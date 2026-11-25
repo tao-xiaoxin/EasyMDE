@@ -108,15 +108,24 @@ function scanInlineCodeRangesInternal(
 	source: string,
 	blockCodeRanges: ReadonlyArray<ScannedCodeRange>,
 ): Readonly<{
-	hasTrailingUnmatchedBacktick: boolean;
+	earliestTrailingUnmatchedBacktickFrom: number;
 	ranges: ScannedCodeRange[];
+	trailingUnmatchedBacktickLengths: ReadonlySet<number> | null;
 }> {
 	if (!source.includes("`")) {
-		return { hasTrailingUnmatchedBacktick: false, ranges: [] };
+		return {
+			earliestTrailingUnmatchedBacktickFrom: -1,
+			ranges: [],
+			trailingUnmatchedBacktickLengths: null,
+		};
 	}
 	const runs = collectBacktickRuns(source, blockCodeRanges);
 	if (0 === runs.length) {
-		return { hasTrailingUnmatchedBacktick: false, ranges: [] };
+		return {
+			earliestTrailingUnmatchedBacktickFrom: -1,
+			ranges: [],
+			trailingUnmatchedBacktickLengths: null,
+		};
 	}
 	const lastBlockEnd =
 		blockCodeRanges.length > 0
@@ -140,7 +149,8 @@ function scanInlineCodeRangesInternal(
 	}
 
 	const ranges: ScannedCodeRange[] = [];
-	let hasTrailingUnmatchedBacktick = false;
+	let earliestTrailingUnmatchedBacktickFrom = -1;
+	let trailingUnmatchedBacktickLengths: Set<number> | null = null;
 	let runIndex = 0;
 	while (runIndex < runs.length) {
 		const run = runs[runIndex];
@@ -149,7 +159,14 @@ function scanInlineCodeRangesInternal(
 		if (closeIndex < 0) {
 			const openLength = run.escaped ? run.length - 1 : run.length;
 			if (openLength > 0 && run.from >= lastBlockEnd) {
-				hasTrailingUnmatchedBacktick = true;
+				const openStart = run.escaped ? run.to - openLength : run.from;
+				if (earliestTrailingUnmatchedBacktickFrom < 0) {
+					earliestTrailingUnmatchedBacktickFrom = openStart;
+				}
+				if (!trailingUnmatchedBacktickLengths) {
+					trailingUnmatchedBacktickLengths = new Set<number>();
+				}
+				trailingUnmatchedBacktickLengths.add(openLength);
 			}
 			runIndex += 1;
 			continue;
@@ -161,7 +178,71 @@ function scanInlineCodeRangesInternal(
 		ranges.push({ end: close.to, start });
 		runIndex = closeIndex + 1;
 	}
-	return { hasTrailingUnmatchedBacktick, ranges };
+	return {
+		earliestTrailingUnmatchedBacktickFrom,
+		ranges,
+		trailingUnmatchedBacktickLengths,
+	};
+}
+
+function hasMatchingBacktickRunAfter(
+	source: string,
+	start: number,
+	neededLengths: ReadonlySet<number>,
+): boolean {
+	let pos = source.indexOf("`", start);
+	while (pos >= 0) {
+		let end = pos + 1;
+		while (end < source.length && "`" === source[end]) end += 1;
+		if (neededLengths.has(end - pos)) return true;
+		pos = source.indexOf("`", end);
+	}
+	return false;
+}
+
+function scanSealedTrailingSegmentBeforeBacktick(
+	segment: string,
+	segmentOffset: number,
+	ranges: PhpMarkdownMathRange[],
+	tokenCounter: { value: number },
+): boolean {
+	let current = segment;
+	const hasDollar = current.includes("$");
+	const hasBracket = current.includes("\\[");
+	const hasParen = current.includes("\\(");
+	if (!hasDollar && !hasBracket && !hasParen) return true;
+
+	const passes: ReadonlyArray<
+		readonly [boolean, string, string, boolean, boolean]
+	> = [
+		[hasDollar && current.includes("$$"), "$$", "$$", true, true],
+		[hasBracket, "\\[", "\\]", true, true],
+		[hasParen, "\\(", "\\)", false, hasDollar],
+	];
+	for (let i = 0; i < passes.length; i += 1) {
+		const entry = passes[i];
+		if (!entry?.[0]) continue;
+		const [, openDelim, closeDelim, isDisplay, buildMasked] = entry;
+		const pass = scanDelimitedMathPass(
+			current,
+			segmentOffset,
+			openDelim,
+			closeDelim,
+			isDisplay,
+			ranges,
+			buildMasked,
+			tokenCounter,
+		);
+		if (pass.unclosedPos >= 0) return false;
+		current = pass.text;
+	}
+	if (hasDollar) {
+		const firstDollar = current.indexOf("$");
+		if (firstDollar >= 0 && current.indexOf("$", firstDollar + 1) >= 0) {
+			scanInlineDollarMathPass(current, segmentOffset, ranges, tokenCounter);
+		}
+	}
+	return true;
 }
 
 /**
@@ -449,12 +530,6 @@ function scanBoundedPhpMarkdownMathRanges(
 
 		const blockCodeRanges = scanPhpCommonMarkBlockCodeRanges(prefix);
 		const inlineScan = scanInlineCodeRangesInternal(prefix, blockCodeRanges);
-		if (
-			inlineScan.hasTrailingUnmatchedBacktick &&
-			source.indexOf("`", bound) >= 0
-		) {
-			return null;
-		}
 		const baseCodeRanges = mergeCodeRanges(blockCodeRanges, inlineScan.ranges);
 		const boundedExtra = collectBoundedExtraProtectedRanges(
 			extraProtectedRanges,
@@ -464,6 +539,73 @@ function scanBoundedPhpMarkdownMathRanges(
 			boundedExtra.length > 0
 				? mergeCodeRanges(baseCodeRanges, boundedExtra)
 				: baseCodeRanges;
+
+		if (
+			inlineScan.trailingUnmatchedBacktickLengths &&
+			hasMatchingBacktickRunAfter(
+				source,
+				bound,
+				inlineScan.trailingUnmatchedBacktickLengths,
+			)
+		) {
+			const cut = inlineScan.earliestTrailingUnmatchedBacktickFrom;
+			const tailAfterUnmatched = cut >= 0 ? prefix.slice(cut) : prefix;
+			if (
+				cut < 0 ||
+				tailAfterUnmatched.includes("$") ||
+				tailAfterUnmatched.includes("\\[") ||
+				tailAfterUnmatched.includes("\\(")
+			) {
+				return null;
+			}
+			const sealedPrefix = prefix.slice(0, cut);
+			const sealedRanges: PhpMarkdownMathRange[] = [];
+			const sealedTokenCounter = { value: 0 };
+			const sealedFlags: DelimiterScanFlags = {
+				hasBracketPair:
+					sealedPrefix.includes("\\[") && sealedPrefix.includes("\\]"),
+				hasDollar: sealedPrefix.includes("$"),
+				hasDollarPair:
+					sealedPrefix.includes("$") &&
+					sealedPrefix.indexOf("$", sealedPrefix.indexOf("$") + 1) >= 0,
+				hasDoubleDollar: sealedPrefix.includes("$$"),
+				hasParenPair:
+					sealedPrefix.includes("\\(") && sealedPrefix.includes("\\)"),
+			};
+			let sealedCursor = 0;
+			for (let i = 0; i < codeRanges.length; i += 1) {
+				const codeRange = codeRanges[i];
+				if (!codeRange || codeRange.start >= cut) break;
+				if (codeRange.end > cut) return null;
+				if (codeRange.start > sealedCursor) {
+					scanSegmentMathRanges(
+						sealedPrefix.slice(sealedCursor, codeRange.start),
+						sealedCursor,
+						sealedFlags,
+						sealedRanges,
+						sealedTokenCounter,
+					);
+				}
+				if (codeRange.end > sealedCursor) sealedCursor = codeRange.end;
+			}
+			if (
+				sealedCursor < cut &&
+				!scanSealedTrailingSegmentBeforeBacktick(
+					sealedPrefix.slice(sealedCursor),
+					sealedCursor,
+					sealedRanges,
+					sealedTokenCounter,
+				)
+			) {
+				return null;
+			}
+			const collapsedSealed = collapseNestedMathRanges(sealedRanges);
+			return collapsedSealed.map(({ block, from, to }) => ({
+				block,
+				from,
+				to,
+			}));
+		}
 
 		const ranges: PhpMarkdownMathRange[] = [];
 		const tokenCounter = { value: 0 };

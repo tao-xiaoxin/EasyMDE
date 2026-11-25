@@ -7,7 +7,6 @@ import {
 	findLineIndexAtOffset,
 	inCodeRange,
 	type PhpMarkdownMathRange,
-	type ScannedCodeRange,
 	type ScannedMarkdownBlocks,
 	type ScannedMarkdownLine,
 } from "../../shared/markdown/php-commonmark-block-scan";
@@ -19,7 +18,7 @@ export type ReconciledPhpTableBlocks = Readonly<{
 	reconciledTableBlocks: ReadonlyArray<EditorMarkdownSourceBlock>;
 }>;
 
-function trimBlockSlice(
+export function trimBlockSlice(
 	source: string,
 	sliceFrom: number,
 	sliceTo: number,
@@ -76,118 +75,29 @@ function trimBlockSlice(
 	};
 }
 
-/**
- * Reconciles Lezer `code` blocks whose non-blank lines are not classified as
- * CommonMark block code by PHP `MarkdownCodeRegionScanner::block_ranges()`
- * (such as 4-space/tab indented paragraphs immediately following a link
- * reference definition like `[r]: /u\n    $x$`, where PHP keeps its
- * `ParagraphParser` open while Lezer emits a `CodeBlock`). Genuine indented
- * and fenced code blocks (including indented code blocks with interior blank
- * lines) remain untouched `code` blocks.
- */
-export function reconcilePhpNonCodeBlocks(
+export function isOffsetInsideInlineParenMath(
 	source: string,
-	blocks: ReadonlyArray<EditorMarkdownSourceBlock>,
-	phpBlockCodeRanges: ReadonlyArray<ScannedCodeRange>,
-	starts: ReadonlyArray<number>,
-): ReadonlyArray<EditorMarkdownSourceBlock> {
-	let reconciled: EditorMarkdownSourceBlock[] | null = null;
-	let codeIndex = 0;
-
-	for (let index = 0; index < blocks.length; index += 1) {
-		const block = blocks[index];
-		if (!block) continue;
-		if ("code" !== block.kind) {
-			if (reconciled) reconciled.push(block);
-			continue;
-		}
-		while (
-			codeIndex < phpBlockCodeRanges.length &&
-			(phpBlockCodeRanges[codeIndex]?.end ?? 0) <= block.from
-		) {
-			codeIndex += 1;
-		}
-
-		const parts: EditorMarkdownSourceBlock[] = [];
-		let hasUncoveredParagraph = false;
-		let cursor = block.from;
-		let pendingCodeFrom = -1;
-		let pendingCodeTo = -1;
-		let probe = codeIndex;
-
-		const flushPendingCode = (): void => {
-			if (pendingCodeFrom < 0) return;
-			const codeSlice = trimBlockSlice(
-				source,
-				pendingCodeFrom,
-				pendingCodeTo,
-				starts,
-				"code",
-				true,
-			);
-			if (codeSlice) parts.push(codeSlice);
-			pendingCodeFrom = -1;
-			pendingCodeTo = -1;
-		};
-
-		while (probe < phpBlockCodeRanges.length) {
-			const codeRange = phpBlockCodeRanges[probe];
-			if (!codeRange || codeRange.start >= block.to) break;
-			const overlapStart = Math.max(cursor, codeRange.start);
-			const overlapEnd = Math.min(block.to, codeRange.end);
-			if (overlapStart > cursor) {
-				const gap = trimBlockSlice(
-					source,
-					cursor,
-					overlapStart,
-					starts,
-					"paragraph",
-					true,
-				);
-				if (gap) {
-					flushPendingCode();
-					hasUncoveredParagraph = true;
-					parts.push(gap);
-				}
-			}
-			if (overlapEnd > overlapStart) {
-				if (pendingCodeFrom < 0) pendingCodeFrom = overlapStart;
-				pendingCodeTo = overlapEnd;
-				cursor = overlapEnd;
-			}
-			if (codeRange.end <= block.to) probe += 1;
-			else break;
-		}
-		if (cursor < block.to) {
-			const trailing = trimBlockSlice(
-				source,
-				cursor,
-				block.to,
-				starts,
-				"paragraph",
-				true,
-			);
-			if (trailing) {
-				flushPendingCode();
-				hasUncoveredParagraph = true;
-				parts.push(trailing);
-			}
-		}
-		flushPendingCode();
-		codeIndex = probe;
-
-		if (!hasUncoveredParagraph) {
-			if (reconciled) reconciled.push(block);
-			continue;
-		}
-		if (!reconciled) reconciled = blocks.slice(0, index);
-		for (let p = 0; p < parts.length; p += 1) {
-			const part = parts[p];
-			if (part) reconciled.push(part);
-		}
+	offset: number,
+	minMathFrom: number,
+	phpMathRanges: ReadonlyArray<PhpMarkdownMathRange>,
+	mathCursor: { value: number },
+): boolean {
+	while (
+		mathCursor.value < phpMathRanges.length &&
+		(phpMathRanges[mathCursor.value]?.to ?? 0) <= offset
+	) {
+		mathCursor.value += 1;
 	}
-
-	return reconciled ?? blocks;
+	const math = phpMathRanges[mathCursor.value];
+	return Boolean(
+		math &&
+			!math.block &&
+			math.from >= minMathFrom &&
+			math.from < offset &&
+			offset < math.to &&
+			"\\" === source[math.from] &&
+			"(" === source[math.from + 1],
+	);
 }
 
 /**
@@ -212,6 +122,8 @@ export function reconcilePhpTableUnavailableBlocks(
 	starts: ReadonlyArray<number>,
 ): ReconciledPhpTableBlocks {
 	const tableSpans: SourceRange[] = [];
+	const evaluatedTableStarts = new Set<number>();
+	const evaluatedUntilLineIdx = { value: -1 };
 	let mathIndex = 0;
 
 	for (let index = 0; index < blocks.length; index += 1) {
@@ -229,6 +141,8 @@ export function reconcilePhpTableUnavailableBlocks(
 			index,
 			phpBlockScan,
 			phpMathRanges,
+			evaluatedTableStarts,
+			evaluatedUntilLineIdx,
 		);
 		if (bridgedSpan) {
 			if (!lastSpan || bridgedSpan.from >= lastSpan.to) {
@@ -327,7 +241,7 @@ export function reconcilePhpTableUnavailableBlocks(
 	return { blocks: result, reconciledTableBlocks };
 }
 
-function findFirstBlockEndingAfter(
+export function findFirstBlockEndingAfter(
 	blocks: ReadonlyArray<EditorMarkdownSourceBlock>,
 	offset: number,
 ): number {
@@ -377,10 +291,34 @@ function hasBridgingEditableParenMath(
 	);
 }
 
-function findPhpTableSpanContainingLine(
+function advanceEvaluatedContiguousTableRows(
+	lines: ReadonlyArray<ScannedMarkdownLine>,
+	fromIdx: number,
+	columnCount: number | null,
+	evaluatedUntilLineIdx: { value: number },
+): void {
+	let endProbe = fromIdx;
+	while (
+		endProbe + 1 < lines.length &&
+		lines[endProbe + 1]?.isTableRow &&
+		(lines[endProbe + 1]?.inlineBlockId ?? -1) >= 0 &&
+		lines[endProbe + 1]?.tableColumnCount === columnCount
+	) {
+		endProbe += 1;
+	}
+	if (endProbe > evaluatedUntilLineIdx.value) {
+		evaluatedUntilLineIdx.value = endProbe;
+	}
+}
+
+export function findPhpTableSpanContainingLine(
 	lines: ReadonlyArray<ScannedMarkdownLine>,
 	targetLineIdx: number,
+	evaluatedUntilLineIdx?: { value: number },
 ): Readonly<{ endLineIdx: number; startLineIdx: number }> | null {
+	if (evaluatedUntilLineIdx && targetLineIdx <= evaluatedUntilLineIdx.value) {
+		return null;
+	}
 	const target = lines[targetLineIdx];
 	if (!target?.isTableRow || target.inlineBlockId < 0) return null;
 
@@ -398,7 +336,17 @@ function findPhpTableSpanContainingLine(
 			}
 			probe -= 1;
 		}
-		if (probe <= 0 || !lines[probe]?.isTableDelimiter) return null;
+		if (probe <= 0 || !lines[probe]?.isTableDelimiter) {
+			if (evaluatedUntilLineIdx) {
+				advanceEvaluatedContiguousTableRows(
+					lines,
+					targetLineIdx,
+					target.tableColumnCount,
+					evaluatedUntilLineIdx,
+				);
+			}
+			return null;
+		}
 		headerIdx = probe - 1;
 	}
 
@@ -414,6 +362,14 @@ function findPhpTableSpanContainingLine(
 		delimiter.isTableRow ||
 		delimiter.inlineBlockId >= 0
 	) {
+		if (evaluatedUntilLineIdx) {
+			advanceEvaluatedContiguousTableRows(
+				lines,
+				Math.max(targetLineIdx, headerIdx + 1),
+				target.tableColumnCount,
+				evaluatedUntilLineIdx,
+			);
+		}
 		return null;
 	}
 
@@ -429,6 +385,9 @@ function findPhpTableSpanContainingLine(
 		}
 		endIdx += 1;
 	}
+	if (evaluatedUntilLineIdx && endIdx > evaluatedUntilLineIdx.value) {
+		evaluatedUntilLineIdx.value = endIdx;
+	}
 	const after = endIdx + 1 < lines.length ? lines[endIdx + 1] : null;
 	if (after?.isTableRow || after?.isTableDelimiter) return null;
 	if (targetLineIdx < headerIdx || targetLineIdx > endIdx) return null;
@@ -441,6 +400,8 @@ function findMathBridgedPhpTableSpan(
 	blockIndex: number,
 	phpBlockScan: ScannedMarkdownBlocks,
 	phpMathRanges: ReadonlyArray<PhpMarkdownMathRange>,
+	evaluatedTableStarts: Set<number>,
+	evaluatedUntilLineIdx: { value: number },
 ): SourceRange | null {
 	const block = blocks[blockIndex];
 	if (!block) return null;
@@ -449,9 +410,15 @@ function findMathBridgedPhpTableSpan(
 	}
 	const lines = phpBlockScan.lines;
 	const phpLineIdx = findLineIndexAtOffset(lines, block.from);
-	if (phpLineIdx < 0) return null;
-	const tableLineSpan = findPhpTableSpanContainingLine(lines, phpLineIdx);
+	if (phpLineIdx < 0 || phpLineIdx <= evaluatedUntilLineIdx.value) return null;
+	const tableLineSpan = findPhpTableSpanContainingLine(
+		lines,
+		phpLineIdx,
+		evaluatedUntilLineIdx,
+	);
 	if (!tableLineSpan) return null;
+	if (evaluatedTableStarts.has(tableLineSpan.startLineIdx)) return null;
+	evaluatedTableStarts.add(tableLineSpan.startLineIdx);
 
 	for (
 		let idx = tableLineSpan.startLineIdx;
@@ -478,7 +445,11 @@ function findMathBridgedPhpTableSpan(
 	}
 
 	// Verify overlapping Lezer blocks are top-level non-code/non-container blocks
-	// and the table does not start inside a separate `unavailable` block.
+	// (allowing phantom `quote`/`list` blocks whose markers lie strictly inside
+	// inline `\(...\)` math) and the table does not start in `unavailable`.
+	const mathCursor = {
+		value: findFirstMathRangeEndingAfter(phpMathRanges, tableFrom),
+	};
 	let firstOverlappingKind: EditorMarkdownBlockKind | null = null;
 	for (
 		let i = findFirstBlockEndingAfter(blocks, tableFrom);
@@ -488,11 +459,18 @@ function findMathBridgedPhpTableSpan(
 		const candidate = blocks[i];
 		if (!candidate || candidate.from >= tableTo) break;
 		if (null === firstOverlappingKind) firstOverlappingKind = candidate.kind;
+		if ("code" === candidate.kind || "math" === candidate.kind) {
+			return null;
+		}
 		if (
-			"code" === candidate.kind ||
-			"quote" === candidate.kind ||
-			"list" === candidate.kind ||
-			"math" === candidate.kind
+			("quote" === candidate.kind || "list" === candidate.kind) &&
+			!isOffsetInsideInlineParenMath(
+				source,
+				candidate.from,
+				tableFrom,
+				phpMathRanges,
+				mathCursor,
+			)
 		) {
 			return null;
 		}

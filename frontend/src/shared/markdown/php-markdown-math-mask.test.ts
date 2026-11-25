@@ -611,4 +611,125 @@ describe("maskPhpMarkdownMathForTableScan", () => {
 		expect(prefix.lines[0]?.isTableRow).toBe(true);
 		expect(elapsedMs).toBeLessThanOrEqual(150);
 	});
+
+	it("matches exact backtick run length in bounded math scans and skips trailing 100k-line math (Round 38 Track A #5)", () => {
+		const trailing = "p $x$ $y$\n".repeat(100_000);
+
+		// 1-backtick open before trailing 2-backtick run cannot close -> only 1 math span scanned in bounded time.
+		for (const [label, source] of [
+			[
+				"1-tick after math + 2-tick EOF",
+				`| $a$ \` | [x](/u) |\n| - | - |\n\n${trailing}\`\``,
+			],
+			[
+				"1-tick after math + 1-tick EOF (sealed before backtick)",
+				`| $a$ \` | [x](/u) |\n| - | - |\n\n${trailing}\``,
+			],
+			[
+				"1-tick before math + 2-tick EOF",
+				`| \` $a$ | [x](/u) |\n| - | - |\n\n${trailing}\`\``,
+			],
+			[
+				"2-tick before math + 1-tick EOF",
+				`| \`\` $a$ | [x](/u) |\n| - | - |\n\n${trailing}\``,
+			],
+			[
+				"escaped leading 2-tick (opens len 1) before math + 2-tick EOF",
+				`| \\\`\` $a$ | [x](/u) |\n| - | - |\n\n${trailing}\`\``,
+			],
+		] as const) {
+			const started = performance.now();
+			const prefix = scanPhpTablePrefixThroughOffset(source, 16);
+			const elapsedMs = performance.now() - started;
+			expect(prefix.phpMathRanges, label).toHaveLength(1);
+			expect(elapsedMs, label).toBeLessThanOrEqual(150);
+		}
+
+		// Positive closure controls: exact matching run length after math genuinely closes the inline code span.
+		expect(
+			scanPhpMarkdownMathRanges(
+				`| \` $a$ | [x](/u) |\n| - | - |\n\n${"p $x$ $y$\n".repeat(100)}\``,
+				undefined,
+				25,
+			),
+		).toEqual([]);
+		expect(
+			scanPhpMarkdownMathRanges(
+				`| \`\` $a$ | [x](/u) |\n| - | - |\n\n${"p $x$ $y$\n".repeat(100)}\`\``,
+				undefined,
+				25,
+			),
+		).toEqual([]);
+		expect(
+			scanPhpMarkdownMathRanges(
+				"| $$a ` | [x](/u) |\n| - | - |\n\n` $$",
+				undefined,
+				25,
+			),
+		).toEqual([]);
+		expect(
+			scanPhpMarkdownMathRanges(
+				"| $$a ` | [x](/u) |\n| - | - |\n\n`` $$",
+				undefined,
+				25,
+			),
+		).toHaveLength(1);
+
+		// Deterministic 300-doc randomized bounded-vs-unbounded fuzz guard (1,200 checks, 0 mismatches).
+		let seed = 0x51a7c0de;
+		const rand = (): number => {
+			seed = (seed * 1664525 + 1013904223) >>> 0;
+			return seed / 0x100000000;
+		};
+		const tokens = [
+			"`",
+			"``",
+			"```",
+			"\\`",
+			"\\``",
+			"\\\\`",
+			"$a$",
+			"$",
+			"$$",
+			"$$b$$",
+			"\\[",
+			"\\]",
+			"\\(",
+			"\\)",
+			"\\$",
+			"|",
+			"a",
+			" ",
+			"\n",
+			"\n\n",
+			"\n```\ncode\n```\n",
+			"\n~~~\ncode\n~~~\n",
+			"\n\n    indented\n\n",
+			"\n<!--\n```\n-->\n",
+		];
+		for (let iter = 0; iter < 300; iter += 1) {
+			const count = 4 + Math.floor(rand() * 14);
+			let doc = "";
+			for (let p = 0; p < count; p += 1) {
+				doc += tokens[Math.floor(rand() * tokens.length)] ?? "";
+			}
+			const full = scanPhpMarkdownMathRanges(doc).map(({ block, from, to }) => ({
+				block,
+				from,
+				to,
+			}));
+			for (const ratio of [0, 0.25, 0.5, 0.75]) {
+				const limit = Math.floor(doc.length * ratio);
+				const bounded = scanPhpMarkdownMathRanges(doc, undefined, limit).map(
+					({ block, from, to }) => ({ block, from, to }),
+				);
+				for (const exp of full.filter((r) => r.from <= limit)) {
+					expect(bounded, `iter=${iter}@${limit}`).toContainEqual(exp);
+				}
+				for (const got of bounded) {
+					expect(full, `iter=${iter}@${limit}`).toContainEqual(got);
+				}
+			}
+		}
+	});
 });

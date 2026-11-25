@@ -1056,6 +1056,34 @@ describe("createBrowserEditorBlockIndexWorker", () => {
 					.buffer,
 			}),
 		).rejects.toThrow("editor-block-index-result-invalid");
+
+		// Round 38: post-refdef links/tables/images/display-math/nested-refdefs + quote/list inside paren-math tables round-trip identically.
+		for (const source of [
+			"[r]: /u\n    $a$ [x](/v)",
+			"[r]: /u\n    c | [x](/v)\n-|-",
+			"[r]: /u\n    [link](https://example.com)",
+			"[r]: /u\n    https://example.com",
+			"[r]: /u\n    ![alt](https://example.com/a.png)",
+			"[r]: /u\n    | a | b |\n    | --- | --- |\n    | [link](/local) | 2 |",
+			"[r]: /u\n    $$x$$\n    [link](https://example.com)",
+			"[r]: /u\n    $$x$$\n    $y$",
+			"[r]: /u\n    [r2]: /v\n\n    real code",
+			"| A | B |\n| --- | --- |\n| \\(x\n> quote\n<div>\ny\\) | [link](https://example.com) |",
+			"| A | B |\n| --- | --- |\n| \\(x\n- list\n<div>\ny\\) | [link](https://example.com) |",
+		]) {
+			const direct = createEditorMarkdownBlockIndex(source, {
+				referenceLabelCaseFoldProfile: 14,
+			});
+			const decoded = await runWithPayload(source, pack(source));
+			expect(decoded.blocks, source).toEqual(direct.blocks);
+			expect(decoded.mathSpans, source).toEqual(direct.mathSpans);
+			expect(decoded.imageBlocks, source).toEqual(direct.imageBlocks);
+			expect(decoded.imageRanges, source).toEqual(direct.imageRanges);
+			expect(decoded.linkCandidates, source).toEqual(direct.linkCandidates);
+			if (direct.linkTableCells && direct.linkTableCells.size > 0) {
+				expect(decoded.linkTableCells, source).toEqual(direct.linkTableCells);
+			}
+		}
 	});
 
 	it("rejects an oversized result with a distinct bounded-result error", async () => {

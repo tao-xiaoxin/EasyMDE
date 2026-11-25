@@ -467,4 +467,110 @@ describe("editor markdown link table-cell wire", () => {
 		expect(unpackedMulti).toEqual(multiIdx.linkTableCells);
 		expect(performance.now() - multiStarted).toBeLessThanOrEqual(150);
 	}, 60_000);
+
+	it("round-trips post-refdef and quote/list-in-paren-math table cells and keeps exact backtick run-length unpack fast on 100k-line trailing math (Round 38 Track A #4/#5, Track B Findings 2 & 3)", () => {
+		for (const source of [
+			"[r]: /u\n    c | [x](/v)\n-|-",
+			"[r]: /u\n    | a | b |\n    | --- | --- |\n    | [link](/local) | 2 |",
+			"| A | B |\n| --- | --- |\n| \\(x\n> quote\n<div>\ny\\) | [link](https://example.com) |",
+			"| A | B |\n| --- | --- |\n| \\(x\n- list\n<div>\ny\\) | [link](https://example.com) |",
+		]) {
+			const index = build(source);
+			const wire = packEditorMarkdownLinkTableCells(index.linkTableCells);
+			if (!wire) throw new Error(`wire-missing:${source}`);
+			const payload: EditorMarkdownBlockIndexPackedData = {
+				...basePackedPayload(source.length),
+				linkTableCellCount: wire.linkTableCellCount,
+				linkTableCells: wire.linkTableCells,
+			};
+			expect(
+				unpackEditorMarkdownLinkTableCells(
+					source,
+					index.linkCandidates ?? [],
+					index.blocks,
+					payload,
+				),
+				source,
+			).toEqual(index.linkTableCells);
+		}
+
+		// Track A #5 perf guard: 1-backtick open + 100k trailing math + trailing 2-backtick run unpacks in bounded prefix time.
+		const trailing = "p $x$ $y$\n".repeat(100_000);
+		for (const source of [
+			`| $a$ \` | [x](/u) |\n| - | - |\n\n${trailing}\`\``,
+			`| $a$ \` | [x](/u) |\n| - | - |\n\n${trailing}\``,
+			`| \` $a$ | [x](/u) |\n| - | - |\n\n${trailing}\`\``,
+		]) {
+			const idx = build(source);
+			const wire = packEditorMarkdownLinkTableCells(idx.linkTableCells);
+			if (!wire) throw new Error("backtick-wire-missing");
+			const payload: EditorMarkdownBlockIndexPackedData = {
+				...basePackedPayload(source.length),
+				linkTableCellCount: wire.linkTableCellCount,
+				linkTableCells: wire.linkTableCells,
+			};
+			const started = performance.now();
+			const unpacked = unpackEditorMarkdownLinkTableCells(
+				source,
+				idx.linkCandidates ?? [],
+				idx.blocks,
+				payload,
+			);
+			const elapsedMs = performance.now() - started;
+			expect(unpacked).toEqual(idx.linkTableCells);
+			expect(elapsedMs).toBeLessThanOrEqual(150);
+		}
+
+		// Forged table cell inside post-display-math indented code stays rejected.
+		const postDisplay = "[r]: /u\n    $$x$$\n    [link](https://example.com)";
+		const forgedFrom = postDisplay.indexOf("[link]");
+		const forgedTo = postDisplay.length;
+		expect(
+			unpackEditorMarkdownLinkTableCells(
+				postDisplay,
+				[
+					{
+						blockFrom: 18,
+						blockTo: postDisplay.length,
+						from: forgedFrom,
+						kind: "link",
+						reference: false,
+						to: forgedTo,
+					},
+				],
+				[
+					{
+						editable: false,
+						from: 0,
+						kind: "unavailable",
+						lineEnd: 0,
+						lineStart: 0,
+						to: 7,
+					},
+					{
+						editable: true,
+						from: 12,
+						kind: "math",
+						lineEnd: 1,
+						lineStart: 1,
+						to: 17,
+					},
+					{
+						editable: true,
+						from: 18,
+						kind: "table",
+						lineEnd: 2,
+						lineStart: 2,
+						to: postDisplay.length,
+					},
+				],
+				{
+					...basePackedPayload(postDisplay.length),
+					linkTableCellCount: 1,
+					linkTableCells: Int32Array.from([forgedFrom, 18, postDisplay.length])
+						.buffer,
+				},
+			),
+		).toBeNull();
+	}, 60_000);
 });

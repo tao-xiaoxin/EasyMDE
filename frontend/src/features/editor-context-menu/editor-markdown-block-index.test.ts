@@ -3272,6 +3272,202 @@ describe("Round 35 exact PHP table reconciliation and PHP-owned reconciled links
 		]);
 		expect(plainHtmlIdx.linkCandidates).toEqual([]);
 	});
+
+	it("reconciles post-refdef 4-space/tab indented CodeBlocks against post-math phpBlockScan with full link, table, image, display-math, and nested-refdef parity (Round 38 Track A #4, Track B Finding 2)", () => {
+		const linkTexts = (source: string) =>
+			(createEditorMarkdownBlockIndex(source).linkCandidates ?? []).map((c) =>
+				source.slice(c.from, c.to),
+			);
+
+		// Reproducers 1, 3, 4: post-refdef indented inline paragraphs extract PHP-owned links & bare autolinks.
+		expect(linkTexts("[r]: /u\n    $a$ [x](/v)")).toEqual(["[x](/v)"]);
+		expect(linkTexts("[r]: /u\n    [link](https://example.com)")).toEqual([
+			"[link](https://example.com)",
+		]);
+		expect(linkTexts("[r]: /u\n    https://example.com")).toEqual([
+			"https://example.com",
+		]);
+
+		// Reproducers 2 & 6: post-refdef indented PHP GFM tables become editable `table` blocks with PHP-owned links and table-cell metadata.
+		for (const [source, expectedLink] of [
+			["[r]: /u\n    c | [x](/v)\n-|-", "[x](/v)"],
+			[
+				"[r]: /u\n    | a | b |\n    | --- | --- |\n    | [link](/local) | 2 |",
+				"[link](/local)",
+			],
+			["[r]: /u\n    a | b\n--- | ---\n    [x](/v) | 2", "[x](/v)"],
+			["[r]: /u\n    | [a](/x\\|y) | b |\n    | --- | --- |", "[a](/x\\|y)"],
+		] as const) {
+			const idx = createEditorMarkdownBlockIndex(source);
+			expect(idx.blocks[1], source).toMatchObject({
+				editable: true,
+				kind: "table",
+			});
+			expect(
+				(idx.linkCandidates ?? []).map((c) => source.slice(c.from, c.to)),
+				source,
+			).toEqual([expectedLink]);
+			expect(idx.linkTableCells?.size, source).toBe(1);
+		}
+
+		// Reproducer 5 & image variants: never falsely report `{ count: 0, status: "ready" }` for reconciled PHP images.
+		const inlineImgSrc = "[r]: /u\n    ![alt](https://example.com/a.png)";
+		const inlineImgIdx = createEditorMarkdownBlockIndex(inlineImgSrc);
+		expect(inlineImgIdx.blocks[1]).toMatchObject({
+			editable: true,
+			kind: "paragraph",
+		});
+		expect(inlineImgIdx.imageBlocks[1]).toEqual({
+			count: 1,
+			firstImageIndex: 0,
+			status: "ready",
+		});
+		expect(
+			inlineImgIdx.imageRanges.map((r) => inlineImgSrc.slice(r.from, r.to)),
+		).toEqual(["![alt](https://example.com/a.png)"]);
+
+		const refImgIdx = createEditorMarkdownBlockIndex("[r]: /u\n    ![alt][r]");
+		expect(refImgIdx.imageBlocks[1]).toMatchObject({
+			count: 0,
+			status: "unavailable",
+		});
+		expect(refImgIdx.linkCandidates).toEqual([]);
+
+		// Inline image wrapping a link emits the image and 0 links; unresolved ref image emits the inner link.
+		const imgWrappingLink = createEditorMarkdownBlockIndex(
+			"[r]: /u\n    ![[x](/v)](https://example.com/a.png)",
+		);
+		expect(imgWrappingLink.imageRanges).toHaveLength(1);
+		expect(imgWrappingLink.linkCandidates).toEqual([]);
+		expect(linkTexts("[r]: /u\n    ![[x](/v)][missing]")).toEqual(["[x](/v)"]);
+
+		// Reproducer 7: post-display-math indented code line stays `kind: "code"` with 0 links (and post-display-math indented `$y$` stays code without invalid worker math spans).
+		const postDisplayCode =
+			"[r]: /u\n    $$x$$\n    [link](https://example.com)";
+		const postDisplayIdx = createEditorMarkdownBlockIndex(postDisplayCode);
+		expect(postDisplayIdx.blocks.map((b) => b.kind)).toEqual([
+			"unavailable",
+			"math",
+			"code",
+		]);
+		expect(postDisplayIdx.linkCandidates).toEqual([]);
+		expect(postDisplayIdx.mathSpans).toHaveLength(1);
+
+		const postDisplaySameLine = createEditorMarkdownBlockIndex(
+			"[r]: /u\n    $$x$$ [b](/b)",
+		);
+		expect(postDisplaySameLine.blocks.map((b) => b.kind)).toEqual([
+			"unavailable",
+			"math",
+			"paragraph",
+		]);
+		expect(
+			(postDisplaySameLine.linkCandidates ?? []).map((c) =>
+				postDisplaySameLine.source.slice(c.from, c.to),
+			),
+		).toEqual(["[b](/b)"]);
+
+		const postDisplaySameLineCode = createEditorMarkdownBlockIndex(
+			"[r]: /u\n    $$x$$    [b](/b)",
+		);
+		expect(postDisplaySameLineCode.blocks.map((b) => b.kind)).toEqual([
+			"unavailable",
+			"math",
+			"code",
+		]);
+		expect(postDisplaySameLineCode.linkCandidates).toEqual([]);
+
+		const postDisplayMathInCode = createEditorMarkdownBlockIndex(
+			"[r]: /u\n    $$x$$\n    $y$",
+		);
+		expect(postDisplayMathInCode.blocks.map((b) => b.kind)).toEqual([
+			"unavailable",
+			"math",
+			"code",
+		]);
+		expect(postDisplayMathInCode.mathSpans).toHaveLength(1);
+
+		// Reproducer 8: nested refdef becomes `unavailable` (not editable paragraph), followed by genuine `code`.
+		const nestedRefdef = createEditorMarkdownBlockIndex(
+			"[r]: /u\n    [r2]: /v\n\n    real code",
+		);
+		expect(
+			nestedRefdef.blocks.map((b) => ({ editable: b.editable, kind: b.kind })),
+		).toEqual([
+			{ editable: false, kind: "unavailable" },
+			{ editable: false, kind: "unavailable" },
+			{ editable: true, kind: "code" },
+		]);
+		expect(linkTexts("[r]: /u\n    [r2]: /v\n    [x][r2]")).toEqual([
+			"[x][r2]",
+		]);
+
+		// Cross-line post-refdef link and paren-math hiding `# h` before 4-space link.
+		expect(linkTexts("[r]: /u\n    [a\nb](/u)")).toEqual(["[a\nb](/u)"]);
+		expect(linkTexts("\\(a\n# h\\)\n    [link](https://example.com)")).toEqual([
+			"[link](https://example.com)",
+		]);
+
+		// Genuine indented code controls stay `code` with 0 math spans and 0 links.
+		for (const genuineCode of [
+			"\n\n    $x$",
+			"[r]: /u\n\n    $x$",
+			"[r]: /u\n\n    [x](/v)",
+		]) {
+			const idx = createEditorMarkdownBlockIndex(genuineCode);
+			expect(
+				idx.blocks.some((b) => "code" === b.kind),
+				genuineCode,
+			).toBe(true);
+			expect(idx.mathSpans, genuineCode).toEqual([]);
+			expect(idx.linkCandidates, genuineCode).toEqual([]);
+		}
+	});
+
+	it("allows quote/list lines inside multiline paren math in PHP tables and keeps table reconciliation strictly O(N) at n=8,000 (Round 38 Track B Finding 3)", () => {
+		for (const source of [
+			"| A | B |\n| --- | --- |\n| \\(x\n> quote\n<div>\ny\\) | [link](https://example.com) |",
+			"| A | B |\n| --- | --- |\n| \\(x\n- list\n<div>\ny\\) | [link](https://example.com) |",
+			"| A | B |\n| --- | --- |\n| \\(x\n> quote\n- list\n<div>\ny\\) | [link](https://example.com) |",
+			"| A | B |\n| --- | --- |\n| \\(x\n1. item\n<div>\ny\\) | [link](https://example.com) |",
+		]) {
+			const idx = createEditorMarkdownBlockIndex(source);
+			expect(idx.blocks, source).toEqual([
+				expect.objectContaining({ editable: true, kind: "table" }),
+			]);
+			expect(
+				(idx.linkCandidates ?? []).map((c) => source.slice(c.from, c.to)),
+				source,
+			).toEqual(["[link](https://example.com)"]);
+			expect(idx.linkTableCells?.size, source).toBe(1);
+		}
+
+		// O(N) regression guard across both accepted (`> quote` tail, `$$z$$` tail) and rejected (`unavailable`-start) 8,000-row tables.
+		const rows8k = "| \\(x\n<!-- c -->\ny\\) | 2 |\n".repeat(8_000);
+		for (const [label, payload, expectedBlocks] of [
+			[
+				"accepted 8k + > quote tail",
+				`| A | B |\n| --- | --- |\n${rows8k}| \\(x\n> quote\ny\\) | 1 |\n`,
+				1,
+			],
+			[
+				"accepted 8k + $$z$$ tail",
+				`| A | B |\n| --- | --- |\n${rows8k}| \\(x\n$$z$$\ny\\) | 1 |\n`,
+				1,
+			],
+			[
+				"rejected 8k refdef-start table",
+				`[a | b]: /x "\n| - | - |\n| c | d"\n${rows8k}`,
+				16_002,
+			],
+		] as const) {
+			const started = performance.now();
+			const idx = createEditorMarkdownBlockIndex(payload);
+			const elapsedMs = performance.now() - started;
+			expect(idx.blocks.length, label).toBe(expectedBlocks);
+			expect(elapsedMs, label).toBeLessThanOrEqual(1_500);
+		}
+	}, 60_000);
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

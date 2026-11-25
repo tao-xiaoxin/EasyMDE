@@ -2070,6 +2070,137 @@ describe("createEditorSourceLinkQuery", () => {
 			session.dispose();
 		}
 	});
+
+	it("resolves post-refdef indented links/tables and quote/list-in-paren-math tables identically through direct and worker round-trip indexes (Round 38 Track A #4, Track B Findings 2 & 3)", async () => {
+		const cases: ReadonlyArray<
+			Readonly<{
+				href: string;
+				html0: string;
+				needle: string;
+				prefix: string;
+				source: string;
+			}>
+		> = [
+			{
+				href: "/v",
+				html0: '<p><a href="/v">x</a></p><p>doc</p>',
+				needle: "[x](/v)",
+				prefix: "[x](/v)",
+				source: "[r]: /u\n    $a$ [x](/v)",
+			},
+			{
+				href: "/v",
+				html0: '<p><a href="/v">x</a></p><p>doc</p>',
+				needle: "[x](/v)",
+				prefix: "[x](/v)",
+				source: "[r]: /u\n    c | [x](/v)\n-|-",
+			},
+			{
+				href: "https://example.com",
+				html0: '<p><a href="https://example.com">link</a></p><p>doc</p>',
+				needle: "[link](https://example.com)",
+				prefix: "[link](https://example.com)",
+				source: "[r]: /u\n    [link](https://example.com)",
+			},
+			{
+				href: "https://example.com",
+				html0:
+					'<p><a href="https://example.com">https://example.com</a></p><p>doc</p>',
+				needle: "https://example.com",
+				prefix: "https://example.com",
+				source: "[r]: /u\n    https://example.com",
+			},
+			{
+				href: "/local",
+				html0: '<p><a href="/local">link</a></p><p>doc</p>',
+				needle: "[link](/local)",
+				prefix: "[link](/local)",
+				source:
+					"[r]: /u\n    | a | b |\n    | --- | --- |\n    | [link](/local) | 2 |",
+			},
+			{
+				href: "https://example.com",
+				html0: '<p><a href="https://example.com">link</a></p><p>doc</p>',
+				needle: "[link](https://example.com)",
+				prefix: "[link](https://example.com)",
+				source:
+					"| A | B |\n| --- | --- |\n| \\(x\n> quote\n<div>\ny\\) | [link](https://example.com) |",
+			},
+			{
+				href: "https://example.com",
+				html0: '<p><a href="https://example.com">link</a></p><p>doc</p>',
+				needle: "[link](https://example.com)",
+				prefix: "[link](https://example.com)",
+				source:
+					"| A | B |\n| --- | --- |\n| \\(x\n- list\n<div>\ny\\) | [link](https://example.com) |",
+			},
+		];
+
+		for (const entry of cases) {
+			const direct = createEditorMarkdownBlockIndex(entry.source);
+			const worker = await buildWorkerRoundTripBlockIndex(entry.source);
+			expect(worker.blocks, entry.source).toEqual(direct.blocks);
+			expect(worker.mathSpans, entry.source).toEqual(direct.mathSpans);
+			expect(worker.linkCandidates, entry.source).toEqual(
+				direct.linkCandidates,
+			);
+			const caret = entry.source.indexOf(entry.needle) + 2;
+			for (const [mode, blockIndex] of [
+				["direct", direct],
+				["worker", worker],
+			] as const) {
+				const current = binding(entry.source, `${mode}:${entry.source}`, {
+					end: caret,
+					start: caret,
+				});
+				const { requestFactory, session } = createHarness({
+					render: async (request) => response(request.markdown, entry.html0),
+				});
+				expect(
+					session.ensure({ binding: current, blockIndex }).status,
+					`${mode}:${entry.source}`,
+				).toBe("pending");
+				await settle();
+				expect(
+					requestFactory.mock.calls[0]?.[0]?.markdown,
+					`${mode}:${entry.source}`,
+				).toBe(`${entry.prefix}\n\n${entry.source}`);
+				expect(session.peek(current), `${mode}:${entry.source}`).toEqual({
+					href: entry.href,
+					status: "ready",
+				});
+				session.dispose();
+			}
+		}
+
+		// Negative controls: post-display-math indented code & genuine indented code stay `none` in both direct and worker indexes.
+		for (const [source, needle] of [
+			["[r]: /u\n    $$x$$\n    [link](https://example.com)", "[link]"],
+			["[r]: /u\n\n    [x](/v)", "[x](/v)"],
+		] as const) {
+			const direct = createEditorMarkdownBlockIndex(source);
+			const worker = await buildWorkerRoundTripBlockIndex(source);
+			const caret = source.indexOf(needle) + 2;
+			for (const [mode, blockIndex] of [
+				["direct", direct],
+				["worker", worker],
+			] as const) {
+				const { render, session } = createHarness();
+				expect(
+					session.ensure({
+						binding: binding(source, `${mode}:${source}`, {
+							end: caret,
+							start: caret,
+						}),
+						blockIndex,
+					}),
+					`${mode}:${source}`,
+				).toEqual({ status: "none" });
+				expect(render).not.toHaveBeenCalled();
+				session.dispose();
+			}
+		}
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

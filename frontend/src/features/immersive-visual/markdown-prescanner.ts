@@ -1,3 +1,7 @@
+import {
+	advancePhpCommonMarkBlockLine,
+	createPhpCommonMarkBlockState,
+} from "../../shared/markdown/php-commonmark-block-engine";
 import { matchHtmlBlockOpen } from "../../shared/markdown/php-commonmark-block-helpers";
 import {
 	advanceParagraphReferenceParser,
@@ -9,8 +13,11 @@ import {
 	blockquoteDepth,
 	type ContainerStep,
 	canListMarkerInterruptParagraph,
+	detectFence,
 	findCommonMarkHtmlBlockEnd,
+	findContainerBoundedFenceEnd,
 	findGfmTableEnd,
+	hasListBeforeQuote,
 	isCommonMarkBlankLine,
 	isGfmTableStartAt,
 	type ListMarkerMatch,
@@ -18,9 +25,11 @@ import {
 	matchListPrefixedHtmlBlock,
 	measureIndentColumns,
 	readBlockquotePrefix,
+	resolveGfmTableContainerIndent,
 	stripBlockquoteDepth,
 	stripContainerIndent,
 	stripContainers,
+	stripContainersWithColumn,
 	stripUpToIndentColumns,
 } from "./markdown-prescanner-blocks";
 import {
@@ -30,7 +39,10 @@ import {
 import type { ProtectedBlockKind } from "./visual-schema";
 
 export {
+	type DetectableFence,
+	detectFence,
 	isCommonMarkBlankLine,
+	isFenceCloser,
 	readBlockquotePrefix,
 	stripBlockquoteDepth,
 } from "./markdown-prescanner-blocks";
@@ -135,72 +147,6 @@ export function analyzeLine(line: string, containerIndent: number): LineAnalysis
 		quoteDepth: depth,
 		rest,
 	};
-}
-
-export type DetectableFence = Readonly<{
-	containerIndent: number;
-	fenceChar: "`" | "~";
-	fenceLength: number;
-	info: string;
-}>;
-
-function matchFenceAt(
-	content: string,
-	indent: number,
-	containerIndent: number,
-): DetectableFence | null {
-	const relative = indent - containerIndent;
-	if (relative < 0 || relative > 3) {
-		return null;
-	}
-	const match = /^(`{3,}|~{3,})(.*)$/.exec(content);
-	if (!match?.[1]) {
-		return null;
-	}
-	const info = match[2] ?? "";
-	const fenceChar = match[1][0] === "~" ? "~" : "`";
-	if (fenceChar === "`" && info.includes("`")) {
-		return null;
-	}
-	return {
-		containerIndent,
-		fenceChar,
-		fenceLength: match[1].length,
-		info,
-	};
-}
-
-export function detectFence(analysis: LineAnalysis): DetectableFence | null {
-	const direct = matchFenceAt(
-		analysis.content,
-		analysis.indent,
-		analysis.containerIndent,
-	);
-	if (direct || !analysis.listMarker) {
-		return direct;
-	}
-	const markerIndent = analysis.listMarker.contentIndent;
-	return matchFenceAt(
-		analysis.listMarker.afterContent,
-		markerIndent,
-		markerIndent,
-	);
-}
-
-export function isFenceCloser(line: string, fence: DetectableFence): boolean {
-	const { column, rest } = readBlockquotePrefix(line);
-	const indentText = /^[ \t]*/.exec(rest)?.[0] ?? "";
-	const indent = measureIndentColumns(rest, column);
-	const relative = indent - fence.containerIndent;
-	if (relative < 0 || relative > 3) {
-		return false;
-	}
-	const content = rest.slice(indentText.length);
-	const match =
-		fence.fenceChar === "`"
-			? /^(`{3,})[ \t]*$/.exec(content)
-			: /^(~{3,})[ \t]*$/.exec(content);
-	return Boolean(match?.[1] && match[1].length >= fence.fenceLength);
 }
 
 export const FOOTNOTE_DEF_LINE = /^ {0,3}\[\^([^\s\]]+)\]:(?:[ \t]|$)/;
@@ -387,6 +333,22 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		});
 	};
 
+	const phpBlockState = createPhpCommonMarkBlockState(false, false);
+	const advancePhpStateRange = (from: number, toInclusive: number): void => {
+		for (let k = from; k <= toInclusive; k += 1) {
+			advancePhpCommonMarkBlockLine(phpBlockState, lines[k] ?? "");
+		}
+	};
+	const advancePhpStateClosedBlock = (
+		prefix: string,
+		indent: number,
+	): void => {
+		advancePhpCommonMarkBlockLine(
+			phpBlockState,
+			`${prefix}${" ".repeat(Math.max(0, indent))}<!-- -->`,
+		);
+	};
+
 	let i = 0;
 	let inIndentedCode = false;
 	let indentedCodeContainer = 0;
@@ -406,17 +368,29 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 
 	while (i < lines.length) {
 		const line = lines[i] ?? "";
+		const phpContainers: ContainerStep[] = phpBlockState.containers.map(
+			(container) =>
+				container.kind === "blockquote"
+					? { kind: "blockquote" }
+					: { indent: container.indent, kind: "list" },
+		);
+		const hasInterleavedContainers = hasListBeforeQuote(phpContainers);
+		const matchedInterleaved = hasInterleavedContainers
+			? stripContainersWithColumn(line, phpContainers)
+			: null;
 		let analysis: LineAnalysis = analyzeLine(line, listContentIndent ?? 0);
 		const isBlank = isCommonMarkBlankLine(line);
 
 		if (inIndentedCode) {
 			if (isBlank) {
 				pushOutputLine(line, { end: i + 1, start: i });
+				advancePhpStateRange(i, i);
 				i += 1;
 				continue;
 			}
 			if (analysis.indent - indentedCodeContainer >= 4) {
 				pushOutputLine(line, { end: i + 1, start: i });
+				advancePhpStateRange(i, i);
 				i += 1;
 				continue;
 			}
@@ -427,59 +401,132 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			pushOutputLine(line, { end: i + 1, start: i });
 			closeParagraph();
 			inIndentedCode = false;
+			advancePhpStateRange(i, i);
 			i += 1;
 			continue;
 		}
 
-		// A deeper blockquote marker opens a quote that interrupts a paragraph.
-		const lineQuoteDepth = analysis.quoteDepth;
-		if (paragraphOpen && lineQuoteDepth > paragraphQuoteDepth) {
-			closeParagraph();
-		}
-
-		const prevListIndent: number | null = listContentIndent;
-		const prevContainerIndent = prevListIndent ?? 0;
-		const continuesListItem: boolean =
+		let lineQuoteDepth = analysis.quoteDepth;
+		let prevListIndent: number | null = listContentIndent;
+		let prevContainerIndent = prevListIndent ?? 0;
+		let continuesListItem: boolean =
 			prevListIndent === null || analysis.indent >= prevListIndent;
-		const listInterruptionInParagraph: boolean =
-			paragraphOpen &&
-			paragraphHasContent &&
-			lineQuoteDepth === paragraphQuoteDepth &&
-			continuesListItem;
-
-		const rawListMarker = analysis.listMarker;
-		const acceptedListMarker: ListMarkerMatch | null =
-			rawListMarker !== null &&
-			(!listInterruptionInParagraph ||
-				canListMarkerInterruptParagraph(rawListMarker))
-				? rawListMarker
-				: null;
-
+		let listInterruptionInParagraph: boolean;
 		let droppedOutOfList = false;
-		if (acceptedListMarker !== null) {
-			listContentIndent = acceptedListMarker.contentIndent;
-		} else if (!continuesListItem) {
-			droppedOutOfList = true;
-			if (!paragraphOpen) {
-				listContentIndent = null;
-			}
-		}
+		let acceptedListMarker: ListMarkerMatch | null;
+		let effectiveContainer: number;
+		let preMarkerContainerIndent: number;
+		let activeInterleavedContainers: ReadonlyArray<ContainerStep> | null = null;
 
-		const effectiveContainer =
-			acceptedListMarker !== null
-				? acceptedListMarker.contentIndent
-				: droppedOutOfList
-					? 0
-					: (listContentIndent ?? 0);
-		if (
-			analysis.containerIndent !== effectiveContainer ||
-			analysis.listMarker !== acceptedListMarker
-		) {
+		if (matchedInterleaved !== null) {
+			activeInterleavedContainers = phpContainers;
+			const interRest = matchedInterleaved.rest;
+			const interColumn = matchedInterleaved.column;
+			const interIndent = measureIndentColumns(interRest, interColumn);
+			const interContent = interRest.replace(/^[ \t]+/, "");
+			const opensDeeperQuote =
+				interIndent < 4 && interContent.startsWith(">");
+			let interQuoteDepth = 0;
+			for (const step of phpContainers) {
+				if (step.kind === "blockquote") {
+					interQuoteDepth += 1;
+				}
+			}
+			lineQuoteDepth = interQuoteDepth;
+			if (opensDeeperQuote) {
+				closeParagraph();
+			} else {
+				const phpLeaf = phpBlockState.leaf;
+				paragraphOpen = phpLeaf?.kind === "paragraph";
+				paragraphHasContent =
+					phpLeaf?.kind === "paragraph" && phpLeaf.paragraphLineCount > 0;
+			}
+			const rawInterMarker = matchListMarker(interRest, interColumn);
+			const boundedInterMarker =
+				rawInterMarker !== null && rawInterMarker.leadCols <= 3
+					? rawInterMarker
+					: null;
+			listInterruptionInParagraph =
+				paragraphOpen && paragraphHasContent && !opensDeeperQuote;
+			acceptedListMarker =
+				boundedInterMarker !== null &&
+				(!listInterruptionInParagraph ||
+					canListMarkerInterruptParagraph(boundedInterMarker))
+					? boundedInterMarker
+					: null;
+			effectiveContainer =
+				acceptedListMarker !== null ? acceptedListMarker.contentIndent : 0;
+			preMarkerContainerIndent = 0;
+			continuesListItem = true;
+			prevContainerIndent = 0;
 			analysis = {
-				...analysis,
+				column: interColumn,
 				containerIndent: effectiveContainer,
+				content: interContent,
+				indent: interIndent,
 				listMarker: acceptedListMarker,
+				prefix: matchedInterleaved.prefix,
+				quoteDepth: interQuoteDepth,
+				rest: interRest,
 			};
+		} else {
+			// A deeper blockquote marker opens a quote that interrupts a paragraph.
+			if (paragraphOpen && lineQuoteDepth > paragraphQuoteDepth) {
+				closeParagraph();
+			}
+
+			prevListIndent = listContentIndent;
+			prevContainerIndent = prevListIndent ?? 0;
+			continuesListItem =
+				prevListIndent === null || analysis.indent >= prevListIndent;
+			// Dropping out of an interleaved `list -> quote` container closes the
+			// inner blockquote paragraph, so outer list markers (`2.`) may start.
+			listInterruptionInParagraph =
+				!hasInterleavedContainers &&
+				paragraphOpen &&
+				paragraphHasContent &&
+				lineQuoteDepth === paragraphQuoteDepth &&
+				continuesListItem;
+
+			const rawListMarker = analysis.listMarker;
+			acceptedListMarker =
+				rawListMarker !== null &&
+				(!listInterruptionInParagraph ||
+					canListMarkerInterruptParagraph(rawListMarker))
+					? rawListMarker
+					: null;
+
+			if (acceptedListMarker !== null) {
+				listContentIndent = acceptedListMarker.contentIndent;
+			} else if (!continuesListItem) {
+				droppedOutOfList = true;
+				if (!paragraphOpen) {
+					listContentIndent = null;
+				}
+			}
+
+			effectiveContainer =
+				acceptedListMarker !== null
+					? acceptedListMarker.contentIndent
+					: droppedOutOfList
+						? 0
+						: (listContentIndent ?? 0);
+			preMarkerContainerIndent =
+				acceptedListMarker !== null
+					? acceptedListMarker.leadCols >= prevContainerIndent
+						? prevContainerIndent
+						: 0
+					: effectiveContainer;
+			if (
+				analysis.containerIndent !== effectiveContainer ||
+				analysis.listMarker !== acceptedListMarker
+			) {
+				analysis = {
+					...analysis,
+					containerIndent: effectiveContainer,
+					listMarker: acceptedListMarker,
+				};
+			}
 		}
 		const relativeIndent = analysis.indent - effectiveContainer;
 
@@ -491,20 +538,24 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 				listContentIndent = null;
 			}
 			pushOutputLine(line, { end: i + 1, start: i });
+			advancePhpStateRange(i, i);
 			i += 1;
 			continue;
 		}
 
 		// 2. Fenced code blocks (container aware: blockquotes and list items).
-		const fence = detectFence(analysis);
+		const fence = detectFence(
+			analysis,
+			activeInterleavedContainers ?? undefined,
+		);
 		if (fence) {
-			let end = i + 1;
-			while (end < lines.length && !isFenceCloser(lines[end] ?? "", fence)) {
-				end += 1;
-			}
-			const blockEnd = end < lines.length ? end : lines.length - 1;
+			const blockEnd = findContainerBoundedFenceEnd(lines, i, fence);
 			const lang = (fence.info.trim().split(/\s+/)[0] ?? "").toLowerCase();
-			if (lang === "mermaid" && acceptedListMarker === null) {
+			if (
+				lang === "mermaid" &&
+				acceptedListMarker === null &&
+				activeInterleavedContainers === null
+			) {
 				pushProtectedBlock("mermaid", analysis, i, blockEnd);
 			} else {
 				for (let k = i; k <= blockEnd; k += 1) {
@@ -515,19 +566,29 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 				listContentIndent = null;
 			}
 			closeParagraph();
+			advancePhpStateRange(i, blockEnd);
 			i = blockEnd + 1;
 			continue;
 		}
 
 		// 3. EasyMDE table alignment annotation directly preceding a GFM table.
 		const tableAlignCandidate =
-			relativeIndent >= 0 && relativeIndent <= 3
-				? stripContainerIndent(
-						analysis.rest,
-						effectiveContainer,
-						analysis.column,
-					)
-				: null;
+			activeInterleavedContainers !== null
+				? null
+				: acceptedListMarker !== null
+					? measureIndentColumns(
+							acceptedListMarker.afterContent,
+							analysis.column + acceptedListMarker.contentIndent,
+						) <= 3
+						? acceptedListMarker.afterContent
+						: null
+					: relativeIndent >= 0 && relativeIndent <= 3
+						? stripContainerIndent(
+								analysis.rest,
+								effectiveContainer,
+								analysis.column,
+							)
+						: null;
 		const parsedTableAlign =
 			tableAlignCandidate !== null &&
 			isGfmTableStartAt(
@@ -542,30 +603,40 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		if (null !== parsedTableAlign && !("code" in parsedTableAlign)) {
 			const markerToken = `${sentinel}TBLALIGN${tableAlignMarkers.size}END`;
 			tableAlignMarkers.set(markerToken, parsedTableAlign.text);
-			pushOutputLine(
-				`${analysis.prefix}${" ".repeat(analysis.indent)}${markerToken}`,
-				{ end: i + 1, start: i },
-			);
+			const markerPrefix =
+				acceptedListMarker !== null
+					? `${analysis.prefix}${acceptedListMarker.markerPrefix}`
+					: `${analysis.prefix}${" ".repeat(analysis.indent)}`;
+			pushOutputLine(`${markerPrefix}${markerToken}`, {
+				end: i + 1,
+				start: i,
+			});
 			if (droppedOutOfList) {
 				listContentIndent = null;
 			}
 			closeParagraph();
+			advancePhpStateRange(i, i);
 			i += 1;
 			continue;
 		}
 
-		if (
-			i > tableRowEnd &&
-			isGfmTableStartAt(
+		if (i > tableRowEnd && activeInterleavedContainers === null) {
+			const detectedTableContainer = resolveGfmTableContainerIndent(
 				lines[i] ?? "",
 				lines[i + 1] ?? "",
-				effectiveContainer,
+				preMarkerContainerIndent,
 				lineQuoteDepth,
-				true,
-			)
-		) {
-			tableRowStart = i;
-			tableRowEnd = findGfmTableEnd(lines, i);
+				acceptedListMarker !== null,
+			);
+			if (detectedTableContainer !== null) {
+				tableRowStart = i;
+				tableRowEnd = findGfmTableEnd(
+					lines,
+					i,
+					detectedTableContainer,
+					lineQuoteDepth,
+				);
+			}
 		}
 		const isTableRow = i >= tableRowStart && i <= tableRowEnd;
 
@@ -577,9 +648,22 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			effectiveContainer,
 		);
 		if (blockMathEnd >= i) {
-			const mathSentinelIndent =
-				relativeIndent >= 4 ? effectiveContainer : analysis.indent;
-			pushProtectedBlock("math", analysis, i, blockMathEnd, mathSentinelIndent);
+			if (activeInterleavedContainers !== null) {
+				pushListPrefixedProtectedBlock(
+					"math",
+					analysis.prefix,
+					analysis.content,
+					activeInterleavedContainers,
+					i,
+					blockMathEnd,
+				);
+				advancePhpStateClosedBlock(analysis.prefix, 0);
+			} else {
+				const mathSentinelIndent =
+					relativeIndent >= 4 ? effectiveContainer : analysis.indent;
+				pushProtectedBlock("math", analysis, i, blockMathEnd, mathSentinelIndent);
+				advancePhpStateClosedBlock(analysis.prefix, effectiveContainer);
+			}
 			if (droppedOutOfList) {
 				listContentIndent = null;
 			}
@@ -599,6 +683,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 				listContentIndent = null;
 			}
 			closeParagraph();
+			advancePhpStateClosedBlock(analysis.prefix, effectiveContainer);
 			i += 1;
 			continue;
 		}
@@ -641,6 +726,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 				listContentIndent = null;
 			}
 			closeParagraph();
+			advancePhpStateClosedBlock(analysis.prefix, effectiveContainer);
 			i = end + 1;
 			continue;
 		}
@@ -651,6 +737,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			line,
 			listInterruptionInParagraph,
 			prevContainerIndent,
+			activeInterleavedContainers ?? undefined,
 		);
 		if (listHtml !== null) {
 			const end = findCommonMarkHtmlBlockEnd(
@@ -668,8 +755,11 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 				i,
 				end,
 			);
-			listContentIndent = listHtml.contentIndent;
+			if (activeInterleavedContainers === null) {
+				listContentIndent = listHtml.contentIndent;
+			}
 			closeParagraph();
+			advancePhpStateRange(i, end);
 			i = end + 1;
 			continue;
 		}
@@ -681,10 +771,12 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		) {
 			const htmlType = matchHtmlBlockOpen(analysis.content, !paragraphOpen);
 			if (htmlType !== null) {
-				const htmlContainers: ContainerStep[] = [];
-				for (let d = 0; d < lineQuoteDepth; d += 1) {
-					htmlContainers.push({ kind: "blockquote" });
-				}
+				const htmlContainers: ContainerStep[] =
+					activeInterleavedContainers !== null
+						? [...activeInterleavedContainers]
+						: Array.from({ length: lineQuoteDepth }, () => ({
+								kind: "blockquote" as const,
+							}));
 				if (effectiveContainer > 0) {
 					htmlContainers.push({ indent: effectiveContainer, kind: "list" });
 				}
@@ -695,11 +787,23 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 					htmlContainers,
 					analysis.content,
 				);
-				pushProtectedBlock("raw", analysis, i, end);
+				if (activeInterleavedContainers !== null) {
+					pushListPrefixedProtectedBlock(
+						"raw",
+						analysis.prefix,
+						analysis.content,
+						htmlContainers,
+						i,
+						end,
+					);
+				} else {
+					pushProtectedBlock("raw", analysis, i, end);
+				}
 				if (droppedOutOfList) {
 					listContentIndent = null;
 				}
 				closeParagraph();
+				advancePhpStateRange(i, end);
 				i = end + 1;
 				continue;
 			}
@@ -760,6 +864,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			paragraphHasContent = false;
 			paragraphRefParser = null;
 		}
+		advancePhpStateRange(i, i);
 		i += 1;
 	}
 

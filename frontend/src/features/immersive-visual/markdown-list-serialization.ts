@@ -134,6 +134,53 @@ function isStandaloneType7HtmlFirstLine(text: string): boolean {
 	return matchHtmlBlockOpen(trimmedLead, true) === 7;
 }
 
+function nodeCanLazilyContinue(node: ProseMirrorNode): boolean {
+	switch (node.type.name) {
+		case "paragraph":
+		case "table":
+			return true;
+		case "heading":
+		case "code_block":
+		case "horizontal_rule":
+			return false;
+		case "blockquote":
+			return node.lastChild !== null && nodeCanLazilyContinue(node.lastChild);
+		case "bullet_list":
+		case "ordered_list":
+		case "task_list": {
+			const lastItem = node.lastChild;
+			return (
+				lastItem !== null &&
+				lastItem.lastChild !== null &&
+				nodeCanLazilyContinue(lastItem.lastChild)
+			);
+		}
+		case "protected_block": {
+			if (node.attrs.kind === "mermaid") {
+				return false;
+			}
+			if (node.attrs.kind === "raw") {
+				if (inspectProtectedReferenceBlock(node).isRefDef) {
+					return true;
+				}
+				const raw =
+					typeof node.attrs.rawMarkdown === "string"
+						? node.attrs.rawMarkdown
+						: "";
+				const nl = raw.indexOf("\n");
+				const firstLine = (nl === -1 ? raw : raw.slice(0, nl)).replace(
+					/^[ \t]{0,3}/,
+					"",
+				);
+				return matchHtmlBlockOpen(firstLine, true) === null;
+			}
+			return true;
+		}
+		default:
+			return true;
+	}
+}
+
 function canInterruptPreviousInTightList(
 	node: ProseMirrorNode,
 	prev: ProseMirrorNode,
@@ -167,8 +214,18 @@ function canInterruptPreviousInTightList(
 	if (prev.type.name === "protected_block" && prev.attrs.kind === "raw") {
 		return false;
 	}
-	if (prev.type.name === "blockquote" && name === "blockquote") {
-		return false;
+	if (prev.type.name === "blockquote") {
+		if (name === "blockquote") {
+			return false;
+		}
+		if (
+			serialized.length > 0 &&
+			!(name === "protected_block" && node.attrs.kind === "toc") &&
+			!/^[ \t]{0,3}>/.test(serialized) &&
+			!nodeCanLazilyContinue(prev)
+		) {
+			return true;
+		}
 	}
 	if (prev.type.name === "table") {
 		const nl = serialized.indexOf("\n");
@@ -357,14 +414,15 @@ function serializeListItemBody(
 			);
 		}
 		if (i === startIndex) {
-			const startsWithInlineRaw =
+			const startsInlineOnMarkerLine =
 				hasPhantomParagraph &&
-				child.type.name === "protected_block" &&
-				child.attrs.kind === "raw" &&
 				serialized.length > 0 &&
-				!/^[ \t\n]/.test(serialized);
+				!/^[ \t\n]/.test(serialized) &&
+				((child.type.name === "protected_block" &&
+					child.attrs.kind === "raw") ||
+					(child.type.name === "table" && listKind !== "task_list"));
 			parts.push(
-				hasPhantomParagraph && !startsWithInlineRaw
+				hasPhantomParagraph && !startsInlineOnMarkerLine
 					? `\n${serialized}`
 					: serialized,
 			);

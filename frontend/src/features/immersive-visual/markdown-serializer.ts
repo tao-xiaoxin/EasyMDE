@@ -454,7 +454,11 @@ function serializeInlineContent(
 					? child.attrs.rawMarkdown
 					: "";
 			if (inTableCell) {
-				output += escapeTablePipes(raw);
+				// PHP `MarkdownRenderer::extract_math()` extracts inline math
+				// BEFORE CommonMark parses GFM tables, so pipes inside math
+				// stay verbatim rather than turning `|` into KaTeX `\|` (`‖`).
+				output +=
+					child.attrs.kind === "math-inline" ? raw : escapeTablePipes(raw);
 			} else {
 				const continuationMatch =
 					!inHeading &&

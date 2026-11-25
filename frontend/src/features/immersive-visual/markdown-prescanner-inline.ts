@@ -454,9 +454,6 @@ export function extractInlineProtectedSyntax(
 				let closePos = -1;
 				for (let j = index + 1; j < length; j += 1) {
 					const cur = line[j] ?? "";
-					if (isTableRow && cur === "|" && !isEscapedAt(line, j)) {
-						break;
-					}
 					if (cur !== "$" || isEscapedAt(line, j)) {
 						continue;
 					}

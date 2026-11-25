@@ -5818,3 +5818,482 @@ describe("PR-R22-A PHP CommonMark column/tab parity, priority-35 task markers, o
 		expect(outerItem?.child(2).textContent).toBe("visible");
 	});
 });
+
+describe("PR-R23-A pipe math in tables, list-prefixed tables, container-bounded fences, list->quote order, and tight blockquote lists", () => {
+	function collectProtectedInlines(doc: ProseMirrorNode): Array<{
+		kind: string;
+		rawMarkdown: string;
+	}> {
+		const entries: Array<{ kind: string; rawMarkdown: string }> = [];
+		doc.descendants((node) => {
+			if (node.type.name === "protected_inline") {
+				entries.push({
+					kind: String(node.attrs.kind ?? ""),
+					rawMarkdown: String(node.attrs.rawMarkdown ?? ""),
+				});
+			}
+			return true;
+		});
+		return entries;
+	}
+
+	function findTextEndPos(doc: ProseMirrorNode, needle: string): number {
+		let found = -1;
+		doc.descendants((node, pos) => {
+			if (found !== -1) return false;
+			if (node.isText && node.text) {
+				const idx = node.text.indexOf(needle);
+				if (idx !== -1) {
+					found = pos + idx + needle.length;
+					return false;
+				}
+			}
+			return true;
+		});
+		if (found === -1) {
+			throw new Error(`Needle not found in visual doc: ${needle}`);
+		}
+		return found;
+	}
+
+	function insertTextAt(
+		doc: ProseMirrorNode,
+		pos: number,
+		text: string,
+	): ProseMirrorNode {
+		const state = EditorState.create({ doc, schema: visualEditorSchema });
+		return state.tr.insertText(text, pos).doc;
+	}
+
+	it("preserves pipe-containing inline math ($a|b$, \\(x|y\\), $$a|b$$) in GFM table bodies and headers (Track A #1/#2 + Track B #1)", () => {
+		// 1. `$a|b$` in table body: editing header `A` -> `AZ` preserves both `$a|b$` verbatim and `![x](x.png)`.
+		const dollarBodyMd = "| A | B |\n|---|---|\n| $a|b$ | ![x](x.png) |";
+		const dollarGuard = createMarkdownRoundTripGuard(dollarBodyMd);
+		expect(collectProtectedInlines(dollarGuard.initialDoc)).toEqual([
+			{ kind: "math-inline", rawMarkdown: "$a|b$" },
+		]);
+		const editedDollar = insertTextAt(
+			dollarGuard.initialDoc,
+			findTextEndPos(dollarGuard.initialDoc, "A"),
+			"Z",
+		);
+		const serializedDollar = dollarGuard.serialize(editedDollar);
+		expect(serializedDollar).toBe(
+			"| AZ | B |\n| --- | --- |\n| $a|b$ | ![x](x.png) |",
+		);
+		expect(parseMarkdownToVisualDoc(serializedDollar).eq(editedDollar)).toBe(
+			true,
+		);
+
+		// 2. `\(x|y\)` in table body: editing header `A` -> `AZ` keeps `|` unescaped (`\(x|y\)`, not `\(x\|y\)`).
+		const parenBodyMd = "| A | B |\n|---|---|\n| \\(x|y\\) | ![x](x.png) |";
+		const parenGuard = createMarkdownRoundTripGuard(parenBodyMd);
+		expect(collectProtectedInlines(parenGuard.initialDoc)).toEqual([
+			{ kind: "math-inline", rawMarkdown: "\\(x|y\\)" },
+		]);
+		const editedParen = insertTextAt(
+			parenGuard.initialDoc,
+			findTextEndPos(parenGuard.initialDoc, "A"),
+			"Z",
+		);
+		const serializedParen = parenGuard.serialize(editedParen);
+		expect(serializedParen).toBe(
+			"| AZ | B |\n| --- | --- |\n| \\(x|y\\) | ![x](x.png) |",
+		);
+		expect(parseMarkdownToVisualDoc(serializedParen).eq(editedParen)).toBe(true);
+
+		// 3. `$$a|b$$` and `\[a|b\]` inside table cells also emit verbatim without escaping `|`.
+		for (const expr of ["$$a|b$$", "\\[a|b\\]"]) {
+			const md = `| A | B |\n|---|---|\n| ${expr} | ![x](x.png) |`;
+			const guard = createMarkdownRoundTripGuard(md);
+			expect(collectProtectedInlines(guard.initialDoc)).toEqual([
+				{ kind: "math-inline", rawMarkdown: expr },
+			]);
+			const edited = insertTextAt(
+				guard.initialDoc,
+				findTextEndPos(guard.initialDoc, "A"),
+				"Z",
+			);
+			expect(guard.serialize(edited)).toBe(
+				`| AZ | B |\n| --- | --- |\n| ${expr} | ![x](x.png) |`,
+			);
+		}
+
+		// 4. Pipe-containing math in table HEADER still detects the GFM table so `<br>` becomes `hard_break`.
+		for (const headerMath of ["$a|b$", "\\(a|b\\)", "$|x| = 1$"]) {
+			const headerMd = `| ${headerMath} | C |\n| --- | --- |\n| a<br>b | 2 |`;
+			const guard = createMarkdownRoundTripGuard(headerMd);
+			expect(guard.initialDoc.firstChild?.type.name).toBe("table");
+			let hardBreaks = 0;
+			guard.initialDoc.descendants((node) => {
+				if (node.type.name === "hard_break") hardBreaks += 1;
+				return true;
+			});
+			expect(hardBreaks, headerMath).toBe(1);
+			const edited = insertTextAt(
+				guard.initialDoc,
+				findTextEndPos(guard.initialDoc, "C"),
+				"Z",
+			);
+			const serialized = guard.serialize(edited);
+			expect(serialized, headerMath).toBe(
+				`| ${headerMath} | CZ |\n| --- | --- |\n| a<br>b | 2 |`,
+			);
+			expect(parseMarkdownToVisualDoc(serialized).eq(edited), headerMath).toBe(
+				true,
+			);
+		}
+	});
+
+	it("handles list-prefixed GFM tables, list-prefixed table-align comments, and container-bounded findGfmTableEnd (Track B #2)", () => {
+		// 1. List-prefixed GFM tables (`- | A | B |`, tab-indented, and nested lists) convert `<br>` to `hard_break`.
+		for (const listTableMd of [
+			"- | A | B |\n  | --- | --- |\n  | a<br>b | c |",
+			"-\t| A | B |\n\t| --- | --- |\n\t| a<br>b | c |",
+			"- outer\n  - | A | B |\n    | --- | --- |\n    | a<br>b | c |",
+			"- - | A | B |\n    | --- | --- |\n    | a<br>b | c |",
+		]) {
+			const guard = createMarkdownRoundTripGuard(listTableMd);
+			let hardBreaks = 0;
+			let tables = 0;
+			guard.initialDoc.descendants((node) => {
+				if (node.type.name === "table") tables += 1;
+				if (node.type.name === "hard_break") hardBreaks += 1;
+				return true;
+			});
+			expect(tables, listTableMd).toBe(1);
+			expect(hardBreaks, listTableMd).toBe(1);
+			const edited = insertTextAt(
+				guard.initialDoc,
+				findTextEndPos(guard.initialDoc, "A"),
+				"Z",
+			);
+			const serialized = guard.serialize(edited);
+			expect(serialized, listTableMd).toContain("a<br>b");
+			expect(parseMarkdownToVisualDoc(serialized).eq(edited), listTableMd).toBe(
+				true,
+			);
+		}
+
+		// 2. List-prefixed table alignment annotation keeps the list wrapper and applies cell alignment.
+		const listAlignMd =
+			'- <!-- easymde-table-align:v1 [[1,"center"]] -->\n  | A | B |\n  | --- | --- |\n  | 1 | 2 |';
+		const preAlign = prescanMarkdown(listAlignMd);
+		expect(preAlign.tableAlignMarkers.size).toBe(1);
+		expect(preAlign.markdown.startsWith("- EASYMDEPH")).toBe(true);
+		const listAlignGuard = createMarkdownRoundTripGuard(listAlignMd);
+		const listNode = listAlignGuard.initialDoc.firstChild;
+		expect(listNode?.type.name).toBe("bullet_list");
+		const tableNode = listNode?.firstChild?.child(1);
+		expect(tableNode?.type.name).toBe("table");
+		expect(tableNode?.attrs.alignAnnotation).toBe(
+			'<!-- easymde-table-align:v1 [[1,"center"]] -->',
+		);
+		expect(tableNode?.child(1).child(0).attrs.textAlign).toBe("center");
+		expect(tableNode?.child(1).child(1).attrs.textAlign).toBe("center");
+		const editedAlign = insertTextAt(
+			listAlignGuard.initialDoc,
+			findTextEndPos(listAlignGuard.initialDoc, "A"),
+			"Z",
+		);
+		const serializedAlign = listAlignGuard.serialize(editedAlign);
+		expect(serializedAlign).toContain(
+			'<!-- easymde-table-align:v1 [[1,"center"]] -->',
+		);
+		expect(
+			parseMarkdownToVisualDoc(serializedAlign).eq(editedAlign),
+		).toBe(true);
+
+		// Blockquote + list-prefixed table alignment annotation also works cleanly.
+		const bqListAlignMd =
+			'> - <!-- easymde-table-align:v1 [[1,"center"]] -->\n>   | A | B |\n>   | --- | --- |\n>   | 1 | 2 |';
+		const bqListAlignDoc = parseMarkdownToVisualDoc(bqListAlignMd);
+		let centeredCells = 0;
+		bqListAlignDoc.descendants((node) => {
+			if (node.type.name === "table_cell" && node.attrs.textAlign === "center") {
+				centeredCells += 1;
+			}
+			return true;
+		});
+		expect(centeredCells).toBe(2);
+
+		// 3. Container-bounded `findGfmTableEnd()` never leaks `isTableRow = true` past blockquote/list/indent boundaries.
+		const nonTableTrailingCases = [
+			"> | A | B |\n> | --- | --- |\n> | 1 | 2 |\n- not a table | a<br>b",
+			"-\n  | A | B |\n  | --- | --- |\n  | 1 | 2 |\n- not a table | a<br>b",
+			"-\n  | A | B |\n  | --- | --- |\n  | 1 | 2 |\n  - not a table | a<br>b",
+			"| A | B |\n| --- | --- |\n| 1 | 2 |\n    | indented | a<br>b |",
+			"> | A | B |\n> | --- | --- |\n> | 1 | 2 |\n> > | deeper | a<br>b |",
+		];
+		for (const md of nonTableTrailingCases) {
+			const doc = parseMarkdownToVisualDoc(md);
+			let hardBreaks = 0;
+			doc.descendants((node) => {
+				if (node.type.name === "hard_break") hardBreaks += 1;
+				return true;
+			});
+			expect(hardBreaks, md).toBe(0);
+			// The non-table line `<br>` stays raw HTML (or literal code block text), never `hard_break`.
+			if (!md.includes("    | indented")) {
+				expect(collectProtectedInlines(doc), md).toContainEqual({
+					kind: "raw-inline",
+					rawMarkdown: "<br>",
+				});
+			}
+		}
+	});
+
+	it("keeps fenced code scanning container-aware and matches exact quoteDepth in isFenceCloser (Track B #3)", () => {
+		// 1. `> ``` ` inside a top-level fence must NOT prematurely close the fence.
+		const gtInsideTopFence = "```js\n> ```\n```\n\n$$real math$$";
+		const topFenceGuard = createMarkdownRoundTripGuard(gtInsideTopFence);
+		expect(topFenceGuard.initialDoc.childCount).toBe(2);
+		expect(topFenceGuard.initialDoc.child(0).type.name).toBe("code_block");
+		expect(topFenceGuard.initialDoc.child(0).textContent).toBe("> ```");
+		expect(topFenceGuard.initialDoc.child(1).type.name).toBe("protected_block");
+		expect(topFenceGuard.initialDoc.child(1).attrs.kind).toBe("math");
+		expect(topFenceGuard.initialDoc.child(1).attrs.rawMarkdown).toBe(
+			"$$real math$$",
+		);
+
+		// Extra `>` inside a blockquote-nested fence also must NOT close it.
+		const extraGtInBqFence = "> ```js\n> > ```\n> ```\n>\n> $$real math$$";
+		const bqFenceDoc = parseMarkdownToVisualDoc(extraGtInBqFence);
+		expect(bqFenceDoc.childCount).toBe(1);
+		expect(bqFenceDoc.child(0).child(0).type.name).toBe("code_block");
+		expect(bqFenceDoc.child(0).child(0).textContent).toBe("> ```");
+		expect(bqFenceDoc.child(0).child(1).type.name).toBe("protected_block");
+		expect(bqFenceDoc.child(0).child(1).attrs.kind).toBe("math");
+
+		// 2. Unclosed fence inside blockquote, list, or list->quote ends when its container closes.
+		for (const unclosedMd of [
+			"> ```js\n> code\n$$x$$",
+			"- ```js\n  code\n$$x$$",
+			"- ```js\n  code\n\n$$x$$",
+			"- > ```js\n  > code\n  $$x$$",
+		]) {
+			const doc = parseMarkdownToVisualDoc(unclosedMd);
+			let codeBlocks = 0;
+			let mathBlocks = 0;
+			doc.descendants((node) => {
+				if (node.type.name === "code_block") codeBlocks += 1;
+				if (node.type.name === "protected_block" && node.attrs.kind === "math") {
+					mathBlocks += 1;
+				}
+				return true;
+			});
+			expect(codeBlocks, unclosedMd).toBe(1);
+			expect(mathBlocks, unclosedMd).toBe(1);
+		}
+	});
+
+	it("preserves list -> quote container order so 2. <kbd> stays inside an open paragraph without escaping <kbd> (Track A #5)", () => {
+		// 1. `- > Alpha\n  > 2. <kbd>\n  > Tail` (and 4-space `10. > ...`, `01.`, `<kbd>`) stays one open paragraph.
+		for (const md of [
+			"- > Alpha\n  > 2. <kbd>\n  > Tail",
+			"10. > Alpha\n    > 2. <kbd>\n    > Tail",
+			"- > Alpha\n  > 01. <kbd>\n  > Tail",
+			"- > Alpha\n  > <kbd>\n  > Tail",
+		]) {
+			const guard = createMarkdownRoundTripGuard(md);
+			expect(collectProtectedInlines(guard.initialDoc), md).toEqual([
+				{ kind: "raw-inline", rawMarkdown: "<kbd>" },
+			]);
+			const edited = insertTextAt(
+				guard.initialDoc,
+				findTextEndPos(guard.initialDoc, "Alpha"),
+				"Z",
+			);
+			const serialized = guard.serialize(edited);
+			expect(serialized, md).toContain("<kbd>");
+			expect(serialized, md).not.toContain("\\<kbd>");
+			expect(parseMarkdownToVisualDoc(serialized).eq(edited), md).toBe(true);
+		}
+
+		// 2. Contrast cases matching PHP CommonMark:
+		// `1.` interrupts the open paragraph, starting an ordered list whose `<kbd>` is a Type 7 HTML block.
+		const interruptOne = parseMarkdownToVisualDoc(
+			"- > Alpha\n  > 1. <kbd>\n  > Tail",
+		);
+		const bqOne = interruptOne.child(0).firstChild?.child(1);
+		expect(bqOne?.childCount).toBe(3);
+		expect(bqOne?.child(1).type.name).toBe("ordered_list");
+		expect(bqOne?.child(1).firstChild?.child(1).type.name).toBe(
+			"protected_block",
+		);
+
+		// Refdef-only paragraph allows `2.` to start an ordered list inside `list -> quote`.
+		const refDefTwo = parseMarkdownToVisualDoc(
+			"- > [r]: /u\n  > 2. <kbd>\n  > Tail",
+		);
+		const bqRef = refDefTwo.child(0).firstChild?.child(1);
+		expect(bqRef?.child(1).type.name).toBe("ordered_list");
+		expect(bqRef?.child(1).attrs.order).toBe(2);
+
+		// Dropping out of the inner `>` closes the blockquote so `2.` starts an ordered list in the outer list item.
+		const droppedBq = parseMarkdownToVisualDoc("- > Alpha\n  2. <kbd>\n  Tail");
+		const outerListItem = droppedBq.child(0).firstChild;
+		expect(outerListItem?.child(1).type.name).toBe("blockquote");
+		expect(outerListItem?.child(2).type.name).toBe("ordered_list");
+		expect(outerListItem?.child(2).attrs.order).toBe(2);
+
+		// Type 6 HTML block (`<div>`) still interrupts the open paragraph inside `list -> quote`.
+		const type6InListQuote = parseMarkdownToVisualDoc(
+			"- > Alpha\n  > <div>\n  > hidden",
+		);
+		const bqDiv = type6InListQuote.child(0).firstChild?.child(1);
+		expect(bqDiv?.child(0).type.name).toBe("paragraph");
+		expect(bqDiv?.child(1).type.name).toBe("protected_block");
+		expect(bqDiv?.child(1).attrs.rawMarkdown).toBe("<div>\nhidden");
+	});
+
+	it("keeps tight blockquote + paragraph lists tight only when the blockquote cannot lazily absorb the paragraph (Track A #6)", () => {
+		// 1. `- > <section>\n  Alpha\n  Tail` edited (`Alpha` -> `Alpha!`) stays tight without blank line before `Alpha!`.
+		const tightHtmlBqMd = "- > <section>\n  Alpha\n  Tail";
+		const guard = createMarkdownRoundTripGuard(tightHtmlBqMd);
+		expect(guard.initialDoc.child(0).attrs.tight).toBe(true);
+		const edited = insertTextAt(
+			guard.initialDoc,
+			findTextEndPos(guard.initialDoc, "Alpha"),
+			"!",
+		);
+		const serialized = guard.serialize(edited);
+		expect(serialized).toBe("-\n  > <section>\n  Alpha!\n  Tail");
+		const reparsed = parseMarkdownToVisualDoc(serialized);
+		expect(reparsed.child(0).attrs.tight).toBe(true);
+		expect(reparsed.eq(edited)).toBe(true);
+
+		// Closed leaf blocks inside a tight blockquote (`heading`, `code_block`, `hr`, nested `> > <section>`) stay tight too.
+		for (const tightCase of [
+			"- > # Head\n  Alpha",
+			"- > ```\n  > code\n  > ```\n  Alpha",
+			"- > ---\n  Alpha",
+			"- > > <section>\n  Alpha",
+		]) {
+			const g = createMarkdownRoundTripGuard(tightCase);
+			expect(g.initialDoc.child(0).attrs.tight, tightCase).toBe(true);
+			const ed = insertTextAt(
+				g.initialDoc,
+				findTextEndPos(g.initialDoc, "Alpha"),
+				"!",
+			);
+			const ser = g.serialize(ed);
+			expect(ser, tightCase).not.toContain("\n\n  Alpha!");
+			expect(parseMarkdownToVisualDoc(ser).child(0).attrs.tight, tightCase).toBe(
+				true,
+			);
+			expect(parseMarkdownToVisualDoc(ser).eq(ed), tightCase).toBe(true);
+		}
+
+		// 2. Blockquotes that CAN lazily absorb a following paragraph (paragraph, table, list->paragraph, refdef) keep `\n\n`.
+		const looseQuoteAfter = createMarkdownRoundTripGuard("- > Quote\n\n  After");
+		const editedAfter = insertTextAt(
+			looseQuoteAfter.initialDoc,
+			findTextEndPos(looseQuoteAfter.initialDoc, "After"),
+			"!",
+		);
+		const serializedAfter = looseQuoteAfter.serialize(editedAfter);
+		expect(serializedAfter).toBe("-\n  > Quote\n\n  After!");
+		expect(parseMarkdownToVisualDoc(serializedAfter).eq(editedAfter)).toBe(true);
+
+		// Even with forced `tight: true`, lazy-continuable blockquotes and adjacent blockquotes MUST emit `\n\n`.
+		const buildForcedTightItem = (
+			first: ProseMirrorNode,
+			second: ProseMirrorNode,
+		): ProseMirrorNode =>
+			visualEditorSchema.nodes.doc.create(null, [
+				visualEditorSchema.nodes.bullet_list.create(
+					{ marker: "-", tight: true },
+					[
+						visualEditorSchema.nodes.list_item.create(null, [
+							visualEditorSchema.nodes.paragraph.create(),
+							first,
+							second,
+						]),
+					],
+				),
+			]);
+
+		const afterPara = visualEditorSchema.nodes.paragraph.create(null, [
+			visualEditorSchema.text("After"),
+		]);
+
+		// Blockquote ending in paragraph -> `\n\n`
+		expect(
+			serializeVisualDocToMarkdown(
+				buildForcedTightItem(
+					visualEditorSchema.nodes.blockquote.create(null, [
+						visualEditorSchema.nodes.paragraph.create(null, [
+							visualEditorSchema.text("Quote"),
+						]),
+					]),
+					afterPara,
+				),
+			),
+		).toBe("-\n  > Quote\n\n  After");
+
+		// Blockquote ending in HTML followed by another blockquote -> `\n\n` (never merge blockquotes!)
+		expect(
+			serializeVisualDocToMarkdown(
+				buildForcedTightItem(
+					visualEditorSchema.nodes.blockquote.create(null, [
+						visualEditorSchema.nodes.protected_block.create({
+							kind: "raw",
+							rawMarkdown: "<section>",
+						}),
+					]),
+					visualEditorSchema.nodes.blockquote.create(null, [
+						visualEditorSchema.nodes.paragraph.create(null, [
+							visualEditorSchema.text("b"),
+						]),
+					]),
+				),
+			),
+		).toBe("-\n  > <section>\n\n  > b");
+
+		// Blockquote ending in table -> `\n\n`
+		const parsedTable = parseMarkdownToVisualDoc(
+			"| A | B |\n| --- | --- |\n| 1 | 2 |",
+		).firstChild;
+		expect(parsedTable).not.toBeNull();
+		if (parsedTable) {
+			expect(
+				serializeVisualDocToMarkdown(
+					buildForcedTightItem(
+						visualEditorSchema.nodes.blockquote.create(null, [parsedTable]),
+						afterPara,
+					),
+				),
+			).toContain("\n\n  After");
+		}
+
+		// Blockquote ending in list->paragraph -> `\n\n`
+		const parsedList = parseMarkdownToVisualDoc("- item").firstChild;
+		expect(parsedList).not.toBeNull();
+		if (parsedList) {
+			expect(
+				serializeVisualDocToMarkdown(
+					buildForcedTightItem(
+						visualEditorSchema.nodes.blockquote.create(null, [parsedList]),
+						afterPara,
+					),
+				),
+			).toBe("-\n  > - item\n\n  After");
+		}
+
+		// Blockquote ending in refdef -> `\n\n` (PHP ParagraphParser stays open across refdefs)
+		expect(
+			serializeVisualDocToMarkdown(
+				buildForcedTightItem(
+					visualEditorSchema.nodes.blockquote.create(null, [
+						visualEditorSchema.nodes.protected_block.create({
+							kind: "raw",
+							rawMarkdown: "[r]: /u",
+						}),
+					]),
+					afterPara,
+				),
+			),
+		).toBe("-\n  > [r]: /u\n\n  After");
+	});
+});

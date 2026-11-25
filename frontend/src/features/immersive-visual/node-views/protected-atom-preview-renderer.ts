@@ -6,25 +6,17 @@ import {
 import type { EditorView } from "prosemirror-view";
 import { COMMONMARK_ESCAPABLE_PUNCTUATION } from "../../../shared/image-scale-title";
 import {
-	htmlBlockLineCloses,
-	matchHtmlBlockOpen,
-} from "../../../shared/markdown/php-commonmark-block-helpers";
+	advancePhpCommonMarkBlockLine,
+	createPhpCommonMarkBlockState,
+} from "../../../shared/markdown/php-commonmark-block-engine";
 import {
 	extractReferenceDefinitionLabels,
 	parseInlineMarkdownFragment,
 	parseMarkdownToVisualDoc,
 } from "../markdown-parser";
 import {
-	ATX_HEADING,
-	analyzeLine,
-	type DetectableFence,
-	detectFence,
 	FOOTNOTE_DEF_LINE,
 	isCommonMarkBlankLine,
-	isFenceCloser,
-	SETEXT_UNDERLINE,
-	stripBlockquoteDepth,
-	THEMATIC_BREAK,
 } from "../markdown-prescanner";
 import {
 	createInlineHtmlScanState,
@@ -110,120 +102,67 @@ function stripInlineHtmlOutsideCode(line: string): string {
 /**
  * Strip raw HTML blocks and inline tags from a protected `raw` Markdown block
  * using CommonMark `html_input: 'strip'` semantics (matching EasyMDE's `main`
- * PHP `MarkdownRenderer`), keeping inner blank-line-separated Markdown intact.
+ * PHP `MarkdownRenderer`), delegating block classification to the shared PHP
+ * CommonMark block engine so code blocks, list-nested indented code, and
+ * container-bounded fences stay intact.
  */
 export function stripCommonMarkHtmlForPreview(rawMarkdown: string): string {
 	const lines = rawMarkdown.replace(/\r\n?/g, "\n").split("\n");
 	const kept: string[] = [];
-	let activeFence: DetectableFence | null = null;
-	let inParagraph = false;
-	let activeHtmlBlock: Readonly<{
-		quoteDepth: number;
-		type: 1 | 2 | 3 | 4 | 5 | 6 | 7;
-	}> | null = null;
+	const state = createPhpCommonMarkBlockState(true, true);
+	let offset = 0;
 
 	for (const line of lines) {
-		if (activeFence) {
+		const lineStart = offset;
+		const lineEnd = lineStart + line.length;
+		const nextLineStart = lineEnd + 1;
+		offset = nextLineStart;
+
+		const prevLeafKind = state.leaf?.kind ?? null;
+		const prevInlineBlockId =
+			state.leaf?.kind === "paragraph" ? state.leaf.inlineBlockId : -1;
+
+		advancePhpCommonMarkBlockLine(state, line, lineStart, lineEnd, nextLineStart);
+
+		const scanned = state.lines[state.lines.length - 1];
+		if (!scanned) {
+			continue;
+		}
+		if (state.leaf?.kind === "html-block") {
+			continue;
+		}
+		const lastCodeRange =
+			state.blockCodeRanges.length > 0
+				? state.blockCodeRanges[state.blockCodeRanges.length - 1]
+				: undefined;
+		if (lastCodeRange !== undefined && lastCodeRange.end === nextLineStart) {
 			kept.push(line);
-			if (isFenceCloser(line, activeFence)) activeFence = null;
-			inParagraph = false;
 			continue;
 		}
 
-		const analysis = analyzeLine(line, 0);
-		const lineQuoteDepth = (analysis.prefix.match(/>/g) ?? []).length;
-
-		if (activeHtmlBlock) {
-			const afterQuote =
-				activeHtmlBlock.quoteDepth > 0
-					? stripBlockquoteDepth(line, activeHtmlBlock.quoteDepth)
-					: line;
-			if (afterQuote !== null) {
-				if (activeHtmlBlock.type === 6 || activeHtmlBlock.type === 7) {
-					if (isCommonMarkBlankLine(afterQuote)) {
-						activeHtmlBlock = null;
-						if (kept.length > 0) {
-							kept.push(
-								analysis.prefix.length > 0
-									? analysis.prefix.replace(/[ \t]+$/, "")
-									: "",
-							);
-						}
-						inParagraph = false;
-						continue;
-					}
-					inParagraph = false;
-					continue;
-				}
-				if (htmlBlockLineCloses(activeHtmlBlock.type, afterQuote)) {
-					activeHtmlBlock = null;
-				}
-				inParagraph = false;
-				continue;
-			}
-			activeHtmlBlock = null;
-		}
-
-		if (isCommonMarkBlankLine(analysis.rest)) {
-			inParagraph = false;
+		const contentRel = Math.max(0, scanned.contentOffset - lineStart);
+		const prefix = line.slice(0, contentRel);
+		const rest = line.slice(contentRel);
+		if (isCommonMarkBlankLine(rest)) {
 			if (kept.length > 0) {
 				kept.push(
-					analysis.prefix.length > 0
-						? analysis.prefix.replace(/[ \t]+$/, "")
-						: "",
+					scanned.consumedBlockquote ? prefix.replace(/[ \t]+$/, "") : "",
 				);
 			}
 			continue;
 		}
 
-		const isTopLevel = analysis.prefix.length === 0 && analysis.indent <= 3;
-
-		const fence = detectFence(analysis);
-		if (fence) {
-			activeFence = fence;
-			inParagraph = false;
-			kept.push(line);
-			continue;
-		}
-
-		if (analysis.indent <= 3 && analysis.content.startsWith("<")) {
-			const htmlType = matchHtmlBlockOpen(analysis.content, !inParagraph);
-			if (htmlType !== null) {
-				if (
-					htmlType === 6 ||
-					htmlType === 7 ||
-					!htmlBlockLineCloses(htmlType, analysis.content)
-				) {
-					activeHtmlBlock = { quoteDepth: lineQuoteDepth, type: htmlType };
-				}
-				inParagraph = false;
-				continue;
-			}
-		}
-
-		const isIndentedCodeLine: boolean = !inParagraph && analysis.indent >= 4;
-		const isSetextUnderline: boolean =
-			inParagraph && isTopLevel && SETEXT_UNDERLINE.test(analysis.content);
-		const strippedLine = isIndentedCodeLine
-			? line
-			: `${analysis.prefix}${stripInlineHtmlOutsideCode(analysis.rest)}`;
-		if (
-			inParagraph &&
-			isCommonMarkBlankLine(strippedLine.slice(analysis.prefix.length))
-		) {
+		const strippedRest = stripInlineHtmlOutsideCode(rest);
+		const continuedParagraph =
+			prevLeafKind === "paragraph" &&
+			state.leaf?.kind === "paragraph" &&
+			scanned.inlineBlockId === prevInlineBlockId;
+		if (continuedParagraph && isCommonMarkBlankLine(strippedRest)) {
 			// A stripped inline-only HTML line (e.g. standalone `<kbd>`) inside
 			// an open paragraph must not emit a blank line and split the `<p>`.
 			continue;
 		}
-		kept.push(strippedLine);
-		inParagraph =
-			!isIndentedCodeLine &&
-			!isSetextUnderline &&
-			!(
-				analysis.indent <= 3 &&
-				(ATX_HEADING.test(analysis.content) ||
-					THEMATIC_BREAK.test(analysis.content))
-			);
+		kept.push(`${prefix}${strippedRest}`);
 	}
 
 	return kept

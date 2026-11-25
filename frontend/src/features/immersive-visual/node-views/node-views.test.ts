@@ -2624,4 +2624,55 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 		expect(interleavedView.dom.textContent).toContain("visible");
 		expect(interleavedView.dom.textContent).not.toContain("hidden");
 	});
+
+	it("delegates stripCommonMarkHtmlForPreview block classification to php-commonmark-block-engine for list indented code and container-bounded fences (PR-R23-A Track B #8)", () => {
+		// 1. List-item indented code preserves inline HTML literally (`-     code <span>x</span>`).
+		const listIndentedMd = "<div>a</div>\n\n-     code <span>x</span>";
+		expect(stripCommonMarkHtmlForPreview(listIndentedMd)).toBe(
+			"-     code <span>x</span>",
+		);
+		const listCodeHost = document.createElement("div");
+		listCodeHost.appendChild(
+			renderRawBlockPreview(document, listIndentedMd, {
+				fallbackLabel: "Raw",
+				footnotesLabel: "Footnotes",
+				viewWindow: window,
+			}),
+		);
+		expect(listCodeHost.querySelector("ul li pre code")?.textContent).toBe(
+			"code <span>x</span>",
+		);
+
+		// 2. Blockquote indented code, blockquote PI HTML block, Type 1 cross-tag close, and escaped HTML/backticks stay intact.
+		expect(stripCommonMarkHtmlForPreview(">     <span>code</span>")).toBe(
+			">     <span>code</span>",
+		);
+		expect(
+			stripCommonMarkHtmlForPreview("> <?meta\n> Hidden\n> ?>\n> Visible"),
+		).toBe("> Visible");
+		expect(stripCommonMarkHtmlForPreview("<pre>\n</script>\npara")).toBe("para");
+		expect(stripCommonMarkHtmlForPreview("\\<span>hello\\</span>")).toBe(
+			"\\<span>hello\\</span>",
+		);
+		expect(stripCommonMarkHtmlForPreview("\\`<span>hello</span>\\`")).toBe(
+			"\\`hello\\`",
+		);
+
+		// 3. Unclosed fences inside blockquotes/lists close when their container ends, so trailing inline HTML is stripped.
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"> ```\n> <span>code</span>\n<span>outside</span>",
+			),
+		).toBe("> ```\n> <span>code</span>\noutside");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"- ```\n  <span>code</span>\n<span>outside</span>",
+			),
+		).toBe("- ```\n  <span>code</span>\noutside");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"```\n> ```\n<span>still code</span>\n```\n<span>outside</span>",
+			),
+		).toBe("```\n> ```\n<span>still code</span>\n```\noutside");
+	});
 });

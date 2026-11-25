@@ -11,6 +11,7 @@ import {
 	nextNonSpaceIndex,
 	parseGfmTableSeparatorColumns,
 } from "../../shared/markdown/php-commonmark-block-helpers";
+import { maskPhpMarkdownMathForTableScan } from "../../shared/markdown/php-markdown-math-mask";
 
 /**
  * Feature-private block-structure helpers for `markdown-prescanner.ts`:
@@ -86,10 +87,50 @@ export function stripBlockquoteDepth(
 	return cursorRemainder(cursor);
 }
 
-export function stripContainers(
+function advanceColumnOfText(text: string): number {
+	let col = 0;
+	for (let i = 0; i < text.length; i += 1) {
+		col = text[i] === "\t" ? col + 4 - (col % 4) : col + 1;
+	}
+	return col;
+}
+
+function cursorPrefix(cursor: LineColumnCursor): string {
+	if (cursor.virtualSpaces <= 0) {
+		return cursor.line.slice(0, cursor.index);
+	}
+	const beforeTab = cursor.line.slice(0, Math.max(0, cursor.index - 1));
+	const consumedTabCols = Math.max(
+		1,
+		cursor.column - advanceColumnOfText(beforeTab),
+	);
+	return `${beforeTab}${" ".repeat(consumedTabCols)}`;
+}
+
+export function hasListBeforeQuote(
+	containers: ReadonlyArray<{ kind: "blockquote" | "list" }>,
+): boolean {
+	let sawList = false;
+	for (const step of containers) {
+		if (step.kind === "list") {
+			sawList = true;
+		} else if (sawList) {
+			return true;
+		}
+	}
+	return false;
+}
+
+export type StrippedContainerResult = Readonly<{
+	column: number;
+	prefix: string;
+	rest: string;
+}>;
+
+export function stripContainersWithColumn(
 	line: string,
 	containers: ReadonlyArray<ContainerStep>,
-): string | null {
+): StrippedContainerResult | null {
 	const cursor = createLineCursor(line);
 	for (const step of containers) {
 		if (step.kind === "blockquote") {
@@ -108,7 +149,18 @@ export function stripContainers(
 		}
 		consumeWhitespaceColumns(cursor, step.indent);
 	}
-	return cursorRemainder(cursor);
+	return {
+		column: cursor.column,
+		prefix: cursorPrefix(cursor),
+		rest: cursorRemainder(cursor),
+	};
+}
+
+export function stripContainers(
+	line: string,
+	containers: ReadonlyArray<ContainerStep>,
+): string | null {
+	return stripContainersWithColumn(line, containers)?.rest ?? null;
 }
 
 export function measureIndentColumns(text: string, startColumn = 0): number {
@@ -150,6 +202,7 @@ export type ListMarkerMatch = Readonly<{
 	contentIndent: number;
 	isBlank: boolean;
 	leadCols: number;
+	markerPrefix: string;
 	orderedDigits: string | null;
 }>;
 
@@ -183,6 +236,7 @@ export function matchListMarker(
 		contentIndent: leadCols + markerText.length + padding,
 		isBlank,
 		leadCols,
+		markerPrefix: cursorPrefix(cursor),
 		orderedDigits,
 	};
 }
@@ -201,20 +255,20 @@ export function canListMarkerInterruptParagraph(
 	return marker.orderedDigits === null || marker.orderedDigits === "1";
 }
 
-export function isGfmTableStartAt(
+export function resolveGfmTableContainerIndent(
 	headerLine: string,
 	delimiterLine: string,
 	containerIndent: number,
 	expectedQuoteDepth: number | null,
 	allowLeadingListMarker: boolean,
-): boolean {
+): number | null {
 	const headerBq = readBlockquotePrefix(headerLine);
 	const delimiterBq = readBlockquotePrefix(delimiterLine);
 	if (headerBq.depth !== delimiterBq.depth) {
-		return false;
+		return null;
 	}
 	if (expectedQuoteDepth !== null && headerBq.depth !== expectedQuoteDepth) {
-		return false;
+		return null;
 	}
 
 	let effContainer = containerIndent;
@@ -224,21 +278,28 @@ export function isGfmTableStartAt(
 		headerBq.column,
 	);
 	if (headerCandidate === null) {
-		return false;
+		return null;
 	}
 	let headerColumn = headerBq.column + effContainer;
-	const headerRelIndent = measureIndentColumns(headerCandidate, headerColumn);
+	let headerRelIndent = measureIndentColumns(headerCandidate, headerColumn);
 	if (headerRelIndent >= 4) {
-		return false;
+		return null;
 	}
-	const headerListMarker = matchListMarker(headerCandidate, headerColumn);
-	if (headerListMarker !== null) {
+	while (headerRelIndent < 4) {
+		const headerListMarker = matchListMarker(headerCandidate, headerColumn);
+		if (headerListMarker === null) {
+			break;
+		}
 		if (!allowLeadingListMarker) {
-			return false;
+			return null;
 		}
 		effContainer += headerListMarker.contentIndent;
 		headerColumn += headerListMarker.contentIndent;
 		headerCandidate = headerListMarker.afterContent;
+		headerRelIndent = measureIndentColumns(headerCandidate, headerColumn);
+	}
+	if (headerRelIndent >= 4) {
+		return null;
 	}
 
 	const delimiterCandidate = stripContainerIndent(
@@ -247,34 +308,87 @@ export function isGfmTableStartAt(
 		delimiterBq.column,
 	);
 	if (delimiterCandidate === null) {
-		return false;
+		return null;
 	}
 	const delimiterColumn = delimiterBq.column + effContainer;
 	if (
 		measureIndentColumns(delimiterCandidate, delimiterColumn) >= 4 ||
 		matchListMarker(delimiterCandidate, delimiterColumn) !== null
 	) {
-		return false;
+		return null;
 	}
 
 	const delimiterColumns = parseGfmTableSeparatorColumns(delimiterCandidate);
-	if (delimiterColumns === 0 || !headerCandidate.includes("|")) {
-		return false;
+	const maskedHeader = maskPhpMarkdownMathForTableScan(headerCandidate);
+	if (delimiterColumns === 0 || !maskedHeader.includes("|")) {
+		return null;
 	}
-	return countTableRowCells(headerCandidate) === delimiterColumns;
+	return countTableRowCells(maskedHeader) === delimiterColumns
+		? effContainer
+		: null;
+}
+
+export function isGfmTableStartAt(
+	headerLine: string,
+	delimiterLine: string,
+	containerIndent: number,
+	expectedQuoteDepth: number | null,
+	allowLeadingListMarker: boolean,
+): boolean {
+	return (
+		resolveGfmTableContainerIndent(
+			headerLine,
+			delimiterLine,
+			containerIndent,
+			expectedQuoteDepth,
+			allowLeadingListMarker,
+		) !== null
+	);
 }
 
 export function findGfmTableEnd(
 	lines: ReadonlyArray<string>,
 	headerIndex: number,
+	containerIndent = 0,
+	expectedQuoteDepth = 0,
 ): number {
 	let end = headerIndex + 1;
 	for (let index = headerIndex + 2; index < lines.length; index += 1) {
-		const { rest } = readBlockquotePrefix(lines[index] ?? "");
-		if (isCommonMarkBlankLine(rest) || !rest.includes("|")) {
+		const line = lines[index] ?? "";
+		const cursor = createLineCursor(line);
+		let matchedQuote = true;
+		for (let d = 0; d < expectedQuoteDepth; d += 1) {
+			if (!consumeBlockquoteMarker(cursor)) {
+				matchedQuote = false;
+				break;
+			}
+		}
+		if (!matchedQuote) {
 			break;
 		}
-		if (/^ {0,3}(?:#{1,6}(?:[ \t]|$)|`{3,}|~{3,}|>)/.test(rest)) {
+		const afterQuote = cursorRemainder(cursor);
+		const afterQuoteColumn = cursor.column;
+		const candidate = stripContainerIndent(
+			afterQuote,
+			containerIndent,
+			afterQuoteColumn,
+		);
+		if (candidate === null || isCommonMarkBlankLine(candidate)) {
+			break;
+		}
+		const candidateColumn = afterQuoteColumn + containerIndent;
+		if (measureIndentColumns(candidate, candidateColumn) >= 4) {
+			break;
+		}
+		if (matchListMarker(candidate, candidateColumn) !== null) {
+			break;
+		}
+		const trimmedStart = candidate.replace(/^[ \t]+/, "");
+		if (
+			!candidate.includes("|") ||
+			trimmedStart.startsWith(">") ||
+			/^(?:#{1,6}(?:[ \t]|$)|`{3,}|~{3,})/.test(trimmedStart)
+		) {
 			break;
 		}
 		end = index;
@@ -329,17 +443,50 @@ export function matchListPrefixedHtmlBlock(
 	line: string,
 	inParagraph: boolean,
 	prevContainerIndent: number,
+	activeContainers?: ReadonlyArray<ContainerStep>,
 ): ListPrefixedHtmlMatch | null {
 	const cursor = createLineCursor(line);
 	const containers: ContainerStep[] = [];
-	while (consumeBlockquoteMarker(cursor)) {
-		containers.push({ kind: "blockquote" });
+	let seededInterleaved = false;
+	if (activeContainers && hasListBeforeQuote(activeContainers)) {
+		let matchedAll = true;
+		for (const step of activeContainers) {
+			if (step.kind === "blockquote") {
+				if (!consumeBlockquoteMarker(cursor)) {
+					matchedAll = false;
+					break;
+				}
+				containers.push(step);
+			} else if (isCursorBlank(cursor)) {
+				matchedAll = false;
+				break;
+			} else if (measureLeadingColumns(cursor) >= step.indent) {
+				consumeWhitespaceColumns(cursor, step.indent);
+				containers.push(step);
+			} else {
+				matchedAll = false;
+				break;
+			}
+		}
+		if (matchedAll) {
+			seededInterleaved = true;
+		} else {
+			cursor.column = 0;
+			cursor.index = 0;
+			cursor.virtualSpaces = 0;
+			containers.length = 0;
+		}
 	}
-	const outerQuoteCount = containers.length;
+	if (!seededInterleaved) {
+		while (consumeBlockquoteMarker(cursor)) {
+			containers.push({ kind: "blockquote" });
+		}
+	}
+	const outerQuoteCount = seededInterleaved ? 0 : containers.length;
 
 	let matchedList = false;
 	let firstStep = true;
-	let activeListIndent = prevContainerIndent;
+	let activeListIndent = seededInterleaved ? 0 : prevContainerIndent;
 
 	while (!isCursorBlank(cursor)) {
 		const leadCols = measureLeadingColumns(cursor);
@@ -357,7 +504,7 @@ export function matchListPrefixedHtmlBlock(
 			break;
 		}
 		const nonSpaceIdx = nextNonSpaceIndex(cursor);
-		if (matchedList && line[nonSpaceIdx] === ">") {
+		if ((matchedList || seededInterleaved) && line[nonSpaceIdx] === ">") {
 			if (!consumeBlockquoteMarker(cursor)) {
 				break;
 			}
@@ -425,10 +572,7 @@ export function matchListPrefixedHtmlBlock(
 		}
 		contentIndent += step.indent;
 	}
-	const linePrefix =
-		cursor.virtualSpaces > 0
-			? `${line.slice(0, cursor.index - 1)} `
-			: line.slice(0, cursor.index);
+	const linePrefix = cursorPrefix(cursor);
 
 	return {
 		containers,
@@ -437,4 +581,194 @@ export function matchListPrefixedHtmlBlock(
 		htmlType,
 		linePrefix,
 	};
+}
+
+export type DetectableFence = Readonly<{
+	containerIndent: number;
+	containers?: ReadonlyArray<ContainerStep>;
+	fenceChar: "`" | "~";
+	fenceLength: number;
+	info: string;
+	quoteDepth: number;
+}>;
+
+export type FenceLineSummary = Readonly<{
+	column: number;
+	containerIndent: number;
+	content: string;
+	indent: number;
+	listMarker: ListMarkerMatch | null;
+	quoteDepth: number;
+}>;
+
+export function fenceContainersOf(
+	fence: DetectableFence,
+): ReadonlyArray<ContainerStep> {
+	if (fence.containers !== undefined) {
+		return fence.containers;
+	}
+	const steps: ContainerStep[] = [];
+	for (let d = 0; d < fence.quoteDepth; d += 1) {
+		steps.push({ kind: "blockquote" });
+	}
+	if (fence.containerIndent > 0) {
+		steps.push({ indent: fence.containerIndent, kind: "list" });
+	}
+	return steps;
+}
+
+function matchFenceAt(
+	content: string,
+	indent: number,
+	containerIndent: number,
+	quoteDepth: number,
+	containers?: ReadonlyArray<ContainerStep>,
+): DetectableFence | null {
+	const relative = indent - containerIndent;
+	if (relative < 0 || relative > 3) {
+		return null;
+	}
+	const match = /^(`{3,}|~{3,})(.*)$/.exec(content);
+	if (!match?.[1]) {
+		return null;
+	}
+	const info = match[2] ?? "";
+	const fenceChar = match[1][0] === "~" ? "~" : "`";
+	if (fenceChar === "`" && info.includes("`")) {
+		return null;
+	}
+	return containers !== undefined
+		? {
+				containerIndent,
+				containers,
+				fenceChar,
+				fenceLength: match[1].length,
+				info,
+				quoteDepth,
+			}
+		: {
+				containerIndent,
+				fenceChar,
+				fenceLength: match[1].length,
+				info,
+				quoteDepth,
+			};
+}
+
+export function detectFence(
+	analysis: FenceLineSummary,
+	baseContainers?: ReadonlyArray<ContainerStep>,
+): DetectableFence | null {
+	const baseSteps: ContainerStep[] = baseContainers
+		? [...baseContainers]
+		: Array.from({ length: analysis.quoteDepth }, () => ({
+				kind: "blockquote" as const,
+			}));
+	const directSteps: ContainerStep[] =
+		analysis.containerIndent > 0
+			? [...baseSteps, { indent: analysis.containerIndent, kind: "list" }]
+			: baseSteps;
+	const direct = matchFenceAt(
+		analysis.content,
+		analysis.indent,
+		analysis.containerIndent,
+		analysis.quoteDepth,
+		directSteps,
+	);
+	if (direct || !analysis.listMarker) {
+		return direct;
+	}
+
+	const containers: ContainerStep[] = [
+		...baseSteps,
+		{ indent: analysis.listMarker.contentIndent, kind: "list" },
+	];
+	let quoteDepth = analysis.quoteDepth;
+	let innerColumn = analysis.column + analysis.listMarker.contentIndent;
+	let innerRest = analysis.listMarker.afterContent;
+	for (let depth = 0; depth < 32; depth += 1) {
+		const leadCols = measureIndentColumns(innerRest, innerColumn);
+		if (leadCols >= 4) {
+			return null;
+		}
+		const trimmedStart = innerRest.replace(/^[ \t]+/, "");
+		if (trimmedStart.startsWith(">")) {
+			const cursor = createLineCursor(innerRest, innerColumn);
+			if (!consumeBlockquoteMarker(cursor)) {
+				break;
+			}
+			containers.push({ kind: "blockquote" });
+			quoteDepth += 1;
+			innerColumn = cursor.column;
+			innerRest = cursorRemainder(cursor);
+			continue;
+		}
+		const nestedMarker = matchListMarker(innerRest, innerColumn);
+		if (nestedMarker !== null && nestedMarker.leadCols <= 3) {
+			containers.push({ indent: nestedMarker.contentIndent, kind: "list" });
+			innerColumn += nestedMarker.contentIndent;
+			innerRest = nestedMarker.afterContent;
+			continue;
+		}
+		break;
+	}
+	const finalIndent = measureIndentColumns(innerRest, innerColumn);
+	const finalContent = innerRest.replace(/^[ \t]+/, "");
+	const matched = matchFenceAt(
+		finalContent,
+		finalIndent,
+		0,
+		quoteDepth,
+		containers,
+	);
+	if (!matched) {
+		return null;
+	}
+	const trailingListIndent =
+		quoteDepth === analysis.quoteDepth ? analysis.listMarker.contentIndent : 0;
+	return { ...matched, containerIndent: trailingListIndent };
+}
+
+function isFenceCloserStripped(
+	stripped: Readonly<{ column: number; rest: string }>,
+	fence: DetectableFence,
+): boolean {
+	const indent = measureIndentColumns(stripped.rest, stripped.column);
+	if (indent < 0 || indent > 3) {
+		return false;
+	}
+	const content = stripped.rest.replace(/^[ \t]+/, "");
+	const match =
+		fence.fenceChar === "`"
+			? /^(`{3,})[ \t]*$/.exec(content)
+			: /^(~{3,})[ \t]*$/.exec(content);
+	return Boolean(match?.[1] && match[1].length >= fence.fenceLength);
+}
+
+export function isFenceCloser(line: string, fence: DetectableFence): boolean {
+	const stripped = stripContainersWithColumn(line, fenceContainersOf(fence));
+	return stripped !== null && isFenceCloserStripped(stripped, fence);
+}
+
+export function findContainerBoundedFenceEnd(
+	lines: ReadonlyArray<string>,
+	startIndex: number,
+	fence: DetectableFence,
+): number {
+	const fenceContainers = fenceContainersOf(fence);
+	let end = startIndex + 1;
+	while (end < lines.length) {
+		const stripped = stripContainersWithColumn(
+			lines[end] ?? "",
+			fenceContainers,
+		);
+		if (stripped === null) {
+			return end - 1;
+		}
+		if (isFenceCloserStripped(stripped, fence)) {
+			return end;
+		}
+		end += 1;
+	}
+	return lines.length - 1;
 }

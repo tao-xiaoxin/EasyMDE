@@ -25,7 +25,7 @@ export type ParserImageNode = Readonly<{
 	to: number;
 }>;
 
-export type ImageSyntaxNode = ReturnType<
+type ImageSyntaxNode = ReturnType<
 	typeof markdownLanguage.parser.parse
 >["topNode"];
 

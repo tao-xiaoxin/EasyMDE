@@ -3,6 +3,7 @@ import type {
 	EditorMarkdownSourceBlock,
 } from "../../contracts/ports/editor-block-index-port";
 import { lineIndexAtOffsets } from "./editor-markdown-lines";
+import { trimBlockSlice } from "./editor-markdown-php-block-reconcile";
 import type { SourceRange } from "./editor-markdown-source-projection";
 
 export type MathRange = SourceRange &
@@ -68,61 +69,6 @@ function mathBlock(
 	};
 }
 
-function sliceNonMathBlock(
-	block: EditorMarkdownSourceBlock,
-	source: string,
-	starts: ReadonlyArray<number>,
-	sliceFrom: number,
-	sliceTo: number,
-): EditorMarkdownSourceBlock | null {
-	let from = sliceFrom;
-	let to = sliceTo;
-	while (from < to) {
-		let probe = from;
-		while (probe < to && (" " === source[probe] || "\t" === source[probe])) {
-			probe += 1;
-		}
-		if (probe < to && ("\r" === source[probe] || "\n" === source[probe])) {
-			from =
-				"\r" === source[probe] && "\n" === source[probe + 1]
-					? probe + 2
-					: probe + 1;
-			continue;
-		}
-		break;
-	}
-	while (to > from) {
-		let probe = to;
-		while (
-			probe > from &&
-			(" " === source[probe - 1] || "\t" === source[probe - 1])
-		) {
-			probe -= 1;
-		}
-		if (
-			probe > from &&
-			("\r" === source[probe - 1] || "\n" === source[probe - 1])
-		) {
-			to =
-				"\n" === source[probe - 1] &&
-				probe - 2 >= from &&
-				"\r" === source[probe - 2]
-					? probe - 2
-					: probe - 1;
-			continue;
-		}
-		break;
-	}
-	if (from >= to || !source.slice(from, to).trim()) return null;
-	return {
-		...block,
-		from,
-		lineEnd: lineIndexAtOffsets(starts, Math.max(from, to - 1)),
-		lineStart: lineIndexAtOffsets(starts, from),
-		to,
-	};
-}
-
 export function overlayMath(
 	source: string,
 	blocks: ReadonlyArray<EditorMarkdownSourceBlock>,
@@ -178,12 +124,13 @@ export function overlayMath(
 			const rangeFrom = Math.max(cursor, block.from, range.from);
 			const rangeTo = Math.min(block.to, range.to);
 			if (cursor < rangeFrom) {
-				const leadingSlice = sliceNonMathBlock(
-					block,
+				const leadingSlice = trimBlockSlice(
 					source,
-					starts,
 					cursor,
 					rangeFrom,
+					starts,
+					block.kind,
+					block.editable,
 				);
 				if (leadingSlice) result.push(leadingSlice);
 			}
@@ -203,12 +150,13 @@ export function overlayMath(
 			else break;
 		}
 		if (cursor < block.to) {
-			const trailingSlice = sliceNonMathBlock(
-				block,
+			const trailingSlice = trimBlockSlice(
 				source,
-				starts,
 				cursor,
 				block.to,
+				starts,
+				block.kind,
+				block.editable,
 			);
 			if (trailingSlice) result.push(trailingSlice);
 		}

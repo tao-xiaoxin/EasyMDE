@@ -14,14 +14,15 @@ import {
 import {
 	findFirstBlockEndingAfter,
 	findPhpTableSpanContainingLine,
-	isOffsetInsideInlineParenMath,
+	isValidReconciledPhpTableSpan,
 	trimBlockSlice,
 } from "./editor-markdown-php-block-reconcile";
+import type { SourceRange } from "./editor-markdown-source-projection";
 
-export type ReconciledPhpNonCodeBlocks = Readonly<{
+type ReconciledPhpNonCodeBlocks = Readonly<{
 	blocks: ReadonlyArray<EditorMarkdownSourceBlock>;
-	reconciledInlineBlocks: ReadonlyArray<EditorMarkdownSourceBlock>;
-	reconciledTableBlocks: ReadonlyArray<EditorMarkdownSourceBlock>;
+	reconciledInlineBlocks: ReadonlyArray<SourceRange>;
+	reconciledTableBlocks: ReadonlyArray<SourceRange>;
 }>;
 
 type PendingNonCodeSliceKind =
@@ -32,7 +33,7 @@ type PendingNonCodeSliceKind =
 
 function isBlockCoveredByCodeRanges(
 	source: string,
-	block: EditorMarkdownSourceBlock,
+	block: SourceRange,
 	codeRanges: ReadonlyArray<ScannedCodeRange>,
 	startCodeIndex: number,
 ): Readonly<{ covered: boolean; nextCodeIndex: number }> {
@@ -66,59 +67,94 @@ function isBlockCoveredByCodeRanges(
 	return { covered: true, nextCodeIndex: probe };
 }
 
-function isValidReconciledNonCodePhpTable(
+function collectNestedNonCodeRanges(
 	source: string,
-	blocks: ReadonlyArray<EditorMarkdownSourceBlock>,
+	nestedCodeBlocks: ReadonlyArray<SourceRange>,
 	phpBlockScan: ScannedMarkdownBlocks,
-	phpMathRanges: ReadonlyArray<PhpMarkdownMathRange>,
-	startLineIdx: number,
-	endLineIdx: number,
-	tableFrom: number,
-	tableTo: number,
-): boolean {
+	displayMathRanges: ReadonlyArray<PhpMarkdownMathRange>,
+	reconciledInlineBlocks: SourceRange[],
+	reconciledTableBlocks: SourceRange[],
+): void {
+	const phpBlockCodeRanges = phpBlockScan.blockCodeRanges;
 	const lines = phpBlockScan.lines;
-	for (let idx = startLineIdx; idx <= endLineIdx; idx += 1) {
-		if (lines[idx]?.consumedBlockquote) return false;
-	}
-	if (inCodeRange(phpBlockScan.blockCodeRanges, tableFrom, tableTo)) {
-		return false;
-	}
-	for (
-		let mIdx = findFirstMathRangeEndingAfter(phpMathRanges, tableFrom);
-		mIdx < phpMathRanges.length;
-		mIdx += 1
-	) {
-		const math = phpMathRanges[mIdx];
-		if (!math || math.from >= tableTo) break;
-		if (math.block) return false;
-	}
-	const mathCursor = {
-		value: findFirstMathRangeEndingAfter(phpMathRanges, tableFrom),
-	};
-	for (
-		let i = findFirstBlockEndingAfter(blocks, tableFrom);
-		i < blocks.length;
-		i += 1
-	) {
-		const candidate = blocks[i];
-		if (!candidate || candidate.from >= tableTo) break;
-		if ("math" === candidate.kind) return false;
-		if (
-			("quote" === candidate.kind ||
-				"list" === candidate.kind ||
-				"unavailable" === candidate.kind) &&
-			!isOffsetInsideInlineParenMath(
-				source,
-				candidate.from,
-				tableFrom,
-				phpMathRanges,
-				mathCursor,
-			)
-		) {
-			return false;
+	let codeIndex = 0;
+
+	for (let index = 0; index < nestedCodeBlocks.length; index += 1) {
+		const block = nestedCodeBlocks[index];
+		if (!block || block.to <= block.from) continue;
+
+		const coverage = isBlockCoveredByCodeRanges(
+			source,
+			block,
+			phpBlockCodeRanges,
+			codeIndex,
+		);
+		codeIndex = coverage.nextCodeIndex;
+		if (coverage.covered) continue;
+
+		let cursor = block.from;
+		let dmIdx = findFirstMathRangeEndingAfter(displayMathRanges, block.from);
+		let lineIdx = findLineIndexAtOffset(lines, block.from);
+		if (lineIdx < 0) lineIdx = 0;
+
+		while (cursor < block.to) {
+			while (
+				dmIdx < displayMathRanges.length &&
+				(displayMathRanges[dmIdx]?.to ?? 0) <= cursor
+			) {
+				dmIdx += 1;
+			}
+			const dm = displayMathRanges[dmIdx];
+			if (dm && dm.from <= cursor && cursor < dm.to) {
+				cursor = Math.min(block.to, dm.to);
+				continue;
+			}
+
+			while (
+				lineIdx < lines.length &&
+				(lines[lineIdx]?.nextLineStart ?? 0) <= cursor
+			) {
+				lineIdx += 1;
+			}
+			const line = lines[lineIdx];
+			if (!line || line.lineStart >= block.to) break;
+			if (cursor < line.lineStart) {
+				cursor = line.lineStart;
+				continue;
+			}
+
+			let segEnd = Math.min(block.to, line.lineEnd);
+			if (dm && dm.from > cursor && dm.from < segEnd) {
+				segEnd = dm.from;
+			}
+			if (segEnd <= cursor) {
+				const nextPos =
+					dm && dm.from === cursor
+						? cursor
+						: Math.min(block.to, Math.max(cursor + 1, line.nextLineStart));
+				if (nextPos <= cursor) break;
+				cursor = nextPos;
+				continue;
+			}
+
+			if (
+				!inCodeRange(phpBlockCodeRanges, cursor, segEnd) &&
+				line.inlineBlockId >= 0 &&
+				source.slice(cursor, segEnd).trim().length > 0
+			) {
+				if (line.isTableRow) {
+					reconciledTableBlocks.push({ from: cursor, to: segEnd });
+				} else {
+					reconciledInlineBlocks.push({ from: cursor, to: segEnd });
+				}
+			}
+
+			cursor =
+				segEnd === line.lineEnd && (!dm || dm.from > segEnd)
+					? Math.min(block.to, line.nextLineStart)
+					: segEnd;
 		}
 	}
-	return true;
 }
 
 function canMergeInlineParagraphAcrossBlocks(
@@ -174,14 +210,15 @@ export function reconcilePhpNonCodeBlocks(
 	phpBlockScan: ScannedMarkdownBlocks,
 	phpMathRanges: ReadonlyArray<PhpMarkdownMathRange>,
 	starts: ReadonlyArray<number>,
+	nestedCodeBlocks: ReadonlyArray<SourceRange> = [],
 ): ReconciledPhpNonCodeBlocks {
 	const phpBlockCodeRanges = phpBlockScan.blockCodeRanges;
 	const lines = phpBlockScan.lines;
 	const displayMathRanges = phpMathRanges.filter((range) => range.block);
 
 	let reconciled: EditorMarkdownSourceBlock[] | null = null;
-	const reconciledInlineBlocks: EditorMarkdownSourceBlock[] = [];
-	const reconciledTableBlocks: EditorMarkdownSourceBlock[] = [];
+	const reconciledInlineBlocks: SourceRange[] = [];
+	const reconciledTableBlocks: SourceRange[] = [];
 	const evaluatedTableUntilLineIdx = { value: -1 };
 	let codeIndex = 0;
 	let consumedUntil = 0;
@@ -364,16 +401,18 @@ export function reconcilePhpNonCodeBlocks(
 						tableFrom >= block.from &&
 						tableFrom >= consumedUntil &&
 						tableTo > tableFrom &&
-						isValidReconciledNonCodePhpTable(
-							source,
+						isValidReconciledPhpTableSpan({
+							allowTrailingUnavailableBlocks: false,
 							blocks,
+							endLineIdx: tableLineSpan.endLineIdx,
 							phpBlockScan,
 							phpMathRanges,
-							tableLineSpan.startLineIdx,
-							tableLineSpan.endLineIdx,
+							rejectCodeBlocks: false,
+							source,
+							startLineIdx: tableLineSpan.startLineIdx,
 							tableFrom,
 							tableTo,
-						)
+						})
 					) {
 						flushPending();
 						const tableBlock = trimBlockSlice(
@@ -456,6 +495,17 @@ export function reconcilePhpNonCodeBlocks(
 		}
 
 		flushPending();
+	}
+
+	if (nestedCodeBlocks.length > 0) {
+		collectNestedNonCodeRanges(
+			source,
+			nestedCodeBlocks,
+			phpBlockScan,
+			displayMathRanges,
+			reconciledInlineBlocks,
+			reconciledTableBlocks,
+		);
 	}
 
 	return {

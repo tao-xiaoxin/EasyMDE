@@ -1,11 +1,11 @@
-import {
-	deriveEditorMarkdownLinkTableCellContext,
-	type EditorMarkdownImageRange,
-	type EditorMarkdownLinkCandidate,
-	type EditorMarkdownLinkTableCellContext,
-	type EditorMarkdownSourceBlock,
-	type EditorMarkdownTableCellMathRange,
+import type {
+	EditorMarkdownImageRange,
+	EditorMarkdownLinkCandidate,
+	EditorMarkdownLinkTableCellContext,
+	EditorMarkdownSourceBlock,
+	EditorMarkdownTableCellMathRange,
 } from "../../contracts/ports/editor-block-index-port";
+import { deriveEditorMarkdownLinkTableCellContext } from "../../shared/markdown/editor-block-index-table-cell-codec";
 import {
 	findLineAtOffset,
 	findTableRowCellInCells,

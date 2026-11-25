@@ -141,7 +141,7 @@ function collectEscapedPipeTableCells(
 function collectReconciledTableCellScopes(
 	source: string,
 	scan: ScannedMarkdownBlocks,
-	reconciledTableBlocks: ReadonlyArray<EditorMarkdownSourceBlock>,
+	reconciledTableBlocks: ReadonlyArray<SourceRange>,
 	scopes: PhpOwnedInlineScope[],
 	seenCells: Set<string>,
 ): void {
@@ -169,7 +169,7 @@ function collectReconciledTableCellScopes(
 function collectReconciledInlineBlockScopes(
 	source: string,
 	scan: ScannedMarkdownBlocks,
-	reconciledInlineBlocks: ReadonlyArray<EditorMarkdownSourceBlock>,
+	reconciledInlineBlocks: ReadonlyArray<SourceRange>,
 	scopes: PhpOwnedInlineScope[],
 	seenBlockIds: Set<number>,
 ): void {
@@ -223,6 +223,63 @@ function rangeCoveredBySorted(
 	return false;
 }
 
+function scanOwnedInlineScopes(
+	source: string,
+	scan: ScannedMarkdownBlocks,
+	scopes: PhpOwnedInlineScope[],
+	isReferenceDefined: (from: number, to: number) => boolean,
+	mathRanges: ReadonlyArray<SourceRange>,
+	options?: Readonly<{
+		imagesOut?: PhpReconciledBlockImage[];
+		skipOwnedRanges?: ReadonlyArray<SourceRange>;
+	}>,
+): PhpOwnedBlockLinks {
+	const crossesMath = createMathCrossingQuery(mathRanges);
+	scopes.sort((left, right) => left.from - right.from || left.to - right.to);
+	const text = scan.tableCellSource ?? source;
+	const ownedRanges: SourceRange[] = [];
+	const links: ParserLinkNode[] = [];
+	const imagesOut = options?.imagesOut;
+	const skipOwnedRanges = options?.skipOwnedRanges;
+
+	for (let i = 0; i < scopes.length; i += 1) {
+		const scope = scopes[i];
+		if (!scope) continue;
+		if (
+			skipOwnedRanges &&
+			skipOwnedRanges.length > 0 &&
+			rangeCoveredBySorted(skipOwnedRanges, scope.from, scope.to)
+		) {
+			continue;
+		}
+		ownedRanges.push({ from: scope.from, to: scope.to });
+		const found = scope.isTableCell
+			? scanPhpTableCellLinks(
+					text,
+					scope.line,
+					scope.from,
+					scope.to,
+					isReferenceDefined,
+					crossesMath,
+					imagesOut,
+				)
+			: scanPhpInlineBlockLinks(
+					text,
+					scan.lines,
+					scope.groupStart,
+					scope.groupEnd,
+					isReferenceDefined,
+					crossesMath,
+					imagesOut,
+				);
+		for (let j = 0; j < found.length; j += 1) {
+			const link = found[j];
+			if (link) links.push(link);
+		}
+	}
+	return { links, ownedRanges };
+}
+
 /**
  * Takes sole PHP inline ownership for every reconciled paragraph block and
  * reconciled GFM table cell (where Lezer originally parsed a `CodeBlock` or
@@ -232,12 +289,11 @@ function rangeCoveredBySorted(
 export function collectPhpReconciledBlocksContent(
 	source: string,
 	scan: ScannedMarkdownBlocks,
-	reconciledInlineBlocks: ReadonlyArray<EditorMarkdownSourceBlock>,
-	reconciledTableBlocks: ReadonlyArray<EditorMarkdownSourceBlock>,
+	reconciledInlineBlocks: ReadonlyArray<SourceRange>,
+	reconciledTableBlocks: ReadonlyArray<SourceRange>,
 	isReferenceDefined: (from: number, to: number) => boolean,
 	mathRanges: ReadonlyArray<SourceRange> = [],
 ): PhpReconciledBlocksContent {
-	const crossesMath = createMathCrossingQuery(mathRanges);
 	const scopes: PhpOwnedInlineScope[] = [];
 	const seenBlockIds = new Set<number>();
 	const seenCells = new Set<string>();
@@ -261,40 +317,15 @@ export function collectPhpReconciledBlocksContent(
 		);
 	}
 
-	scopes.sort((left, right) => left.from - right.from || left.to - right.to);
-	const text = scan.tableCellSource ?? source;
-	const ownedRanges: SourceRange[] = [];
-	const links: ParserLinkNode[] = [];
 	const images: PhpReconciledBlockImage[] = [];
-
-	for (let i = 0; i < scopes.length; i += 1) {
-		const scope = scopes[i];
-		if (!scope) continue;
-		ownedRanges.push({ from: scope.from, to: scope.to });
-		const found = scope.isTableCell
-			? scanPhpTableCellLinks(
-					text,
-					scope.line,
-					scope.from,
-					scope.to,
-					isReferenceDefined,
-					crossesMath,
-					images,
-				)
-			: scanPhpInlineBlockLinks(
-					text,
-					scan.lines,
-					scope.groupStart,
-					scope.groupEnd,
-					isReferenceDefined,
-					crossesMath,
-					images,
-				);
-		for (let j = 0; j < found.length; j += 1) {
-			const link = found[j];
-			if (link) links.push(link);
-		}
-	}
+	const { links, ownedRanges } = scanOwnedInlineScopes(
+		source,
+		scan,
+		scopes,
+		isReferenceDefined,
+		mathRanges,
+		{ imagesOut: images },
+	);
 	return { images, links, ownedRanges };
 }
 
@@ -407,28 +438,39 @@ function collectBareAutolinkScopesInScan(
 	}
 }
 
+type CollectPhpDisplayMathBrokenBlockLinksOptions = Readonly<{
+	bareAutolinkOffsets?: ReadonlyArray<number>;
+	brokenImageRanges: ReadonlyArray<SourceRange>;
+	displayMathRanges: ReadonlyArray<SourceRange>;
+	includeEscapedPipeTableCells?: boolean;
+	isReferenceDefined: (from: number, to: number) => boolean;
+	mathRanges?: ReadonlyArray<SourceRange>;
+	scan: ScannedMarkdownBlocks;
+	skipOwnedRanges?: ReadonlyArray<SourceRange>;
+	source: string;
+}>;
+
 /**
  * Takes sole link ownership for every PHP inline block and GFM table cell
  * touched by a display-math-broken Lezer image (both pre-math and post-math
  * fragments), optionally for every GFM table cell containing an escaped pipe
- * `\|` outside math spans, optionally for ordinary inline blocks and table
- * cells containing uncovered bare GFM autolink triggers, and optionally for
- * reconciled PHP tables and inline paragraphs.
+ * `\|` outside math spans, and optionally for ordinary inline blocks and table
+ * cells containing uncovered bare GFM autolink triggers.
  */
 export function collectPhpDisplayMathBrokenBlockLinks(
-	source: string,
-	scan: ScannedMarkdownBlocks,
-	displayMathRanges: ReadonlyArray<SourceRange>,
-	brokenImageRanges: ReadonlyArray<SourceRange>,
-	isReferenceDefined: (from: number, to: number) => boolean,
-	includeEscapedPipeTableCells = false,
-	bareAutolinkOffsets?: ReadonlyArray<number>,
-	mathRanges: ReadonlyArray<SourceRange> = [],
-	reconciledTableBlocks?: ReadonlyArray<EditorMarkdownSourceBlock>,
-	reconciledInlineBlocks?: ReadonlyArray<EditorMarkdownSourceBlock>,
-	skipOwnedRanges?: ReadonlyArray<SourceRange>,
+	options: CollectPhpDisplayMathBrokenBlockLinksOptions,
 ): PhpOwnedBlockLinks {
-	const crossesMath = createMathCrossingQuery(mathRanges);
+	const {
+		bareAutolinkOffsets,
+		brokenImageRanges,
+		displayMathRanges,
+		includeEscapedPipeTableCells = false,
+		isReferenceDefined,
+		mathRanges = [],
+		scan,
+		skipOwnedRanges,
+		source,
+	} = options;
 	const slices = collectNonDisplayMathSlices(
 		brokenImageRanges,
 		displayMathRanges,
@@ -485,26 +527,6 @@ export function collectPhpDisplayMathBrokenBlockLinks(
 		collectEscapedPipeTableCells(source, scan, scopes, seenCells);
 	}
 
-	if (reconciledTableBlocks && reconciledTableBlocks.length > 0) {
-		collectReconciledTableCellScopes(
-			source,
-			scan,
-			reconciledTableBlocks,
-			scopes,
-			seenCells,
-		);
-	}
-
-	if (reconciledInlineBlocks && reconciledInlineBlocks.length > 0) {
-		collectReconciledInlineBlockScopes(
-			source,
-			scan,
-			reconciledInlineBlocks,
-			scopes,
-			seenBlockIds,
-		);
-	}
-
 	if (bareAutolinkOffsets && bareAutolinkOffsets.length > 0) {
 		collectBareAutolinkScopesInScan(
 			source,
@@ -516,44 +538,14 @@ export function collectPhpDisplayMathBrokenBlockLinks(
 		);
 	}
 
-	scopes.sort((left, right) => left.from - right.from || left.to - right.to);
-	const text = scan.tableCellSource ?? source;
-	const ownedRanges: SourceRange[] = [];
-	const links: ParserLinkNode[] = [];
-	for (let i = 0; i < scopes.length; i += 1) {
-		const scope = scopes[i];
-		if (!scope) continue;
-		if (
-			skipOwnedRanges &&
-			skipOwnedRanges.length > 0 &&
-			rangeCoveredBySorted(skipOwnedRanges, scope.from, scope.to)
-		) {
-			continue;
-		}
-		ownedRanges.push({ from: scope.from, to: scope.to });
-		const found = scope.isTableCell
-			? scanPhpTableCellLinks(
-					text,
-					scope.line,
-					scope.from,
-					scope.to,
-					isReferenceDefined,
-					crossesMath,
-				)
-			: scanPhpInlineBlockLinks(
-					text,
-					scan.lines,
-					scope.groupStart,
-					scope.groupEnd,
-					isReferenceDefined,
-					crossesMath,
-				);
-		for (let j = 0; j < found.length; j += 1) {
-			const link = found[j];
-			if (link) links.push(link);
-		}
-	}
-	return { links, ownedRanges };
+	return scanOwnedInlineScopes(
+		source,
+		scan,
+		scopes,
+		isReferenceDefined,
+		mathRanges,
+		skipOwnedRanges ? { skipOwnedRanges } : undefined,
+	);
 }
 
 /**

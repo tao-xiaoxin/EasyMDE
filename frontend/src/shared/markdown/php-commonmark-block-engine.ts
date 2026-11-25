@@ -33,7 +33,6 @@ import {
  */
 
 const MAX_NESTING_LEVEL = 100;
-const POTENTIAL_INDENTED_CODE_LINE = /(?:^|\r\n|\n|\r)(?: {4}|\t)/u;
 
 export type ScannedCodeRange = Readonly<{ end: number; start: number }>;
 
@@ -587,7 +586,8 @@ export function scanPhpCommonMarkBlockCodeRanges(
 	if (
 		!source.includes("`") &&
 		!source.includes("~") &&
-		!POTENTIAL_INDENTED_CODE_LINE.test(source)
+		!source.includes("    ") &&
+		!source.includes("\t")
 	) {
 		return [];
 	}

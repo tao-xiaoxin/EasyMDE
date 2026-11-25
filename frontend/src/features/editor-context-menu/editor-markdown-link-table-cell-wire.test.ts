@@ -5,9 +5,12 @@ import {
 	EDITOR_BLOCK_INDEX_PACKED_V3_WITH_TABLE_CELLS_KEYS,
 	type EditorMarkdownBlockIndexPackedData,
 	hasExactEditorBlockIndexPackedKeys,
+} from "../../contracts/ports/editor-block-index-port";
+import {
 	packEditorMarkdownLinkTableCells,
 	unpackEditorMarkdownLinkTableCells,
-} from "../../contracts/ports/editor-block-index-port";
+} from "../../shared/markdown/editor-block-index-table-cell-codec";
+import { buildWorkerRoundTripBlockIndex } from "./editor-block-index-worker-round-trip.test-harness";
 import { createEditorMarkdownBlockIndex } from "./editor-markdown-block-index";
 
 function build(source: string) {
@@ -573,4 +576,20 @@ describe("editor markdown link table-cell wire", () => {
 			),
 		).toBeNull();
 	}, 60_000);
+
+	it("round-trips extracted table-cell codec end-to-end through the packed-v3 worker for container and reconciled tables (Round 39 Track B #6)", async () => {
+		for (const source of [
+			"> [r]: /u\n>     [a](/rel) | b\n>     --- | ---\n>     1 | 2",
+			"- [r]: /u\n      [a](/x\\|y) | b\n      --- | ---\n      1 | 2",
+			"[r]: /u\n    ![a](https://example.com/a.png) | [b](/u\\|v)\n    --- | ---\n    1 | 2\n\n![c](https://example.com/c.png)",
+		]) {
+			const direct = build(source);
+			const roundTrip = await buildWorkerRoundTripBlockIndex(source);
+			expect(roundTrip.blocks, source).toEqual(direct.blocks);
+			expect(roundTrip.imageBlocks, source).toEqual(direct.imageBlocks);
+			expect(roundTrip.imageRanges, source).toEqual(direct.imageRanges);
+			expect(roundTrip.linkCandidates, source).toEqual(direct.linkCandidates);
+			expect(roundTrip.linkTableCells, source).toEqual(direct.linkTableCells);
+		}
+	});
 });

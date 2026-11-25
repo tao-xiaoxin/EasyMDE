@@ -84,6 +84,7 @@ type ParserSnapshot = Readonly<{
 	hasIndentedCodeBlock: boolean;
 	hasLinkSyntax: boolean;
 	imageNodes: ReadonlyArray<ParserImageNode>;
+	nestedCodeBlocks: ReadonlyArray<SourceRange>;
 	syntaxNodes: ReadonlyArray<MarkdownSyntaxNode>;
 	unavailableRanges: ReadonlyArray<SourceRange>;
 }>;
@@ -134,7 +135,9 @@ function parserSnapshot(
 	const starts = markdownLineStarts(source);
 	const tree = markdownLanguage.parser.parse(projection.text);
 	const syntaxNodes: MarkdownSyntaxNode[] = [];
+	const codeBlockNodes: SourceRange[] = [];
 	let hasLinkSyntax = false;
+	let hasIndentedCodeBlock = false;
 	tree.iterate({
 		enter: (node) => {
 			if (
@@ -143,6 +146,9 @@ function parserSnapshot(
 				"URL" === node.name
 			) {
 				hasLinkSyntax = true;
+			} else if ("CodeBlock" === node.name) {
+				hasIndentedCodeBlock = true;
+				codeBlockNodes.push({ from: node.from, to: node.to });
 			}
 			syntaxNodes.push({ from: node.from, name: node.name, to: node.to });
 		},
@@ -157,13 +163,30 @@ function parserSnapshot(
 		}>
 	> = [];
 	const unavailableRanges: SourceRange[] = [];
-	let hasIndentedCodeBlock = false;
+	const nestedCodeBlocks: SourceRange[] = [];
+	let codeBlockCursor = 0;
 	if (topLevel.firstChild()) {
 		do {
-			if ("CodeBlock" === topLevel.name) hasIndentedCodeBlock = true;
 			const kind = nodeKind(topLevel.name);
 			if ("unavailable" === kind) {
 				unavailableRanges.push({ from: topLevel.from, to: topLevel.to });
+			}
+			while (
+				codeBlockCursor < codeBlockNodes.length &&
+				(codeBlockNodes[codeBlockCursor]?.from ?? 0) < topLevel.to
+			) {
+				const cb = codeBlockNodes[codeBlockCursor];
+				codeBlockCursor += 1;
+				if (
+					cb &&
+					cb.from >= topLevel.from &&
+					cb.to <= topLevel.to &&
+					"CodeBlock" !== topLevel.name &&
+					"unavailable" !== kind &&
+					"code" !== kind
+				) {
+					nestedCodeBlocks.push(originalRange(projection, cb));
+				}
 			}
 			projectedBlocks.push({ from: topLevel.from, kind, to: topLevel.to });
 			blocks.push(
@@ -220,6 +243,7 @@ function parserSnapshot(
 		hasIndentedCodeBlock,
 		hasLinkSyntax,
 		imageNodes,
+		nestedCodeBlocks,
 		syntaxNodes,
 		unavailableRanges: mergeRanges(unavailableRanges),
 	};
@@ -426,6 +450,7 @@ export function createEditorMarkdownBlockIndex(
 					phpBlockScan,
 					phpMathRanges,
 					starts,
+					parsed.nestedCodeBlocks,
 				)
 			: {
 					blocks: parsed.blocks,
@@ -509,12 +534,16 @@ export function createEditorMarkdownBlockIndex(
 			(!phpBlockScan ||
 				!isImageNodeDroppedByPhp(source, phpBlockScan, node.from, node.to)),
 	);
+	const coveredTableImageRanges: ReadonlyArray<SourceRange> =
+		reconciledContent && reconciledContent.ownedRanges.length > 0
+			? mergeRanges([...availableLezerImages, ...reconciledContent.ownedRanges])
+			: availableLezerImages;
 	const recoveredTableImages =
 		phpBlockScan && hasTableImageCandidate
 			? collectUncoveredPhpTableImages(
 					source,
 					phpBlockScan,
-					availableLezerImages,
+					coveredTableImageRanges,
 				).map((located) => ({
 					available: true,
 					from: located.start,
@@ -529,7 +558,7 @@ export function createEditorMarkdownBlockIndex(
 						recoveredTableImages,
 					),
 					...recoveredTableImages,
-				]
+				].sort((left, right) => left.from - right.from || right.to - left.to)
 			: sortedLezerImages;
 	const allImageNodes =
 		reconciledContent && reconciledContent.ownedRanges.length > 0
@@ -582,19 +611,19 @@ export function createEditorMarkdownBlockIndex(
 		? images.displayMathBrokenImageRanges.length > 0 ||
 			hasEscapedPipe ||
 			uncoveredAutolinkOffsets.length > 0
-			? collectPhpDisplayMathBrokenBlockLinks(
-					source,
-					phpBlockScan,
+			? collectPhpDisplayMathBrokenBlockLinks({
+					bareAutolinkOffsets: uncoveredAutolinkOffsets,
+					brokenImageRanges: images.displayMathBrokenImageRanges,
 					displayMathRanges,
-					images.displayMathBrokenImageRanges,
-					isReferenceRangeDefined,
-					hasEscapedPipe,
-					uncoveredAutolinkOffsets,
-					phpMathRanges,
-					undefined,
-					undefined,
-					reconciledContent?.ownedRanges,
-				)
+					includeEscapedPipeTableCells: hasEscapedPipe,
+					isReferenceDefined: isReferenceRangeDefined,
+					mathRanges: phpMathRanges,
+					scan: phpBlockScan,
+					...(reconciledContent?.ownedRanges
+						? { skipOwnedRanges: reconciledContent.ownedRanges }
+						: {}),
+					source,
+				})
 			: null
 		: uncoveredAutolinkOffsets.length > 0
 			? collectLocalPhpBareAutolinkBlockLinks(

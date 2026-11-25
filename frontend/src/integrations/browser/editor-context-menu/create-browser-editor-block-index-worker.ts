@@ -9,7 +9,6 @@ import {
 	EDITOR_BLOCK_INDEX_PACKED_LINK_FIELDS,
 	EDITOR_BLOCK_INDEX_PACKED_MATH_FIELDS,
 	EDITOR_MARKDOWN_BLOCK_KIND_ORDER,
-	findEditorBlockIndexMathSpanEndBlockIndex,
 	hasExactEditorBlockIndexKeys,
 	hasExactEditorBlockIndexPackedKeys,
 	isReferenceLabelCaseFoldProfile,
@@ -33,8 +32,11 @@ import {
 	MAX_EDITOR_BLOCK_INDEX_MATH_SPANS,
 	MAX_EDITOR_BLOCK_INDEX_SOURCE_BYTES,
 	resolveEditorBlockIndexWorkerUrl,
-	unpackEditorMarkdownLinkTableCells,
 } from "../../../contracts/ports/editor-block-index-port";
+import {
+	findEditorBlockIndexMathSpanEndBlockIndex,
+	unpackEditorMarkdownLinkTableCells,
+} from "../../../shared/markdown/editor-block-index-table-cell-codec";
 
 type WorkerEventListener = (event: Event | MessageEvent<unknown>) => void;
 

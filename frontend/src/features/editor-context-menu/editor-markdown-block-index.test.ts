@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { markdownLanguage } from "@codemirror/lang-markdown";
 
+import { buildWorkerRoundTripBlockIndex } from "./editor-block-index-worker-round-trip.test-harness";
 import {
 	createEditorMarkdownBlockIndex as createProfiledMarkdownBlockIndex,
 	type EditorMarkdownBlockKind,
@@ -2706,13 +2707,13 @@ describe("readEditorCodeContent", () => {
 			);
 			const blockScan = scanPhpCommonMarkBlocks(manyOpeners, mathRanges);
 			const tOpeners = performance.now();
-			const owned = collectPhpDisplayMathBrokenBlockLinks(
-				manyOpeners,
-				blockScan,
-				mathRanges,
-				[{ from: 0, to: 13 }],
-				() => false,
-			);
+			const owned = collectPhpDisplayMathBrokenBlockLinks({
+				brokenImageRanges: [{ from: 0, to: 13 }],
+				displayMathRanges: mathRanges,
+				isReferenceDefined: () => false,
+				scan: blockScan,
+				source: manyOpeners,
+			});
 			const elapsedOpeners = performance.now() - tOpeners;
 			expect(owned.links, openerToken).toHaveLength(12_000);
 			expect(elapsedOpeners, openerToken).toBeLessThan(1_500);
@@ -2738,13 +2739,13 @@ describe("readEditorCodeContent", () => {
 		);
 		const scan = scanPhpCommonMarkBlocks(largeDoc, mathRanges);
 		const tDirect = performance.now();
-		const owned = collectPhpDisplayMathBrokenBlockLinks(
-			largeDoc,
+		const owned = collectPhpDisplayMathBrokenBlockLinks({
+			brokenImageRanges: [{ from: 0, to: 11 }],
+			displayMathRanges: mathRanges,
+			isReferenceDefined: () => false,
 			scan,
-			mathRanges,
-			[{ from: 0, to: 11 }],
-			() => false,
-		);
+			source: largeDoc,
+		});
 		expect(owned.links).toEqual([]);
 		expect(performance.now() - tDirect).toBeLessThan(1_500);
 
@@ -3468,6 +3469,280 @@ describe("Round 35 exact PHP table reconciliation and PHP-owned reconciled links
 			expect(elapsedMs, label).toBeLessThanOrEqual(1_500);
 		}
 	}, 60_000);
+
+	it("keeps reconciled table imageBlocks ready when trailing ordinary images or recovered table images coexist (Round 39 Track B #1)", async () => {
+		// Exact Track B #1 reproducer: post-refdef reconciled table with image + trailing ordinary image.
+		const postRefdefTableWithTrailing =
+			"[r]: /u\n    ![a](https://example.com/a.png) | b\n    --- | ---\n    1 | 2\n\n![b](https://example.com/b.png)";
+		const directPostRefdef = createEditorMarkdownBlockIndex(
+			postRefdefTableWithTrailing,
+		);
+		expect(directPostRefdef.blocks.map((block) => block.kind)).toEqual([
+			"unavailable",
+			"table",
+			"paragraph",
+		]);
+		expect(directPostRefdef.imageBlocks).toEqual([
+			{ count: 0, firstImageIndex: 0, status: "unavailable" },
+			{ count: 1, firstImageIndex: 0, status: "ready" },
+			{ count: 1, firstImageIndex: 1, status: "ready" },
+		]);
+		expect(
+			directPostRefdef.imageRanges.map((range) =>
+				postRefdefTableWithTrailing.slice(range.from, range.to),
+			),
+		).toEqual([
+			"![a](https://example.com/a.png)",
+			"![b](https://example.com/b.png)",
+		]);
+
+		// Worker packed-v3 round-trip produces identical imageBlocks & imageRanges.
+		const roundTripPostRefdef = await buildWorkerRoundTripBlockIndex(
+			postRefdefTableWithTrailing,
+		);
+		expect(roundTripPostRefdef.imageBlocks).toEqual(
+			directPostRefdef.imageBlocks,
+		);
+		expect(roundTripPostRefdef.imageRanges).toEqual(
+			directPostRefdef.imageRanges,
+		);
+
+		// Additional Track B #1 variants: escaped pipe `\|`, inline math `$x|y$`, math-bridged table, and mixed recovered + reconciled tables.
+		const variants: ReadonlyArray<
+			Readonly<{
+				expectedImages: ReadonlyArray<string>;
+				label: string;
+				source: string;
+			}>
+		> = [
+			{
+				expectedImages: [
+					"![a](https://example.com/a\\|1.png)",
+					"![b](https://example.com/b.png)",
+				],
+				label: "post-refdef reconciled table with escaped-pipe image + trailing image",
+				source:
+					"[r]: /u\n    ![a](https://example.com/a\\|1.png) | b\n    --- | ---\n    1 | 2\n\n![b](https://example.com/b.png)",
+			},
+			{
+				expectedImages: [
+					"![a](https://example.com/a.png)",
+					"![b](https://example.com/b.png)",
+				],
+				label: "post-refdef reconciled table with $x|y$ math cell + image + trailing image",
+				source:
+					"[r]: /u\n    $x|y$ ![a](https://example.com/a.png) | b\n    --- | ---\n    1 | 2\n\n![b](https://example.com/b.png)",
+			},
+			{
+				expectedImages: [
+					"![m](https://example.com/m.png)",
+					"![b](https://example.com/b.png)",
+				],
+				label: "math-bridged table with image + trailing image",
+				source:
+					"\\(a\n<div>\nb\\) | ![m](https://example.com/m.png)\n-|-\n\n![b](https://example.com/b.png)",
+			},
+			{
+				expectedImages: [
+					"![esc](https://example.com/a\\|b.png)",
+					"![rec](https://example.com/r.png)",
+					"![tail](https://example.com/t.png)",
+				],
+				label: "ordinary escaped-pipe recovered table + post-refdef reconciled table + trailing image",
+				source:
+					"| ![esc](https://example.com/a\\|b.png) | x |\n| --- | --- |\n\n[r]: /u\n    ![rec](https://example.com/r.png) | b\n    --- | ---\n    1 | 2\n\n![tail](https://example.com/t.png)",
+			},
+			{
+				expectedImages: [
+					"![math](https://example.com/m.png)",
+					"![rec](https://example.com/r.png)",
+					"![tail](https://example.com/t.png)",
+				],
+				label: "ordinary $x|y$ recovered table + post-refdef reconciled table + trailing image",
+				source:
+					"| $x|y$ ![math](https://example.com/m.png) | x |\n| --- | --- |\n\n[r]: /u\n    ![rec](https://example.com/r.png) | b\n    --- | ---\n    1 | 2\n\n![tail](https://example.com/t.png)",
+			},
+		];
+
+		for (const { expectedImages, label, source } of variants) {
+			const idx = createEditorMarkdownBlockIndex(source);
+			expect(
+				idx.imageRanges.map((range) => source.slice(range.from, range.to)),
+				label,
+			).toEqual(expectedImages);
+			for (let i = 0; i < idx.blocks.length; i += 1) {
+				const block = idx.blocks[i];
+				const imageBlock = idx.imageBlocks[i];
+				if (block && "unavailable" !== block.kind && "code" !== block.kind) {
+					expect(imageBlock?.status, `${label}:block${i}`).toBe("ready");
+				}
+			}
+		}
+	});
+
+	it("reconciles post-refdef nested CodeBlocks inside blockquote and list containers while keeping genuine container indented code excluded (Round 39 Track B #5)", async () => {
+		const linkTexts = (source: string) =>
+			(createEditorMarkdownBlockIndex(source).linkCandidates ?? []).map((c) =>
+				source.slice(c.from, c.to),
+			);
+		const imageTexts = (source: string) =>
+			createEditorMarkdownBlockIndex(source).imageRanges.map((r) =>
+				source.slice(r.from, r.to),
+			);
+
+		// Positive PHP-verified container cases (links, images, nested containers, tables, multiline, math, CRLF).
+		for (const [label, source, expectedLinks, expectedImages] of [
+			[
+				"blockquote post-refdef link",
+				"> [r]: /u\n>     [a](/rel)",
+				["[a](/rel)"],
+				[],
+			],
+			[
+				"blockquote post-refdef image",
+				"> [r]: /u\n>     ![a](/rel.png)",
+				[],
+				["![a](/rel.png)"],
+			],
+			[
+				"list post-refdef link",
+				"- [r]: /u\n      [a](/rel)",
+				["[a](/rel)"],
+				[],
+			],
+			[
+				"list post-refdef image",
+				"- [r]: /u\n      ![a](/rel.png)",
+				[],
+				["![a](/rel.png)"],
+			],
+			[
+				"nested blockquote + list post-refdef link",
+				"> - [r]: /u\n>       [a](/rel)",
+				["[a](/rel)"],
+				[],
+			],
+			[
+				"blockquote post-refdef table link",
+				"> [r]: /u\n>     [a](/rel) | b\n>     --- | ---\n>     1 | 2",
+				["[a](/rel)"],
+				[],
+			],
+			[
+				"blockquote post-refdef table image",
+				"> [r]: /u\n>     ![a](/rel.png) | b\n>     --- | ---\n>     1 | 2",
+				[],
+				["![a](/rel.png)"],
+			],
+			[
+				"list post-refdef table link",
+				"- [r]: /u\n      [a](/rel) | b\n      --- | ---\n      1 | 2",
+				["[a](/rel)"],
+				[],
+			],
+			[
+				"blockquote post-refdef multiline link with container prefix stripping",
+				"> [r]: /u\n>     [a\n> b](/rel)",
+				["[a\n> b](/rel)"],
+				[],
+			],
+			[
+				"list post-refdef multiline link with list prefix stripping",
+				"- [r]: /u\n      [a\n  b](/rel)",
+				["[a\n  b](/rel)"],
+				[],
+			],
+			[
+				"blockquote post-refdef inline math + link",
+				"> [r]: /u\n>     $x$ [a](/rel)",
+				["[a](/rel)"],
+				[],
+			],
+			[
+				"blockquote post-refdef inline code + link",
+				"> [r]: /u\n>     `[no](/x)` [yes](/y)",
+				["[yes](/y)"],
+				[],
+			],
+			[
+				"blockquote post-refdef nested refdef + ref link",
+				"> [r]: /u\n>     [r2]: /v\n>     [a][r2]",
+				["[a][r2]"],
+				[],
+			],
+			[
+				"blockquote post-refdef same-line display math + link",
+				"> [r]: /u\n>     $$x$$ [b](/b)",
+				["[b](/b)"],
+				[],
+			],
+			[
+				"blockquote post-refdef CRLF link",
+				"> [r]: /u\r\n>     [a](/rel)",
+				["[a](/rel)"],
+				[],
+			],
+			[
+				"list post-refdef CRLF image",
+				"- [r]: /u\r\n      ![a](/rel.png)",
+				[],
+				["![a](/rel.png)"],
+			],
+		] as const) {
+			const direct = createEditorMarkdownBlockIndex(source);
+			expect(
+				(direct.linkCandidates ?? []).map((c) => source.slice(c.from, c.to)),
+				`links:${label}`,
+			).toEqual([...expectedLinks]);
+			expect(
+				direct.imageRanges.map((r) => source.slice(r.from, r.to)),
+				`images:${label}`,
+			).toEqual([...expectedImages]);
+			if (expectedImages.length > 0) {
+				expect(direct.imageBlocks[0], `imageBlock:${label}`).toEqual({
+					count: expectedImages.length,
+					firstImageIndex: 0,
+					status: "ready",
+				});
+			}
+		}
+
+		// Reference image inside blockquote post-refdef degrades the quote's imageBlock to unavailable (no false ready count=0).
+		const bqRefImg = createEditorMarkdownBlockIndex("> [r]: /u\n>     ![a][r]");
+		expect(bqRefImg.imageBlocks[0]).toMatchObject({
+			count: 0,
+			status: "unavailable",
+		});
+		expect(bqRefImg.linkCandidates).toEqual([]);
+
+		// Blockquote post-refdef table attaches exact linkTableCells metadata and round-trips through packed-v3 worker.
+		const bqTable =
+			"> [r]: /u\n>     [a](/rel) | b\n>     --- | ---\n>     1 | 2";
+		const bqTableDirect = createEditorMarkdownBlockIndex(bqTable);
+		expect(bqTableDirect.linkTableCells?.size).toBe(1);
+		const bqTableWorker = await buildWorkerRoundTripBlockIndex(bqTable);
+		expect(bqTableWorker.linkCandidates).toEqual(bqTableDirect.linkCandidates);
+		expect(bqTableWorker.linkTableCells).toEqual(bqTableDirect.linkTableCells);
+
+		// Negative controls: genuine indented code inside blockquote/list MUST stay excluded (0 links, 0 images).
+		for (const genuineContainerCode of [
+			">     [not-a-link](/x)",
+			">     ![not-an-image](/x.png)",
+			"- \n      [not-a-link](/x)",
+			"- item\n\n      [not-a-link](/x)",
+			"> [r]: /u\n>\n>     [not-a-link](/x)",
+			"> [r]: /u\n>     $$x$$\n>     [not-a-link](/x)",
+			"> [r]: /u\n>     $$x$$    [not-a-link](/x)",
+		]) {
+			expect(linkTexts(genuineContainerCode), `links:${genuineContainerCode}`).toEqual(
+				[],
+			);
+			expect(
+				imageTexts(genuineContainerCode),
+				`images:${genuineContainerCode}`,
+			).toEqual([]);
+		}
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

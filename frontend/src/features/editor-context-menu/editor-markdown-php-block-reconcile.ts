@@ -13,7 +13,7 @@ import {
 import { lineIndexAtOffsets } from "./editor-markdown-lines";
 import type { SourceRange } from "./editor-markdown-source-projection";
 
-export type ReconciledPhpTableBlocks = Readonly<{
+type ReconciledPhpTableBlocks = Readonly<{
 	blocks: ReadonlyArray<EditorMarkdownSourceBlock>;
 	reconciledTableBlocks: ReadonlyArray<EditorMarkdownSourceBlock>;
 }>;
@@ -75,7 +75,7 @@ export function trimBlockSlice(
 	};
 }
 
-export function isOffsetInsideInlineParenMath(
+function isOffsetInsideInlineParenMath(
 	source: string,
 	offset: number,
 	minMathFrom: number,
@@ -98,6 +98,95 @@ export function isOffsetInsideInlineParenMath(
 			"\\" === source[math.from] &&
 			"(" === source[math.from + 1],
 	);
+}
+
+/**
+ * Shared validity gate for reconciling a top-level PHP GFM table span
+ * `[tableFrom, tableTo)` covering lines `[startLineIdx..endLineIdx]`.
+ *
+ * Rejects blockquoted tables, block-code overlaps, overlapping display math,
+ * math blocks, and non-math-hidden container blocks, with caller-configured
+ * rules for overlapping `code` and `unavailable` blocks.
+ */
+export function isValidReconciledPhpTableSpan(
+	options: Readonly<{
+		allowTrailingUnavailableBlocks: boolean;
+		blocks: ReadonlyArray<EditorMarkdownSourceBlock>;
+		endLineIdx: number;
+		phpBlockScan: ScannedMarkdownBlocks;
+		phpMathRanges: ReadonlyArray<PhpMarkdownMathRange>;
+		rejectCodeBlocks: boolean;
+		source: string;
+		startLineIdx: number;
+		tableFrom: number;
+		tableTo: number;
+	}>,
+): boolean {
+	const {
+		allowTrailingUnavailableBlocks,
+		blocks,
+		endLineIdx,
+		phpBlockScan,
+		phpMathRanges,
+		rejectCodeBlocks,
+		source,
+		startLineIdx,
+		tableFrom,
+		tableTo,
+	} = options;
+	const lines = phpBlockScan.lines;
+	for (let idx = startLineIdx; idx <= endLineIdx; idx += 1) {
+		if (lines[idx]?.consumedBlockquote) return false;
+	}
+	if (inCodeRange(phpBlockScan.blockCodeRanges, tableFrom, tableTo)) {
+		return false;
+	}
+	for (
+		let mIdx = findFirstMathRangeEndingAfter(phpMathRanges, tableFrom);
+		mIdx < phpMathRanges.length;
+		mIdx += 1
+	) {
+		const math = phpMathRanges[mIdx];
+		if (!math || math.from >= tableTo) break;
+		if (math.block) return false;
+	}
+	const mathCursor = {
+		value: findFirstMathRangeEndingAfter(phpMathRanges, tableFrom),
+	};
+	let firstOverlappingKind: EditorMarkdownBlockKind | null = null;
+	for (
+		let i = findFirstBlockEndingAfter(blocks, tableFrom);
+		i < blocks.length;
+		i += 1
+	) {
+		const candidate = blocks[i];
+		if (!candidate || candidate.from >= tableTo) break;
+		if (null === firstOverlappingKind) firstOverlappingKind = candidate.kind;
+		if ("math" === candidate.kind) return false;
+		if (rejectCodeBlocks && "code" === candidate.kind) return false;
+		if (
+			("quote" === candidate.kind ||
+				"list" === candidate.kind ||
+				(!allowTrailingUnavailableBlocks &&
+					"unavailable" === candidate.kind)) &&
+			!isOffsetInsideInlineParenMath(
+				source,
+				candidate.from,
+				tableFrom,
+				phpMathRanges,
+				mathCursor,
+			)
+		) {
+			return false;
+		}
+	}
+	if (
+		allowTrailingUnavailableBlocks &&
+		(null === firstOverlappingKind || "unavailable" === firstOverlappingKind)
+	) {
+		return false;
+	}
+	return true;
 }
 
 /**
@@ -420,62 +509,23 @@ function findMathBridgedPhpTableSpan(
 	if (evaluatedTableStarts.has(tableLineSpan.startLineIdx)) return null;
 	evaluatedTableStarts.add(tableLineSpan.startLineIdx);
 
-	for (
-		let idx = tableLineSpan.startLineIdx;
-		idx <= tableLineSpan.endLineIdx;
-		idx += 1
-	) {
-		if (lines[idx]?.consumedBlockquote) return null;
-	}
 	const tableFrom = lines[tableLineSpan.startLineIdx]?.lineStart ?? -1;
 	const tableTo = lines[tableLineSpan.endLineIdx]?.lineEnd ?? -1;
 	if (tableFrom < 0 || tableTo <= tableFrom) return null;
-	if (inCodeRange(phpBlockScan.blockCodeRanges, tableFrom, tableTo)) {
-		return null;
-	}
-
-	for (
-		let mIdx = findFirstMathRangeEndingAfter(phpMathRanges, tableFrom);
-		mIdx < phpMathRanges.length;
-		mIdx += 1
+	if (
+		!isValidReconciledPhpTableSpan({
+			allowTrailingUnavailableBlocks: true,
+			blocks,
+			endLineIdx: tableLineSpan.endLineIdx,
+			phpBlockScan,
+			phpMathRanges,
+			rejectCodeBlocks: true,
+			source,
+			startLineIdx: tableLineSpan.startLineIdx,
+			tableFrom,
+			tableTo,
+		})
 	) {
-		const math = phpMathRanges[mIdx];
-		if (!math || math.from >= tableTo) break;
-		if (math.block) return null;
-	}
-
-	// Verify overlapping Lezer blocks are top-level non-code/non-container blocks
-	// (allowing phantom `quote`/`list` blocks whose markers lie strictly inside
-	// inline `\(...\)` math) and the table does not start in `unavailable`.
-	const mathCursor = {
-		value: findFirstMathRangeEndingAfter(phpMathRanges, tableFrom),
-	};
-	let firstOverlappingKind: EditorMarkdownBlockKind | null = null;
-	for (
-		let i = findFirstBlockEndingAfter(blocks, tableFrom);
-		i < blocks.length;
-		i += 1
-	) {
-		const candidate = blocks[i];
-		if (!candidate || candidate.from >= tableTo) break;
-		if (null === firstOverlappingKind) firstOverlappingKind = candidate.kind;
-		if ("code" === candidate.kind || "math" === candidate.kind) {
-			return null;
-		}
-		if (
-			("quote" === candidate.kind || "list" === candidate.kind) &&
-			!isOffsetInsideInlineParenMath(
-				source,
-				candidate.from,
-				tableFrom,
-				phpMathRanges,
-				mathCursor,
-			)
-		) {
-			return null;
-		}
-	}
-	if (null === firstOverlappingKind || "unavailable" === firstOverlappingKind) {
 		return null;
 	}
 	return { from: tableFrom, to: tableTo };

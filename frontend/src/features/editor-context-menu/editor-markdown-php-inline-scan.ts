@@ -24,7 +24,7 @@ import type { ParserLinkNode } from "./editor-markdown-link-preparation";
 import type { SourceRange } from "./editor-markdown-source-projection";
 
 /** Whether original-source `[from, to)` overlaps a PHP-extracted math span. */
-export type MathCrossingQuery = (from: number, to: number) => boolean;
+type MathCrossingQuery = (from: number, to: number) => boolean;
 
 const NO_MATH_CROSSING: MathCrossingQuery = () => false;
 

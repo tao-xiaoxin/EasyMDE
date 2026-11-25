@@ -15,9 +15,9 @@ import {
 	type EditorBlockIndexWorkerResponse,
 	type ReferenceLabelCaseFoldProfile,
 	MAX_EDITOR_BLOCK_INDEX_SOURCE_BYTES,
-	packEditorMarkdownLinkTableCells,
 } from "../contracts/ports/editor-block-index-port";
 import { createEditorMarkdownBlockIndex } from "../features/editor-context-menu/editor-markdown-block-index";
+import { packEditorMarkdownLinkTableCells } from "../shared/markdown/editor-block-index-table-cell-codec";
 
 type WorkerMessage = Readonly<{ data: unknown }>;
 export type EditorBlockIndexWorkerScope = Readonly<{

@@ -700,8 +700,15 @@ describe("maskPhpMarkdownMathForTableScan", () => {
 			"|",
 			"a",
 			" ",
+			"\t",
+			" \t",
+			"  \t",
+			"   \t",
 			"\n",
+			"\r\n",
 			"\n\n",
+			"\n>     ",
+			"\n-     ",
 			"\n```\ncode\n```\n",
 			"\n~~~\ncode\n~~~\n",
 			"\n\n    indented\n\n",
@@ -731,5 +738,57 @@ describe("maskPhpMarkdownMathForTableScan", () => {
 				}
 			}
 		}
+	});
+
+	it("detects space+tab ({0,3}\\t) and container indented code in bounded math scans matching full scan and PHP MarkdownRenderer while keeping 100k trailing-backtick prefix scan fast (Round 39 Track A #3)", () => {
+		// All of these parse as IndentedCode (`<pre><code>$x$</code></pre>`) in PHP MarkdownRenderer & full scan.
+		for (const [label, source, stopAfterOffset] of [
+			["1 space + tab + LF + backtick", " \t$x$\n`", 5],
+			["2 spaces + tab + LF + backtick", "  \t$x$\n`", 6],
+			["3 spaces + tab + LF + backtick", "   \t$x$\n`", 7],
+			["1 space + tab + CRLF + backtick (offset 5)", " \t$x$\r\n`", 5],
+			["1 space + tab + CRLF + backtick (offset 6)", " \t$x$\r\n`", 6],
+			["4 spaces + LF + backtick", "    $x$\n`", 7],
+			["blockquote + 5 spaces + LF + backtick", ">     $x$\n`", 9],
+			["list + 5 spaces + LF + backtick", "-     $x$\n`", 9],
+			["blockquote + 2 tabs + LF + backtick", ">\t\t$x$\n`", 6],
+			["list + 2 tabs + LF + backtick", "-\t\t$x$\n`", 6],
+		] as const) {
+			const full = scanPhpMarkdownMathRanges(source).map(
+				({ block, from, to }) => ({ block, from, to }),
+			);
+			const bounded = scanPhpMarkdownMathRanges(
+				source,
+				undefined,
+				stopAfterOffset,
+			).map(({ block, from, to }) => ({ block, from, to }));
+			expect(full, `full:${label}`).toEqual([]);
+			expect(bounded, `bounded:${label}`).toEqual(full);
+		}
+
+		// Positive control: paragraph continuation line with ` \t` is NOT indented code in either full or bounded scan.
+		const paraContinuation = "a\n \t$x$\n`";
+		const expectedContinuation = scanPhpMarkdownMathRanges(paraContinuation).map(
+			({ block, from, to }) => ({ block, from, to }),
+		);
+		expect(expectedContinuation).toEqual([{ block: false, from: 4, to: 7 }]);
+		expect(
+			scanPhpMarkdownMathRanges(paraContinuation, undefined, 7).map(
+				({ block, from, to }) => ({ block, from, to }),
+			),
+		).toEqual(expectedContinuation);
+
+		// 100k-line trailing-backtick bounded prefix scan stays fast (sub-5ms target, generous CI margin).
+		const trailingLines = "p $a$ $b$\n".repeat(100_000);
+		const tabPrefixedTrailing = ` \t$x$\n${trailingLines}\``;
+		const started = performance.now();
+		const boundedTrailing = scanPhpMarkdownMathRanges(
+			tabPrefixedTrailing,
+			undefined,
+			5,
+		);
+		const elapsedMs = performance.now() - started;
+		expect(boundedTrailing).toEqual([]);
+		expect(elapsedMs).toBeLessThanOrEqual(50);
 	});
 });

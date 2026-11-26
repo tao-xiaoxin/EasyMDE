@@ -803,8 +803,6 @@ export function createPrescanPhpTracker(
 		listIndentAfterBlank,
 		mathIndex,
 		standaloneDisplayMath,
-		startsDisplayMath: (content: string, lineIdx: number): boolean =>
-			displayMathAt(content, lineIdx) !== null,
 		state,
 	};
 }

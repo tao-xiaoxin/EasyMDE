@@ -323,33 +323,97 @@ function createTopItemMatcher(listNode: ProseMirrorNode): TopItemMatcher {
 }
 
 /**
+ * Collects the parsed `protected_block(math)` raws that precede `prevEffIdx`
+ * inside its baseline `sharedGroup` (empty when `prevEffIdx` is not preceded
+ * by display math in a shared group).
+ */
+export function precedingSharedGroupMathRaws(
+	baselineBlocks: ReadonlyArray<ParsedVisualBlockSource>,
+	prevEffIdx: number,
+): ReadonlyArray<string> {
+	if (prevEffIdx < 0) return [];
+	const group = baselineBlocks[prevEffIdx]?.sharedGroup;
+	if (!group || prevEffIdx <= group.startIndex) return [];
+	const raws: string[] = [];
+	for (let k = group.startIndex; k < prevEffIdx; k += 1) {
+		const member = baselineBlocks[k]?.node;
+		if (
+			member?.type.name === "protected_block" &&
+			member.attrs.kind === "math" &&
+			typeof member.attrs.rawMarkdown === "string" &&
+			member.attrs.rawMarkdown.length > 0
+		) {
+			raws.push(member.attrs.rawMarkdown);
+		}
+	}
+	return raws;
+}
+
+/**
  * PHP `extract_math()` turns any unshielded display math into
  * `"\n\nTOKEN\n\n"`, which closes an open list, so display math never sits
- * inside `listNode`'s body. It can only precede the list on the shared-group
- * line that opens it (`$$a$$- item`, `foo\\[a\\]- item`, `$$\na\n$$- item`):
- * when line 0 is not already an item of `listNode`, the text up to the
- * closing delimiter immediately before the first item marker is dropped.
+ * inside `listNode`'s body. It can only precede `listNode` inside its
+ * enclosing shared group (`$$a$$- item`, `-   item1 $$b$$- item2`,
+ * `$$a$$-   item1 $$b$$- item2`, `$$\na\n$$- item`). When `precedingMathRaws`
+ * is provided by the caller's baseline alignment, only those parsed display
+ * math spans are trusted (empty = never run an isolated math scan); otherwise
+ * direct callers fall back to slicing after the last display-math range whose
+ * tail opens a top-level item of `listNode`.
  */
 function stripLeadingDisplayMathPrefix(
 	text: string,
 	depth: number,
 	matchTopItem: TopItemMatcher,
+	precedingMathRaws?: ReadonlyArray<string>,
 ): string {
-	const head = stripBlockquoteDepthWithColumn(firstLine(text), depth);
-	if (head.matched === depth && matchTopItem(head.rest, head.column)) {
+	const quotePrefix = "> ".repeat(Math.max(depth, 0));
+	if (precedingMathRaws !== undefined) {
+		if (precedingMathRaws.length === 0) return text;
+		const lastMath = precedingMathRaws[precedingMathRaws.length - 1] ?? "";
+		if (lastMath.length === 0) return text;
+		const ranges = scanPhpMarkdownMathRanges(text);
+		for (let i = ranges.length - 1; i >= 0; i -= 1) {
+			const range = ranges[i];
+			if (!range?.block) continue;
+			if (
+				text.slice(range.from, range.to) === lastMath &&
+				matchTopItem(firstLine(text.slice(range.to)), 0)
+			) {
+				return `${quotePrefix}${text.slice(range.to)}`;
+			}
+		}
+		// Fallback when cross-block backticks outside `text` make an isolated
+		// math scan skip the real parsed `lastMath` inside the shared group.
+		let searchFrom = text.length;
+		while (searchFrom >= lastMath.length) {
+			const pos = text.lastIndexOf(lastMath, searchFrom - 1);
+			if (pos < 0) break;
+			const tail = text.slice(pos + lastMath.length);
+			if (matchTopItem(firstLine(tail), 0)) {
+				return `${quotePrefix}${tail}`;
+			}
+			searchFrom = pos;
+		}
 		return text;
 	}
 	if (!text.includes("$$") && !text.includes("\\[")) return text;
-	for (const range of scanPhpMarkdownMathRanges(text)) {
-		if (!range.block) continue;
+	const ranges = scanPhpMarkdownMathRanges(text);
+	for (let i = ranges.length - 1; i >= 0; i -= 1) {
+		const range = ranges[i];
+		if (!range?.block) continue;
 		if (matchTopItem(firstLine(text.slice(range.to)), 0)) {
-			return `${"> ".repeat(Math.max(depth, 0))}${text.slice(range.to)}`;
+			return `${quotePrefix}${text.slice(range.to)}`;
 		}
 	}
 	return text;
 }
 
-/** Raw Markdown of every multiline inline math span parsed inside `listNode`. */
+/**
+ * Raw Markdown of every multiline inline math span parsed inside `listNode`,
+ * including `\(...\)` spans preserved inside `protected_block(raw)` HTML
+ * blocks or reference definitions (which PHP `extract_math()` folds before
+ * CommonMark parses containers).
+ */
 function collectMultilineInlineMath(
 	listNode: ProseMirrorNode,
 ): ReadonlyArray<string> {
@@ -362,6 +426,20 @@ function collectMultilineInlineMath(
 			node.attrs.rawMarkdown.includes("\n")
 		) {
 			spans.push(node.attrs.rawMarkdown);
+		} else if (
+			node.type.name === "protected_block" &&
+			node.attrs.kind === "raw" &&
+			typeof node.attrs.rawMarkdown === "string" &&
+			node.attrs.rawMarkdown.includes("\n") &&
+			(node.attrs.rawMarkdown.includes("\\(") ||
+				node.attrs.rawMarkdown.includes("$"))
+		) {
+			const raw = node.attrs.rawMarkdown;
+			for (const range of scanPhpMarkdownMathRanges(raw)) {
+				if (range.block) continue;
+				const slice = raw.slice(range.from, range.to);
+				if (slice.includes("\n")) spans.push(slice);
+			}
 		}
 		return !node.isInline;
 	});
@@ -487,9 +565,15 @@ function trailingListItemContentIndent(
 	listNode: ProseMirrorNode,
 	depth: number,
 	blankLineFollows: boolean,
+	precedingMathRaws?: ReadonlyArray<string>,
 ): number {
 	const matchTopItem = createTopItemMatcher(listNode);
-	const text = stripLeadingDisplayMathPrefix(listEmitted, depth, matchTopItem);
+	const text = stripLeadingDisplayMathPrefix(
+		listEmitted,
+		depth,
+		matchTopItem,
+		precedingMathRaws,
+	);
 	const raw = scanTrailingListItem(text, matchTopItem, depth, blankLineFollows);
 	let indent = raw.indent;
 	const spans = collectMultilineInlineMath(listNode);
@@ -529,6 +613,7 @@ export function isListSwallowingFollowingBlock(
 	depth: number,
 	prevWasVerbatimAdjacent: boolean,
 	blankLineBetween: boolean,
+	prevPrecedingMathRaws?: ReadonlyArray<string>,
 ): boolean {
 	if (!prevNode || prevWasVerbatimAdjacent || !isNestedList(prevNode)) {
 		return false;
@@ -542,6 +627,7 @@ export function isListSwallowingFollowingBlock(
 		prevNode,
 		depth,
 		blankLineBetween,
+		prevPrecedingMathRaws,
 	);
 	return trailingIndent > 0 && childIndent >= trailingIndent;
 }
@@ -603,6 +689,7 @@ export function checkRawPreservationRisks(
 	prevInner: string,
 	prevEmitted: () => string,
 	prevWasVerbatimAdjacent: boolean,
+	prevPrecedingMathRaws?: ReadonlyArray<string>,
 ): Readonly<{ indentedRisk: boolean; swallowRisk: boolean }> {
 	const leadIndent = leadingIndentAtDepth(rawEmitted, depth);
 	const indentedRisk =
@@ -627,6 +714,7 @@ export function checkRawPreservationRisks(
 			depth,
 			prevWasVerbatimAdjacent,
 			sep !== "\n",
+			prevPrecedingMathRaws,
 		);
 	return { indentedRisk, swallowRisk };
 }

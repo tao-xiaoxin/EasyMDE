@@ -24,7 +24,11 @@ import {
  * `serializeContainerPreservingChildren`.
  */
 
-export type SlotState = "verbatim" | "preserved-container" | "canonical";
+export type SlotState =
+	| "verbatim"
+	| "dedented"
+	| "preserved-container"
+	| "canonical";
 
 type SlotRisks = Readonly<{
 	indentedRisk: boolean;

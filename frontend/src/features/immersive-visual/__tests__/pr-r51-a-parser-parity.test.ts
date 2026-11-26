@@ -1,6 +1,7 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { EditorState } from "prosemirror-state";
 import { describe, expect, it } from "vitest";
+import { scanPhpMarkdownMathRanges } from "../../../shared/markdown/php-markdown-math-mask";
 import {
 	dedentSwallowedBlockAtDepth,
 	wouldMergeWithPreviousList,
@@ -847,6 +848,155 @@ describe("PR-R51-A list-marker padding, trailing-item scan, depth-aware list val
 			expect(stripBlockContainerPrefix("> x", "> > ", 0)).toBe("x");
 			expect(stripBlockContainerPrefix(">", "> ", 2)).toBe("");
 			expect(stripBlockContainerPrefix("    > x", "> ", 0)).toBe("    > x");
+		});
+	});
+
+	describe("7. Wave-54 parser/serializer hardening (cursor padding, multi-math/raw-block swallow, monotonic dedent, Step-1 inline-prefixed display math)", () => {
+		const cases: ReadonlyArray<Case> = [
+			[
+				"w54.cursor-ul-math",
+				"-    -\n      $$x$$\n\nzz",
+				replaceText("zz", "yy"),
+				"-    -\n      $$x$$\n\nyy",
+				[],
+			],
+			[
+				"w54.cursor-ol-math",
+				"1.    -\n       $$x$$\n\nzz",
+				replaceText("zz", "yy"),
+				"1.    -\n       $$x$$\n\nyy",
+				[],
+			],
+			[
+				"w54.cursor-ul-inline-math",
+				"-    -\n      $x$\n\nzz",
+				replaceText("zz", "yy"),
+				"-    -\n      $x$\n\nyy",
+				[],
+			],
+			[
+				"w54.mid-math-shared-group",
+				"-   item1 $$b$$- item2\n\ndrop\n\n  para",
+				deleteParagraph("drop"),
+				"-   item1 $$b$$- item2\n\npara",
+				[],
+			],
+			[
+				"w54.multi-math-shared-group",
+				"$$a$$-   item1 $$b$$- item2\n\ndrop\n\n  para",
+				deleteParagraph("drop"),
+				"$$a$$-   item1 $$b$$- item2\n\npara",
+				[],
+			],
+			[
+				"w54.multiline-mid-math-shared-group",
+				"-   item1\n  x $$b$$- item2\n\ndrop\n\n  para",
+				deleteParagraph("drop"),
+				"-   item1\n  x $$b$$- item2\n\npara",
+				[],
+			],
+			[
+				"w54.ol-mid-math-shared-group",
+				"1.   item1 $$b$$1. item2\n\ndrop\n\n   para",
+				deleteParagraph("drop"),
+				"1.   item1 $$b$$1. item2\n\npara",
+				[],
+			],
+			[
+				"w54.raw-html-multiline-math",
+				"- <div>\\(a\n-   bb\nc\\)</div>\n\ndrop\n\n  para",
+				deleteParagraph("drop"),
+				"- <div>\\(a\n-   bb\nc\\)</div>\n\npara",
+				[],
+			],
+			[
+				"w54.raw-html-multiline-math-quoted",
+				"> - <div>\\(a\n> -   bb\n> c\\)</div>\n>\n> drop\n>\n>   para",
+				deleteParagraph("drop"),
+				"> - <div>\\(a\n> -   bb\n> c\\)</div>\n>\n> para",
+				[],
+			],
+			[
+				"w54.raw-refdef-multiline-math",
+				'- [r]: /u "\\(a\n-   bb\nc\\)"\n\ndrop\n\n  para',
+				deleteParagraph("drop"),
+				'- [r]: /u "\\(a\n-   bb\nc\\)"\n\npara',
+				[],
+			],
+			[
+				"w54.step1-indented-prefixed-math",
+				">     foo $$x$$\n\nzz",
+				replaceText("foo", "bar"),
+				"> ```\n> bar \n> ```\n\n$$x$$\n\nzz",
+				[],
+			],
+		];
+		runCases(cases);
+
+		it("keeps liveness and serializer monotonically aligned when a Wave-2 list indent grows past an already-dedented follower", () => {
+			const md = [
+				"1. item1",
+				"2. item2",
+				"3. item3",
+				"4. item4",
+				"5. item5",
+				"6. item6",
+				"7. item7",
+				"8. item8",
+				"9. item9",
+				"1. [q]",
+				"",
+				"drop",
+				"",
+				"   * b",
+				"",
+				"  > [p]: /u",
+				'  > "t',
+				"  > ===",
+				"  >",
+				"  > editme",
+				"",
+				"prefix `` [link][p]",
+				"",
+				"$$x$$ ``",
+				"",
+				"- [r]",
+				"",
+				"  [q]: /q",
+				'  "qt',
+				"  ===",
+				"",
+				"[r]: /r",
+			].join("\n");
+			const parsed = parser.parseMarkdownWithBlockSources(md);
+			const guard = createMarkdownRoundTripGuard(md, parsed);
+			const edited = chain(
+				deleteParagraph("drop"),
+				replaceText("editme", "edited"),
+				deleteRefDef("r"),
+			)(guard.initialDoc);
+			const live = computeIntactRefDefLabels(
+				edited,
+				parsed,
+				MARKDOWN_SERIALIZERS.serializeBlock,
+				MARKDOWN_SERIALIZERS.serializeBlockWithRefs,
+			);
+			const serialized = guard.serialize(edited);
+			expect(live.partialTitleIntact.has("P")).toBe(false);
+			// Serializer honors the monotonic dedent of `* b` instead of leaving
+			// `   * b` and a dangling live `[p]: /u` behind while liveness killed P.
+			expect(serialized).toContain("\n\n* b\n\n");
+			expect(serialized).not.toContain('  > "t\n  > ===');
+		});
+
+		it("keeps PHP math scanning clean on single-codepoint nested list markers", () => {
+			expect(scanPhpMarkdownMathRanges("-    -\n      $$x$$\n\nzz")).toEqual(
+				[],
+			);
+			expect(scanPhpMarkdownMathRanges("-    -\n      $x$\n\nzz")).toEqual([]);
+			expect(
+				docShape(">     foo $$x$$\n\nzz"),
+			).toContain("protected_block");
 		});
 	});
 });

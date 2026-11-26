@@ -5,6 +5,7 @@ import {
 	hasDetachedContainerMathRisk,
 	leadingIndentAtDepth,
 	needsPrevInnerForRiskCheck,
+	precedingSharedGroupMathRaws,
 	prefixAtDepth,
 	stripAtDepth,
 } from "./markdown-container-preservation";
@@ -124,6 +125,7 @@ export function evaluateMatchedContainerHeadRisk(
 		prevInnerForRisk,
 		input.prevEmittedText,
 		prevWasVerbatimAdjacent,
+		precedingSharedGroupMathRaws(input.baselineBlocks, input.prevEffIdx),
 	);
 	return { indentedRisk, separator, swallowRisk };
 }

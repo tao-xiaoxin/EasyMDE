@@ -135,6 +135,28 @@ function reevaluateAttachedCandidates(
 	}
 }
 
+function recordPlannedDedented(
+	st: LivenessState,
+	container: ProseMirrorNode,
+	slot: number,
+	dedented: string,
+): void {
+	let map = st.plan.dedentedSlots.get(container);
+	if (!map) {
+		map = new Map<number, string>();
+		st.plan.dedentedSlots.set(container, map);
+	}
+	map.set(slot, dedented);
+}
+
+function clearPlannedDedented(
+	st: LivenessState,
+	container: ProseMirrorNode,
+	slot: number,
+): void {
+	st.plan.dedentedSlots.get(container)?.delete(slot);
+}
+
 function recheckFollowingIndentRisks(
 	st: LivenessState,
 	cs: ContainerState,
@@ -169,16 +191,44 @@ function recheckFollowingIndentRisks(
 		nextOrigIdx,
 		nextGroup?.separatorBefore,
 	);
+	if (nextState === "dedented") {
+		if (
+			indentedRisk ||
+			wouldMergeWithPreviousList(
+				cs.container.child(changedIdx),
+				cs.container.child(nextIdx),
+			)
+		) {
+			fireTask(cs.slotTasks.get(nextIdx));
+		}
+		return;
+	}
 	if (nextGroup) {
 		const broken = isBrokenTightLeft(cs, nextIdx, nextGroup, separator);
-		const dedented =
-			swallowRisk && !indentedRisk && !broken
-				? dedentSwallowedGroup(cs, nextIdx, nextGroup)
-				: null;
-		if (dedented === null && (broken || indentedRisk || swallowRisk)) {
+		const lastSlot = nextIdx + nextGroup.endIndex - nextGroup.startIndex - 1;
+		const alreadyDedented = cs.dedentedAt[lastSlot] === true;
+		if (broken || indentedRisk) {
 			fireTask(cs.groupTasks.get(nextIdx));
-		} else if (!cs.groupTasks.get(nextIdx)?.fired) {
-			bindGroupEmission(st, cs, nextIdx, nextGroup, dedented);
+			return;
+		}
+		if (alreadyDedented) {
+			if (
+				wouldMergeWithPreviousList(
+					cs.container.child(changedIdx),
+					cs.container.child(nextIdx),
+				)
+			) {
+				fireTask(cs.groupTasks.get(nextIdx));
+			}
+			return;
+		}
+		if (swallowRisk) {
+			const dedented = dedentSwallowedGroup(cs, nextIdx, nextGroup);
+			if (dedented === null) {
+				fireTask(cs.groupTasks.get(nextIdx));
+			} else if (!cs.groupTasks.get(nextIdx)?.fired) {
+				bindGroupEmission(st, cs, nextIdx, nextGroup, dedented);
+			}
 		}
 		return;
 	}
@@ -262,20 +312,22 @@ function dedentSwallowedGroup(
 }
 
 /**
- * Re-binds the emission of an intact shared group (raw, or its swallow-only
- * dedented raw); a changed emission re-evaluates the following slot.
+ * Monotonically transitions an intact shared group from raw emission to its
+ * swallow-only dedented raw emission, recording the committed dedent in
+ * `st.plan.dedentedSlots` so the serializer stays locked with liveness.
  */
 function bindGroupEmission(
 	st: LivenessState,
 	cs: ContainerState,
 	groupStart: number,
 	group: ParsedVisualSharedGroup,
-	dedented: string | null,
+	dedented: string,
 ): void {
 	const lastSlot = groupStart + group.endIndex - group.startIndex - 1;
-	if (cs.dedentedAt[lastSlot] === (dedented !== null)) return;
-	cs.dedentedAt[lastSlot] = dedented !== null;
-	cs.emittedAt[lastSlot] = verbatimEmitted(dedented ?? group.raw);
+	if (cs.dedentedAt[lastSlot]) return;
+	cs.dedentedAt[lastSlot] = true;
+	cs.emittedAt[lastSlot] = verbatimEmitted(dedented);
+	recordPlannedDedented(st, cs.container, groupStart, dedented);
 	onSlotInnerChanged(st, cs, lastSlot);
 }
 
@@ -322,10 +374,10 @@ function downgradeMatchedContainer(
 }
 
 /**
- * Records a canonical-state slot whose serializer emission is the dedented
- * raw block (its subtree keeps raw, i.e. verbatim, reference semantics); a
- * later invalidation of any reference it uses makes the serializer emit it
- * canonically (or re-preserve it as a nested container).
+ * Records a `"dedented"` slot whose serializer emission is monotonically
+ * locked to the dedented raw block (its subtree keeps verbatim reference
+ * semantics); a later reference invalidation or `indentedRisk` transitions it
+ * to `"canonical"` (or re-preserves it as a nested container).
  */
 function bindDedentedSlot(
 	st: LivenessState,
@@ -336,9 +388,10 @@ function bindDedentedSlot(
 	walk: boolean,
 ): void {
 	const child = cs.container.child(idx);
-	cs.slotState[idx] = "canonical";
+	cs.slotState[idx] = "dedented";
 	cs.dedentedAt[idx] = true;
 	cs.emittedAt[idx] = verbatimEmitted(dedented);
+	recordPlannedDedented(st, cs.container, idx, dedented);
 	if (
 		walk &&
 		child.childCount > 0 &&
@@ -352,8 +405,10 @@ function bindDedentedSlot(
 		fired: false,
 		run: () => {
 			if (cs.emittedAt[idx] === null) return;
+			cs.slotState[idx] = "canonical";
 			cs.emittedAt[idx] = null;
 			cs.dedentedAt[idx] = false;
+			clearPlannedDedented(st, cs.container, idx);
 			downgradeMatchedContainer(st, cs, idx, origBlock, origIdx);
 			reevaluateAttachedCandidates(st, cs, idx);
 			onSlotInnerChanged(st, cs, idx);
@@ -493,10 +548,14 @@ function processIntactGroup(
 	const lastSlot = groupStart + groupLen - 1;
 	cs.emittedAt[lastSlot] = verbatimEmitted(dedented ?? group.raw);
 	cs.dedentedAt[lastSlot] = dedented !== null;
+	if (dedented !== null) {
+		recordPlannedDedented(st, cs.container, groupStart, dedented);
+	}
 
 	const breakGroupTask: InvalidationTask = {
 		fired: false,
 		run: () => {
+			clearPlannedDedented(st, cs.container, groupStart);
 			for (let offset = 0; offset < groupLen; offset += 1) {
 				const slot = groupStart + offset;
 				cs.slotState[slot] = "canonical";

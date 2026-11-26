@@ -140,7 +140,9 @@ describe("PR-R44-A monotonic container risk dominance, unified list drain, heap 
 					'9. [dead](/d "td&#10;")',
 					"10. x",
 					"",
-					"   $$y$$ [p]: /u",
+					// Monotonically locked dedent from Wave 1 (identical PHP HTML,
+					// keeping [p]'s title="t\n" and preventing Wave-2 liveness split).
+					"$$y$$ [p]: /u",
 					'"t',
 					"===",
 					"",

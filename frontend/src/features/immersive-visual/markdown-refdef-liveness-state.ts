@@ -39,6 +39,13 @@ export type BlockWithRefsSerializer = (
 export type PreservationPlan = Readonly<{
 	containers: Map<ProseMirrorNode, ContainerAlignmentPlan>;
 	/**
+	 * Monotonic swallow-risk dedented emissions committed by liveness per
+	 * container slot (plain matched slot or intact shared-group start); the
+	 * serializer honors a committed dedent even if a preceding list's indent
+	 * later grows in a subsequent wave, preventing liveness/serializer split.
+	 */
+	dedentedSlots: Map<ProseMirrorNode, Map<number, string>>;
+	/**
 	 * Live per-item liveness reuse mask of each planned list; the serializer
 	 * never re-preserves an item liveness transitioned to canonical.
 	 */

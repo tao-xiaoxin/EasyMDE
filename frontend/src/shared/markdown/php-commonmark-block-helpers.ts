@@ -425,43 +425,37 @@ export function matchListMarkerLength(
 	return inParagraph && rest >= nonSpaceRest.length ? 0 : markerLength;
 }
 
-/** Whether `s` is exactly one Unicode code point (no allocation). */
-function isSingleUnicodeCodePoint(s: string): boolean {
-	return (
-		s.length === 1 || (s.length === 2 && (s.codePointAt(0) ?? 0) > 0xffff)
-	);
-}
-
 /**
- * Single canonical CommonMark §5.2 list-item content indent assigned by
+ * Single canonical CommonMark §5.2 list-marker padding consumer mirroring
  * pinned PHP `league/commonmark@2.8.2`
- * (`ListBlockStartParser::calculateListMarkerPadding()`): after the spaces
- * following the marker, `$cursor->peek() === null` (exactly one code point
- * remains) marks the item blank, so the padding falls back to `1` and the
- * content indent becomes `leadCols + markerLength + 1`. `afterContent` is
- * the untrimmed remainder after the consumed padding (callers may pass `""`
- * whenever more than two UTF-16 units remain).
+ * (`ListBlockStartParser::calculateListMarkerPadding()`): after advancing past
+ * `leadCols` and `markerLength`, peeks the spacing columns and trailing
+ * remainder without moving `cursor`. When the item is blank, has fewer than 1
+ * or at least 5 spacing columns, or leaves only a single Unicode code point
+ * (`$cursor->peek() === null` in League 2.8.2), consumes only 1 column (leaving
+ * remaining spaces for nested blocks such as `-    -`) and returns
+ * `leadCols + markerLength + 1`; otherwise consumes `spacingCols` and returns
+ * `leadCols + markerLength + spacingCols`.
  */
-export function computePhpListMarkerContentIndent(
+export function consumePhpListMarkerPadding(
+	cursor: LineColumnCursor,
 	leadCols: number,
 	markerLength: number,
-	standardContentIndent: number,
-	afterContent: string,
 ): number {
-	return isSingleUnicodeCodePoint(afterContent)
-		? Math.min(standardContentIndent, leadCols + markerLength + 1)
-		: standardContentIndent;
-}
-
-/**
- * The cursor remainder when it may be a single code point (at most two
- * UTF-16 units and no pending virtual tab spaces), otherwise `""`, so list
- * padding checks never allocate a long remainder.
- */
-export function shortCursorTail(cursor: LineColumnCursor): string {
-	return cursor.virtualSpaces === 0 && cursor.line.length - cursor.index <= 2
-		? cursor.line.slice(cursor.index)
-		: "";
+	const spacingCols = measureLeadingColumns(cursor);
+	const nonSpaceIdx = nextNonSpaceIndex(cursor);
+	const remainingUnits = cursor.line.length - nonSpaceIdx;
+	const isBlankOrSingleCodePoint =
+		remainingUnits === 0 ||
+		remainingUnits === 1 ||
+		(remainingUnits === 2 &&
+			(cursor.line.codePointAt(nonSpaceIdx) ?? 0) > 0xffff);
+	const padding =
+		isBlankOrSingleCodePoint || spacingCols < 1 || spacingCols >= 5
+			? 1
+			: spacingCols;
+	consumeWhitespaceColumns(cursor, Math.min(padding, spacingCols));
+	return leadCols + markerLength + padding;
 }
 
 const PHP_ESCAPABLE_RE = /^[!"#$%&'()*+,./:;<=>?@[\\\]^_`{|}~-]$/;

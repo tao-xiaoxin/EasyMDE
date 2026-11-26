@@ -1,13 +1,12 @@
 import {
-	computePhpListMarkerContentIndent,
 	consumeBlockquoteMarker,
+	consumePhpListMarkerPadding,
 	consumeWhitespaceColumns,
 	cursorRemainder,
 	isCursorBlank,
 	type LineColumnCursor,
 	measureLeadingColumns,
 	nextNonSpaceIndex,
-	shortCursorTail,
 } from "../../shared/markdown/php-commonmark-block-helpers";
 
 /**
@@ -352,16 +351,11 @@ function consumeListMarkerOnCursor(
 	consumeWhitespaceColumns(cursor, leadCols);
 	cursor.index += markerText.length;
 	cursor.column += markerText.length;
-	const spacingCols = measureLeadingColumns(cursor);
-	const padding =
-		isBlank || spacingCols < 1 || spacingCols >= 5 ? 1 : spacingCols;
-	consumeWhitespaceColumns(cursor, Math.min(padding, spacingCols));
 	return {
-		contentIndent: computePhpListMarkerContentIndent(
+		contentIndent: consumePhpListMarkerPadding(
+			cursor,
 			leadCols,
 			markerText.length,
-			leadCols + markerText.length + padding,
-			shortCursorTail(cursor),
 		),
 		isBlank,
 		leadCols,

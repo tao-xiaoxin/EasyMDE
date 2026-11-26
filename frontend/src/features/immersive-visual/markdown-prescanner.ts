@@ -329,13 +329,14 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		const relativeIndent = analysis.indent - effectiveContainer;
 
 		// 1. Indented code blocks can only start when no paragraph is open.
-		//    PHP `extract_math()` runs first: a display-math span the
-		//    authoritative math index found here (no PHP block code range
-		//    covers it) is never indented code.
+		//    PHP `extract_math()` runs first: any line containing an
+		//    authoritative display-math span (no PHP block code range covers
+		//    it, even with leading text like `>     foo $$x$$`) must flow to
+		//    Step 8 instead of being swallowed as indented code.
 		if (
 			!paragraphOpen &&
 			relativeIndent >= 4 &&
-			!php.startsDisplayMath(analysis.content, i)
+			findFirstDisplayMathInLines(mathIndex, i, i) === null
 		) {
 			inIndentedCode = true;
 			indentedCodeContainer = effectiveContainer;

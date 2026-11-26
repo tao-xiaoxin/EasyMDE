@@ -12,6 +12,7 @@ import {
 	hasDetachedContainerMathRisk,
 	isListSwallowingFollowingBlock,
 	leadingIndentAtDepth,
+	precedingSharedGroupMathRaws,
 	prefixAtDepth,
 	sharedGroupHasInvalidatedRef,
 	stripAtDepth,
@@ -465,6 +466,12 @@ function serializeContainerPreservingChildren(
 			effectiveOrigIndex[idx] ?? -1,
 			intactGroup?.separatorBefore,
 		);
+		const prevPrecedingMathRaws = precedingSharedGroupMathRaws(
+			baselineBlocks,
+			idx > 0 ? (effectiveOrigIndex[idx - 1] ?? -1) : -1,
+		);
+		const plannedDedented =
+			ctx.plan?.dedentedSlots.get(container)?.get(idx) ?? null;
 		const isSwallowRisk = (emittedText: string): boolean =>
 			isListSwallowingFollowingBlock(
 				prevNode,
@@ -473,6 +480,7 @@ function serializeContainerPreservingChildren(
 				depth,
 				prevWasVerbatimAdjacent,
 				separator !== "\n",
+				prevPrecedingMathRaws,
 			);
 		let { indentedRisk, swallowRisk } = checkRawPreservationRisks(
 			child,
@@ -483,6 +491,7 @@ function serializeContainerPreservingChildren(
 			prevInnerText,
 			() => prevEmittedText,
 			prevWasVerbatimAdjacent,
+			prevPrecedingMathRaws,
 		);
 		const brokenTightLeft =
 			intactGroup !== undefined &&
@@ -491,14 +500,21 @@ function serializeContainerPreservingChildren(
 				(effectiveOrigIndex[idx - 1] ?? -1) !== intactGroup.startIndex - 1);
 		// An intact shared group at risk ONLY of being swallowed into a
 		// preceding list keeps its raw bytes, dedented (see
-		// `dedentSwallowedBlockAtDepth`).
+		// `dedentSwallowedBlockAtDepth`); honors a monotonic liveness dedent
+		// commitment even if a preceding list's indent grew in a later wave.
 		const dedentedGroup =
 			intactGroup &&
-			swallowRisk &&
 			!indentedRisk &&
 			!brokenTightLeft &&
 			!wouldMergeWithPreviousList(prevNode, child)
-				? dedentSwallowedBlockAtDepth(intactGroup.raw, depth, child.type.name)
+				? (plannedDedented ??
+					(swallowRisk
+						? dedentSwallowedBlockAtDepth(
+								intactGroup.raw,
+								depth,
+								child.type.name,
+							)
+						: null))
 				: null;
 		if (
 			intactGroup &&
@@ -529,6 +545,7 @@ function serializeContainerPreservingChildren(
 				prevInnerText,
 				() => prevEmittedText,
 				prevWasVerbatimAdjacent,
+				prevPrecedingMathRaws,
 			));
 		}
 
@@ -542,7 +559,7 @@ function serializeContainerPreservingChildren(
 		} else if (
 			!intactGroup &&
 			serialized !== null &&
-			(swallowRisk || indentedRisk)
+			(swallowRisk || indentedRisk || plannedDedented !== null)
 		) {
 			if (child.type.name === "protected_block") {
 				if (
@@ -555,7 +572,10 @@ function serializeContainerPreservingChildren(
 				) {
 					blockEmitted = detachContainerMathAtDepth(candidateEmitted, depth);
 					blockInner = stripAtDepth(blockEmitted, depth);
-				} else if (swallowRisk && child.attrs.kind !== "math") {
+				} else if (
+					(swallowRisk || plannedDedented !== null) &&
+					child.attrs.kind !== "math"
+				) {
 					const canonical = ensureGenerated();
 					if (isSwallowRisk(canonical.emitted)) {
 						({ emitted: blockEmitted, inner: blockInner } =
@@ -583,15 +603,22 @@ function serializeContainerPreservingChildren(
 			} else {
 				// A clean matched block at risk ONLY of being swallowed into a
 				// preceding list keeps its raw inline bytes (dedented, see
-				// `dedentSwallowedBlockAtDepth`); the separator and
-				// `effectiveOrigIndex` stay as for canonical.
+				// `dedentSwallowedBlockAtDepth`); honors a monotonic liveness
+				// dedent commitment so Wave-2 list indent growth never splits
+				// liveness and serialization.
 				const dedented =
-					swallowRisk &&
 					!indentedRisk &&
 					serializedFromRaw &&
 					!sharedGroup &&
 					!wouldMergeWithPreviousList(prevNode, child)
-						? dedentSwallowedBlockAtDepth(serialized, depth, child.type.name)
+						? (plannedDedented ??
+							(swallowRisk
+								? dedentSwallowedBlockAtDepth(
+										serialized,
+										depth,
+										child.type.name,
+									)
+								: null))
 						: null;
 				if (dedented !== null) {
 					blockEmitted = dedented;

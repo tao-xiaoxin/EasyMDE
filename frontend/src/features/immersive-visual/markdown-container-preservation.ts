@@ -196,10 +196,10 @@ export function leadingIndentAtDepth(
  * shared group led by a paragraph / protected block, or `nodeTypeName ===
  * null`) keeps every continuation line byte-for-byte, so math continuation
  * bytes never change. Every other block (headings, blockquotes, tables,
- * lists, fenced code, ...) strips up to the same columns from each
- * continuation line carrying all `depth` markers, keeping its internal
- * column structure; blank and lazy lines stay untouched. Returns `null`
- * when line 0 lacks a marker or its indent is outside 1-3.
+ * lists, ...) strips up to the same columns from each continuation line
+ * carrying all `depth` markers, keeping its internal column structure; blank
+ * and lazy lines stay untouched. Returns `null` when line 0 lacks a marker
+ * or its indent is outside 1-3.
  */
 export function dedentSwallowedBlockAtDepth(
 	rawEmitted: string,
@@ -252,6 +252,18 @@ export function dedentSwallowedBlockAtDepth(
 		const line = lines[i] ?? "";
 		const stripped = stripBlockquoteDepthWithColumn(line, quoteDepth);
 		if (stripped.matched !== quoteDepth) {
+			// A non-blank continuation line omitting outer `>` markers before any
+			// blank line is a valid CommonMark lazy continuation on blockquotes and
+			// setext headings: leave it verbatim, symmetric with the 4+-column
+			// lazy-continuation branch below.
+			if (
+				stripped.matched < quoteDepth &&
+				!sawBlank &&
+				!isCommonMarkBlankLine(line) &&
+				(nodeTypeName === "blockquote" || nodeTypeName === "heading")
+			) {
+				continue;
+			}
 			return null;
 		}
 		if (isCommonMarkBlankLine(stripped.rest)) {
@@ -397,9 +409,64 @@ function stripLeadingDisplayMathPrefix(
 	precedingMathRaws?: ReadonlyArray<string>,
 ): string {
 	const quotePrefix = "> ".repeat(Math.max(depth, 0));
+	if (precedingMathRaws !== undefined) {
+		if (precedingMathRaws.length === 0) return text;
+		const lastMath = precedingMathRaws[precedingMathRaws.length - 1] ?? "";
+		if (lastMath.length === 0) return text;
+		const best: {
+			exact: { candidate: string; indent: number } | null;
+			fallback: { candidate: string; indent: number } | null;
+		} = { exact: null, fallback: null };
+		const consider = (tail: string): void => {
+			if (!matchTopItem(firstLine(tail), 0)) return;
+			const candidate = `${quotePrefix}${tail}`;
+			const scan = scanTrailingListItem(
+				candidate,
+				matchTopItem,
+				depth,
+				blankLineFollows,
+			);
+			const indent = scan.indent > 0 ? scan.indent : Number.POSITIVE_INFINITY;
+			if (scan.items === expectedItems) {
+				if (best.exact === null || indent < best.exact.indent) {
+					best.exact = { candidate, indent };
+				}
+				return;
+			}
+			if (best.fallback === null || indent < best.fallback.indent) {
+				best.fallback = { candidate, indent };
+			}
+		};
+		// Anchor earlier display-math blocks left-to-right, then evaluate every
+		// `lastMath` occurrence directly rather than trusting an isolated
+		// `scanPhpMarkdownMathRanges(text)` (which cross-block backticks outside
+		// `text` can invert, shielding the real `lastMath` while unshielding a
+		// duplicate inside inline code). Keeping the smallest positive trailing
+		// item indent prevents a duplicate `lastMath` from hiding swallow risk.
+		let minPos = 0;
+		for (let m = 0; m < precedingMathRaws.length - 1; m += 1) {
+			const raw = precedingMathRaws[m] ?? "";
+			const pos = text.indexOf(raw, minPos);
+			if (pos < 0) break;
+			minPos = pos + raw.length;
+		}
+		let searchAt = minPos;
+		while (searchAt + lastMath.length <= text.length) {
+			const pos = text.indexOf(lastMath, searchAt);
+			if (pos < 0) break;
+			consider(text.slice(pos + lastMath.length));
+			searchAt = pos + 1;
+		}
+		return best.exact?.candidate ?? best.fallback?.candidate ?? text;
+	}
+	if (!text.includes("$$") && !text.includes("\\[")) return text;
 	let fallback: string | null = null;
-	const accept = (tail: string): string | null => {
-		if (!matchTopItem(firstLine(tail), 0)) return null;
+	const ranges = scanPhpMarkdownMathRanges(text);
+	for (let i = ranges.length - 1; i >= 0; i -= 1) {
+		const range = ranges[i];
+		if (!range?.block) continue;
+		const tail = text.slice(range.to);
+		if (!matchTopItem(firstLine(tail), 0)) continue;
 		const candidate = `${quotePrefix}${tail}`;
 		if (
 			scanTrailingListItem(candidate, matchTopItem, depth, blankLineFollows)
@@ -408,40 +475,6 @@ function stripLeadingDisplayMathPrefix(
 			return candidate;
 		}
 		if (fallback === null) fallback = candidate;
-		return null;
-	};
-	if (precedingMathRaws !== undefined) {
-		if (precedingMathRaws.length === 0) return text;
-		const lastMath = precedingMathRaws[precedingMathRaws.length - 1] ?? "";
-		if (lastMath.length === 0) return text;
-		const ranges = scanPhpMarkdownMathRanges(text);
-		for (let i = ranges.length - 1; i >= 0; i -= 1) {
-			const range = ranges[i];
-			if (!range?.block) continue;
-			if (text.slice(range.from, range.to) === lastMath) {
-				const matched = accept(text.slice(range.to));
-				if (matched !== null) return matched;
-			}
-		}
-		// Fallback when cross-block backticks outside `text` make an isolated
-		// math scan skip the real parsed `lastMath` inside the shared group.
-		let searchFrom = text.length;
-		while (searchFrom >= lastMath.length) {
-			const pos = text.lastIndexOf(lastMath, searchFrom - 1);
-			if (pos < 0) break;
-			const matched = accept(text.slice(pos + lastMath.length));
-			if (matched !== null) return matched;
-			searchFrom = pos;
-		}
-		return fallback ?? text;
-	}
-	if (!text.includes("$$") && !text.includes("\\[")) return text;
-	const ranges = scanPhpMarkdownMathRanges(text);
-	for (let i = ranges.length - 1; i >= 0; i -= 1) {
-		const range = ranges[i];
-		if (!range?.block) continue;
-		const matched = accept(text.slice(range.to));
-		if (matched !== null) return matched;
 	}
 	return fallback ?? text;
 }

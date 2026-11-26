@@ -38,10 +38,11 @@ export type BlockWithRefsSerializer = (
 
 export type PreservationPlan = Readonly<{
 	/**
-	 * Monotonic canonical downgrades committed by liveness for matched-invalidated
-	 * or paired container slots whose head line triggered `headLineHasRisk` or
-	 * `preservedSlotHasRisk`; the serializer never re-preserves them even if a
-	 * preceding list's indent grows in a subsequent wave.
+	 * Monotonic canonical downgrades committed by liveness for any container slot
+	 * (plain match, intact shared-group start, matched-invalidated, or paired
+	 * container) that transitioned to `"canonical"`; the serializer never
+	 * re-preserves them verbatim or as a nested container even if a preceding
+	 * list's indent grows in a subsequent wave.
 	 */
 	canonicalContainerSlots: Map<ProseMirrorNode, Set<number>>;
 	containers: Map<ProseMirrorNode, ContainerAlignmentPlan>;

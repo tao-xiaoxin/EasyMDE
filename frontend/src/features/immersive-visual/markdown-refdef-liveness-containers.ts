@@ -358,7 +358,13 @@ function downgradeMatchedContainer(
 	origIdx: number,
 ): void {
 	const child = cs.container.child(idx);
-	if (child.childCount === 0 || !isBlockContainerForRefDefs(child)) return;
+	const invalidated = nodeHasCurrentInvalidatedRef(st, origBlock.node);
+	if (child.childCount === 0 || !isBlockContainerForRefDefs(child)) {
+		if (invalidated || child.type.name !== "protected_block") {
+			recordCanonicalContainerSlot(st, cs.container, idx);
+		}
+		return;
+	}
 	const headLine = resolveMatchedContainerHeadLine(
 		child,
 		origBlock,
@@ -366,11 +372,7 @@ function downgradeMatchedContainer(
 		st.plan,
 		st.parsed,
 	);
-	const invalidated = nodeHasCurrentInvalidatedRef(st, origBlock.node);
 	const risky = invalidated && headLineHasRisk(st, cs, idx, headLine, origIdx);
-	if (risky) {
-		recordCanonicalContainerSlot(st, cs.container, idx);
-	}
 	if (invalidated && !risky) {
 		const result = descendNonVerbatimChild(
 			st,
@@ -382,10 +384,12 @@ function downgradeMatchedContainer(
 		);
 		if (result.preserved) {
 			installPreservedContainerSlot(st, cs, idx, origIdx, result, headLine);
+			return;
 		}
 	} else if (st.subtreeHasCandidates.has(child)) {
 		walkSubtree(st, child, "canonical", false, false);
 	}
+	recordCanonicalContainerSlot(st, cs.container, idx);
 }
 
 /**
@@ -575,6 +579,7 @@ function processIntactGroup(
 			for (let offset = 0; offset < groupLen; offset += 1) {
 				const slot = groupStart + offset;
 				cs.slotState[slot] = "canonical";
+				recordCanonicalContainerSlot(st, cs.container, slot);
 				cs.effectiveOrigIndex[slot] = -1;
 				cs.emittedAt[slot] = null;
 				cs.dedentedAt[slot] = false;
@@ -622,6 +627,9 @@ function processMatchedSlot(
 		if (dedented !== null) {
 			bindDedentedSlot(st, cs, idx, origBlock, dedented, cs.discover);
 			return;
+		}
+		if (child.type.name !== "protected_block") {
+			recordCanonicalContainerSlot(st, cs.container, idx);
 		}
 		if (
 			child.childCount > 0 &&
@@ -690,6 +698,7 @@ function processUnmatchedSlot(
 	const child = cs.container.child(idx);
 	if (origBlock !== undefined && !origInvalidated) {
 		cs.slotState[idx] = "canonical";
+		recordCanonicalContainerSlot(st, cs.container, idx);
 		if (
 			child.childCount > 0 &&
 			isBlockContainerForRefDefs(child) &&
@@ -734,6 +743,7 @@ function processUnmatchedSlot(
 		installPreservedContainerSlot(st, cs, idx, baseIdx, result, headLine);
 		return;
 	}
+	recordCanonicalContainerSlot(st, cs.container, idx);
 	cs.effectiveOrigIndex[idx] = canonicalEffectiveOrigIndex(cs, idx);
 	cs.slotState[idx] = "canonical";
 }

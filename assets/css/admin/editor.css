@@ -2406,11 +2406,11 @@ body:has(.easymde-editor.is-immersive) .wrap {
   float: none;
 }
 
-.easymde-editor:not(.is-immersive) .easymde-rendered-content :is(p, li, blockquote, figcaption, h1, h2, h3, h4, h5, h6, a) {
+#easymde-editor-root .easymde-editor:not(.is-immersive) .easymde-rendered-content :is(p, li, blockquote, figcaption, h1, h2, h3, h4, h5, h6, a) {
     overflow-wrap: anywhere;
 }
 
-.easymde-editor[data-easymde-preview-presentation="split"] .easymde-rendered-content :is(p, li, blockquote, figcaption, h1, h2, h3, h4, h5, h6, a) {
+#easymde-editor-root .easymde-editor[data-easymde-preview-presentation="split"] .easymde-rendered-content :is(p, li, blockquote, figcaption, h1, h2, h3, h4, h5, h6, a) {
     overflow-wrap: anywhere;
 }
 

@@ -336,6 +336,26 @@ describe('collectWechatTableNativeGridEvidence', () => {
     );
   });
 
+  it('ignores non-selector @view-transition rules injected by WordPress core', () => {
+    const table = tableFixture();
+    class FakeViewTransitionRule {
+      readonly type = 0;
+      readonly cssText = '@view-transition { navigation: auto; }';
+      get [Symbol.toStringTag](): string {
+        return 'CSSViewTransitionRule';
+      }
+    }
+    const viewTransitionRule = new FakeViewTransitionRule() as unknown as CSSRule;
+    const input = readWechatTableNativeGridInput(
+      table,
+      style(tableStyles),
+      runtimeFor(table, { rules: [viewTransitionRule, cssRule('width:100cqi;')] })
+    );
+    expect(input.state).toBe('target');
+    expect(input.issues).toEqual([]);
+    expect(collect(table, { rules: [viewTransitionRule, cssRule('width:100cqi;')] })).not.toBeNull();
+  });
+
   it('rejects fixed 335px even when the used width is identical', () => {
     const table = tableFixture();
     expect(() => collect(table, { rules: [cssRule('width:335px;')] })).toThrow(

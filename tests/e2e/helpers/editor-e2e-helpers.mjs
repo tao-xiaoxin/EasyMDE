@@ -226,6 +226,7 @@ export async function login(page, user) {
     form.requestSubmit(submit);
   }, user);
   await expect(page.locator('#wpadminbar')).toBeVisible();
+  await page.waitForLoadState('load');
 }
 
 async function pulseWordPressHeartbeat(page) {

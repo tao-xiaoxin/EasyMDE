@@ -361,6 +361,17 @@ function readAuthorPseudoWidths(source: Element, runtime: BrowserWechatClipboard
         continue;
       }
 
+      const viewTransitionCtor =
+        defaultView && 'CSSViewTransitionRule' in defaultView
+          ? (defaultView as unknown as { CSSViewTransitionRule?: unknown }).CSSViewTransitionRule
+          : undefined;
+      if (
+        ('function' === typeof viewTransitionCtor && rule instanceof (viewTransitionCtor as new () => CSSRule)) ||
+        '[object CSSViewTransitionRule]' === Object.prototype.toString.call(rule)
+      ) {
+        continue;
+      }
+
       throw tableGridError('rule-unreadable');
     }
   };

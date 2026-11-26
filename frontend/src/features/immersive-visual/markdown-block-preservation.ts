@@ -322,8 +322,11 @@ function serializeContainerPreservingChildren(
 		const child = container.child(idx);
 		const origIdx = matchedOrigIndex[idx] ?? -1;
 		const origBlock = origIdx >= 0 ? baselineBlocks[origIdx] : undefined;
+		const forcedCanonical =
+			ctx.plan?.canonicalContainerSlots.get(container)?.has(idx) ?? false;
 		const sharedGroup = origBlock?.sharedGroup;
 		let intactGroup =
+			!forcedCanonical &&
 			sharedGroup &&
 			origIdx === sharedGroup.startIndex &&
 			isIntactSharedGroupAt(idx, sharedGroup) &&
@@ -340,11 +343,13 @@ function serializeContainerPreservingChildren(
 			origBlock !== undefined &&
 			ctx.hasInvalidatedRefDefs &&
 			ctx.nodeHasInvalidatedRef(origBlock.node);
-		let serialized: string | null = intactGroup
-			? intactGroup.raw
-			: origBlock && origBlock.raw !== null && !origInvalidated
-				? origBlock.raw
-				: null;
+		let serialized: string | null = forcedCanonical
+			? null
+			: intactGroup
+				? intactGroup.raw
+				: origBlock && origBlock.raw !== null && !origInvalidated
+					? origBlock.raw
+					: null;
 		let serializedFromRaw = serialized !== null;
 
 		const prevNode = idx > 0 ? container.child(idx - 1) : null;
@@ -363,7 +368,7 @@ function serializeContainerPreservingChildren(
 			base: ParsedVisualBlockSource | undefined,
 			effIdx: number,
 		): boolean => {
-			if (ctx.plan?.canonicalContainerSlots.get(container)?.has(idx)) {
+			if (forcedCanonical) {
 				return true;
 			}
 			const headLine = resolveMatchedContainerHeadLine(

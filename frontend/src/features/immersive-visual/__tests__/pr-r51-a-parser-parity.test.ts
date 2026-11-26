@@ -1198,5 +1198,101 @@ describe("PR-R51-A list-marker padding, trailing-item scan, depth-aware list val
 				docShape(">     foo $$x$$\n\nzz"),
 			).toContain("protected_block");
 		});
+
+		it("detects swallow risk on a 1-item list whose inline code repeats the preceding display math", () => {
+			const md = [
+				"pre ``",
+				"",
+				"a `` $$b$$- x ``$$b$$-   fake``",
+				"",
+				"drop",
+				"",
+				"  para",
+			].join("\n");
+			const parsed = parser.parseMarkdownWithBlockSources(md);
+			const guard = createMarkdownRoundTripGuard(md, parsed);
+			const edited = deleteParagraph("drop")(guard.initialDoc);
+			const serialized = guard.serialize(edited);
+			// `para` must be dedented to column 0 so it is not swallowed into `- x ...`.
+			expect(serialized).toContain("\n\npara");
+			expect(serialized).not.toContain("\n\n  para");
+		});
+
+		it("preserves depth>=1 blockquote lazy continuations during swallow-risk dedent", () => {
+			const md = [
+				"> - abc",
+				">",
+				"> drop",
+				">",
+				">   > head ``",
+				"    continuation",
+				">",
+				"> $$x$$ ``",
+			].join("\n");
+			const parsed = parser.parseMarkdownWithBlockSources(md);
+			const guard = createMarkdownRoundTripGuard(md, parsed);
+			const edited = deleteParagraph("drop")(guard.initialDoc);
+			const serialized = guard.serialize(edited);
+			expect(serialized).toBe(
+				[
+					"> - abc",
+					">",
+					"> > head ``",
+					"    continuation",
+					">",
+					"> $$x$$ ``",
+				].join("\n"),
+			);
+		});
+
+		it("keeps liveness and serializer monotonically locked across Pass-1 canonical downgrades when Wave-2 list indent grows", () => {
+			const md = [
+				"1. item1",
+				"2. item2",
+				"3. item3",
+				"4. item4",
+				"5. item5",
+				"6. item6",
+				"7. item7",
+				"8. item8",
+				"9. item9",
+				"1. [q]",
+				"",
+				"drop",
+				"",
+				"   > [p]: /u",
+				'   > "t',
+				"   > ===",
+				"  > second",
+				"",
+				"[link][p]",
+				"",
+				"- [r]",
+				"",
+				"  [q]: /q",
+				'  "qt',
+				"  ===",
+				"",
+				"[r]: /r",
+			].join("\n");
+			const parsed = parser.parseMarkdownWithBlockSources(md);
+			const guard = createMarkdownRoundTripGuard(md, parsed);
+			const edited = chain(
+				deleteParagraph("drop"),
+				deleteRefDef("r"),
+			)(guard.initialDoc);
+			const live = computeIntactRefDefLabels(
+				edited,
+				parsed,
+				MARKDOWN_SERIALIZERS.serializeBlock,
+				MARKDOWN_SERIALIZERS.serializeBlockWithRefs,
+			);
+			const serialized = guard.serialize(edited);
+			expect(live.partialTitleIntact.has("P")).toBe(false);
+			// Serializer honors Pass-1 canonical downgrade instead of resurrecting raw
+			// `   > [p]: /u` after Wave-2 grows `1.` -> `10.`.
+			expect(serialized).not.toContain('   > "t\n   > ===');
+			expect(serialized).toContain('[link](/u "t&#10;")');
+		});
 	});
 });

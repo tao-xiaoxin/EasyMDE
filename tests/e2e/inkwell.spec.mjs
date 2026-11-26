@@ -111,9 +111,15 @@ test('matches the Inkwell light palette across the full Markdown fixture', async
       const inlineCode = root.querySelector('p code');
       const codeBlock = root.querySelector('pre');
       const rootBox = root.getBoundingClientRect();
+      const layoutOwner = (element) => {
+        const wrapper = element.closest('.table-container, .easymde-table-container');
+        return wrapper instanceof HTMLElement && root.contains(wrapper)
+          ? wrapper
+          : element;
+      };
       const visibleBlocks = [...root.querySelectorAll('h1,h2,h3,h4,h5,h6,blockquote,table,pre,img')];
       const maxRight = visibleBlocks.reduce(
-        (right, element) => Math.max(right, element.getBoundingClientRect().right),
+        (right, element) => Math.max(right, layoutOwner(element).getBoundingClientRect().right),
         rootBox.left
       );
 

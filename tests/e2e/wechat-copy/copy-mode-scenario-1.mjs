@@ -43,21 +43,31 @@ export async function runCopyModeScenario1({ baseURL, login, page, test, testInf
       exact: true
     }).click();
     await expect(page.getByText(immersiveLabels.previewContentLoaded)).toBeVisible();
+    const lockedPreview = page.locator(
+      '.easymde-immersive-preview-canvas [data-easymde-preview-html-sink="1"]'
+    );
+    await assertReadonlyMathProjection(lockedPreview, {
+      editable: false,
+      nonwindowed: true,
+      ordinaryParagraphText: 'Ordinary editable paragraph.'
+    });
+    const initialSignature = await lockedPreview.evaluate(
+      (surface) => surface.easymdePreviewSignature ?? ''
+    );
+    if (!initialSignature) throw new Error('wechat-immersive-preview-signature-unavailable');
     await page.getByRole('button', { name: immersiveLabels.previewUnlockEdit }).click();
 
-    const visualEditor = page.locator(
-      '.easymde-immersive-visual-editor[data-easymde-preview-html-sink="1"]'
-    );
-    await expect(visualEditor).toHaveAttribute('contenteditable', 'true');
+    const visualEditor = page.getByRole('textbox', {
+      name: immersiveLabels.previewEditorLabel
+    });
+    await expect(visualEditor).toHaveAttribute('contenteditable', 'true', {
+      timeout: 30_000
+    });
     await assertReadonlyMathProjection(visualEditor, {
       editable: true,
       nonwindowed: true,
       ordinaryParagraphText: 'Ordinary editable paragraph.'
     });
-    const initialSignature = await visualEditor.evaluate(
-      (surface) => surface.easymdePreviewSignature ?? ''
-    );
-    if (!initialSignature) throw new Error('wechat-immersive-preview-signature-unavailable');
 
     await page.getByRole('button', {
       name: immersiveLabels.editMode,

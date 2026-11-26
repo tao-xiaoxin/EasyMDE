@@ -123,37 +123,41 @@ export async function assertReadonlyMathProjection(
   surface,
   { editable, nonwindowed, ordinaryParagraphText }
 ) {
-  await expect(surface).toHaveAttribute('aria-busy', 'false');
-  await expect(surface).not.toHaveAttribute('data-easymde-preview-error', '1');
-  await expect(surface.locator('.easymde-math')).toHaveCount(3);
-  await expect(surface.locator('.easymde-math-inline')).toHaveCount(2);
-  await expect(surface.locator('.easymde-math-block')).toHaveCount(1);
-  await expect(surface.locator('.katex')).toHaveCount(3);
-  const readOnlyTopLevelCount = await surface.evaluate((root) => (
-    [...root.children].filter(
-      (child) => child.getAttribute('contenteditable') === 'false'
-    ).length
-  ));
-  expect(readOnlyTopLevelCount).toBe(3);
   if (editable) {
-    for (const root of await surface.locator('.easymde-math').all()) {
+    await expect(surface).toHaveAttribute('contenteditable', 'true');
+    await expect(surface.locator('.katex')).toHaveCount(3);
+    const inlineMath = surface.locator(
+      '[data-easymde-protected-inline][data-easymde-protected-kind="math-inline"]'
+    );
+    const blockMath = surface.locator(
+      '[data-easymde-protected-block][data-easymde-protected-kind="math"]'
+    );
+    await expect(inlineMath).toHaveCount(2);
+    await expect(blockMath).toHaveCount(1);
+    for (const root of await inlineMath.all()) {
       await expect(root).toHaveAttribute('contenteditable', 'false');
     }
-  } else {
-    await expect(surface.locator('.easymde-math-block')).toHaveAttribute(
-      'contenteditable',
-      'false'
-    );
-    for (const root of await surface.locator('.easymde-math-inline').all()) {
-      await expect(root).not.toHaveAttribute('contenteditable', 'false');
+    for (const root of await blockMath.all()) {
+      await expect(root).toHaveAttribute('contenteditable', 'false');
     }
+    const ordinaryParagraph = surface.locator('p').filter({
+      hasText: ordinaryParagraphText
+    });
+    await expect(ordinaryParagraph).toHaveCount(1);
+    await expect(ordinaryParagraph).not.toHaveAttribute('contenteditable', 'false');
+  } else {
+    await expect(surface).toHaveAttribute('aria-busy', 'false');
+    await expect(surface).not.toHaveAttribute('data-easymde-preview-error', '1');
+    await expect(surface).not.toHaveAttribute('contenteditable', 'true');
+    await expect(surface.locator('.easymde-math')).toHaveCount(3);
+    await expect(surface.locator('.easymde-math-inline')).toHaveCount(2);
+    await expect(surface.locator('.easymde-math-block')).toHaveCount(1);
+    await expect(surface.locator('.katex')).toHaveCount(3);
+    const ordinaryParagraph = surface.locator('p').filter({
+      hasText: ordinaryParagraphText
+    });
+    await expect(ordinaryParagraph).toHaveCount(1);
   }
-  const ordinaryParagraph = surface.locator('[data-easymde-visual-block-id]').filter({
-    hasText: ordinaryParagraphText
-  });
-  await expect(ordinaryParagraph).toHaveCount(1);
-  await expect(ordinaryParagraph).not.toHaveAttribute('contenteditable', 'false');
-  if (editable) await expect(surface).toHaveAttribute('contenteditable', 'true');
   if (nonwindowed) {
     await expect(surface.locator('[data-easymde-preview-window-spacer]')).toHaveCount(0);
   }

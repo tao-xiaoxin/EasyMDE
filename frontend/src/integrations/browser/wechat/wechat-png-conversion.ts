@@ -506,7 +506,12 @@ export async function replaceVisualObjects(
                       retainedBoundary: context.captureBoundary,
                       retainedParentWrapper: true,
                     }
-                  : { directSvgCapture: false }
+                  : 'mermaid-intrinsic' === plan.mode
+                    ? {
+                        directSvgCapture: false,
+                        preserveRoundedOuterCorners: true,
+                      }
+                    : { directSvgCapture: false }
               )
             : null;
         failureStage = 'rasterization';

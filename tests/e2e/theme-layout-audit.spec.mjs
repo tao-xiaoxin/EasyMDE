@@ -167,7 +167,7 @@ async function chooseTheme(page, theme) {
 		exact: true,
 	});
 	await selectOrdinaryOption(page, select, theme.label);
-	await expect(page.locator(".easymde-pane-preview article")).toHaveClass(
+	await expect(page.locator(".easymde-pane-preview article[data-easymde-preview-html-sink="1"]")).toHaveClass(
 		new RegExp(`easymde-markdown-theme-${theme.id}`),
 	);
 	await waitForStylesheet(
@@ -198,7 +198,7 @@ async function chooseCodeTheme(page, theme) {
 		exact: true,
 	});
 	await selectOrdinaryOption(page, select, theme.label);
-	await expect(page.locator(".easymde-pane-preview article")).toHaveClass(
+	await expect(page.locator(".easymde-pane-preview article[data-easymde-preview-html-sink="1"]")).toHaveClass(
 		new RegExp(`easymde-code-theme-${theme.id}`),
 	);
 	await waitForStylesheet(
@@ -260,7 +260,7 @@ async function setMode(page, mode, labels) {
 }
 
 async function scrollToMermaid(page, mode, index) {
-	await page.locator(".easymde-pane-preview article").evaluate(
+	await page.locator(".easymde-pane-preview article[data-easymde-preview-html-sink="1"]").evaluate(
 		(root, args) => {
 			const svg = root.querySelectorAll(".easymde-mermaid svg")[args.index];
 			if (!(svg instanceof SVGElement))
@@ -277,7 +277,7 @@ async function scrollToMermaid(page, mode, index) {
 }
 
 async function scrollToCodeBlock(page) {
-	await page.locator(".easymde-pane-preview article").evaluate((root) => {
+	await page.locator(".easymde-pane-preview article[data-easymde-preview-html-sink="1"]").evaluate((root) => {
 		const codeBlocks = Array.from(root.querySelectorAll("pre code.hljs"));
 		const code = codeBlocks.sort(
 			(first, second) =>
@@ -1327,7 +1327,7 @@ test("audits all registered article themes in ordinary, immersive split, and pur
 		await expect(
 			page.locator('[data-easymde-editor-owner="react"]'),
 		).toBeVisible();
-		const preview = page.locator(".easymde-pane-preview article");
+		const preview = page.locator(".easymde-pane-preview article[data-easymde-preview-html-sink="1"]");
 		await waitForPreviewIdle(preview);
 		const localCapabilityMarkdown = fullCapabilityMarkdown;
 		await page

@@ -1,6 +1,6 @@
 {
-  "_admin-editor-chunk-DO54m8S0.js": {
-    "file": "assets/admin-editor-chunk-DO54m8S0.js",
+  "_admin-editor-chunk-DJHa3tIx.js": {
+    "file": "assets/admin-editor-chunk-DJHa3tIx.js",
     "name": "wechat-managed-fonts",
     "imports": [
       "_admin-editor-chunk-DPy6uxpC.js"
@@ -11,7 +11,7 @@
     "name": "shared"
   },
   "frontend/src/entrypoints/admin-editor.tsx": {
-    "file": "assets/admin-editor-Caut8Mcj.js",
+    "file": "assets/admin-editor-CNRoDdkM.js",
     "name": "editor",
     "src": "frontend/src/entrypoints/admin-editor.tsx",
     "isEntry": true,
@@ -49,7 +49,7 @@
     ]
   },
   "frontend/src/features/immersive-visual/MountedProseMirrorVisualEditor.tsx": {
-    "file": "assets/admin-editor-chunk-CxTzZYEx.js",
+    "file": "assets/admin-editor-chunk-BaOONqNP.js",
     "name": "MountedProseMirrorVisualEditor",
     "src": "frontend/src/features/immersive-visual/MountedProseMirrorVisualEditor.tsx",
     "isDynamicEntry": true,
@@ -58,23 +58,23 @@
     ]
   },
   "frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts": {
-    "file": "assets/admin-editor-chunk-DagCqfk0.js",
+    "file": "assets/admin-editor-chunk-CyFZMs5V.js",
     "name": "create-browser-wechat-clipboard",
     "src": "frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts",
     "isDynamicEntry": true,
     "imports": [
       "_admin-editor-chunk-DPy6uxpC.js",
-      "_admin-editor-chunk-DO54m8S0.js"
+      "_admin-editor-chunk-DJHa3tIx.js"
     ]
   },
   "frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.ts": {
-    "file": "assets/admin-editor-chunk-C6b6_T3f.js",
+    "file": "assets/admin-editor-chunk-DVlqx4LM.js",
     "name": "create-browser-wechat-visual-rasterizer",
     "src": "frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.ts",
     "isDynamicEntry": true,
     "imports": [
       "_admin-editor-chunk-DPy6uxpC.js",
-      "_admin-editor-chunk-DO54m8S0.js"
+      "_admin-editor-chunk-DJHa3tIx.js"
     ]
   },
   "node_modules/@codemirror/lang-json/dist/index.js": {

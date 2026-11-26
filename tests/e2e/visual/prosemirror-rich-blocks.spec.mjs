@@ -358,11 +358,20 @@ test.describe('Unified ProseMirror visual editor rich blocks and long documents'
       const rawBlocks = visualEditor.locator('[data-easymde-protected-block][data-easymde-protected-kind="raw"]');
       const footnoteRefs = visualEditor.locator('[data-easymde-protected-inline][data-easymde-protected-kind="footnote-ref"]');
       await expect(footnoteRefs.locator('.easymde-footnote-ref-link')).toHaveText(['^1', '^long-note']);
+      // CommonMark Type-6 HTML block (<div align="center">) closes at the first
+      // blank line, so its inner Markdown heading and paragraph render directly
+      // as editable visual blocks while the wrapper tags remain collapsed meta chips.
       await expect(
-        rawBlocks.locator('.easymde-protected-preview h3').filter({ hasText: '居中标题' })
+        visualEditor.locator('h3').filter({ hasText: '居中标题' })
       ).toHaveCount(1);
       await expect(
-        rawBlocks.locator('.easymde-protected-preview p').filter({ hasText: '这是一段通过 HTML div 实现居中的文本。' })
+        visualEditor.locator('p').filter({ hasText: '这是一段通过 HTML div 实现居中的文本。' })
+      ).toHaveCount(1);
+      await expect(
+        visualEditor.locator('[data-easymde-protected-block][data-easymde-protected-kind="raw"][data-easymde-visual-markdown-source="<div align=\\"center\\">"] .easymde-protected-meta-chip')
+      ).toHaveCount(1);
+      await expect(
+        visualEditor.locator('[data-easymde-protected-block][data-easymde-protected-kind="raw"][data-easymde-visual-markdown-source="</div>"] .easymde-protected-meta-chip')
       ).toHaveCount(1);
       // CommonMark Type-6 HTML block without blank lines (<p align="right">...</p>) is stripped by html_input => 'strip' on main,
       // so the visual editor shows a subtle collapsed meta chip while keeping its raw source intact.
@@ -540,16 +549,20 @@ test.describe('Unified ProseMirror visual editor rich blocks and long documents'
       ]);
       await expect(tocBlock.locator('.easymde-toc ul li a').nth(0)).toHaveAttribute('href', '#1-overview');
       await expect(tocBlock.locator('.easymde-toc ul li a').nth(1)).toHaveAttribute('href', '#centered-heading');
-      await expect(rawBlock.locator('.easymde-protected-preview h3')).toHaveText('Centered Heading');
+      await expect(visualEditor.locator('h3').filter({ hasText: 'Centered Heading' })).toHaveCount(1);
+      await expect(visualEditor.locator('p').filter({ hasText: 'Centered paragraph.' })).toHaveCount(1);
+      await expect(rawBlock).toHaveCount(2);
 
-      // Edit on raw HTML block opens untouched raw source and Cancel returns to rendered preview.
-      await rawBlock.hover();
-      await rawBlock.locator('button.easymde-protected-edit-btn').click();
-      await expect(rawBlock.locator('textarea.easymde-protected-source-input')).toHaveValue(
-        '<div align="center">\n\n### Centered Heading\n\nCentered paragraph.\n\n</div>'
+      // Edit on raw HTML block opens untouched raw source and Cancel closes it cleanly.
+      const openingDivBlock = rawBlock.first();
+      await openingDivBlock.hover();
+      await openingDivBlock.locator('button.easymde-protected-edit-btn').click();
+      await expect(openingDivBlock.locator('textarea.easymde-protected-source-input')).toHaveValue(
+        '<div align="center">'
       );
-      await rawBlock.locator('button.easymde-protected-cancel-btn').click();
-      await expect(rawBlock.locator('.easymde-protected-preview h3')).toHaveText('Centered Heading');
+      await openingDivBlock.locator('button.easymde-protected-cancel-btn').click();
+      await expect(openingDivBlock.locator('textarea.easymde-protected-source-input')).toHaveCount(0);
+      await expect(visualEditor.locator('h3').filter({ hasText: 'Centered Heading' })).toHaveCount(1);
 
       expect(tracker.errors).toEqual([]);
     } finally {

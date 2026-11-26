@@ -245,6 +245,12 @@ export type PreparedListPreservation = Readonly<{
 
 type AuthoritativeListResolution = Readonly<{
 	firstEmittedSlice: string | null;
+	/**
+	 * Per-item reusability with `allowShift = true` (base reuse, item 0's
+	 * first-marker outcome, and genuinely failing left-shifts) BEFORE any
+	 * whole-list `allowShift = false` fallback disables shiftable items.
+	 */
+	intrinsicItemReusable: ReadonlyArray<boolean>;
 	itemReusable: boolean[];
 	needsFirstOrderedValidation: boolean;
 	output: string | null;
@@ -514,12 +520,14 @@ export function resolveAuthoritativeListPreservation(
 			if (firstRaw === null && newLen > 0) effectiveReusable[0] = false;
 			return {
 				firstEmittedSlice: firstRaw,
+				intrinsicItemReusable: effectiveReusable.slice(),
 				itemReusable: effectiveReusable,
 				needsFirstOrderedValidation: false,
 				output: null,
 			};
 		}
 		let assembled = assemble(firstRaw, buildOutput, true);
+		const intrinsicItemReusable = assembled.effectiveReusable;
 		if (assembled.hasShiftedItem) {
 			const full = buildOutput ? assembled : assemble(firstRaw, true, true);
 			const unmasked =
@@ -532,6 +540,7 @@ export function resolveAuthoritativeListPreservation(
 		}
 		return {
 			firstEmittedSlice: firstRaw,
+			intrinsicItemReusable,
 			itemReusable: assembled.effectiveReusable,
 			needsFirstOrderedValidation: false,
 			output: buildOutput ? assembled.output : null,
@@ -552,6 +561,7 @@ export function resolveAuthoritativeListPreservation(
 	}
 	for (const candidate of candidates) {
 		let assembled = assemble(candidate, true, true);
+		const intrinsicItemReusable = assembled.effectiveReusable;
 		let unmasked =
 			mathNewlineToken !== undefined
 				? restoreMathNewlineSentinel(assembled.output, mathNewlineToken)
@@ -559,6 +569,7 @@ export function resolveAuthoritativeListPreservation(
 		if (listMarkdownParsesTo(unmasked, listNode, envReferences)) {
 			return {
 				firstEmittedSlice: candidate,
+				intrinsicItemReusable,
 				itemReusable: assembled.effectiveReusable,
 				needsFirstOrderedValidation: true,
 				output: buildOutput ? assembled.output : null,
@@ -573,6 +584,7 @@ export function resolveAuthoritativeListPreservation(
 			if (listMarkdownParsesTo(unmasked, listNode, envReferences)) {
 				return {
 					firstEmittedSlice: candidate,
+					intrinsicItemReusable,
 					itemReusable: assembled.effectiveReusable,
 					needsFirstOrderedValidation: true,
 					output: buildOutput ? assembled.output : null,

@@ -1,5 +1,8 @@
 import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
-import type { ContainerAlignmentPlan } from "./markdown-container-preservation";
+import {
+	type ContainerAlignmentPlan,
+	firstLine,
+} from "./markdown-container-preservation";
 import { normalizeReferenceLabel } from "./markdown-escape";
 import type { PreparedListPreservation } from "./markdown-list-preservation";
 import {
@@ -269,11 +272,6 @@ function hasQueuedProducer(
 	);
 }
 
-function firstLineOf(text: string): string {
-	const nl = text.indexOf("\n");
-	return nl === -1 ? text : text.slice(0, nl);
-}
-
 export function isLivePartialLabel(st: LivenessState, label: string): boolean {
 	return (
 		Boolean(st.partialLabels?.has(label)) &&
@@ -391,7 +389,7 @@ function canonicalParagraphPreservesPartialTitle(
 		hasLivePartialRef && st.serializeBlockWithRefs
 			? st.serializeBlockWithRefs(nextSibling, st.liveResolver)
 			: st.serializeBlock(nextSibling);
-	if (!/^[ \t]*["'(]/.test(firstLineOf(serializedNext))) return false;
+	if (!/^[ \t]*["'(]/.test(firstLine(serializedNext))) return false;
 	if (
 		wouldReferenceDefinitionAbsorbFollowingBlock(
 			refInfo.lastRaw,

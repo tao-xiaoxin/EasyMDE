@@ -31,8 +31,9 @@ import {
  * matches what the final serializer sees. All Pass-2 list re-validation
  * (first ordered marker, indented-item left-shifts, and the whole-list
  * `allowShift = false` fallback) goes through the authoritative
- * `resolveAuthoritativeListPreservation`, stabilizing newly non-reusable
- * trailing items (and their partial-title refdefs) BEFORE committing item 0;
+ * `resolveAuthoritativeListPreservation`, stabilizing intrinsically
+ * non-reusable trailing items (and their partial-title refdefs) BEFORE
+ * committing item 0, and `allowShift = false` fallback items only after;
  * dirty lists drain one at a time in exact active-producer topological order
  * (`pendingUpstreamCount`, `liveUpstreamCount`, non-sink before sink, smallest
  * `listNode.nodeSize` first) so multi-wave cascades never re-validate a heavy
@@ -96,11 +97,20 @@ function resolveListReuse(
 }
 
 /**
- * Resolves list reuse to a fixed point: every newly non-reusable trailing item
- * (`idx >= 1`) is downgraded first, re-resolving while that shrinks
+ * Resolves list reuse to a monotonic fixed point in three stages, re-resolving
+ * (and restarting from stage 1) whenever a downgrade shrinks
  * `st.partialTitleRefNodes` (which changes canonical blank-line emission and
- * therefore tight/loose re-validation); item 0 is committed only once the
- * trailing items are stable. Each item downgrades at most once (monotonic).
+ * therefore tight/loose, first-marker, and left-shift re-validation):
+ *
+ * 1. downgrade only INTRINSICALLY non-reusable trailing items (`idx >= 1`,
+ *    failing even with `allowShift = true`);
+ * 2. commit a non-reusable item 0;
+ * 3. only then downgrade trailing items that fail solely through the
+ *    whole-list `allowShift = false` fallback.
+ *
+ * A trailing item that only failed because a still-pending partial-title
+ * refdef forced the fallback therefore survives once that refdef is gone.
+ * Each item downgrades at most once.
  */
 function resolveStableListReuse(
 	st: LivenessState,
@@ -109,22 +119,35 @@ function resolveStableListReuse(
 	isDowngraded: (itemIdx: number) => boolean,
 	downgrade: (itemIdx: number) => void,
 ): ReturnType<typeof resolveListReuse> {
+	const itemCount = listNode.childCount;
+	const downgradeTrailing = (mask: ReadonlyArray<boolean>): void => {
+		for (let idx = 1; idx < itemCount; idx += 1) {
+			if (mask[idx] !== true && !isDowngraded(idx)) downgrade(idx);
+		}
+	};
 	while (true) {
 		const resolution = resolveListReuse(st, listNode, prepared, false);
 		const before = st.partialTitleRefNodes.size;
-		for (let idx = 1; idx < listNode.childCount; idx += 1) {
-			if (resolution.itemReusable[idx] !== true && !isDowngraded(idx)) {
-				downgrade(idx);
-			}
-		}
+		downgradeTrailing(resolution.intrinsicItemReusable);
 		if (st.partialTitleRefNodes.size !== before) continue;
 		if (
-			listNode.childCount > 0 &&
+			itemCount > 0 &&
 			resolution.itemReusable[0] !== true &&
 			!isDowngraded(0)
 		) {
 			downgrade(0);
+			// Only indented trailing items (left-shifts and the whole-list
+			// `allowShift = false` fallback) depend on canonical item 0 text.
+			if (
+				prepared.hasIndentedTrailingItem &&
+				st.partialTitleRefNodes.size !== before
+			) {
+				continue;
+			}
 		}
+		const beforeFallback = st.partialTitleRefNodes.size;
+		downgradeTrailing(resolution.itemReusable);
+		if (st.partialTitleRefNodes.size !== beforeFallback) continue;
 		return resolution;
 	}
 }
@@ -304,9 +327,9 @@ export function openList(
 		}
 	}
 
-	// 3. Stabilize newly non-reusable trailing items (and their partial-title
-	//    refdefs) BEFORE committing item 0; every non-reusable item ends up
-	//    evaluated canonically exactly once.
+	// 3. Stabilize intrinsically non-reusable trailing items (and their
+	//    partial-title refdefs), then item 0, then `allowShift = false`
+	//    fallback items; every downgraded item is evaluated canonically once.
 	const resolution = resolveStableListReuse(
 		st,
 		listNode,
@@ -323,10 +346,6 @@ export function openList(
 			preEvaluatedCanonical[itemIdx] = true;
 		},
 	);
-	for (let itemIdx = 0; itemIdx < itemCount; itemIdx += 1) {
-		if (preEvaluatedCanonical[itemIdx])
-			resolution.itemReusable[itemIdx] = false;
-	}
 	// One unified Pass-2 re-validation trigger: a reused first ordered item
 	// with candidates needing whole-list marker validation, or ANY indented
 	// trailing item whose left-shift (and the whole-list `allowShift = false`
@@ -433,8 +452,8 @@ export function openList(
  * `liveUpstreamCount`, non-sink before sink, smallest `listNode.nodeSize`)
  * and re-runs the authoritative `resolveAuthoritativeListPreservation`
  * (first ordered marker, indented-item left-shifts, and the whole-list
- * `allowShift = false` fallback), stabilizing newly non-reusable trailing
- * items before item 0. Returns `false` once no list is dirty.
+ * `allowShift = false` fallback) through the same staged fixed point as
+ * `openList`. Returns `false` once no list is dirty.
  */
 export function drainNextPendingList(st: LivenessState): boolean {
 	while (st.pendingListHeap.length > 0) {

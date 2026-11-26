@@ -103,6 +103,22 @@ export function stripAtDepth(text: string, depth: number): string {
 		.join("\n");
 }
 
+/** Prefixes every line of `text` with `depth` blockquote markers. */
+export function prefixAtDepth(text: string, depth: number): string {
+	if (depth <= 0) return text;
+	const quotePrefix = "> ".repeat(depth);
+	const blankLine = `${"> ".repeat(depth - 1)}>`;
+	return text
+		.split("\n")
+		.map((line) => (line.length > 0 ? `${quotePrefix}${line}` : blankLine))
+		.join("\n");
+}
+
+export function firstLine(text: string): string {
+	const nl = text.indexOf("\n");
+	return nl === -1 ? text : text.slice(0, nl);
+}
+
 export function tryStripAllLinesAtDepth(
 	text: string,
 	depth: number,
@@ -122,17 +138,16 @@ export function leadingIndentAtDepth(
 	emittedText: string,
 	depth: number,
 ): number {
-	const nl = emittedText.indexOf("\n");
-	const firstLine = nl === -1 ? emittedText : emittedText.slice(0, nl);
+	const head = firstLine(emittedText);
 	if (depth <= 0) {
-		return measureIndentColumns(firstLine);
+		return measureIndentColumns(head);
 	}
-	const bq = readBlockquotePrefix(firstLine);
+	const bq = readBlockquotePrefix(head);
 	if (bq.depth === depth) {
 		return measureIndentColumns(bq.rest, bq.column);
 	}
-	const stripped = stripBlockquoteDepth(firstLine, depth);
-	return measureIndentColumns(stripped ?? firstLine);
+	const stripped = stripBlockquoteDepth(head, depth);
+	return measureIndentColumns(stripped ?? head);
 }
 
 /**

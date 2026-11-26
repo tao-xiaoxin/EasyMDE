@@ -258,6 +258,20 @@ function descendNonVerbatimChild(
 }
 
 /**
+ * Effective baseline index the serializer keeps for a slot that falls back to
+ * canonical after attempting nested preservation: only a matched block outside
+ * any shared group inherits its baseline index (a paired or shared-group slot
+ * inherits nothing), mirroring `serializeContainerPreservingChildren`.
+ */
+function canonicalEffectiveOrigIndex(cs: ContainerState, idx: number): number {
+	const matchedIdx = cs.matchedOrigIndex[idx] ?? -1;
+	return matchedIdx >= 0 &&
+		cs.source.blocks[matchedIdx]?.sharedGroup === undefined
+		? matchedIdx
+		: -1;
+}
+
+/**
  * Transitions a slot whose nested `blockquote`/`list` returned `preserved: true`
  * into `"preserved-container"` with a Pass-2 risk-downgrade task, matching
  * `serializeContainerPreservingChildren`. Callers have already rejected a
@@ -283,6 +297,10 @@ function installPreservedContainerSlot(
 			const oldTail = cs.tailAt[idx];
 			if (oldTail) oldTail.onChange = null;
 			cs.slotState[idx] = "canonical";
+			// A paired (or shared-group) slot emitted canonically no longer
+			// inherits its paired baseline index, so the following slot's
+			// tight-left / inherited-separator checks see the real join.
+			cs.effectiveOrigIndex[idx] = canonicalEffectiveOrigIndex(cs, idx);
 			cs.innerAt[idx] = null;
 			cs.headLineAt[idx] = null;
 			cs.tailAt[idx] = null;
@@ -487,9 +505,7 @@ function processUnmatchedSlot(
 		st.parsed,
 	);
 	if (headLineHasRisk(st, cs, idx, headLine, baseIdx)) {
-		if (origBlock !== undefined && origBlock.sharedGroup === undefined) {
-			cs.effectiveOrigIndex[idx] = baseIdx;
-		}
+		cs.effectiveOrigIndex[idx] = canonicalEffectiveOrigIndex(cs, idx);
 		cs.slotState[idx] = "canonical";
 		if (
 			walkSubtree(st, child, "canonical", cs.discover, cs.deferInvalidation)
@@ -511,13 +527,7 @@ function processUnmatchedSlot(
 		installPreservedContainerSlot(st, cs, idx, baseIdx, result, headLine);
 		return;
 	}
-	if (
-		origBlock !== undefined &&
-		origInvalidated &&
-		origBlock.sharedGroup === undefined
-	) {
-		cs.effectiveOrigIndex[idx] = baseIdx;
-	}
+	cs.effectiveOrigIndex[idx] = canonicalEffectiveOrigIndex(cs, idx);
 	cs.slotState[idx] = "canonical";
 }
 

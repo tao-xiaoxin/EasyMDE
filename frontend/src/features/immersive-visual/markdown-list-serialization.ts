@@ -149,6 +149,9 @@ export function restoreMathNewlineSentinel(
  */
 export const LEADING_FOUR_COLUMN_INDENT = /^(?: {4}| {0,3}\t)/;
 
+/** Largest CommonMark §5.2 ordered-list marker number (9 digits). */
+const MAX_ORDERED_LIST_NUMBER = 999999999;
+
 const NON_REF_DEF_INFO: ReferenceDefinitionBlockInfo = {
 	isRefDef: false,
 	lastHasTitle: false,
@@ -759,7 +762,12 @@ export function serializeListItemAt(
 			typeof order === "number" && Number.isInteger(order) && order >= 0
 				? order
 				: 1;
-		prefix = `${startOrder + index}${delimiter} `;
+		// CommonMark §5.2 allows at most 9 marker digits; an overflowing
+		// number would parse as continuation text, so it restarts at `1`
+		// (list continuation ignores later item numbers). The continuation
+		// indent follows the actual emitted marker width.
+		const number = Math.min(startOrder, MAX_ORDERED_LIST_NUMBER) + index;
+		prefix = `${number > MAX_ORDERED_LIST_NUMBER ? 1 : number}${delimiter} `;
 		indent = " ".repeat(prefix.length);
 	} else if (
 		listNode.type.name === "task_list" &&

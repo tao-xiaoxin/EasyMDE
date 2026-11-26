@@ -1,11 +1,5 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
-import {
-	checkRawPreservationRisks,
-	leadingIndentAtDepth,
-	needsPrevInnerForRiskCheck,
-	stripAtDepth,
-} from "./markdown-container-preservation";
-import { resolveContainerSlotJoin } from "./markdown-container-slot-separator";
+import { evaluateMatchedContainerHeadRisk } from "./markdown-container-head-line";
 import type {
 	BuiltVisualBlockSources,
 	ParsedVisualSharedGroup,
@@ -105,47 +99,19 @@ export function evaluateSlotJoin(
 		}
 		return prevInner;
 	};
-	const rawInner = stripAtDepth(rawCandidate, cs.depth);
-	const { separator } = resolveContainerSlotJoin({
+	return evaluateMatchedContainerHeadRisk({
 		baselineBlocks: cs.source.blocks,
 		child,
 		defaultBlankSep: cs.defaultBlankSep,
+		depth: cs.depth,
 		effIdx,
 		groupSep,
-		innerText: rawInner,
-		// A tight partial-title join depends on final liveness, which a later
-		// invalidation may withdraw; predicting the blank join is conservative.
-		isPartialTitleRefDef: null,
+		headLine: rawCandidate,
 		prevEffIdx: idx > 0 ? (cs.effectiveOrigIndex[idx - 1] ?? -1) : -1,
 		prevInnerText: readPrevInner,
 		prevNode,
 		prevWasVerbatimAdjacent,
-		serializedIsNull: false,
 	});
-	const leadIndent = leadingIndentAtDepth(rawCandidate, cs.depth);
-	if (leadIndent <= 0) {
-		return { indentedRisk: false, separator, swallowRisk: false };
-	}
-	const prevInnerForRisk = needsPrevInnerForRiskCheck(
-		child,
-		leadIndent,
-		separator,
-		prevNode,
-		prevWasVerbatimAdjacent,
-	)
-		? readPrevInner()
-		: "";
-	const { indentedRisk, swallowRisk } = checkRawPreservationRisks(
-		child,
-		cs.depth,
-		rawCandidate,
-		rawInner,
-		separator,
-		prevNode,
-		prevInnerForRisk,
-		prevWasVerbatimAdjacent,
-	);
-	return { indentedRisk, separator, swallowRisk };
 }
 
 export function isBrokenTightLeft(

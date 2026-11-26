@@ -1,5 +1,14 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
-import { alignContainerChildren } from "./markdown-container-preservation";
+import {
+	alignContainerChildren,
+	checkRawPreservationRisks,
+	firstLine,
+	leadingIndentAtDepth,
+	needsPrevInnerForRiskCheck,
+	prefixAtDepth,
+	stripAtDepth,
+} from "./markdown-container-preservation";
+import { resolveContainerSlotJoin } from "./markdown-container-slot-separator";
 import { prepareListPreservation } from "./markdown-list-preservation";
 import { isNestedList } from "./markdown-list-serialization";
 import type {
@@ -11,7 +20,9 @@ import type { PreservationPlan } from "./markdown-refdef-liveness-state";
 /**
  * Single pure, immutable Pass-1 prediction of the leading line a partially
  * preserved nested container (`list` / `blockquote`) emits at its parent
- * `depth`, shared by refdef liveness and `serializeContainerPreservingChildren`.
+ * `depth`, shared by refdef liveness and `serializeContainerPreservingChildren`,
+ * plus the one authoritative raw-text slot risk evaluation both callers run
+ * against it.
  *
  * The line depends ONLY on the cached baseline alignment (`plan.lists` /
  * `plan.containers`, computed and cached here on first use), never on which
@@ -19,16 +30,77 @@ import type { PreservationPlan } from "./markdown-refdef-liveness-state";
  * indentedRisk` against the exact same text monotonically.
  */
 
-function firstLine(text: string): string {
-	const nl = text.indexOf("\n");
-	return nl === -1 ? text : text.slice(0, nl);
-}
+type MatchedContainerHeadRiskInput = Readonly<{
+	baselineBlocks: ReadonlyArray<ParsedVisualBlockSource>;
+	child: ProseMirrorNode;
+	defaultBlankSep: string;
+	depth: number;
+	effIdx: number;
+	groupSep: string | undefined;
+	/** Raw emitted text (with `depth` quote prefixes) whose join is checked. */
+	headLine: string;
+	prevEffIdx: number;
+	/** Lazily computes the depth-stripped Markdown emitted for `prevNode`. */
+	prevInnerText: () => string;
+	prevNode: ProseMirrorNode | null;
+	prevWasVerbatimAdjacent: boolean;
+}>;
 
-function prefixLineAtDepth(line: string, depth: number): string {
-	if (depth <= 0) return line;
-	return line.length > 0
-		? `${"> ".repeat(depth)}${line}`
-		: `${"> ".repeat(depth - 1)}>`;
+/**
+ * The one authoritative separator + `indentedRisk` / `swallowRisk` evaluation
+ * for emitting raw text (an immutable matched container head line or a
+ * verbatim raw candidate) at a container slot. A tight partial-title join
+ * depends on final liveness, which a later invalidation may withdraw, so the
+ * blank join is predicted conservatively. Text with no leading indent at
+ * `depth` can never form indented code or be swallowed by a preceding list.
+ */
+export function evaluateMatchedContainerHeadRisk(
+	input: MatchedContainerHeadRiskInput,
+): Readonly<{
+	indentedRisk: boolean;
+	separator: string;
+	swallowRisk: boolean;
+}> {
+	const { child, depth, headLine, prevNode, prevWasVerbatimAdjacent } = input;
+	const rawInner = stripAtDepth(headLine, depth);
+	const { separator } = resolveContainerSlotJoin({
+		baselineBlocks: input.baselineBlocks,
+		child,
+		defaultBlankSep: input.defaultBlankSep,
+		effIdx: input.effIdx,
+		groupSep: input.groupSep,
+		innerText: rawInner,
+		isPartialTitleRefDef: null,
+		prevEffIdx: input.prevEffIdx,
+		prevInnerText: input.prevInnerText,
+		prevNode,
+		prevWasVerbatimAdjacent,
+		serializedIsNull: false,
+	});
+	const leadIndent = leadingIndentAtDepth(headLine, depth);
+	if (leadIndent <= 0) {
+		return { indentedRisk: false, separator, swallowRisk: false };
+	}
+	const prevInnerForRisk = needsPrevInnerForRiskCheck(
+		child,
+		leadIndent,
+		separator,
+		prevNode,
+		prevWasVerbatimAdjacent,
+	)
+		? input.prevInnerText()
+		: "";
+	const { indentedRisk, swallowRisk } = checkRawPreservationRisks(
+		child,
+		depth,
+		headLine,
+		rawInner,
+		separator,
+		prevNode,
+		prevInnerForRisk,
+		prevWasVerbatimAdjacent,
+	);
+	return { indentedRisk, separator, swallowRisk };
 }
 
 /**
@@ -62,9 +134,7 @@ export function resolveMatchedContainerHeadLine(
 		const matchedIdx = prepared.matched[0] ?? -1;
 		const slice =
 			matchedIdx >= 0 ? prepared.slices.items[matchedIdx] : undefined;
-		return slice === undefined
-			? null
-			: prefixLineAtDepth(firstLine(slice), depth);
+		return slice === undefined ? null : prefixAtDepth(firstLine(slice), depth);
 	}
 	if (
 		child.type.name !== "blockquote" ||

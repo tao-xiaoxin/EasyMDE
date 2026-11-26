@@ -1,10 +1,14 @@
 import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
-import { resolveMatchedContainerHeadLine } from "./markdown-container-head-line";
+import {
+	evaluateMatchedContainerHeadRisk,
+	resolveMatchedContainerHeadLine,
+} from "./markdown-container-head-line";
 import {
 	alignContainerChildren,
 	checkRawPreservationRisks,
 	createTightSharedGroupChecker,
 	isListSwallowingFollowingBlock,
+	prefixAtDepth,
 	sharedGroupHasInvalidatedRef,
 	stripAtDepth,
 	tryStripAllLinesAtDepth,
@@ -105,16 +109,6 @@ function isEmptyDoc(doc: ProseMirrorNode): boolean {
 // ---------------------------------------------------------------------------
 // Depth-aware blockquote line helpers (depth = 0 is top-level doc)
 // ---------------------------------------------------------------------------
-
-function prefixAtDepth(text: string, depth: number): string {
-	if (depth <= 0) return text;
-	const quotePrefix = "> ".repeat(depth);
-	const blankLine = `${"> ".repeat(depth - 1)}>`;
-	return text
-		.split("\n")
-		.map((line) => (line.length > 0 ? `${quotePrefix}${line}` : blankLine))
-		.join("\n");
-}
 
 function serializeChildAtDepth(
 	child: ProseMirrorNode,
@@ -364,31 +358,19 @@ function serializeContainerPreservingChildren(
 				ctx.parsed,
 			);
 			if (headLine === null) return false;
-			const rawInner = stripAtDepth(headLine, depth);
-			const join = resolveContainerSlotJoin({
+			const risks = evaluateMatchedContainerHeadRisk({
 				baselineBlocks,
 				child,
 				defaultBlankSep,
+				depth,
 				effIdx,
 				groupSep: undefined,
-				innerText: rawInner,
-				isPartialTitleRefDef: null,
+				headLine,
 				prevEffIdx: idx > 0 ? (effectiveOrigIndex[idx - 1] ?? -1) : -1,
 				prevInnerText: () => prevInnerText,
 				prevNode,
 				prevWasVerbatimAdjacent,
-				serializedIsNull: false,
 			});
-			const risks = checkRawPreservationRisks(
-				child,
-				depth,
-				headLine,
-				rawInner,
-				join.separator,
-				prevNode,
-				prevInnerText,
-				prevWasVerbatimAdjacent,
-			);
 			return risks.indentedRisk || risks.swallowRisk;
 		};
 

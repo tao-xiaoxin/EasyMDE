@@ -5,7 +5,7 @@ import {
 	createDimensionSemanticsContext,
 	type WechatDimensionSemanticsContext,
 } from "./wechat-dimension-semantics";
-import { preparedLayoutSignature } from "./wechat-fidelity-signature";
+import { collectPreparedSignatures } from "./wechat-fidelity-signature";
 import type { WechatInlinePseudoPaintReadiness } from "./wechat-inline-pseudo-paint";
 import {
 	eligibleWechatMathVectorOwners,
@@ -159,15 +159,13 @@ export function preparedGeometryRuntime(
 	if (!basicInputsMatch()) return null;
 	dimensionSemantics.refresh();
 	if (
-		preparedLayoutSignature(
-			preview,
+		collectPreparedSignatures({
+			preview: root,
 			runtime,
-			root,
 			dimensionSemantics,
-			undefined,
-			false,
-			true,
-		) !== evidence.inputSignature
+			contentBoxInputsOnly: true,
+			includeDimension: false,
+		}).layout !== evidence.inputSignature
 	) {
 		return null;
 	}
@@ -359,21 +357,16 @@ export function fallbackAfterSynchronousModernFailure(
 		}
 		const copyRuntime = geometry.runtime;
 		const currentMarkup = clipboardSourceMarkup(preview);
-		const currentDimensionSignatureSink = { value: "" };
-		const currentDimensionGeometrySignatureSink = { value: "" };
 		const hasMathCandidate =
 			hasWechatMathStaticFlowCandidate(serializationPreview);
-		const currentLayoutSignature = preparedLayoutSignature(
-			preview,
-			copyRuntime,
-			serializationPreview,
+		const currentSignatures = collectPreparedSignatures({
+			preview: serializationPreview,
+			runtime: copyRuntime,
 			dimensionSemantics,
-			currentDimensionSignatureSink,
-			false,
-			false,
-			hasMathCandidate ? currentDimensionGeometrySignatureSink : undefined,
-		);
-		const currentDimensionSignature = currentDimensionSignatureSink.value;
+			includeDimensionGeometry: hasMathCandidate,
+		});
+		const currentLayoutSignature = currentSignatures.layout;
+		const currentDimensionSignature = currentSignatures.dimension;
 		const mathSourceCapture = hasMathCandidate
 			? captureWechatMathSourceAdmissionSynchronously(
 					serializationPreview,
@@ -381,7 +374,7 @@ export function fallbackAfterSynchronousModernFailure(
 					true,
 					undefined,
 					undefined,
-					currentDimensionGeometrySignatureSink.value,
+					currentSignatures.dimensionGeometry,
 				)
 			: null;
 		const preparedFallback = reusablePreparedClipboardPayload(
@@ -455,12 +448,12 @@ export function fallbackAfterSynchronousModernFailure(
 		);
 		dimensionSemantics.refresh();
 		if (
-			preparedLayoutSignature(
-				preview,
-				copyRuntime,
-				serializationPreview,
+			collectPreparedSignatures({
+				preview: serializationPreview,
+				runtime: copyRuntime,
 				dimensionSemantics,
-			) !== currentLayoutSignature
+				includeDimension: false,
+			}).layout !== currentLayoutSignature
 		) {
 			return { code: "wechat-copy-failed", status: "failed" };
 		}
@@ -570,21 +563,16 @@ export function executeLegacyWechatCopy(
 		}
 		const copyRuntime = geometry.runtime;
 		const currentMarkup = clipboardSourceMarkup(preview);
-		const currentDimensionSignatureSink = { value: "" };
-		const currentDimensionGeometrySignatureSink = { value: "" };
 		const hasMathCandidate =
 			hasWechatMathStaticFlowCandidate(serializationPreview);
-		const currentLayoutSignature = preparedLayoutSignature(
-			preview,
-			copyRuntime,
-			serializationPreview,
+		const currentSignatures = collectPreparedSignatures({
+			preview: serializationPreview,
+			runtime: copyRuntime,
 			dimensionSemantics,
-			currentDimensionSignatureSink,
-			false,
-			false,
-			hasMathCandidate ? currentDimensionGeometrySignatureSink : undefined,
-		);
-		const currentDimensionSignature = currentDimensionSignatureSink.value;
+			includeDimensionGeometry: hasMathCandidate,
+		});
+		const currentLayoutSignature = currentSignatures.layout;
+		const currentDimensionSignature = currentSignatures.dimension;
 		const mathSourceCapture = hasMathCandidate
 			? captureWechatMathSourceAdmissionSynchronously(
 					serializationPreview,
@@ -592,7 +580,7 @@ export function executeLegacyWechatCopy(
 					true,
 					undefined,
 					undefined,
-					currentDimensionGeometrySignatureSink.value,
+					currentSignatures.dimensionGeometry,
 				)
 			: null;
 		const payload = reusablePreparedClipboardPayload(
@@ -637,12 +625,12 @@ export function executeLegacyWechatCopy(
 		}
 		dimensionSemantics.refresh();
 		if (
-			preparedLayoutSignature(
-				preview,
-				copyRuntime,
-				serializationPreview,
+			collectPreparedSignatures({
+				preview: serializationPreview,
+				runtime: copyRuntime,
 				dimensionSemantics,
-			) !== currentLayoutSignature
+				includeDimension: false,
+			}).layout !== currentLayoutSignature
 		) {
 			return { code: "wechat-copy-failed", status: "failed" };
 		}

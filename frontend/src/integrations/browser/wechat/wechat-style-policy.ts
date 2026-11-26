@@ -113,6 +113,7 @@ export {
 	semanticMarginSignature,
 	semanticMarginSource,
 	semanticMarginValue,
+	semanticMarginValueForEligibleStyle,
 	semanticPaddingSignature,
 	semanticPaddingValue,
 	semanticTransformOriginSignature,
@@ -123,7 +124,7 @@ export {
 const ORDINARY_DIMENSION_PROPERTY_SET: ReadonlySet<string> = new Set(
 	ORDINARY_DIMENSION_PROPERTIES,
 );
-const SEMANTIC_MARGIN_PROPERTY_SET: ReadonlySet<string> = new Set(
+export const SEMANTIC_MARGIN_PROPERTY_SET: ReadonlySet<string> = new Set(
 	SEMANTIC_MARGIN_PROPERTIES,
 );
 const NOOP_BACKGROUND_SHORTHAND_TOKENS: ReadonlySet<string> = new Set([

@@ -34,9 +34,10 @@ import {
 	ORDINARY_DIMENSION_PROPERTIES,
 	PREPARED_PSEUDO_ELEMENTS,
 	rootExportComputedStyle,
+	SEMANTIC_MARGIN_PROPERTY_SET,
 	semanticMarginSignature,
 	semanticMarginSource,
-	semanticMarginValue,
+	semanticMarginValueForEligibleStyle,
 	semanticPaddingSignature,
 	semanticTransformOriginSignature,
 	signatureStyleProperties,
@@ -90,37 +91,27 @@ function preparedPseudoStyleAndMarginSignature(
 		};
 	}
 	const marginEligible =
-		Boolean(dimensionSemantics) &&
+		null !== dimensionSemantics &&
 		semanticMarginSource(element, computed, pseudoElement, predicates);
-	const semanticComputed = marginEligible
-		? projectRoot
-			? exported
-			: (dimensionSemantics as WechatDimensionSemanticsContext).getComputedStyle(
-					element,
-					pseudoElement,
-				)
-		: null;
+	const semanticComputed =
+		marginEligible && dimensionSemantics
+			? projectRoot
+				? exported
+				: dimensionSemantics.getComputedStyle(element, pseudoElement)
+			: null;
 	const signature = `${pseudoElement}:${signatureStyleProperties(
 		element,
 		root,
 		true,
 		predicates,
 	)
-		.map(
-			(property) =>
-				`${property}=${normalizeSignatureStyleValue(
-					property,
-					semanticMarginValue(
-						property,
-						element,
-						computed,
-						dimensionSemantics,
-						pseudoElement,
-						semanticComputed,
-						predicates,
-					) ?? exported.getPropertyValue(property),
-				)}`,
-		)
+		.map((property) => {
+			const rawValue =
+				(marginEligible && SEMANTIC_MARGIN_PROPERTY_SET.has(property)
+					? semanticMarginValueForEligibleStyle(property, semanticComputed)
+					: null) ?? exported.getPropertyValue(property);
+			return `${property}=${normalizeSignatureStyleValue(property, rawValue)}`;
+		})
 		.join(";")}`;
 	const generatedHeadingVisibility =
 		!root &&
@@ -204,26 +195,17 @@ export function preparedRootExportStyleSignature(
 		runtime.getComputedStyle(element),
 		dimensionSemantics,
 	);
-	const semanticComputed =
-		dimensionSemantics &&
-		semanticMarginSource(element, computed, undefined, predicates)
-			? computed
-			: null;
-	const styles = COPY_STYLE_PROPERTIES.map(
-		(property) =>
-			`${property}=${normalizeSignatureStyleValue(
-				property,
-				semanticMarginValue(
-					property,
-					element,
-					computed,
-					dimensionSemantics,
-					undefined,
-					semanticComputed,
-					predicates,
-				) ?? computed.getPropertyValue(property),
-			)}`,
-	).join(";");
+	const marginEligible =
+		null !== dimensionSemantics &&
+		semanticMarginSource(element, computed, undefined, predicates);
+	const semanticComputed = marginEligible ? computed : null;
+	const styles = COPY_STYLE_PROPERTIES.map((property) => {
+		const rawValue =
+			(marginEligible && SEMANTIC_MARGIN_PROPERTY_SET.has(property)
+				? semanticMarginValueForEligibleStyle(property, semanticComputed)
+				: null) ?? computed.getPropertyValue(property);
+		return `${property}=${normalizeSignatureStyleValue(property, rawValue)}`;
+	}).join(";");
 	const pseudoStyles = PREPARED_PSEUDO_ELEMENTS.map((pseudoElement) =>
 		preparedPseudoStyleSignature(
 			element,
@@ -335,7 +317,7 @@ export function ordinaryDimensionSemanticsSignature(
 							.join(";")
 					: "";
 	const outerAllocation =
-		"html" === role && dimensionSemantics
+		"html" === role
 			? `math-outer-allocation=${
 					mathOuterAllocationDecision(
 						element,
@@ -542,49 +524,296 @@ function auxiliaryFidelitySignature(
 	return `${markerSignature}:${inlineMarkerSignature}:${quotePseudoSignature}:${headingAfterPseudoSignature}:${taskCheckboxSignature}:${tableHeaderSignature}:${tableScrollSignature}:${tableNativeGridSignature}:${mermaidAdmission}:${markerDecisions}:${inlinePseudoPaint}:${nestedListProjectionSignature}`;
 }
 
-function layoutDimensionEntrySignature(
-	index: number,
-	dimensionSemanticsSignature: string,
-	childPseudoMarginSignature: string,
-	rootExportStyleSignature: string,
-	auxiliarySignature: string,
-): string {
-	return `${index}:${dimensionSemanticsSignature}:${childPseudoMarginSignature}:${rootExportStyleSignature}:${auxiliarySignature}`;
+function previewElements(root: HTMLElement): Element[] {
+	return [root, ...Array.from(root.querySelectorAll("*"))];
 }
 
-function layoutElementSignature(
-	index: number,
-	width: number,
-	height: number,
-	styles: string,
-	pseudoStyles: string,
-	dimensionSemanticsSignature: string,
-	rootExportStyleSignature: string,
-	auxiliarySignature: string,
-): string {
-	return `${index}:${width},${height}:${styles}:${pseudoStyles}:${dimensionSemanticsSignature}:${rootExportStyleSignature}:${auxiliarySignature}`;
-}
-
-function dimensionGeometryEntrySignature(
-	index: number,
-	width: number,
-	height: number,
-	dimensions: string,
-	childPseudoMarginSignature: string,
-	rootExportStyleSignature: string,
-	auxiliarySignature: string,
-): string {
-	return `${index}:${width},${height}:${dimensions}:${childPseudoMarginSignature}:${rootExportStyleSignature}:${auxiliarySignature}`;
-}
-
-function dimensionSemanticsEntrySignature(
+function dimensionEntrySignature(
 	index: number,
 	dimensions: string,
-	childPseudoMarginSignature: string,
-	rootExportStyleSignature: string,
-	auxiliarySignature: string,
+	childPseudoMargin: string,
+	rootExportStyle: string,
+	auxiliary: string,
 ): string {
-	return `${index}:${dimensions}:${childPseudoMarginSignature}:${rootExportStyleSignature}:${auxiliarySignature}`;
+	return `${index}:${dimensions}:${childPseudoMargin}:${rootExportStyle}:${auxiliary}`;
+}
+
+export type PreparedSignatureBundle = Readonly<{
+	dimension: string;
+	dimensionGeometry: string;
+	layout: string;
+}>;
+
+export type CollectPreparedSignaturesOptions = Readonly<{
+	preview: HTMLElement;
+	runtime: BrowserWechatClipboardRuntime;
+	dimensionSemantics?: WechatDimensionSemanticsContext | null | undefined;
+	conversionActive?: boolean | undefined;
+	contentBoxInputsOnly?: boolean | undefined;
+	includeDimension?: boolean | undefined;
+	includeDimensionGeometry?: boolean | undefined;
+}>;
+
+export type CollectPreparedSignaturesWithYieldOptions =
+	CollectPreparedSignaturesOptions &
+		Readonly<{
+			yieldToBrowser: SerializationYield;
+			signal?: AbortSignal | undefined;
+		}>;
+
+type LayoutSignatureContext = Readonly<{
+	runtime: BrowserWechatClipboardRuntime;
+	dimensionSemantics: WechatDimensionSemanticsContext | null;
+	conversionActive: boolean;
+	contentBoxInputsOnly: boolean;
+	includeDimension: boolean;
+	includeDimensionGeometry: boolean;
+	predicates: WechatTreePredicateCache;
+}>;
+
+type LayoutElementSignatureResult = Readonly<{
+	dimensionEntry: string | null;
+	dimensionGeometryEntry: string | null;
+	layoutEntry: string;
+}>;
+
+function collectLayoutElementSignatures(
+	element: Element,
+	domIndex: number,
+	index: number,
+	ctx: LayoutSignatureContext,
+): LayoutElementSignatureResult {
+	const { runtime, dimensionSemantics, conversionActive, predicates } = ctx;
+	const rect = element.getBoundingClientRect?.();
+	const computed = runtime.getComputedStyle(element);
+	const root = 0 === index;
+	const styles = signatureStyleProperties(element, root, false, predicates)
+		.map(
+			(property) =>
+				`${property}=${normalizeSignatureStyleValue(property, computed.getPropertyValue(property))}`,
+		)
+		.join(";");
+	const pseudoEntries = PREPARED_PSEUDO_ELEMENTS.map((pseudo) =>
+		preparedPseudoStyleAndMarginSignature(
+			element,
+			pseudo,
+			runtime,
+			root,
+			dimensionSemantics,
+			root,
+			predicates,
+		),
+	);
+	const pseudoStyles = pseudoEntries.map((entry) => entry.style).join("|");
+	const dimensions = ordinaryDimensionSemanticsSignature(
+		element,
+		dimensionSemantics,
+		predicates,
+	);
+	const auxiliary = auxiliaryFidelitySignature(
+		element,
+		runtime,
+		dimensionSemantics,
+		conversionActive,
+		computed,
+		ctx.contentBoxInputsOnly,
+		predicates,
+	);
+	const childPseudoMargin =
+		root || !dimensionSemantics
+			? ""
+			: pseudoEntries.map((entry) => entry.childMargin).join("|");
+	const rootExportStyle = root
+		? preparedRootExportStyleSignature(
+				element,
+				runtime,
+				dimensionSemantics,
+				predicates,
+			)
+		: "";
+	const width = rect?.width ?? 0;
+	const height = rect?.height ?? 0;
+	const dimensionEntry = ctx.includeDimension
+		? dimensionEntrySignature(
+				index,
+				dimensions,
+				childPseudoMargin,
+				rootExportStyle,
+				auxiliary,
+			)
+		: null;
+	let dimensionGeometryEntry: string | null = null;
+	if (
+		ctx.includeDimensionGeometry &&
+		(0 < domIndex ||
+			!conversionActive ||
+			!predicates.hasVisualRasterizationAncestor(element))
+	) {
+		const geometryAuxiliary = ctx.contentBoxInputsOnly
+			? auxiliaryFidelitySignature(
+					element,
+					runtime,
+					dimensionSemantics,
+					conversionActive,
+					computed,
+					false,
+					predicates,
+				)
+			: auxiliary;
+		dimensionGeometryEntry = `${domIndex}:${width},${height}:${dimensions}:${childPseudoMargin}:${rootExportStyle}:${geometryAuxiliary}`;
+	}
+	// `left`/`top`/`right`/`bottom` are viewport-relative and change when
+	// the user scrolls, even though the exported markup and layout did not.
+	// Only retain dimensions here; they can affect wrapping and image/text
+	// geometry without invalidating a prepared payload on ordinary scroll.
+	const layoutEntry = `${index}:${width},${height}:${styles}:${pseudoStyles}:${dimensions}:${rootExportStyle}:${auxiliary}`;
+	return { dimensionEntry, dimensionGeometryEntry, layoutEntry };
+}
+
+function collectDimensionGeometryElementSignature(
+	element: Element,
+	index: number,
+	runtime: BrowserWechatClipboardRuntime,
+	dimensionSemantics: WechatDimensionSemanticsContext | null,
+	conversionActive: boolean,
+	predicates: WechatTreePredicateCache,
+	includeGeometry = true,
+): string | null {
+	if (conversionActive && predicates.hasVisualRasterizationAncestor(element)) {
+		return null;
+	}
+	const rect = includeGeometry ? element.getBoundingClientRect?.() : undefined;
+	const dimensions = ordinaryDimensionSemanticsSignature(
+		element,
+		dimensionSemantics,
+		predicates,
+	);
+	const auxiliary = auxiliaryFidelitySignature(
+		element,
+		runtime,
+		dimensionSemantics,
+		conversionActive,
+		undefined,
+		false,
+		predicates,
+	);
+	const childPseudoMargin =
+		0 === index
+			? ""
+			: preparedChildPseudoMarginSignature(
+					element,
+					runtime,
+					dimensionSemantics,
+					predicates,
+				);
+	const rootExportStyle =
+		0 === index
+			? preparedRootExportStyleSignature(
+					element,
+					runtime,
+					dimensionSemantics,
+					predicates,
+				)
+			: "";
+	if (!includeGeometry) {
+		return dimensionEntrySignature(
+			index,
+			dimensions,
+			childPseudoMargin,
+			rootExportStyle,
+			auxiliary,
+		);
+	}
+	return `${index}:${rect?.width ?? 0},${rect?.height ?? 0}:${dimensions}:${childPseudoMargin}:${rootExportStyle}:${auxiliary}`;
+}
+
+function createPreparedSignatureCollector(
+	options: CollectPreparedSignaturesOptions,
+) {
+	const ctx: LayoutSignatureContext = {
+		runtime: options.runtime,
+		dimensionSemantics: options.dimensionSemantics ?? null,
+		conversionActive: options.conversionActive ?? false,
+		contentBoxInputsOnly: options.contentBoxInputsOnly ?? false,
+		includeDimension: options.includeDimension ?? true,
+		includeDimensionGeometry: options.includeDimensionGeometry ?? false,
+		predicates: createWechatTreePredicateCache(),
+	};
+	const viewportSignature = layoutViewportSignature(options.preview);
+	const elements = previewElements(options.preview);
+	const entries: string[] = [];
+	const dimensionEntries: string[] = [];
+	const dimensionGeometryEntries: string[] = [];
+	let layoutIndex = 0;
+
+	return {
+		elements,
+		shouldSkip: (domIndex: number, element: Element): boolean =>
+			0 < domIndex &&
+			ctx.conversionActive &&
+			ctx.predicates.hasVisualRasterizationAncestor(element),
+		visit(domIndex: number, element: Element): void {
+			const result = collectLayoutElementSignatures(
+				element,
+				domIndex,
+				layoutIndex,
+				ctx,
+			);
+			layoutIndex += 1;
+			if (null !== result.dimensionEntry)
+				dimensionEntries.push(result.dimensionEntry);
+			if (null !== result.dimensionGeometryEntry) {
+				dimensionGeometryEntries.push(result.dimensionGeometryEntry);
+			}
+			entries.push(result.layoutEntry);
+		},
+		finish: (): PreparedSignatureBundle => ({
+			dimension: ctx.includeDimension ? dimensionEntries.join("\u0001") : "",
+			dimensionGeometry: ctx.includeDimensionGeometry
+				? [viewportSignature, ...dimensionGeometryEntries].join("\u0001")
+				: "",
+			layout: [viewportSignature, ...entries].join("\u0001"),
+		}),
+	};
+}
+
+export function collectPreparedSignatures(
+	options: CollectPreparedSignaturesOptions,
+): PreparedSignatureBundle {
+	const collector = createPreparedSignatureCollector(options);
+	for (const [domIndex, element] of collector.elements.entries()) {
+		if (collector.shouldSkip(domIndex, element)) continue;
+		collector.visit(domIndex, element);
+	}
+	return collector.finish();
+}
+
+export async function collectPreparedSignaturesWithYield(
+	options: CollectPreparedSignaturesWithYieldOptions,
+): Promise<PreparedSignatureBundle> {
+	const { yieldToBrowser, signal } = options;
+	throwIfBackgroundPreparationAborted(signal);
+	const collector = createPreparedSignatureCollector(options);
+	for (const [domIndex, element] of collector.elements.entries()) {
+		if (collector.shouldSkip(domIndex, element)) continue;
+		throwIfBackgroundPreparationAborted(signal);
+		collector.visit(domIndex, element);
+		if (yieldToBrowser.shouldYield()) await yieldToBrowser();
+		throwIfBackgroundPreparationAborted(signal);
+	}
+	return collector.finish();
+}
+
+function applyLegacySignatureSinks(
+	result: PreparedSignatureBundle,
+	dimensionSink?: { value: string },
+	dimensionGeometrySink?: { value: string },
+): string {
+	if (dimensionSink) dimensionSink.value = result.dimension;
+	if (dimensionGeometrySink) {
+		dimensionGeometrySink.value = result.dimensionGeometry;
+	}
+	return result.layout;
 }
 
 export function preparedLayoutSignature(
@@ -597,137 +826,19 @@ export function preparedLayoutSignature(
 	contentBoxInputsOnly = false,
 	dimensionGeometrySignatureSink?: { value: string },
 ): string {
-	const predicates = createWechatTreePredicateCache();
-	const viewportSignature = layoutViewportSignature(layoutPreview);
-	const allElements = [
-		layoutPreview,
-		...Array.from(layoutPreview.querySelectorAll("*")),
-	];
-	const entries: string[] = [];
-	const dimensionEntries: string[] = [];
-	const dimensionGeometryEntries: string[] = [];
-	let layoutIndex = 0;
-	for (const [domIndex, element] of allElements.entries()) {
-		if (
-			0 < domIndex &&
-			conversionActive &&
-			predicates.hasVisualRasterizationAncestor(element)
-		) {
-			continue;
-		}
-		const index = layoutIndex;
-		layoutIndex += 1;
-		const rect = element.getBoundingClientRect?.();
-		const computed = runtime.getComputedStyle(element);
-		const root = 0 === index;
-		const styles = signatureStyleProperties(element, root, false, predicates)
-			.map(
-				(property) =>
-					`${property}=${normalizeSignatureStyleValue(property, computed.getPropertyValue(property))}`,
-			)
-			.join(";");
-		const pseudoEntries = PREPARED_PSEUDO_ELEMENTS.map((pseudoElement) =>
-			preparedPseudoStyleAndMarginSignature(
-				element,
-				pseudoElement,
-				runtime,
-				root,
-				dimensionSemantics,
-				root,
-				predicates,
-			),
-		);
-		const pseudoStyles = pseudoEntries.map((entry) => entry.style).join("|");
-		const dimensionSemanticsSignature = ordinaryDimensionSemanticsSignature(
-			element,
-			dimensionSemantics,
-			predicates,
-		);
-		const auxiliarySignature = auxiliaryFidelitySignature(
-			element,
+	return applyLegacySignatureSinks(
+		collectPreparedSignatures({
+			preview: layoutPreview,
 			runtime,
 			dimensionSemantics,
 			conversionActive,
-			computed,
 			contentBoxInputsOnly,
-			predicates,
-		);
-		const childPseudoMarginSignature =
-			root || !dimensionSemantics
-				? ""
-				: pseudoEntries.map((entry) => entry.childMargin).join("|");
-		const rootExportStyleSignature = root
-			? preparedRootExportStyleSignature(
-					element,
-					runtime,
-					dimensionSemantics,
-					predicates,
-				)
-			: "";
-		dimensionEntries.push(
-			layoutDimensionEntrySignature(
-				index,
-				dimensionSemanticsSignature,
-				childPseudoMarginSignature,
-				rootExportStyleSignature,
-				auxiliarySignature,
-			),
-		);
-		if (
-			dimensionGeometrySignatureSink &&
-			(0 < domIndex ||
-				!conversionActive ||
-				!predicates.hasVisualRasterizationAncestor(element))
-		) {
-			const geometryAuxiliarySignature = contentBoxInputsOnly
-				? auxiliaryFidelitySignature(
-						element,
-						runtime,
-						dimensionSemantics,
-						conversionActive,
-						computed,
-						false,
-						predicates,
-					)
-				: auxiliarySignature;
-			dimensionGeometryEntries.push(
-				dimensionGeometryEntrySignature(
-					domIndex,
-					rect?.width ?? 0,
-					rect?.height ?? 0,
-					dimensionSemanticsSignature,
-					childPseudoMarginSignature,
-					rootExportStyleSignature,
-					geometryAuxiliarySignature,
-				),
-			);
-		}
-		// `left`/`top`/`right`/`bottom` are viewport-relative and change when
-		// the user scrolls, even though the exported markup and layout did not.
-		// Only retain dimensions here; they can affect wrapping and image/text
-		// geometry without invalidating a prepared payload on ordinary scroll.
-		entries.push(
-			layoutElementSignature(
-				index,
-				rect?.width ?? 0,
-				rect?.height ?? 0,
-				styles,
-				pseudoStyles,
-				dimensionSemanticsSignature,
-				rootExportStyleSignature,
-				auxiliarySignature,
-			),
-		);
-	}
-	if (dimensionSignatureSink)
-		dimensionSignatureSink.value = dimensionEntries.join("\u0001");
-	if (dimensionGeometrySignatureSink) {
-		dimensionGeometrySignatureSink.value = [
-			viewportSignature,
-			...dimensionGeometryEntries,
-		].join("\u0001");
-	}
-	return [viewportSignature, ...entries].join("\u0001");
+			includeDimension: Boolean(dimensionSignatureSink),
+			includeDimensionGeometry: Boolean(dimensionGeometrySignatureSink),
+		}),
+		dimensionSignatureSink,
+		dimensionGeometrySignatureSink,
+	);
 }
 
 export async function preparedLayoutSignatureWithYield(
@@ -742,143 +853,21 @@ export async function preparedLayoutSignatureWithYield(
 	contentBoxInputsOnly = false,
 	dimensionGeometrySignatureSink?: { value: string },
 ): Promise<string> {
-	throwIfBackgroundPreparationAborted(signal);
-	const predicates = createWechatTreePredicateCache();
-	const viewportSignature = layoutViewportSignature(layoutPreview);
-	const entries: string[] = [];
-	const dimensionEntries: string[] = [];
-	const dimensionGeometryEntries: string[] = [];
-	const allElements = [
-		layoutPreview,
-		...Array.from(layoutPreview.querySelectorAll("*")),
-	];
-	let layoutIndex = 0;
-	for (const [domIndex, element] of allElements.entries()) {
-		if (
-			0 < domIndex &&
-			conversionActive &&
-			predicates.hasVisualRasterizationAncestor(element)
-		) {
-			continue;
-		}
-		const index = layoutIndex;
-		layoutIndex += 1;
-		throwIfBackgroundPreparationAborted(signal);
-		const rect = element.getBoundingClientRect?.();
-		const computed = runtime.getComputedStyle(element);
-		const root = 0 === index;
-		const styles: string[] = [];
-		for (const property of signatureStyleProperties(
-			element,
-			root,
-			false,
-			predicates,
-		)) {
-			styles.push(
-				`${property}=${normalizeSignatureStyleValue(property, computed.getPropertyValue(property))}`,
-			);
-		}
-		const pseudoEntries = PREPARED_PSEUDO_ELEMENTS.map((pseudoElement) =>
-			preparedPseudoStyleAndMarginSignature(
-				element,
-				pseudoElement,
-				runtime,
-				root,
-				dimensionSemantics,
-				root,
-				predicates,
-			),
-		);
-		const pseudoStyles = pseudoEntries.map((entry) => entry.style).join("|");
-		const dimensionSemanticsSignature = ordinaryDimensionSemanticsSignature(
-			element,
-			dimensionSemantics,
-			predicates,
-		);
-		const auxiliarySignature = auxiliaryFidelitySignature(
-			element,
+	return applyLegacySignatureSinks(
+		await collectPreparedSignaturesWithYield({
+			preview: layoutPreview,
 			runtime,
+			yieldToBrowser,
+			signal,
 			dimensionSemantics,
 			conversionActive,
-			computed,
 			contentBoxInputsOnly,
-			predicates,
-		);
-		const childPseudoMarginSignature =
-			root || !dimensionSemantics
-				? ""
-				: pseudoEntries.map((entry) => entry.childMargin).join("|");
-		const rootExportStyleSignature = root
-			? preparedRootExportStyleSignature(
-					element,
-					runtime,
-					dimensionSemantics,
-					predicates,
-				)
-			: "";
-		dimensionEntries.push(
-			layoutDimensionEntrySignature(
-				index,
-				dimensionSemanticsSignature,
-				childPseudoMarginSignature,
-				rootExportStyleSignature,
-				auxiliarySignature,
-			),
-		);
-		if (
-			dimensionGeometrySignatureSink &&
-			(0 < domIndex ||
-				!conversionActive ||
-				!predicates.hasVisualRasterizationAncestor(element))
-		) {
-			const geometryAuxiliarySignature = contentBoxInputsOnly
-				? auxiliaryFidelitySignature(
-						element,
-						runtime,
-						dimensionSemantics,
-						conversionActive,
-						computed,
-						false,
-						predicates,
-					)
-				: auxiliarySignature;
-			dimensionGeometryEntries.push(
-				dimensionGeometryEntrySignature(
-					domIndex,
-					rect?.width ?? 0,
-					rect?.height ?? 0,
-					dimensionSemanticsSignature,
-					childPseudoMarginSignature,
-					rootExportStyleSignature,
-					geometryAuxiliarySignature,
-				),
-			);
-		}
-		entries.push(
-			layoutElementSignature(
-				index,
-				rect?.width ?? 0,
-				rect?.height ?? 0,
-				styles.join(";"),
-				pseudoStyles,
-				dimensionSemanticsSignature,
-				rootExportStyleSignature,
-				auxiliarySignature,
-			),
-		);
-		if (yieldToBrowser.shouldYield()) await yieldToBrowser();
-		throwIfBackgroundPreparationAborted(signal);
-	}
-
-	if (dimensionSignatureSink)
-		dimensionSignatureSink.value = dimensionEntries.join("\u0001");
-	if (dimensionGeometrySignatureSink) {
-		dimensionGeometrySignatureSink.value = [
-			viewportSignature,
-			...dimensionGeometryEntries,
-		].join("\u0001");
-	}
-	return [viewportSignature, ...entries].join("\u0001");
+			includeDimension: Boolean(dimensionSignatureSink),
+			includeDimensionGeometry: Boolean(dimensionGeometrySignatureSink),
+		}),
+		dimensionSignatureSink,
+		dimensionGeometrySignatureSink,
+	);
 }
 
 export async function preparedDimensionGeometrySignatureWithYield(
@@ -893,58 +882,18 @@ export async function preparedDimensionGeometrySignatureWithYield(
 	const predicates = createWechatTreePredicateCache();
 	const viewportSignature = layoutViewportSignature(layoutPreview);
 	const entries: string[] = [];
-	const elements = [
-		layoutPreview,
-		...Array.from(layoutPreview.querySelectorAll("*")),
-	];
-	for (const [index, element] of elements.entries()) {
+	for (const [index, element] of previewElements(layoutPreview).entries()) {
 		throwIfBackgroundPreparationAborted(signal);
-		if (conversionActive && predicates.hasVisualRasterizationAncestor(element))
-			continue;
-		const rect = element.getBoundingClientRect?.();
-		const dimensions = ordinaryDimensionSemanticsSignature(
+		const entry = collectDimensionGeometryElementSignature(
 			element,
-			dimensionSemantics,
-			predicates,
-		);
-		const auxiliarySignature = auxiliaryFidelitySignature(
-			element,
+			index,
 			runtime,
 			dimensionSemantics,
 			conversionActive,
-			undefined,
-			false,
 			predicates,
 		);
-		const childPseudoMarginSignature =
-			0 === index
-				? ""
-				: preparedChildPseudoMarginSignature(
-						element,
-						runtime,
-						dimensionSemantics,
-						predicates,
-					);
-		const rootExportStyleSignature =
-			0 === index
-				? preparedRootExportStyleSignature(
-						element,
-						runtime,
-						dimensionSemantics,
-						predicates,
-					)
-				: "";
-		entries.push(
-			dimensionGeometryEntrySignature(
-				index,
-				rect?.width ?? 0,
-				rect?.height ?? 0,
-				dimensions,
-				childPseudoMarginSignature,
-				rootExportStyleSignature,
-				auxiliarySignature,
-			),
-		);
+		if (null === entry) continue;
+		entries.push(entry);
 		if (yieldToBrowser.shouldYield()) await yieldToBrowser();
 		throwIfBackgroundPreparationAborted(signal);
 	}
@@ -959,59 +908,18 @@ export function preparedDimensionGeometrySignature(
 ): string {
 	const predicates = createWechatTreePredicateCache();
 	const viewportSignature = layoutViewportSignature(layoutPreview);
-	const elements = [
-		layoutPreview,
-		...Array.from(layoutPreview.querySelectorAll("*")),
-	];
 	const entries: string[] = [];
-	elements.forEach((element, index) => {
-		if (conversionActive && predicates.hasVisualRasterizationAncestor(element))
-			return;
-		const rect = element.getBoundingClientRect?.();
-		const dimensions = ordinaryDimensionSemanticsSignature(
+	for (const [index, element] of previewElements(layoutPreview).entries()) {
+		const entry = collectDimensionGeometryElementSignature(
 			element,
-			dimensionSemantics,
-			predicates,
-		);
-		const auxiliarySignature = auxiliaryFidelitySignature(
-			element,
+			index,
 			runtime,
 			dimensionSemantics,
 			conversionActive,
-			undefined,
-			false,
 			predicates,
 		);
-		const childPseudoMarginSignature =
-			0 === index
-				? ""
-				: preparedChildPseudoMarginSignature(
-						element,
-						runtime,
-						dimensionSemantics,
-						predicates,
-					);
-		const rootExportStyleSignature =
-			0 === index
-				? preparedRootExportStyleSignature(
-						element,
-						runtime,
-						dimensionSemantics,
-						predicates,
-					)
-				: "";
-		entries.push(
-			dimensionGeometryEntrySignature(
-				index,
-				rect?.width ?? 0,
-				rect?.height ?? 0,
-				dimensions,
-				childPseudoMarginSignature,
-				rootExportStyleSignature,
-				auxiliarySignature,
-			),
-		);
-	});
+		if (null !== entry) entries.push(entry);
+	}
 	return [viewportSignature, ...entries].join("\u0001");
 }
 
@@ -1021,51 +929,18 @@ export function preparedDimensionSemanticsSignature(
 	dimensionSemantics: WechatDimensionSemanticsContext | null,
 ): string {
 	const predicates = createWechatTreePredicateCache();
-	const elements = [
-		layoutPreview,
-		...Array.from(layoutPreview.querySelectorAll("*")),
-	];
-	return elements
-		.map((element, index) => {
-			const auxiliarySignature = auxiliaryFidelitySignature(
-				element,
-				runtime,
-				dimensionSemantics,
-				false,
-				undefined,
-				false,
-				predicates,
-			);
-			const rootExportStyleSignature =
-				0 === index
-					? preparedRootExportStyleSignature(
-							element,
-							runtime,
-							dimensionSemantics,
-							predicates,
-						)
-					: "";
-			const childPseudoMarginSignature =
-				0 === index
-					? ""
-					: preparedChildPseudoMarginSignature(
-							element,
-							runtime,
-							dimensionSemantics,
-							predicates,
-						);
-			const dimensions = ordinaryDimensionSemanticsSignature(
-				element,
-				dimensionSemantics,
-				predicates,
-			);
-			return dimensionSemanticsEntrySignature(
-				index,
-				dimensions,
-				childPseudoMarginSignature,
-				rootExportStyleSignature,
-				auxiliarySignature,
-			);
-		})
+	return previewElements(layoutPreview)
+		.map(
+			(element, index) =>
+				collectDimensionGeometryElementSignature(
+					element,
+					index,
+					runtime,
+					dimensionSemantics,
+					false,
+					predicates,
+					false,
+				) ?? "",
+		)
 		.join("\u0001");
 }

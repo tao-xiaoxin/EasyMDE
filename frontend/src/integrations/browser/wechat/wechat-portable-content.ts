@@ -259,7 +259,14 @@ export function normalizeMathBlocks(root: HTMLElement): void {
       const layoutRoot = element.firstElementChild;
       if (!layoutRoot) return;
       if (WECHAT_PNG_GENERATED_IMAGES.has(layoutRoot)) {
-        generatedBlockImageAlignment(layoutRoot, element);
+        const layoutStyle = (layoutRoot as Element & { style?: CSSStyleDeclaration }).style;
+        const hasHorizontalMargins = Boolean(
+          layoutStyle?.getPropertyValue('margin-left').trim() &&
+          layoutStyle?.getPropertyValue('margin-right').trim()
+        );
+        if (!hasHorizontalMargins) {
+          generatedBlockImageAlignment(layoutRoot, element);
+        }
         return;
       }
       replaceDeclarations(layoutRoot, ['inline-size:100%', 'max-inline-size:100%', 'width:auto'], true);

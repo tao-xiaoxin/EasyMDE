@@ -21,6 +21,7 @@ import {
 	assertHeadingEmptyPseudoFlows,
 	HEADING_EMPTY_PSEUDO_FLOW_EXPECTATIONS,
 	type HeadingEmptyPseudoFlowExpectation,
+	materializeHeadingAfterEmptyPseudoFlows,
 } from "./wechat-pseudo-elements";
 
 type HeadingCase = Readonly<{
@@ -157,6 +158,41 @@ const cases: readonly HeadingCase[] = [
 	},
 ];
 
+const inBoxCases: readonly HeadingCase[] = [
+	{
+		name: "h2 in-box flush bottom bar",
+		tag: "h2",
+		markup: "Heading",
+		text: "Heading",
+		height: 44,
+		paddingBottom: 10,
+		paddingLeft: 6,
+		borderTop: 0,
+		borderBottom: 1,
+		bottom: 0,
+		left: 8,
+		paintWidth: 64,
+		paintHeight: 3,
+		observedTop: 40,
+	},
+	{
+		name: "h3 in-box inset bar above border",
+		tag: "h3",
+		markup: "Heading",
+		text: "Heading",
+		height: 40,
+		paddingBottom: 12,
+		paddingLeft: 4,
+		borderTop: 2,
+		borderBottom: 2,
+		bottom: 4,
+		left: 10,
+		paintWidth: 48,
+		paintHeight: 4,
+		observedTop: 28,
+	},
+];
+
 const gradient = "linear-gradient(90deg, rgb(60, 100, 180), transparent)";
 const headingWidth = 419.5;
 const geometryEpsilon = 1 / 64;
@@ -174,12 +210,15 @@ async function copyHeading(
 	sourceOverrides: Record<string, string> = {},
 	parentOverrides: Record<string, string> = {},
 	wrapParentInContents = false,
+	wrapInBlockquote = false,
 ) {
 	const preview = document.createElement("article");
 	preview.setAttribute("data-easymde-preview-html-sink", "1");
-	preview.innerHTML = wrapParentInContents
-		? `<div data-contents-wrapper="1"><${fixture.tag}>${fixture.markup}</${fixture.tag}></div><p>Following</p>`
-		: `<${fixture.tag}>${fixture.markup}</${fixture.tag}><p>Following</p>`;
+	preview.innerHTML = wrapInBlockquote
+		? `<blockquote><${fixture.tag}>${fixture.markup}</${fixture.tag}><p>Following</p></blockquote>`
+		: wrapParentInContents
+			? `<div data-contents-wrapper="1"><${fixture.tag}>${fixture.markup}</${fixture.tag}></div><p>Following</p>`
+			: `<${fixture.tag}>${fixture.markup}</${fixture.tag}><p>Following</p>`;
 	const source = preview.querySelector(fixture.tag);
 	if (!source) throw new Error("heading fixture missing");
 	for (const [property, value] of Object.entries(sourceOverrides)) {
@@ -263,7 +302,7 @@ async function copyHeading(
 					"padding-right": "0px",
 					"padding-top": "0px",
 					position: "absolute",
-					right: `${headingWidth - fixture.left - fixture.paintWidth}px`,
+					right: `${headingWidth - (Number.parseFloat(sourceOverrides["border-left-width"] ?? "0") || 0) - (Number.parseFloat(sourceOverrides["border-right-width"] ?? "0") || 0) - fixture.left - fixture.paintWidth}px`,
 					top: `${fixture.observedTop}px`,
 					transform,
 					visibility: "visible",
@@ -374,7 +413,7 @@ async function copyHeading(
 // This conservative model is not a description of WeChat's internal sanitizer.
 function saveModel(holder: HTMLElement): HTMLElement {
 	const saved = holder.cloneNode(true) as HTMLElement;
-	[...saved.querySelectorAll("span")].reverse().forEach((marker) => {
+	[...saved.querySelectorAll("span, section")].reverse().forEach((marker) => {
 		const isPaint = /linear-gradient\(/u.test(
 			`${declaredStyleValue(marker, "background")} ${declaredStyleValue(marker, "background-image")}`,
 		);
@@ -390,17 +429,29 @@ function saveModel(holder: HTMLElement): HTMLElement {
 }
 
 function pixels(element: Element, property: string): number {
-	const value = (element as HTMLElement).style.getPropertyValue(property);
+	const value =
+		declaredStyleValue(element, property) ||
+		(element as HTMLElement).style.getPropertyValue(property);
 	if (!value) return 0;
 	expect(value).toMatch(/^-?(?:\d+(?:\.\d+)?|\.\d+)(?:px)?$/u);
 	return Number.parseFloat(value);
 }
 
-function gradientPaint(heading: Element): Element | undefined {
-	return [...heading.querySelectorAll("span")].find((element) =>
+function gradientPaint(scope: Element): Element | undefined {
+	return [...scope.querySelectorAll("section, span")].find((element) =>
 		/linear-gradient\(/u.test(
 			`${declaredStyleValue(element, "background")} ${declaredStyleValue(element, "background-image")}`,
 		),
+	);
+}
+
+function assertNoZeroHeightFlowStyles(html: string): void {
+	expect(html).not.toMatch(/(?:^|[;\s"])height\s*:\s*0(?:px)?(?=[;\s"!]|$)/iu);
+	expect(html).not.toMatch(
+		/(?:^|[;\s"])line-height\s*:\s*0(?:px)?(?=[;\s"!]|$)/iu,
+	);
+	expect(html).not.toMatch(
+		/(?:^|[;\s"])font-size\s*:\s*0(?:px)?(?=[;\s"!]|$)/iu,
 	);
 }
 
@@ -408,92 +459,91 @@ describe("empty absolute heading after decoration", () => {
 	installClipboardTestEnvironment();
 
 	it.each(cases)(
-		"retains paint and placement in the save model: $name",
+		"retains below-border paint and sibling placement without zero-height wrappers: $name",
 		async (fixture) => {
-			const { holder: copied } = await copyHeading(fixture);
+			const { holder: copied, html } = await copyHeading(fixture);
+			assertNoZeroHeightFlowStyles(html);
 			const copiedHeading = copied.querySelector(fixture.tag);
 			if (!copiedHeading) throw new Error("copied heading missing");
 			expect(
-				gradientPaint(copiedHeading),
+				copiedHeading.nextElementSibling?.tagName,
+				"below-border bar must be promoted to an immediate sibling section",
+			).toBe("SECTION");
+			expect(
+				gradientPaint(copied),
 				"the clipboard must contain the source paint",
-			).toBeDefined();
+			).toBe(copiedHeading.nextElementSibling);
+
 			const saved = saveModel(copied);
 			const heading = saved.querySelector(fixture.tag);
 			if (!heading) throw new Error("saved heading missing");
-			const visible = heading.cloneNode(true) as HTMLElement;
-			visible.querySelectorAll('[aria-hidden="true"]').forEach((marker) => {
-				marker.remove();
-			});
-			expect(visible.textContent).toBe(fixture.markup.replace("<br>", ""));
-			expect(visible.querySelectorAll("br")).toHaveLength(
+			expect(heading.querySelector('[aria-hidden="true"]')).toBeNull();
+			expect(heading.textContent).toBe(fixture.markup.replace("<br>", ""));
+			expect(heading.querySelectorAll("br")).toHaveLength(
 				fixture.markup.includes("<br>") ? 1 : 0,
 			);
 			expect(saved.querySelector("p")?.textContent).toBe("Following");
 
-			const paint = gradientPaint(heading);
+			const sibling = heading.nextElementSibling;
 			expect(
-				paint,
-				"the modeled save must retain the painted carrier",
-			).toBeDefined();
-			if (!paint) throw new Error("saved heading paint missing");
-			const carrier = paint.parentElement;
-			expect(carrier?.parentElement).toBe(heading);
-			if (!carrier) throw new Error("saved heading carrier missing");
-			expect(carrier.getAttribute("aria-hidden")).toBe("true");
-			expect(carrier.textContent).toBe("\u2060");
-			expect(paint.textContent).toBe("\u2060");
-			expect(carrier.childNodes).toHaveLength(1);
-			expect(carrier.firstChild).toBe(paint);
-			expect(paint.childNodes).toHaveLength(1);
-			expect(paint.firstChild?.nodeType).toBe(Node.TEXT_NODE);
-			expect(declaredStyleValue(carrier, "display")).toBe("block");
-			expect(declaredStyleValue(carrier, "text-align")).toBe("left");
-			expect(declaredStyleValue(carrier, "height")).toMatch(/^0(?:px)?$/u);
-			expect(declaredStyleValue(carrier, "line-height")).toMatch(/^0(?:px)?$/u);
-			expect(declaredStyleValue(carrier, "font-size")).toMatch(/^0(?:px)?$/u);
-			expect(pixels(carrier, "height")).toBe(0);
-			expect(pixels(carrier, "line-height")).toBe(0);
-			expect(["", "static"]).toContain(declaredStyleValue(carrier, "position"));
-			expect(["", "static"]).toContain(declaredStyleValue(paint, "position"));
-			expect(["", "none"]).toContain(declaredStyleValue(carrier, "float"));
-			expect(["", "none"]).toContain(declaredStyleValue(paint, "float"));
-			expect(["", "none"]).toContain(declaredStyleValue(carrier, "transform"));
-			expect(["", "none"]).toContain(declaredStyleValue(paint, "transform"));
-			expect(["", "visible"]).toContain(
-				declaredStyleValue(carrier, "overflow"),
+				sibling,
+				"the modeled save must retain the painted sibling section",
+			).not.toBeNull();
+			if (!sibling) throw new Error("saved heading sibling missing");
+			expect(sibling.tagName).toBe("SECTION");
+			expect(sibling.parentElement).toBe(heading.parentElement);
+			expect(sibling.getAttribute("aria-hidden")).toBe("true");
+			expect(sibling.getAttribute("data-ignore-dm")).toBe("text-bg-gradient");
+			expect(sibling.textContent).toBe("\u2060");
+			expect(sibling.childNodes).toHaveLength(1);
+			expect(sibling.firstChild?.nodeType).toBe(Node.TEXT_NODE);
+			expect(declaredStyleValue(sibling, "display")).toBe("block");
+			expect(declaredStyleValue(sibling, "position")).toBe("static");
+			expect(declaredStyleValue(sibling, "float")).toBe("none");
+			expect(declaredStyleValue(sibling, "transform")).toBe("none");
+			expect(declaredStyleValue(sibling, "overflow")).toBe("hidden");
+			expect(pixels(sibling, "width")).toBe(fixture.paintWidth);
+			expect(pixels(sibling, "height")).toBe(fixture.paintHeight);
+			expect(pixels(sibling, "line-height")).toBe(fixture.paintHeight);
+			expect(pixels(sibling, "font-size")).toBe(
+				Math.max(1, Math.round(fixture.paintHeight)),
 			);
-			expect(declaredStyleValue(paint, "display")).toBe("inline-block");
-			expect(declaredStyleValue(paint, "vertical-align")).toBe("top");
+			expect(pixels(sibling, "margin-right")).toBe(0);
 			for (const side of ["top", "right", "bottom", "left"]) {
-				expect(pixels(carrier, `margin-${side}`)).toBe(0);
-				expect(pixels(carrier, `padding-${side}`)).toBe(0);
-				expect(pixels(carrier, `border-${side}-width`)).toBe(0);
-				expect(pixels(paint, `padding-${side}`)).toBe(0);
-				expect(pixels(paint, `border-${side}-width`)).toBe(0);
+				expect(pixels(sibling, `padding-${side}`)).toBe(0);
+				expect(pixels(sibling, `border-${side}-width`)).toBe(0);
 			}
+			expect(declaredStyleValue(sibling, "border-radius")).toBe("999px");
+			expect(declaredStyleValue(sibling, "opacity")).toBe("1");
+
 			expect(pixels(heading, "padding-bottom")).toBeCloseTo(
 				fixture.paddingBottom,
 				4,
 			);
 			expect(pixels(heading, "border-bottom-width")).toBe(fixture.borderBottom);
 			expect(pixels(heading, "border-top-width")).toBe(fixture.borderTop);
-			expect(pixels(heading, "margin-bottom")).toBe(16);
-			expect(pixels(paint, "width")).toBe(fixture.paintWidth);
-			expect(pixels(paint, "height")).toBe(fixture.paintHeight);
-			expect(declaredStyleValue(paint, "border-radius")).toBe("999px");
-			const contentBottom =
-				fixture.height - fixture.borderBottom - fixture.paddingBottom;
+			expect(pixels(heading, "margin-bottom")).toBe(0);
+
+			const expectedGap = Math.max(
+				0,
+				-fixture.bottom - fixture.borderBottom - fixture.paintHeight,
+			);
+			const expectedRemainingMarginBottom = Math.max(
+				0,
+				16 - expectedGap - fixture.paintHeight,
+			);
+			expect(pixels(sibling, "margin-top")).toBeCloseTo(expectedGap, 4);
+			expect(pixels(sibling, "margin-bottom")).toBeCloseTo(
+				expectedRemainingMarginBottom,
+				4,
+			);
+			expect(pixels(sibling, "margin-left")).toBeCloseTo(fixture.left, 4);
 			expect(
 				Math.abs(
-					contentBottom +
-						pixels(paint, "margin-top") -
+					fixture.height +
+						pixels(sibling, "margin-top") -
 						fixture.borderTop -
 						fixture.observedTop,
-				),
-			).toBeLessThanOrEqual(geometryEpsilon);
-			expect(
-				Math.abs(
-					fixture.paddingLeft + pixels(paint, "margin-left") - fixture.left,
 				),
 			).toBeLessThanOrEqual(geometryEpsilon);
 		},
@@ -506,11 +556,136 @@ describe("empty absolute heading after decoration", () => {
 		expect(legacy.text).toBe(modern.text);
 	});
 
+	it.each(inBoxCases)(
+		"retains in-box paint without zero-height wrappers and matches both Clipboard paths: $name",
+		async (fixture) => {
+			const modern = await copyHeading(fixture);
+			const legacy = await copyHeading(fixture, "none", "legacy");
+			expect(legacy.html).toBe(modern.html);
+			expect(legacy.text).toBe(modern.text);
+			assertNoZeroHeightFlowStyles(modern.html);
+
+			const saved = saveModel(modern.holder);
+			const heading = saved.querySelector(fixture.tag);
+			if (!heading) throw new Error("saved in-box heading missing");
+			expect(heading.nextElementSibling?.tagName).toBe("P");
+			const paint = heading.querySelector(':scope > span[aria-hidden="true"]');
+			if (!paint) throw new Error("saved in-box paint span missing");
+			expect(paint.getAttribute("data-ignore-dm")).toBe("text-bg-gradient");
+			expect(paint.textContent).toBe("\u2060");
+			expect(paint.childNodes).toHaveLength(1);
+			expect(paint.firstChild?.nodeType).toBe(Node.TEXT_NODE);
+			expect(declaredStyleValue(paint, "display")).toBe("block");
+			expect(declaredStyleValue(paint, "position")).toBe("static");
+			expect(declaredStyleValue(paint, "float")).toBe("none");
+			expect(declaredStyleValue(paint, "transform")).toBe("none");
+			expect(declaredStyleValue(paint, "overflow")).toBe("hidden");
+			expect(pixels(paint, "width")).toBe(fixture.paintWidth);
+			expect(pixels(paint, "height")).toBe(fixture.paintHeight);
+			expect(pixels(paint, "line-height")).toBe(fixture.paintHeight);
+			expect(pixels(paint, "font-size")).toBe(
+				Math.max(1, Math.round(fixture.paintHeight)),
+			);
+			expect(pixels(paint, "margin-right")).toBe(0);
+			expect(pixels(paint, "margin-bottom")).toBe(0);
+			for (const side of ["top", "right", "bottom", "left"]) {
+				expect(pixels(paint, `padding-${side}`)).toBe(0);
+				expect(pixels(paint, `border-${side}-width`)).toBe(0);
+			}
+			expect(pixels(heading, "padding-bottom")).toBeCloseTo(
+				Math.max(0, fixture.bottom),
+				4,
+			);
+			expect(pixels(heading, "margin-bottom")).toBe(16);
+			const contentBottom =
+				fixture.height - fixture.borderBottom - fixture.paddingBottom;
+			expect(
+				Math.abs(
+					contentBottom +
+						pixels(paint, "margin-top") -
+						fixture.borderTop -
+						fixture.observedTop,
+				),
+			).toBeLessThanOrEqual(geometryEpsilon);
+			expect(
+				Math.abs(
+					contentBottom +
+						pixels(paint, "margin-top") +
+						pixels(paint, "height") +
+						pixels(heading, "padding-bottom") +
+						fixture.borderBottom -
+						fixture.height,
+				),
+			).toBeLessThanOrEqual(geometryEpsilon);
+			expect(
+				Math.abs(
+					fixture.paddingLeft + pixels(paint, "margin-left") - fixture.left,
+				),
+			).toBeLessThanOrEqual(geometryEpsilon);
+		},
+	);
+
+	it("omits data-ignore-dm on solid-color bars and preserves sibling placement inside blockquote", async () => {
+		const belowBorderFixture = cases[0];
+		const inBoxFixture = inBoxCases[0];
+		if (!belowBorderFixture || !inBoxFixture)
+			throw new Error("heading fixture missing");
+		const solidOverrides = {
+			background: "rgb(60, 100, 180)",
+			"background-color": "rgb(60, 100, 180)",
+			"background-image": "none",
+		};
+		const solidBelow = await copyHeading(
+			belowBorderFixture,
+			"none",
+			"clipboard",
+			solidOverrides,
+			{},
+			{ "border-left-width": "3px", "border-left-style": "solid" },
+			{},
+			false,
+			true,
+		);
+		assertNoZeroHeightFlowStyles(solidBelow.html);
+		const quoteSection = solidBelow.holder.querySelector("section > section");
+		const heading = quoteSection?.querySelector(belowBorderFixture.tag);
+		const sibling = heading?.nextElementSibling;
+		expect(sibling?.tagName).toBe("SECTION");
+		expect(sibling?.parentElement).toBe(quoteSection);
+		expect(sibling?.getAttribute("aria-hidden")).toBe("true");
+		expect(sibling?.getAttribute("data-ignore-dm")).toBeNull();
+		expect(pixels(sibling as Element, "margin-left")).toBeCloseTo(
+			3 + belowBorderFixture.left,
+			4,
+		);
+		expect(declaredStyleValue(sibling as Element, "background-color")).toBe(
+			"rgb(60, 100, 180)",
+		);
+		expect(sibling?.nextElementSibling?.tagName).toBe("P");
+
+		const solidInBox = await copyHeading(
+			inBoxFixture,
+			"none",
+			"clipboard",
+			solidOverrides,
+		);
+		assertNoZeroHeightFlowStyles(solidInBox.html);
+		const inBoxPaint = solidInBox.holder.querySelector(
+			`${inBoxFixture.tag} > span[aria-hidden="true"]`,
+		);
+		expect(inBoxPaint).not.toBeNull();
+		expect(inBoxPaint?.getAttribute("data-ignore-dm")).toBeNull();
+	});
+
 	it.each([
 		{ name: "inconsistent top", styles: { top: "0px" } },
 		{ name: "inconsistent right", styles: { right: "0px" } },
 		{ name: "nonzero margin", styles: { "margin-top": "1px" } },
 		{ name: "nonzero border", styles: { "border-top-width": "1px" } },
+		{
+			name: "straddling bottom border",
+			styles: { bottom: "-2px", top: "54.796875px" },
+		},
 	])(
 		"keeps unsupported geometry on its existing path: $name",
 		async ({ styles }) => {
@@ -777,8 +952,9 @@ describe("empty absolute heading after decoration", () => {
 			);
 			const heading = holder.querySelector(fixture.tag);
 			if (!heading) throw new Error("copied heading missing");
-			const paint = gradientPaint(heading);
+			const paint = heading.nextElementSibling;
 			if (!paint) throw new Error("projected heading paint missing");
+			expect(paint.tagName).toBe("SECTION");
 			expect(declaredStyleValue(paint, "position")).toBe("static");
 			expect(paint.textContent).toBe("\u2060");
 		},
@@ -796,26 +972,69 @@ describe("empty absolute heading after decoration", () => {
 		},
 	);
 
-	it("normalizes only the inner paint text and restores it after connected plain-text measurement", () => {
+	it("normalizes and preserves the transport text node across sibling materialization and plain-text measurement", () => {
 		const clone = document.createElement("article");
 		const heading = document.createElement("h2");
+		heading.setAttribute(
+			"style",
+			"margin-bottom:16px;padding-bottom:6px;padding-left:0px;border-top-width:0px;border-bottom-width:1px;border-left-width:0px",
+		);
 		heading.append("Heading");
-		const wrapper = document.createElement("span");
-		wrapper.setAttribute("aria-hidden", "true");
-		const paint = document.createElement("span");
-		paint.setAttribute("aria-hidden", "true");
+		const pending = document.createElement("span");
+		pending.setAttribute("aria-hidden", "true");
 		const paintText = document.createTextNode(" ");
-		paint.append(paintText);
-		wrapper.append(paint);
-		heading.append(wrapper);
+		pending.append(paintText);
+		heading.append(pending);
 		clone.append(heading);
-		GENERATED_EMPTY_HEADING_SUFFIX_CLONES.add(paint);
-		HEADING_EMPTY_PSEUDO_FLOW_CLONES.add(paint);
+		GENERATED_EMPTY_HEADING_SUFFIX_CLONES.add(pending);
+		HEADING_EMPTY_PSEUDO_FLOW_CLONES.add(pending);
+		const backgroundDeclarations = [
+			{
+				important: false,
+				property: "background-image",
+				value: gradient,
+			},
+		] as const;
+		const expectation: HeadingEmptyPseudoFlowExpectation = {
+			cloneHeading: heading,
+			flow: {
+				kind: "after",
+				placement: "below-border",
+				background: JSON.stringify(backgroundDeclarations),
+				backgroundDeclarations,
+				borderBottom: 1,
+				borderLeft: 0,
+				borderRadius: "999px",
+				borderTop: 0,
+				bottom: -14,
+				gapBelowBorder: 10,
+				hasGradientBackground: true,
+				headingMarginBottom: 16,
+				height: 3,
+				left: 0,
+				marginLeft: 0,
+				marginTop: 10,
+				opacity: 1,
+				paddingBottom: 6,
+				paddingLeft: 0,
+				remainingMarginBottom: 3,
+				width: 76,
+			},
+			marker: pending,
+			paint: pending,
+			source: heading,
+		};
+		HEADING_EMPTY_PSEUDO_FLOW_EXPECTATIONS.set(pending, expectation);
+		const expectations: HeadingEmptyPseudoFlowExpectation[] = [expectation];
 
 		const finalized = finalizeMarkup(clone, new Set());
-		expect(wrapper.childNodes).toHaveLength(1);
-		expect(wrapper.firstChild).toBe(paint);
-		expect(paint.childNodes).toHaveLength(1);
+		materializeHeadingAfterEmptyPseudoFlows(finalized, expectations);
+		assertHeadingEmptyPseudoFlows(expectations, finalized);
+		const sibling = heading.nextElementSibling;
+		if (!sibling) throw new Error("materialized sibling missing");
+		expect(sibling.tagName).toBe("SECTION");
+		expect(sibling.childNodes).toHaveLength(1);
+		expect(sibling.firstChild).toBe(paintText);
 		expect(paintText.nodeValue).toBe("\u2060");
 		expect(EXPORT_TEXT_NORMALIZATIONS.get(finalized)?.get(paintText)).toEqual({
 			original: "",
@@ -837,72 +1056,99 @@ describe("empty absolute heading after decoration", () => {
 		expect(connectedPlainText(finalized, source)).toBe("Heading");
 		expect(duringMeasurement).toBe("");
 		expect(paintText.nodeValue).toBe("\u2060");
-		expect(wrapper.childNodes).toHaveLength(1);
+		expect(sibling.childNodes).toHaveLength(1);
 	});
 
-	it("rejects damage to the registered wrapper, paint, geometry, or text record", async () => {
+	it("rejects damage to below-border sibling placement, zero-height styles, geometry, paint, darkmode metadata, or text record", async () => {
 		const fixture = cases[0];
 		if (!fixture) throw new Error("heading fixture missing");
 		const captured: HeadingEmptyPseudoFlowExpectation[] = [];
-		const appendChild = Node.prototype.appendChild;
-		Object.defineProperty(Node.prototype, "appendChild", {
+		let latestRoot: HTMLElement | null = null;
+		const origOuterHtml = Object.getOwnPropertyDescriptor(
+			Element.prototype,
+			"outerHTML",
+		);
+		Object.defineProperty(Element.prototype, "outerHTML", {
 			configurable: true,
-			writable: true,
-			value: function (this: Node, child: Node): Node {
-				const result = appendChild.call(this, child);
-				if (child instanceof Element) {
-					const expectation = HEADING_EMPTY_PSEUDO_FLOW_EXPECTATIONS.get(child);
-					if (expectation && this === expectation.cloneHeading)
-						captured.push(expectation);
+			get: function (this: Element) {
+				if (this instanceof HTMLElement && this.tagName === "SECTION") {
+					const found = [...this.querySelectorAll("section")].find((el) =>
+						HEADING_EMPTY_PSEUDO_FLOW_EXPECTATIONS.has(el),
+					);
+					if (found) {
+						latestRoot = this;
+						const exp = HEADING_EMPTY_PSEUDO_FLOW_EXPECTATIONS.get(found);
+						if (exp) captured.push(exp);
+					}
 				}
-				return result;
+				return origOuterHtml?.get?.call(this) ?? "";
 			},
 		});
 		try {
 			await copyHeading(fixture);
 		} finally {
-			Object.defineProperty(Node.prototype, "appendChild", {
-				configurable: true,
-				writable: true,
-				value: appendChild,
-			});
+			if (origOuterHtml)
+				Object.defineProperty(Element.prototype, "outerHTML", origOuterHtml);
 		}
 		const expectation = captured.at(-1);
-		if (!expectation) throw new Error("heading flow expectation missing");
-		const { cloneHeading, marker, paint } = expectation;
-		const root = cloneHeading.parentElement;
-		if (!(root instanceof HTMLElement))
-			throw new Error("finalized heading root missing");
+		if (!expectation || !latestRoot)
+			throw new Error("heading flow expectation missing");
+		const root: HTMLElement = latestRoot;
+		const { cloneHeading, marker } = expectation;
 		const check = () => assertHeadingEmptyPseudoFlows([expectation], root);
 		expect(check).not.toThrow();
 
+		// Detach sibling
 		marker.remove();
 		expect(check).toThrow("wechat-heading-pseudo-flow-carrier-missing");
+
+		// Misplace sibling inside heading instead of after heading
 		cloneHeading.appendChild(marker);
-		marker.removeChild(paint);
-		cloneHeading.appendChild(paint);
 		expect(check).toThrow("wechat-heading-pseudo-flow-carrier-missing");
-		marker.appendChild(paint);
+		cloneHeading.parentElement?.insertBefore(marker, cloneHeading.nextSibling);
+		expect(check).not.toThrow();
+
+		// Extra child node
 		marker.appendChild(document.createTextNode(" "));
 		expect(check).toThrow("wechat-heading-pseudo-flow-carrier-missing");
 		marker.lastChild?.remove();
 
-		const wrapperStyle = marker.getAttribute("style");
-		(marker as HTMLElement).style.height = "1px";
-		expect(check).toThrow("wechat-heading-pseudo-flow-geometry-mismatch");
-		if (wrapperStyle === null) throw new Error("wrapper style missing");
-		marker.setAttribute("style", wrapperStyle);
+		// Zero-height, zero line-height, and zero font-size declarations are strictly forbidden
+		const markerStyle = marker.getAttribute("style");
+		if (markerStyle === null) throw new Error("marker style missing");
+		for (const zeroDecl of [
+			"height:0px",
+			"line-height:0px",
+			"font-size:0px",
+			"font-size:0",
+		]) {
+			marker.setAttribute("style", `${zeroDecl};${markerStyle}`);
+			expect(check).toThrow("wechat-heading-pseudo-flow-geometry-mismatch");
+			marker.setAttribute("style", markerStyle);
+		}
 
-		const paintStyle = paint.getAttribute("style");
-		if (paintStyle === null) throw new Error("paint style missing");
-		paint.setAttribute(
+		// Heading margin-bottom damage
+		const headingStyle = cloneHeading.getAttribute("style");
+		if (headingStyle === null) throw new Error("heading style missing");
+		(cloneHeading as HTMLElement).style.marginBottom = "16px";
+		expect(check).toThrow("wechat-heading-pseudo-flow-geometry-mismatch");
+		cloneHeading.setAttribute("style", headingStyle);
+
+		// Paint gradient damage
+		marker.setAttribute(
 			"style",
-			paintStyle.replaceAll("linear-gradient", "radial-gradient"),
+			markerStyle.replaceAll("linear-gradient", "radial-gradient"),
 		);
 		expect(check).toThrow("wechat-heading-pseudo-flow-paint-mismatch");
-		paint.setAttribute("style", paintStyle);
+		marker.setAttribute("style", markerStyle);
 
-		const text = paint.firstChild;
+		// Missing darkmode gradient metadata
+		marker.removeAttribute("data-ignore-dm");
+		expect(check).toThrow("wechat-heading-pseudo-flow-paint-mismatch");
+		marker.setAttribute("data-ignore-dm", "text-bg-gradient");
+
+		// Missing plain-text normalization entry
+		const text = marker.firstChild;
 		if (!(text instanceof Text)) throw new Error("paint text missing");
 		const records = EXPORT_TEXT_NORMALIZATIONS.get(root);
 		const record = records?.get(text);
@@ -910,6 +1156,60 @@ describe("empty absolute heading after decoration", () => {
 		records?.delete(text);
 		expect(check).toThrow("wechat-heading-pseudo-flow-carrier-missing");
 		records?.set(text, record);
+		expect(check).not.toThrow();
+	});
+
+	it("rejects damage to in-box paint span geometry, heading padding-bottom, or darkmode metadata", async () => {
+		const fixture = inBoxCases[0];
+		if (!fixture) throw new Error("in-box heading fixture missing");
+		let captured: HeadingEmptyPseudoFlowExpectation | null = null;
+		let latestRoot: HTMLElement | null = null;
+		const origOuterHtml = Object.getOwnPropertyDescriptor(
+			Element.prototype,
+			"outerHTML",
+		);
+		Object.defineProperty(Element.prototype, "outerHTML", {
+			configurable: true,
+			get: function (this: Element) {
+				if (this instanceof HTMLElement && this.tagName === "SECTION") {
+					const found = [...this.querySelectorAll("span")].find((el) =>
+						HEADING_EMPTY_PSEUDO_FLOW_EXPECTATIONS.has(el),
+					);
+					if (found) {
+						latestRoot = this;
+						captured = HEADING_EMPTY_PSEUDO_FLOW_EXPECTATIONS.get(found) ?? null;
+					}
+				}
+				return origOuterHtml?.get?.call(this) ?? "";
+			},
+		});
+		try {
+			await copyHeading(fixture);
+		} finally {
+			if (origOuterHtml)
+				Object.defineProperty(Element.prototype, "outerHTML", origOuterHtml);
+		}
+		if (!captured || !latestRoot)
+			throw new Error("in-box expectation missing");
+		const expectation: HeadingEmptyPseudoFlowExpectation = captured;
+		const root: HTMLElement = latestRoot;
+		const { cloneHeading, marker } = expectation;
+		const check = () => assertHeadingEmptyPseudoFlows([expectation], root);
+		expect(check).not.toThrow();
+
+		const headingStyle = cloneHeading.getAttribute("style") ?? "";
+		(cloneHeading as HTMLElement).style.paddingBottom = "10px";
+		expect(check).toThrow("wechat-heading-pseudo-flow-geometry-mismatch");
+		cloneHeading.setAttribute("style", headingStyle);
+
+		const markerStyle = marker.getAttribute("style") ?? "";
+		marker.setAttribute("style", `font-size:0;${markerStyle}`);
+		expect(check).toThrow("wechat-heading-pseudo-flow-geometry-mismatch");
+		marker.setAttribute("style", markerStyle);
+
+		marker.removeAttribute("data-ignore-dm");
+		expect(check).toThrow("wechat-heading-pseudo-flow-paint-mismatch");
+		marker.setAttribute("data-ignore-dm", "text-bg-gradient");
 		expect(check).not.toThrow();
 	});
 

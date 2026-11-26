@@ -54,6 +54,7 @@ import { applyInlinePseudoPaint } from "./wechat-portable-serialization-pseudo-p
 import {
 	assertHeadingEmptyPseudoFlows,
 	type HeadingEmptyPseudoFlowCollector,
+	materializeHeadingAfterEmptyPseudoFlows,
 } from "./wechat-pseudo-elements";
 import {
 	assertQuotePseudoFlows,
@@ -284,6 +285,10 @@ export async function createMarkup(
 					cloneIdentity,
 				),
 		);
+		materializeHeadingAfterEmptyPseudoFlows(
+			finalized,
+			headingFlowCollector.expectations,
+		);
 		if (mathPlan) {
 			applyWechatMathStaticFlow(mathPlan, {
 				cloneRoot: finalized,
@@ -475,6 +480,10 @@ export function createMarkupSynchronously(
 					nestedListProjectionCaptures,
 					cloneIdentity,
 				),
+		);
+		materializeHeadingAfterEmptyPseudoFlows(
+			finalized,
+			headingFlowCollector.expectations,
 		);
 		if (mathPlan) {
 			applyWechatMathStaticFlow(mathPlan, {

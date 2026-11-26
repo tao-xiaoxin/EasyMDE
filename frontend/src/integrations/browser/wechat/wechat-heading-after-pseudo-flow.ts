@@ -7,8 +7,14 @@ import {
   HEADING_EMPTY_PSEUDO_FLOW_CLONES
 } from './wechat-clone-metadata';
 import { type CssDeclaration, splitCssDeclarations } from './wechat-css-list';
+import {
+  headingAfterPseudoFlowFreshnessSignature,
+  headingEmptyPseudoPaintColorIsVisible,
+  resolveAdjoiningAfterMargin,
+  resolveHeadingLeftInFormattingParent,
+  resolveProvenNaturalHeadingParent
+} from './wechat-heading-after-layout-analysis';
 import { finiteCssPixelValue } from './wechat-preview-measurement';
-import { pseudoContent } from './wechat-pseudo-content';
 import { replaceDeclarations } from './wechat-style-declarations';
 import {
   WECHAT_DARKMODE_GRADIENT_EXEMPTION,
@@ -19,6 +25,8 @@ import {
   supportsSpecialLayout
 } from './wechat-style-policy';
 import { taskCheckboxStrictNumber } from './wechat-task-layout-policy';
+
+export { headingAfterPseudoFlowFreshnessSignature, headingEmptyPseudoPaintColorIsVisible };
 
 export const HEADING_EMPTY_PSEUDO_FLOW_EPSILON = 1 / 64;
 
@@ -61,14 +69,6 @@ export function cleanHeadingFlowPixel(pixel: number): number {
   return 0 === normalized ? 0 : normalized;
 }
 
-export function headingEmptyPseudoPaintColorIsVisible(value: string): boolean {
-  const normalized = value.trim().toLowerCase();
-  if (!normalized || 'transparent' === normalized || 'none' === normalized) return false;
-  const alpha =
-    /^rgba\([^)]*,\s*([^,)]+)\s*\)$/u.exec(normalized)?.[1] ?? /\/\s*([^\s)]+)\s*\)$/u.exec(normalized)?.[1];
-  return undefined === alpha || Number.parseFloat(alpha) > 0;
-}
-
 export function headingEmptyPseudoFinitePixel(computed: CSSStyleDeclaration, property: string): number | null {
   return finiteCssPixelValue(computed.getPropertyValue(property));
 }
@@ -90,441 +90,6 @@ export function headingFlowPropertyValue(element: Element, property: string): st
 export function headingEmptyPseudoFlowNumberMatches(element: Element, property: string, expected: number): boolean {
   const value = finiteCssPixelValue(headingFlowPropertyValue(element, property));
   return null !== value && Math.abs(value - expected) <= HEADING_EMPTY_PSEUDO_FLOW_EPSILON;
-}
-
-type HeadingComputedStyleMap = Readonly<{
-  get: (property: string) => unknown;
-}>;
-
-type HeadingTypedStyleValue = Readonly<
-  | { kind: 'absent' }
-  | { kind: 'string'; value: string }
-  | { kind: 'typed'; value: string }
-  | { kind: 'to-string'; value: string }
-  | { kind: 'unreadable' }
->;
-
-type HeadingFormattingParent = Readonly<{
-  computed: CSSStyleDeclaration;
-  direction: string;
-  display: string;
-  element: Element;
-  writingMode: string;
-}>;
-
-const HEADING_NATURAL_MIN_HEIGHT_VALUES = new Set(['auto', '0px']);
-const HEADING_NATURAL_ASPECT_RATIO_VALUES = new Set(['auto', 'normal']);
-const HEADING_NATURAL_PARENT_DISPLAY_VALUES = new Set([
-  'block',
-  'flow-root',
-  'list-item',
-  'inline-block'
-]);
-const COLLAPSIBLE_BLOCK_DISPLAY_VALUES = new Set([
-  'block',
-  'list-item',
-  'flow-root',
-  'table',
-  'flex',
-  'grid'
-]);
-const MARGIN_PASSTHROUGH_BLOCK_DISPLAYS = new Set(['block', 'list-item']);
-const HEADING_NATURAL_BOX_CSS_PROPERTIES = [
-  'writing-mode',
-  'direction',
-  'contain',
-  'container-type',
-  'content-visibility',
-  'aspect-ratio'
-] as const;
-const HEADING_NATURAL_BOX_TYPED_PROPERTIES = [
-  'height',
-  'block-size',
-  'min-height',
-  'min-block-size',
-  'max-height',
-  'max-block-size',
-  'writing-mode',
-  'aspect-ratio',
-  'container-type'
-] as const;
-
-function headingTypedCandidateValue(candidate: unknown): string | null {
-  if (!candidate || 'object' !== typeof candidate || !('value' in candidate)) return null;
-  const value = (candidate as { value?: unknown }).value;
-  if ('string' === typeof value) return value.trim().toLowerCase() || null;
-  const unit = (candidate as { unit?: unknown }).unit;
-  if ('number' !== typeof value || !Number.isFinite(value) || 'string' !== typeof unit) return null;
-  if ('percent' === unit) return `${value}%`;
-  if ('number' === unit) return String(value);
-  return `${value}${unit}`.toLowerCase();
-}
-
-function headingTypedStyleValue(candidate: unknown): HeadingTypedStyleValue {
-  if (undefined === candidate || null === candidate) {
-    return { kind: 'absent' };
-  }
-  if ('string' === typeof candidate) {
-    return { kind: 'string', value: candidate.trim().toLowerCase() };
-  }
-  const typed = headingTypedCandidateValue(candidate);
-  if (null !== typed) {
-    return { kind: 'typed', value: typed };
-  }
-  if ('object' === typeof candidate) {
-    const stringify = (candidate as { toString?: unknown }).toString;
-    if ('function' === typeof stringify && stringify !== Object.prototype.toString) {
-      return { kind: 'to-string', value: String(candidate).trim().toLowerCase() };
-    }
-  }
-  return { kind: 'unreadable' };
-}
-
-function headingTypedCssValue(styleMap: HeadingComputedStyleMap, property: string): string | null {
-  return headingTypedCandidateValue(styleMap.get(property));
-}
-
-function headingContainerTypeHasSizeToken(value: string): boolean {
-  const normalized = value.trim().toLowerCase();
-  return '' !== normalized && normalized.split(/\s+/u).includes('size');
-}
-
-function headingHasNaturalAspectRatio(
-  sourceComputed: CSSStyleDeclaration,
-  styleMap: HeadingComputedStyleMap
-): boolean {
-  const cssAspectRatio = sourceComputed.getPropertyValue('aspect-ratio').trim().toLowerCase();
-  if (cssAspectRatio && !HEADING_NATURAL_ASPECT_RATIO_VALUES.has(cssAspectRatio)) {
-    return false;
-  }
-  const parsed = headingTypedStyleValue(styleMap.get('aspect-ratio'));
-  if ('absent' === parsed.kind) return true;
-  if ('unreadable' === parsed.kind) return false;
-  if ('typed' === parsed.kind) {
-    return HEADING_NATURAL_ASPECT_RATIO_VALUES.has(parsed.value);
-  }
-  return '' === parsed.value || HEADING_NATURAL_ASPECT_RATIO_VALUES.has(parsed.value);
-}
-
-function headingHasNaturalContainerType(
-  sourceComputed: CSSStyleDeclaration,
-  styleMap: HeadingComputedStyleMap
-): boolean {
-  if (headingContainerTypeHasSizeToken(sourceComputed.getPropertyValue('container-type'))) {
-    return false;
-  }
-  const parsed = headingTypedStyleValue(styleMap.get('container-type'));
-  if ('absent' === parsed.kind) return true;
-  if ('unreadable' === parsed.kind) return false;
-  return !headingContainerTypeHasSizeToken(parsed.value);
-}
-
-function resolveHeadingFormattingParent(
-  source: Element,
-  getComputedStyle: BrowserWechatClipboardRuntime['getComputedStyle']
-): HeadingFormattingParent | null {
-  let ancestor = source.parentElement;
-  while (ancestor) {
-    const computed = getComputedStyle(ancestor);
-    const display = computed.getPropertyValue('display').trim().toLowerCase();
-    if ('contents' === display) {
-      ancestor = ancestor.parentElement;
-      continue;
-    }
-    const writingMode = computed.getPropertyValue('writing-mode').trim().toLowerCase();
-    const direction = computed.getPropertyValue('direction').trim().toLowerCase();
-    return { computed, direction, display, element: ancestor, writingMode };
-  }
-  return null;
-}
-
-function headingHasSizeContainment(sourceComputed: CSSStyleDeclaration): boolean {
-  const contain = sourceComputed.getPropertyValue('contain').trim().toLowerCase();
-  if (contain && 'none' !== contain) {
-    if (contain.split(/\s+/u).some((token) => 'size' === token || 'strict' === token)) {
-      return true;
-    }
-  }
-  if (headingContainerTypeHasSizeToken(sourceComputed.getPropertyValue('container-type'))) {
-    return true;
-  }
-  const contentVisibility = sourceComputed.getPropertyValue('content-visibility').trim().toLowerCase();
-  return Boolean(contentVisibility && 'visible' !== contentVisibility);
-}
-
-/**
- * Proves that a heading's border-box bottom aligns with the natural end of its
- * in-flow horizontal content plus bottom padding and border, and returns its
- * formatting parent when proven.
- */
-function resolveProvenNaturalHeadingParent(
-  source: Element,
-  sourceComputed: CSSStyleDeclaration,
-  getComputedStyle: BrowserWechatClipboardRuntime['getComputedStyle']
-): HeadingFormattingParent | null {
-  if ('horizontal-tb' !== sourceComputed.getPropertyValue('writing-mode').trim().toLowerCase()) {
-    return null;
-  }
-  const parent = resolveHeadingFormattingParent(source, getComputedStyle);
-  if (
-    !parent ||
-    !HEADING_NATURAL_PARENT_DISPLAY_VALUES.has(parent.display) ||
-    (parent.writingMode && 'horizontal-tb' !== parent.writingMode)
-  ) {
-    return null;
-  }
-  if (headingHasSizeContainment(sourceComputed)) {
-    return null;
-  }
-  const styleMapFactory = (source as Element & { computedStyleMap?: () => HeadingComputedStyleMap }).computedStyleMap;
-  if ('function' !== typeof styleMapFactory) return null;
-  let styleMap: HeadingComputedStyleMap;
-  try {
-    styleMap = styleMapFactory.call(source);
-  } catch {
-    return null;
-  }
-  if (!styleMap || 'function' !== typeof styleMap.get) return null;
-  try {
-    if (!headingHasNaturalAspectRatio(sourceComputed, styleMap)) {
-      return null;
-    }
-    if (!headingHasNaturalContainerType(sourceComputed, styleMap)) {
-      return null;
-    }
-    const height = headingTypedCssValue(styleMap, 'height');
-    const blockSize = headingTypedCssValue(styleMap, 'block-size');
-    const minHeight = headingTypedCssValue(styleMap, 'min-height');
-    const minBlockSize = headingTypedCssValue(styleMap, 'min-block-size');
-    const maxHeight = headingTypedCssValue(styleMap, 'max-height');
-    const maxBlockSize = headingTypedCssValue(styleMap, 'max-block-size');
-    const writingMode = headingTypedCssValue(styleMap, 'writing-mode');
-    if (
-      'auto' === height &&
-      'auto' === blockSize &&
-      null !== minHeight &&
-      HEADING_NATURAL_MIN_HEIGHT_VALUES.has(minHeight) &&
-      null !== minBlockSize &&
-      HEADING_NATURAL_MIN_HEIGHT_VALUES.has(minBlockSize) &&
-      'none' === maxHeight &&
-      'none' === maxBlockSize &&
-      'horizontal-tb' === writingMode
-    ) {
-      return parent;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function headingTypedSignatureToken(styleMap: HeadingComputedStyleMap, property: string): string {
-  try {
-    const parsed = headingTypedStyleValue(styleMap.get(property));
-    if ('absent' === parsed.kind || 'unreadable' === parsed.kind) {
-      return parsed.kind;
-    }
-    return `${parsed.kind}:${parsed.value}`;
-  } catch {
-    return 'error';
-  }
-}
-
-export function headingAfterPseudoFlowFreshnessSignature(
-  element: Element,
-  runtime: BrowserWechatClipboardRuntime,
-  computed?: CSSStyleDeclaration
-): string {
-  if (!['H1', 'H2', 'H3', 'H4'].includes(element.tagName)) return '';
-  const afterComputed = runtime.getComputedStyle(element, '::after');
-  if ('' !== pseudoContent(afterComputed.getPropertyValue('content'))) return '';
-  if ('absolute' !== afterComputed.getPropertyValue('position').trim().toLowerCase()) {
-    return '';
-  }
-  const sourceComputed = computed ?? runtime.getComputedStyle(element);
-  const cssParts = HEADING_NATURAL_BOX_CSS_PROPERTIES.map(
-    (property) => `css:${property}=${sourceComputed.getPropertyValue(property).trim().toLowerCase()}`
-  );
-  const parent = resolveHeadingFormattingParent(element, runtime.getComputedStyle);
-  const parentPart = parent
-    ? `parent:display=${parent.display};parent:writing-mode=${parent.writingMode};parent:direction=${parent.direction}`
-    : 'parent:none';
-  const styleMapFactory = (element as Element & { computedStyleMap?: () => HeadingComputedStyleMap }).computedStyleMap;
-  let typedPart = 'typed:unavailable';
-  if ('function' === typeof styleMapFactory) {
-    try {
-      const styleMap = styleMapFactory.call(element);
-      if (styleMap && 'function' === typeof styleMap.get) {
-        typedPart = HEADING_NATURAL_BOX_TYPED_PROPERTIES.map(
-          (property) => `typed:${property}=${headingTypedSignatureToken(styleMap, property)}`
-        ).join(';');
-      }
-    } catch {
-      typedPart = 'typed:error';
-    }
-  }
-  return [...cssParts, parentPart, typedPart].join(';');
-}
-
-function optionalFinitePixel(computed: CSSStyleDeclaration, property: string): number | null {
-  const raw = computed.getPropertyValue(property).trim();
-  if ('' === raw) return 0;
-  return finiteCssPixelValue(raw);
-}
-
-type NextFormattingNode =
-  | Readonly<{ kind: 'none' }>
-  | Readonly<{ kind: 'text' }>
-  | Readonly<{ kind: 'element'; element: Element }>;
-
-function firstNonTrivialFormattingChild(
-  container: Element,
-  getComputedStyle: BrowserWechatClipboardRuntime['getComputedStyle']
-): NextFormattingNode {
-  let child: ChildNode | null = container.firstChild;
-  while (child) {
-    if (8 === child.nodeType) {
-      child = child.nextSibling;
-      continue;
-    }
-    if (3 === child.nodeType) {
-      if ('' !== (child.nodeValue ?? '').trim()) return { kind: 'text' };
-      child = child.nextSibling;
-      continue;
-    }
-    if (1 === child.nodeType) {
-      const element = child as Element;
-      const display = getComputedStyle(element).getPropertyValue('display').trim().toLowerCase();
-      if ('none' === display) {
-        child = child.nextSibling;
-        continue;
-      }
-      if ('contents' === display) {
-        const inner = firstNonTrivialFormattingChild(element, getComputedStyle);
-        if ('none' !== inner.kind) return inner;
-        child = child.nextSibling;
-        continue;
-      }
-      return { kind: 'element', element };
-    }
-    child = child.nextSibling;
-  }
-  return { kind: 'none' };
-}
-
-function nextFormattingSiblingNode(
-  source: Element,
-  getComputedStyle: BrowserWechatClipboardRuntime['getComputedStyle']
-): NextFormattingNode {
-  let cursor: Element | null = source;
-  while (cursor) {
-    let sibling: ChildNode | null = cursor.nextSibling;
-    while (sibling) {
-      if (8 === sibling.nodeType) {
-        sibling = sibling.nextSibling;
-        continue;
-      }
-      if (3 === sibling.nodeType) {
-        if ('' !== (sibling.nodeValue ?? '').trim()) return { kind: 'text' };
-        sibling = sibling.nextSibling;
-        continue;
-      }
-      if (1 === sibling.nodeType) {
-        const element = sibling as Element;
-        const display = getComputedStyle(element).getPropertyValue('display').trim().toLowerCase();
-        if ('none' === display) {
-          sibling = sibling.nextSibling;
-          continue;
-        }
-        if ('contents' === display) {
-          const inner = firstNonTrivialFormattingChild(element, getComputedStyle);
-          if ('none' !== inner.kind) return inner;
-          sibling = sibling.nextSibling;
-          continue;
-        }
-        return { kind: 'element', element };
-      }
-      sibling = sibling.nextSibling;
-    }
-    const parent: Element | null = cursor.parentElement;
-    if (!parent) return { kind: 'none' };
-    const parentDisplay = getComputedStyle(parent).getPropertyValue('display').trim().toLowerCase();
-    if ('contents' === parentDisplay) {
-      cursor = parent;
-      continue;
-    }
-    return { kind: 'none' };
-  }
-  return { kind: 'none' };
-}
-
-/**
- * Computes the effective adjoining positive `margin-top` of the next in-flow
- * formatting sibling that collapses with the heading's `margin-bottom` under
- * CSS 2.1 §8.3.1. Returns `null` when margin-collapse semantics are ambiguous
- * (floats, out-of-flow elements, negative top margins, inline siblings, or
- * empty self-collapsing blocks) so the caller declines promotion cleanly.
- */
-function resolveFollowingCollapsedTopMargin(
-  source: Element,
-  getComputedStyle: BrowserWechatClipboardRuntime['getComputedStyle']
-): number | null {
-  const next = nextFormattingSiblingNode(source, getComputedStyle);
-  if ('none' === next.kind || 'text' === next.kind) return 0;
-  let current: Element | null = next.element;
-  let maxPositive = 0;
-  while (current) {
-    const computed = getComputedStyle(current);
-    const display = computed.getPropertyValue('display').trim().toLowerCase();
-    const position = computed.getPropertyValue('position').trim().toLowerCase();
-    const floatValue = computed.getPropertyValue('float').trim().toLowerCase();
-    if (
-      'absolute' === position ||
-      'fixed' === position ||
-      (floatValue && 'none' !== floatValue) ||
-      !COLLAPSIBLE_BLOCK_DISPLAY_VALUES.has(display)
-    ) {
-      return null;
-    }
-    const marginTop = optionalFinitePixel(computed, 'margin-top');
-    if (null === marginTop || marginTop < 0) return null;
-    if (marginTop > maxPositive) maxPositive = marginTop;
-
-    const paddingTop = optionalFinitePixel(computed, 'padding-top');
-    const borderTop = optionalFinitePixel(computed, 'border-top-width');
-    const overflow = computed.getPropertyValue('overflow').trim().toLowerCase() || 'visible';
-    if (null === paddingTop || null === borderTop) return null;
-    if (!MARGIN_PASSTHROUGH_BLOCK_DISPLAYS.has(display) || paddingTop > 0 || borderTop > 0 || 'visible' !== overflow) {
-      break;
-    }
-    const currentRect = current.getBoundingClientRect();
-    if (Number.isFinite(currentRect.width) && currentRect.width > 0 && 0 === currentRect.height) {
-      // Empty self-collapsing block lets its own bottom margin collapse through.
-      return null;
-    }
-    const firstChild = firstNonTrivialFormattingChild(current, getComputedStyle);
-    if ('element' !== firstChild.kind) break;
-    current = firstChild.element;
-  }
-  return maxPositive;
-}
-
-function resolveHeadingLeftInFormattingParent(
-  sourceComputed: CSSStyleDeclaration,
-  formattingParent: HeadingFormattingParent,
-  headingRect: DOMRectReadOnly
-): number | null {
-  const headingMarginLeft = optionalFinitePixel(sourceComputed, 'margin-left');
-  if (null === headingMarginLeft) return null;
-  const parentRect = formattingParent.element.getBoundingClientRect();
-  if (Number.isFinite(parentRect.width) && parentRect.width > 0 && Number.isFinite(parentRect.left)) {
-    const parentBorderLeft = optionalFinitePixel(formattingParent.computed, 'border-left-width');
-    const parentPaddingLeft = optionalFinitePixel(formattingParent.computed, 'padding-left');
-    if (null === parentBorderLeft || null === parentPaddingLeft) return null;
-    const offset = headingRect.left - (parentRect.left + parentBorderLeft + parentPaddingLeft);
-    return Number.isFinite(offset) ? offset : null;
-  }
-  return headingMarginLeft;
 }
 
 function serializeHeadingAfterBackgroundDeclarations(declarations: readonly CssDeclaration[]): string[] {
@@ -680,20 +245,21 @@ export function headingAfterEmptyPseudoFlowFor(
   let marginTop: number;
   let effectiveOpacity: number;
   if (rawGapBelowBorder >= -HEADING_EMPTY_PSEUDO_FLOW_EPSILON) {
-    const nextCollapsedTopMargin = resolveFollowingCollapsedTopMargin(source, getComputedStyle);
+    const adjoiningAfterMargin = resolveAdjoiningAfterMargin(source, getComputedStyle);
     const headingLeftInParent = resolveHeadingLeftInFormattingParent(sourceComputed, formattingParent, rect);
-    if (null === nextCollapsedTopMargin || null === headingLeftInParent) {
+    if (null === adjoiningAfterMargin || null === headingLeftInParent) {
       return null;
     }
     placement = 'below-border';
     gapBelowBorder = cleanHeadingFlowPixel(Math.max(0, rawGapBelowBorder));
-    const originalCollapsedGap = Math.max(headingMarginBottom, nextCollapsedTopMargin);
+    const originalCollapsedGap = Math.max(headingMarginBottom, adjoiningAfterMargin);
     const desiredAfterBar = originalCollapsedGap - gapBelowBorder - height;
-    // Under CSS 2.1 §8.3.1, when the following sibling's positive margin-top
-    // exceeds `desiredAfterBar`, a negative `margin-bottom = desiredAfterBar - nextCollapsedTopMargin`
-    // collapses with `nextCollapsedTopMargin` to yield exactly `desiredAfterBar`.
+    // Under CSS 2.1 §8.3.1, when adjoining positive margins (crossed ancestor
+    // margin-bottom or following sibling margin-top) exceed `desiredAfterBar`,
+    // a negative `margin-bottom = desiredAfterBar - adjoiningAfterMargin`
+    // collapses with them to yield exactly `desiredAfterBar`.
     remainingMarginBottom = cleanHeadingFlowPixel(
-      nextCollapsedTopMargin > desiredAfterBar ? desiredAfterBar - nextCollapsedTopMargin : desiredAfterBar
+      adjoiningAfterMargin > desiredAfterBar ? desiredAfterBar - adjoiningAfterMargin : desiredAfterBar
     );
     marginLeft = cleanHeadingFlowPixel(headingLeftInParent + borderLeft + left);
     marginTop = gapBelowBorder;

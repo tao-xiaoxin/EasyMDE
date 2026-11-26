@@ -246,6 +246,7 @@ describe("PR-R48-A column-aware list swallowing at every depth and multi-definit
 					"> \t---",
 					1,
 					false,
+					false,
 				),
 			).toBe(true);
 			expect(
@@ -254,6 +255,7 @@ describe("PR-R48-A column-aware list swallowing at every depth and multi-definit
 					() => ">\t-\ta",
 					">   ---",
 					1,
+					false,
 					false,
 				),
 			).toBe(false);
@@ -264,6 +266,7 @@ describe("PR-R48-A column-aware list swallowing at every depth and multi-definit
 					"> \t---",
 					1,
 					true,
+					false,
 				),
 			).toBe(false);
 		});

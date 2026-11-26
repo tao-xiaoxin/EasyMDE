@@ -33,6 +33,8 @@ import {
  */
 
 const MAX_NESTING_LEVEL = 100;
+/** `MarkdownCodeRegionScanner::block_ranges()` fast-path indent probe. */
+const PHP_BLOCK_RANGES_INDENT_LINE = /(?:^|\r\n|\n|\r)(?: {4}|\t)/;
 
 export type ScannedCodeRange = Readonly<{ end: number; start: number }>;
 
@@ -578,16 +580,21 @@ export function scanLinesIntoPhpCommonMarkBlockState(
 
 /**
  * Collects merged `FencedCode` / `IndentedCode` ranges mirroring PHP
- * `MarkdownCodeRegionScanner::block_ranges()`.
+ * `MarkdownCodeRegionScanner::block_ranges()`, including its exact fast path:
+ * no backtick, no tilde, and no line starting with four spaces or a tab
+ * (`/(^|\r\n|\n|\r)(?: {4}|\t)/`) means no block code at all, even when a
+ * container prefix such as `>       ` would otherwise form indented code.
+ * PHP evaluates that fast path on the WHOLE document, so a bounded prefix
+ * scan passes the full `documentSource` it was sliced from.
  */
 export function scanPhpCommonMarkBlockCodeRanges(
 	source: string,
+	documentSource: string = source,
 ): ReadonlyArray<ScannedCodeRange> {
 	if (
-		!source.includes("`") &&
-		!source.includes("~") &&
-		!source.includes("    ") &&
-		!source.includes("\t")
+		!documentSource.includes("`") &&
+		!documentSource.includes("~") &&
+		!PHP_BLOCK_RANGES_INDENT_LINE.test(documentSource)
 	) {
 		return [];
 	}

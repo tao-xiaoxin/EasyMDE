@@ -77,12 +77,12 @@ export {
 export type { ProtectedInlineEntry };
 export { TABLE_ALIGN_PREFIX, TABLE_ALIGN_SUFFIX };
 
-export type ProtectedBlockEntry = Readonly<{
+type ProtectedBlockEntry = Readonly<{
 	kind: ProtectedBlockKind;
 	rawMarkdown: string;
 }>;
 
-export type PrescannedLineRange = Readonly<{
+type PrescannedLineRange = Readonly<{
 	end: number;
 	start: number;
 }>;
@@ -199,6 +199,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		origStart: number,
 		lastLine: number,
 		sentinelIndent = indent,
+		sentinelPrefix = prefix,
 	): void => {
 		const origEnd = lastLine + 1;
 		const rawBlock = lines
@@ -206,7 +207,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			.map((blockLine) => stripBlockContainerPrefix(blockLine, prefix, indent))
 			.join("\n");
 		const token = addProtectedBlock(kind, rawBlock);
-		pushOutputLine(`${prefix}${" ".repeat(sentinelIndent)}${token}`, {
+		pushOutputLine(`${sentinelPrefix}${" ".repeat(sentinelIndent)}${token}`, {
 			end: origEnd,
 			start: origStart,
 		});
@@ -270,6 +271,21 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		scanLinesIntoPhpCommonMarkBlockState(
 			phpBlockState,
 			`\n\nM\n\n${postMathMasked}`,
+		);
+	};
+	const startsPhpDisplayMath = (content: string, lineIdx: number): boolean => {
+		if (
+			mathIndex.ranges.length === 0 ||
+			!(content.startsWith("$$") || content.startsWith("\\["))
+		) {
+			return false;
+		}
+		const lineText = lines[lineIdx] ?? "";
+		const contentOffset =
+			(mathIndex.lineStarts[lineIdx] ?? 0) + lineText.length - content.length;
+		return (
+			findFirstDisplayMathInLines(mathIndex, lineIdx, lineIdx)?.from ===
+			contentOffset
 		);
 	};
 	const advancePhpStateClosedBlock = (prefix: string, indent: number): void => {
@@ -507,7 +523,14 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		const relativeIndent = analysis.indent - effectiveContainer;
 
 		// 1. Indented code blocks can only start when no paragraph is open.
-		if (!paragraphOpen && relativeIndent >= 4) {
+		//    PHP `extract_math()` runs first: a display-math span the
+		//    authoritative math index found here (no PHP block code range
+		//    covers it) is never indented code.
+		if (
+			!paragraphOpen &&
+			relativeIndent >= 4 &&
+			!startsPhpDisplayMath(analysis.content, i)
+		) {
 			inIndentedCode = true;
 			indentedCodeContainer = effectiveContainer;
 			clearDroppedList(droppedOutOfList);
@@ -699,6 +722,19 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 					blockMathEnd,
 				);
 				advancePhpStateClosedBlock(analysis.prefix, 0);
+			} else if (effectiveContainer > 0) {
+				// PHP `extract_math()` replaces standalone display math with
+				// `"\n\nTOKEN\n\n"`: the token sits at column 0 behind a blank
+				// line, closing every enclosing list item (and blockquote).
+				if (displayMathEnv.hasPrecedingContent()) pushOutputLine("", null);
+				pushProtectedBlock("math", analysis, i, blockMathEnd, 0, "");
+				pushOutputLine("", null);
+				scanLinesIntoPhpCommonMarkBlockState(
+					phpBlockState,
+					`${line.slice(0, line.length - analysis.content.length)}\n\nM\n\n`,
+				);
+				listContentIndent = null;
+				inRestoredDisplayMathContainer = false;
 			} else {
 				const mathSentinelIndent =
 					relativeIndent >= 4 ? effectiveContainer : analysis.indent;

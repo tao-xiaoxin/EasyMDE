@@ -147,6 +147,7 @@ export function resolveContainerSlotJoin(
 			input.emittedText,
 			input.depth,
 			input.prevWasVerbatimAdjacent,
+			false,
 		) ||
 		shouldEscalateLazyContinuation(input, prevNode);
 	return {

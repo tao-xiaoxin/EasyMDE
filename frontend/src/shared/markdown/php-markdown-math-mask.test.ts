@@ -792,3 +792,33 @@ describe("maskPhpMarkdownMathForTableScan", () => {
 		expect(elapsedMs).toBeLessThanOrEqual(50);
 	});
 });
+
+describe("MarkdownCodeRegionScanner::block_ranges() fast path (PR-R50-A Track A #1)", () => {
+	const ranges = (source: string, limit?: number) =>
+		scanPhpMarkdownMathRanges(source, undefined, limit).map(
+			({ block, from, to }) => ({ block, from, to }),
+		);
+
+	it("skips block code scanning unless a backtick, tilde, or line-leading 4 spaces / tab exists", () => {
+		// Verified against real PHP `MarkdownRenderer::render()`: no line
+		// STARTS with 4 spaces or a tab, so `block_ranges()` returns `[]` and
+		// `$$x$$` is extracted as display math (not indented code).
+		const quoted = "> - aa\n>\n>       $$x$$";
+		expect(ranges(quoted)).toEqual([{ block: true, from: 17, to: 22 }]);
+		expect(ranges("> - aa\n>\n>\t      $$x$$")).toEqual([
+			{ block: true, from: 17, to: 22 },
+		]);
+		// Controls: a backtick anywhere, or a line-leading 4-space indent,
+		// makes PHP parse the document, keeping indented code.
+		expect(ranges(`${quoted}\n\n\``)).toEqual([]);
+		expect(ranges("    $$x$$")).toEqual([]);
+	});
+
+	it("evaluates the fast path on the whole document in bounded prefix scans", () => {
+		const source = " \t$x$\n`";
+		expect(ranges(source)).toEqual([]);
+		expect(ranges(source, 5)).toEqual([]);
+		const quoted = "> - aa\n>\n>       $$x$$\n\npara $y$";
+		expect(ranges(quoted, 20)).toEqual(ranges(quoted).slice(0, 1));
+	});
+});

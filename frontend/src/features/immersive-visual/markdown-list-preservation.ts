@@ -28,6 +28,7 @@ import {
 	firstLine,
 	matchListMarker,
 	measureIndentColumns,
+	phpListMarkerContentIndent,
 } from "./markdown-prescanner-containers";
 
 /**
@@ -238,6 +239,13 @@ export type PreparedListPreservation = Readonly<{
 	hasIndentedTrailingItem: boolean;
 	innerRaw: string;
 	itemLeadCols: ReadonlyArray<number>;
+	/**
+	 * Column at which every item line of the list is emitted: preserved lists
+	 * at blockquote `depth` are re-prefixed with `"> ".repeat(depth)`
+	 * (`emitWithMathSentinelAtDepth`), so the depth-stripped item text starts
+	 * at column `2 * depth`.
+	 */
+	itemStartColumn: number;
 	matched: ReadonlyArray<number>;
 	orig: ProseMirrorNode;
 	paired: ReadonlyArray<number>;
@@ -259,9 +267,13 @@ type AuthoritativeListResolution = Readonly<{
 	output: string | null;
 }>;
 
-/** CommonMark §5.2 content indentation column of a single serialized list item. */
-function listItemContentIndent(itemText: string): number {
-	return matchListMarker(firstLine(itemText))?.contentIndent ?? 0;
+/**
+ * PHP CommonMark §5.2 content indentation of a single serialized list item
+ * whose first line is emitted at `startColumn` (tabs expand from there).
+ */
+function listItemContentIndent(itemText: string, startColumn: number): number {
+	const marker = matchListMarker(firstLine(itemText), startColumn);
+	return marker !== null ? phpListMarkerContentIndent(marker) : 0;
 }
 
 function hasMultilineMathInSlice(rawSlice: string): boolean {
@@ -294,6 +306,7 @@ function hasMultilineMathInSlice(rawSlice: string): boolean {
 function tryLeftShiftReusableItem(
 	rawSlice: string,
 	leadCols: number,
+	startColumn: number,
 	listNode: ProseMirrorNode,
 	itemIdx: number,
 	envReferences?: ParsedEnvReferences,
@@ -312,9 +325,8 @@ function tryLeftShiftReusableItem(
 		if (!line.startsWith(prefix)) return null;
 		shiftedLines.push(line.slice(leadCols));
 	}
-	const beforeIndent = matchListMarker(lines[0] ?? "")?.contentIndent ?? 0;
-	const afterIndent =
-		matchListMarker(shiftedLines[0] ?? "")?.contentIndent ?? 0;
+	const beforeIndent = listItemContentIndent(lines[0] ?? "", startColumn);
+	const afterIndent = listItemContentIndent(shiftedLines[0] ?? "", startColumn);
 	if (
 		beforeIndent <= 0 ||
 		afterIndent <= 0 ||
@@ -356,8 +368,9 @@ export function prepareListPreservation(
 		structurallyEqual,
 	);
 	const paired = pairUnmatched(matched, orig.childCount);
+	const itemStartColumn = 2 * Math.max(0, depth);
 	const itemLeadCols = slices.items.map((slice) =>
-		measureIndentColumns(firstLine(slice)),
+		measureIndentColumns(firstLine(slice), itemStartColumn),
 	);
 	let hasIndentedTrailingItem = false;
 	for (let idx = 1; idx < matched.length; idx += 1) {
@@ -371,6 +384,7 @@ export function prepareListPreservation(
 		hasIndentedTrailingItem,
 		innerRaw,
 		itemLeadCols,
+		itemStartColumn,
 		matched,
 		orig,
 		paired,
@@ -400,6 +414,7 @@ export function resolveAuthoritativeListPreservation(
 	const {
 		hasIndentedTrailingItem,
 		itemLeadCols,
+		itemStartColumn,
 		matched,
 		orig,
 		paired,
@@ -421,6 +436,7 @@ export function resolveAuthoritativeListPreservation(
 			shifted = tryLeftShiftReusableItem(
 				reused,
 				leadCols,
+				itemStartColumn,
 				listNode,
 				idx,
 				envReferences,
@@ -503,7 +519,7 @@ export function resolveAuthoritativeListPreservation(
 			if (reused !== undefined) {
 				if (needOutput) parts.push(reused);
 				if (needNextIndent) {
-					prevContentIndent = listItemContentIndent(reused);
+					prevContentIndent = listItemContentIndent(reused, itemStartColumn);
 				}
 				continue;
 			}
@@ -513,7 +529,10 @@ export function resolveAuthoritativeListPreservation(
 				const serializedItem = canonicalItem(idx, pairedSlice);
 				if (needOutput) parts.push(serializedItem);
 				if (needNextIndent) {
-					prevContentIndent = listItemContentIndent(serializedItem);
+					prevContentIndent = listItemContentIndent(
+						serializedItem,
+						itemStartColumn,
+					);
 				}
 			}
 		}
@@ -658,10 +677,17 @@ export function serializeListPreservingItems(
 	rawOverride?: string,
 	mathNewlineToken?: string,
 	preparedOverride?: PreparedListPreservation,
+	depth = 0,
 ): string | null {
 	const prepared =
 		preparedOverride ??
-		prepareListPreservation(listNode, origBlock, 0, envReferences, rawOverride);
+		prepareListPreservation(
+			listNode,
+			origBlock,
+			depth,
+			envReferences,
+			rawOverride,
+		);
 	if (!prepared) return null;
 	const isReusableOrigItem = (origIdx: number, itemIdx: number): boolean =>
 		origIdx >= 0 &&

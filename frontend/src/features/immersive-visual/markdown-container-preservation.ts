@@ -23,6 +23,7 @@ import {
 	isCommonMarkBlankLine,
 	matchListMarker,
 	measureIndentColumns,
+	phpListMarkerContentIndent,
 	stripBlockquoteDepth,
 	stripBlockquoteDepthWithColumn,
 } from "./markdown-prescanner-containers";
@@ -37,6 +38,7 @@ import { sanitizeBulletMarker } from "./visual-schema";
 
 const BLANK_BLOCKQUOTE_LINE = /^[ \t]*(?:>[ \t]*)+$/;
 const ATX_HEADING_FIRST_LINE = /^ {0,3}#{1,6}(?:[ \t]|$)/;
+const BLOCKQUOTE_FIRST_LINE = /^ {0,3}>/;
 
 // ---------------------------------------------------------------------------
 // Shared depth-aware, join, lazy-absorption, and list-swallow guards
@@ -75,6 +77,17 @@ export function wouldBeLazilyAbsorbedByPrevious(
 	}
 	if (name === "protected_block") {
 		if (node.attrs.kind === "mermaid") {
+			return false;
+		}
+		// Display math whose source line keeps its blockquote marker (it
+		// closed an enclosing quoted list item, see PHP `extract_math()`'s
+		// `"\n\nTOKEN\n\n"`) must stay tight: a blank line before it would
+		// open an extra empty blockquote, and the token never joins a
+		// preceding paragraph.
+		if (
+			node.attrs.kind === "math" &&
+			BLOCKQUOTE_FIRST_LINE.test(firstLine(serialized))
+		) {
 			return false;
 		}
 		if (
@@ -198,54 +211,53 @@ function extractPhpMathForBlockScan(text: string): string {
 	return out + text.slice(cursor);
 }
 
+type TrailingItemScan = Readonly<{
+	/** Content indent of the trailing open item, `-1` when none is open. */
+	indent: number;
+	/** Number of top-level items of `listNode`'s kind that were opened. */
+	items: number;
+}>;
+
 /**
- * Computes the CommonMark §5.2 content indentation (relative to the content
- * column at `depth`) of the trailing top-level item in `listEmitted`, the
- * exact emitted text of `listNode` (possibly preceded by the other members of
- * its shared group) including its `depth` blockquote markers, after the PHP
- * `extract_math()` preprocessing. Every line strips `depth` markers and
- * measures its indent and list marker from the real CommonMark column, so
- * tabs before and after the marker expand to their true tab stops. A line
- * lacking the markers is a lazy continuation unless it is blank or follows
- * a blank line (the container closed); a non-item line below the current
- * content indent after a blank line closes the list. A single-code-point
- * first line uses `league/commonmark@2.8.2`'s blank-item padding
- * (`$cursor->peek() === null`): `markerOffset + markerLength + 1`.
+ * One column-aware CommonMark §5.2 scan of `text` (see
+ * `trailingListItemContentIndent`). An empty item (blank marker line, no
+ * content yet) closes at the first blank line, and so does the trailing one
+ * when `blankLineFollows` (`ListItemParser::tryContinue()`:
+ * `firstChild() === null` on a blank line returns `BlockContinue::none()`).
  */
-function trailingListItemContentIndent(
-	listEmitted: string,
+function scanTrailingListItem(
+	text: string,
 	listNode: ProseMirrorNode,
 	depth: number,
-): number {
-	const lines = extractPhpMathForBlockScan(listEmitted).split("\n");
+	blankLineFollows: boolean,
+): TrailingItemScan {
+	const lines = text.split("\n");
 	const isOrdered = listNode.type.name === "ordered_list";
 	const expectedDelimiter =
 		isOrdered && listNode.attrs.delimiter === ")" ? ")" : ".";
 	const expectedBullet = isOrdered
 		? null
 		: sanitizeBulletMarker(listNode.attrs.marker);
-	const matchTopItem = (rest: string, column: number): number | null => {
+	const matchTopItem = (rest: string, column: number) => {
 		const marker = matchListMarker(rest, column);
 		if (!marker || marker.leadCols > 3) return null;
-		let markerLength = 1;
 		if (isOrdered) {
 			if (marker.orderedDigits === null) return null;
 			const digitIdx = marker.markerPrefix.indexOf(marker.orderedDigits);
 			const delimChar =
 				marker.markerPrefix[digitIdx + marker.orderedDigits.length];
 			if (delimChar !== expectedDelimiter) return null;
-			markerLength = marker.orderedDigits.length + 1;
 		} else {
 			if (marker.orderedDigits !== null) return null;
 			if (marker.markerPrefix.trimStart()[0] !== expectedBullet) {
 				return null;
 			}
 		}
-		return Array.from(marker.afterContent).length === 1
-			? Math.min(marker.contentIndent, marker.leadCols + markerLength + 1)
-			: marker.contentIndent;
+		return marker;
 	};
 	let currentIndent = -1;
+	let itemHasContent = false;
+	let items = 0;
 	let afterBlank = false;
 	for (let i = 0; i < lines.length; i += 1) {
 		const line = lines[i] ?? "";
@@ -257,22 +269,79 @@ function trailingListItemContentIndent(
 			continue;
 		}
 		if (isCommonMarkBlankLine(stripped.rest)) {
+			if (!itemHasContent) currentIndent = -1;
 			afterBlank = true;
 			continue;
 		}
 		const leadCols = measureIndentColumns(stripped.rest, stripped.column);
 		if (currentIndent < 0 || leadCols < currentIndent) {
-			const matchedIndent =
+			const marker =
 				leadCols <= 3 ? matchTopItem(stripped.rest, stripped.column) : null;
-			if (matchedIndent !== null) {
-				currentIndent = matchedIndent;
-			} else if (afterBlank) {
-				currentIndent = -1;
+			if (marker !== null) {
+				currentIndent = phpListMarkerContentIndent(marker);
+				itemHasContent = !marker.isBlank;
+				items += 1;
+				afterBlank = false;
+				continue;
 			}
+			if (afterBlank) currentIndent = -1;
 		}
+		itemHasContent = true;
 		afterBlank = false;
 	}
-	return currentIndent > 0 ? currentIndent : 0;
+	if (blankLineFollows && !itemHasContent) currentIndent = -1;
+	return { indent: currentIndent, items };
+}
+
+/**
+ * Computes the CommonMark §5.2 content indentation (relative to the content
+ * column at `depth`) of the trailing top-level item in `listEmitted`, the
+ * exact emitted text of `listNode` (possibly preceded by the other members of
+ * its shared group) including its `depth` blockquote markers, after the PHP
+ * `extract_math()` preprocessing. Every line strips `depth` markers and
+ * measures its indent and list marker from the real CommonMark column, so
+ * tabs before and after the marker expand to their true tab stops. A line
+ * lacking the markers is a lazy continuation unless it is blank or follows
+ * a blank line (the container closed); a non-item line below the current
+ * content indent after a blank line closes the list. Item padding comes from
+ * the single `phpListMarkerContentIndent` primitive.
+ *
+ * PHP masks math spans across the whole document, so a backtick code span
+ * opened or closed OUTSIDE `listEmitted` can shield a `\(...\)` / `$$...$$`
+ * that an isolated scan would fold. The parsed `listNode` is the ground
+ * truth: when the math-folded scan opens fewer top-level items than
+ * `listNode` has, folding swallowed a real item, so the unfolded scan
+ * decides (exactly when it reproduces the item count, otherwise the
+ * smaller, more conservative positive indent of the two scans wins).
+ */
+function trailingListItemContentIndent(
+	listEmitted: string,
+	listNode: ProseMirrorNode,
+	depth: number,
+	blankLineFollows: boolean,
+): number {
+	const folded = extractPhpMathForBlockScan(listEmitted);
+	const masked = scanTrailingListItem(
+		folded,
+		listNode,
+		depth,
+		blankLineFollows,
+	);
+	let indent = masked.indent;
+	if (folded !== listEmitted && masked.items < listNode.childCount) {
+		const raw = scanTrailingListItem(
+			listEmitted,
+			listNode,
+			depth,
+			blankLineFollows,
+		);
+		if (raw.items === listNode.childCount || indent <= 0) {
+			indent = raw.indent;
+		} else if (raw.indent > 0) {
+			indent = Math.min(indent, raw.indent);
+		}
+	}
+	return indent > 0 ? indent : 0;
 }
 
 /**
@@ -283,6 +352,9 @@ function trailingListItemContentIndent(
  * their `depth` blockquote markers: depth-stripped text loses the column at
  * which its remainder starts, so the list's content indent and the next
  * block's leading indent are both measured column-aware at `depth`.
+ * `blankLineBetween` is whether the join separator contains a blank line
+ * (any separator other than a tight `"\n"`, at every depth): an empty
+ * trailing item then closes before `nextEmitted`.
  */
 export function isListSwallowingFollowingBlock(
 	prevNode: ProseMirrorNode | null,
@@ -290,6 +362,7 @@ export function isListSwallowingFollowingBlock(
 	nextEmitted: string,
 	depth: number,
 	prevWasVerbatimAdjacent: boolean,
+	blankLineBetween: boolean,
 ): boolean {
 	if (!prevNode || prevWasVerbatimAdjacent || !isNestedList(prevNode)) {
 		return false;
@@ -302,6 +375,7 @@ export function isListSwallowingFollowingBlock(
 		prevEmitted(),
 		prevNode,
 		depth,
+		blankLineBetween,
 	);
 	return trailingIndent > 0 && childIndent >= trailingIndent;
 }
@@ -380,6 +454,7 @@ export function checkRawPreservationRisks(
 			rawEmitted,
 			depth,
 			prevWasVerbatimAdjacent,
+			sep !== "\n",
 		);
 	return { indentedRisk, swallowRisk };
 }

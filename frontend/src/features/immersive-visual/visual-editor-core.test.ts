@@ -1678,15 +1678,16 @@ describe("visual editor codec regressions", () => {
 	});
 
 	it("P1-05 protects blocks inside lists and blockquotes", () => {
+		// PHP `MarkdownRenderer::extract_math()` replaces standalone display
+		// math with `"\n\nTOKEN\n\n"`, so the math block closes the list and
+		// renders top-level (`<ul><li>Item</li></ul><div class="easymde-math
+		// easymde-math-block">`), never inside the list item.
 		const mathInList = "- Item\n\n  $$\n  E = mc^2\n  $$";
 		const listDoc = parseMarkdownToVisualDoc(mathInList);
-		let mathBlocksInList = 0;
-		listDoc.firstChild?.child(0).forEach((node) => {
-			if (node.type.name === "protected_block" && node.attrs.kind === "math") {
-				mathBlocksInList += 1;
-			}
-		});
-		expect(mathBlocksInList).toBe(1);
+		expect(listDoc.childCount).toBe(2);
+		expect(listDoc.child(0).type.name).toBe("bullet_list");
+		expect(listDoc.child(1).type.name).toBe("protected_block");
+		expect(listDoc.child(1).attrs.kind).toBe("math");
 		expect(
 			parseMarkdownToVisualDoc(serializeVisualDocToMarkdown(listDoc)).eq(
 				listDoc,

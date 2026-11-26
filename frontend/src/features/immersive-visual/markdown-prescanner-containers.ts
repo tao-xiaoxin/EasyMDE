@@ -298,10 +298,10 @@ export function stripBlockContainerPrefix(
 	let result = line;
 	let startColumn = 0;
 	if (depth > 0) {
-		const stripped = stripBlockquoteDepth(line, depth);
-		if (stripped !== null) {
-			result = stripped;
-			startColumn = readBlockquotePrefix(line).column;
+		const stripped = stripBlockquoteDepthWithColumn(line, depth);
+		if (stripped.matched === depth) {
+			result = stripped.rest;
+			startColumn = stripped.column;
 		} else if (
 			line.replace(/[ \t]+$/, "") === prefix.replace(/[ \t]+$/, "")
 		) {
@@ -395,6 +395,23 @@ export function matchListMarker(
 		markerPrefix: cursorPrefix(cursor),
 		orderedDigits: consumed.orderedDigits,
 	};
+}
+
+/**
+ * Single authoritative CommonMark §5.2 content indent (relative to the column
+ * at which `marker` was matched) that pinned PHP `league/commonmark@2.8.2`
+ * assigns: `ListBlockStartParser::calculateListMarkerPadding()` treats an
+ * item as blank when `$cursor->peek() === null` right after the spaces
+ * following the marker, i.e. when the untrimmed remainder is exactly one
+ * code point, so the padding falls back to `markerLength + 1`.
+ */
+export function phpListMarkerContentIndent(marker: ListMarkerMatch): number {
+	if (Array.from(marker.afterContent).length !== 1) {
+		return marker.contentIndent;
+	}
+	const markerLength =
+		marker.orderedDigits !== null ? marker.orderedDigits.length + 1 : 1;
+	return Math.min(marker.contentIndent, marker.leadCols + markerLength + 1);
 }
 
 /**

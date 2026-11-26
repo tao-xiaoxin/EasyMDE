@@ -528,7 +528,7 @@ function scanBoundedPhpMarkdownMathRanges(
 			return [];
 		}
 
-		const blockCodeRanges = scanPhpCommonMarkBlockCodeRanges(prefix);
+		const blockCodeRanges = scanPhpCommonMarkBlockCodeRanges(prefix, source);
 		const inlineScan = scanInlineCodeRangesInternal(prefix, blockCodeRanges);
 		const baseCodeRanges = mergeCodeRanges(blockCodeRanges, inlineScan.ranges);
 		const boundedExtra = collectBoundedExtraProtectedRanges(

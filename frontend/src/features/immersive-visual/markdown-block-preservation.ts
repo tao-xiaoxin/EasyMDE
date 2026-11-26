@@ -223,6 +223,7 @@ function tryPreserveListAtDepth(
 			innerRaw,
 			token,
 			cachedPrepared,
+			depth,
 		);
 		if (innerSerialized === null) failed = true;
 		return innerSerialized ?? "";
@@ -451,6 +452,7 @@ function serializeContainerPreservingChildren(
 				emittedText,
 				depth,
 				prevWasVerbatimAdjacent,
+				separator !== "\n",
 			);
 		let { indentedRisk, swallowRisk } = checkRawPreservationRisks(
 			child,

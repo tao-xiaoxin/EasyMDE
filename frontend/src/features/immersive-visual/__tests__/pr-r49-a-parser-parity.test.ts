@@ -20,6 +20,7 @@ import {
 import type { LivenessState } from "../markdown-refdef-liveness-state";
 import {
 	createMarkdownRoundTripGuard,
+	MARKDOWN_SERIALIZERS,
 	serializeVisualDocToMarkdown,
 } from "../markdown-serializer";
 import { visualEditorSchema } from "../visual-schema";
@@ -32,10 +33,12 @@ import { visualEditorSchema } from "../visual-schema";
 // reference definition is no longer preserved verbatim), and the baseline
 // (pre-PR-R49-A) serializer failed 21 of these PHP differentials.
 
-function serializeOne(node: ProseMirrorNode): string {
-	return serializeVisualDocToMarkdown(
-		visualEditorSchema.nodes.doc.create(null, [node]),
-	);
+/** Production block serializer, forwarding the math-newline sentinel. */
+function serializeOne(
+	node: ProseMirrorNode,
+	mathNewlineToken?: string,
+): string {
+	return MARKDOWN_SERIALIZERS.serializeBlock(node, mathNewlineToken);
 }
 
 type Edit = (doc: ProseMirrorNode) => ProseMirrorNode;
@@ -83,12 +86,16 @@ function replaceText(needle: string, replacement: string): Edit {
 	};
 }
 
-/** Appends a multiline `protected_inline` math atom right after `after`. */
-function appendInlineMath(after: string, rawMarkdown: string): Edit {
+/** Appends a multiline `protected_inline` atom right after `after`. */
+function appendInlineMath(
+	after: string,
+	rawMarkdown: string,
+	kind: "math-inline" | "raw-inline" = "math-inline",
+): Edit {
 	return (doc) => {
 		const at = findText(doc, after) + after.length;
 		const atom = visualEditorSchema.nodes.protected_inline.create({
-			kind: "math-inline",
+			kind,
 			rawMarkdown,
 		});
 		const state = EditorState.create({ doc, schema: visualEditorSchema });
@@ -112,7 +119,12 @@ function expectRoundTrip(
 	const parsed = parser.parseMarkdownWithBlockSources(md);
 	const guard = createMarkdownRoundTripGuard(md, parsed);
 	const edited = edit(guard.initialDoc);
-	const live = computeIntactRefDefLabels(edited, parsed, serializeOne);
+	const live = computeIntactRefDefLabels(
+		edited,
+		parsed,
+		serializeOne,
+		MARKDOWN_SERIALIZERS.serializeBlockWithRefs,
+	);
 	const serialized = guard.serialize(edited);
 	expect(serialized).toBe(expected);
 	expect([...live.partialTitleIntact].sort()).toEqual([...partial]);
@@ -381,6 +393,7 @@ describe("PR-R49-A math-sentinel emission parity, PHP extract_math list scan, bl
 					next,
 					depth,
 					false,
+					false,
 				);
 			};
 			expect(swallows("-   x", "  para")).toBe(true);
@@ -570,6 +583,23 @@ describe("PR-R49-A math-sentinel emission parity, PHP extract_math list scan, bl
 				deleteParagraph("drop"),
 				"1)   z\n\n  para",
 				[],
+			],
+			// Multiline `raw-inline` atoms: liveness (driven by the production
+			// `serializeBlock` + `serializeBlockWithRefs`, forwarding the
+			// math-newline sentinel) and `guard.serialize()` agree 100%.
+			[
+				"raw-inline multiline d1",
+				'> -   alpha\n> -   beta\n>\n>   > [p]: /u\n>   > "t\n>   > ===\n\n[link][p]',
+				appendInlineMath("beta", "<span\n-    fake\n>", "raw-inline"),
+				'> -   alpha\n> - beta<span\n-    fake\n>\n>\n> > [p]: /u\n> >\n> > # "t\n\n[link](/u "t&#10;")',
+				[],
+			],
+			[
+				"raw-inline multiline d0",
+				'-   alpha\n-   beta\n\n  > [p]: /u\n  > "t\n  > ===\n\n[link][p]',
+				appendInlineMath("beta", "<span\n-    fake\n>", "raw-inline"),
+				'-   alpha\n- beta<span\n-    fake\n>\n\n  > [p]: /u\n  > "t\n  > ===\n\n[link][p]',
+				["P"],
 			],
 		];
 		runCases(cases);

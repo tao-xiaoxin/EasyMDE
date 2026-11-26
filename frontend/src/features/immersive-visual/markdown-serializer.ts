@@ -884,7 +884,12 @@ export function serializeVisualDocToMarkdown(doc: ProseMirrorNode): string {
 	return joinSerializedBlocks(doc, serializeBlockNode);
 }
 
-const MARKDOWN_SERIALIZERS: MarkdownSerializers = {
+/**
+ * The single production serializer bundle injected into block preservation
+ * and refdef liveness (`computeIntactRefDefLabels`), so parity tests drive
+ * liveness with exactly the serializers `guard.serialize()` uses.
+ */
+export const MARKDOWN_SERIALIZERS: MarkdownSerializers = {
 	serializeBlock: serializeBlockNode,
 	serializeBlockWithRefs: serializeBlockNodeWithRefs,
 	serializeDoc: serializeVisualDocToMarkdown,

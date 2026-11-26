@@ -155,7 +155,14 @@ final class MarkdownRenderer {
 	 */
 	private static function restore_image_scale_markers( $html ) {
 		$html = (string) $html;
-		if ( false === stripos( $html, '<img' ) || ( false === strpos( $html, '{width=' ) && false === strpos( $html, '&#' ) ) ) {
+		if (
+			false === stripos( $html, '<img' )
+			|| (
+				false === strpos( $html, '{width=' )
+				&& false === strpos( $html, '&#' )
+				&& false === strpos( $html, '&amp;#' )
+			)
+		) {
 			return $html;
 		}
 		if ( ! class_exists( 'DOMDocument' ) ) {
@@ -219,7 +226,7 @@ final class MarkdownRenderer {
 	 * @return array{title:?string,width:int}|null
 	 */
 	private static function parse_image_scale_title( $title ) {
-		$title = (string) $title;
+		$title = self::normalize_image_scale_title( (string) $title );
 		if ( false === strpos( $title, '{width=' ) ) {
 			return null;
 		}
@@ -251,6 +258,136 @@ final class MarkdownRenderer {
 			'title' => $remaining_title,
 			'width' => (int) $matches[1],
 		);
+	}
+
+	/**
+	 * Align numeric character reference normalization in image `title`
+	 * attributes across WordPress 6.7 and WordPress 6.8+ / 7.x.
+	 *
+	 * WordPress 6.7's `wp_kses_normalize_entities()` decodes `&amp;#...;` into
+	 * `&#...;` (and `&amp;#0;` / `&amp;#x0;` into `""`) before `DOMDocument`
+	 * parses the attribute, whereas newer WordPress Core releases keep
+	 * `&amp;#...;` encoded so `DOMDocument::loadHTML()` yields literal
+	 * `&#...;`. Applying a single pass only when WordPress preserves
+	 * `&amp;#...;` keeps image-scale parsing identical across WordPress
+	 * versions and `frontend/src/shared/image-scale-title.ts` without
+	 * double-decoding on WordPress 6.7.
+	 *
+	 * @param string    $title                   Decoded HTML `title` attribute value.
+	 * @param bool|null $decode_numeric_entities Optional override for single-pass numeric entity decoding.
+	 * @param bool|null $strip_zero_entities     Optional override for stripping single-digit zero entities.
+	 * @return string
+	 */
+	private static function normalize_image_scale_title( $title, $decode_numeric_entities = null, $strip_zero_entities = null ) {
+		$title = (string) $title;
+		if ( false === strpos( $title, '&#' ) ) {
+			return $title;
+		}
+
+		if ( null === $decode_numeric_entities ) {
+			$decode_numeric_entities = self::wp_kses_preserves_encoded_numeric_entities();
+		}
+		if ( null === $strip_zero_entities ) {
+			$strip_zero_entities = self::wp_kses_preserves_encoded_zero_entities();
+		}
+		if ( ! $decode_numeric_entities && ! $strip_zero_entities ) {
+			return $title;
+		}
+
+		$normalized = preg_replace_callback(
+			'/&#(?:([0-9]+)|[xX]([0-9a-fA-F]+));/',
+			static function ( $matches ) use ( $decode_numeric_entities, $strip_zero_entities ) {
+				$dec_digits = isset( $matches[1] ) ? (string) $matches[1] : '';
+				if ( '' !== $dec_digits ) {
+					if ( '0' === $dec_digits ) {
+						return $strip_zero_entities ? '' : $matches[0];
+					}
+					if ( ! $decode_numeric_entities ) {
+						return $matches[0];
+					}
+					$trimmed = ltrim( $dec_digits, '0' );
+					if ( '' === $trimmed || strlen( $trimmed ) > 7 ) {
+						return $matches[0];
+					}
+					$code_point = (int) $trimmed;
+					return self::is_valid_wp_kses_unicode( $code_point )
+						? self::unicode_code_point_to_utf8( $code_point )
+						: $matches[0];
+				}
+
+				$hex_digits = isset( $matches[2] ) ? (string) $matches[2] : '';
+				if ( '' !== $hex_digits ) {
+					if ( '0' === $hex_digits ) {
+						return $strip_zero_entities ? '' : $matches[0];
+					}
+					if ( ! $decode_numeric_entities ) {
+						return $matches[0];
+					}
+					$trimmed = ltrim( $hex_digits, '0' );
+					if ( '' === $trimmed || strlen( $trimmed ) > 6 ) {
+						return $matches[0];
+					}
+					$code_point = (int) hexdec( $trimmed );
+					return self::is_valid_wp_kses_unicode( $code_point )
+						? self::unicode_code_point_to_utf8( $code_point )
+						: $matches[0];
+				}
+
+				return $matches[0];
+			},
+			$title
+		);
+
+		return is_string( $normalized ) ? $normalized : $title;
+	}
+
+	private static function wp_kses_preserves_encoded_numeric_entities() {
+		if ( ! function_exists( 'wp_kses_normalize_entities' ) ) {
+			return true;
+		}
+
+		return '&amp;#123;' === wp_kses_normalize_entities( '&amp;#123;' );
+	}
+
+	private static function wp_kses_preserves_encoded_zero_entities() {
+		if ( ! function_exists( 'wp_kses_normalize_entities' ) ) {
+			return true;
+		}
+
+		return '' !== wp_kses_normalize_entities( '&amp;#0;' )
+			|| '' !== wp_kses_normalize_entities( '&amp;#x0;' );
+	}
+
+	private static function is_valid_wp_kses_unicode( $code_point ) {
+		$code_point = (int) $code_point;
+
+		return 0x9 === $code_point
+			|| 0xA === $code_point
+			|| 0xD === $code_point
+			|| ( 0x20 <= $code_point && $code_point <= 0xD7FF )
+			|| ( 0xE000 <= $code_point && $code_point <= 0xFFFD )
+			|| ( 0x10000 <= $code_point && $code_point <= 0x10FFFF );
+	}
+
+	private static function unicode_code_point_to_utf8( $code_point ) {
+		$code_point = (int) $code_point;
+		if ( $code_point <= 0x7F ) {
+			return chr( $code_point );
+		}
+		if ( $code_point <= 0x7FF ) {
+			return chr( 0xC0 | ( $code_point >> 6 ) )
+				. chr( 0x80 | ( $code_point & 0x3F ) );
+		}
+		if ( $code_point <= 0xFFFF ) {
+			return chr( 0xE0 | ( $code_point >> 12 ) )
+				. chr( 0x80 | ( ( $code_point >> 6 ) & 0x3F ) )
+				. chr( 0x80 | ( $code_point & 0x3F ) );
+		}
+
+		return chr( 0xF0 | ( $code_point >> 18 ) )
+			. chr( 0x80 | ( ( $code_point >> 12 ) & 0x3F ) )
+			. chr( 0x80 | ( ( $code_point >> 6 ) & 0x3F ) )
+			. chr( 0x80 | ( $code_point & 0x3F ) );
 	}
 
 	private static function extract_math( $markdown, array &$math ) {

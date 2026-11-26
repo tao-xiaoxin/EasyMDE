@@ -48,14 +48,14 @@ export type PeeledLineContainers = Readonly<{
 	rest: string;
 }>;
 
-export type BlockquotePrefixResult = Readonly<{
+type BlockquotePrefixResult = Readonly<{
 	column: number;
 	depth: number;
 	prefix: string;
 	rest: string;
 }>;
 
-export type StrippedContainerResult = Readonly<{
+type StrippedContainerResult = Readonly<{
 	column: number;
 	prefix: string;
 	rest: string;
@@ -118,7 +118,7 @@ export function readBlockquotePrefix(line: string): BlockquotePrefixResult {
 	};
 }
 
-export function blockquoteDepth(prefix: string): number {
+function blockquoteDepth(prefix: string): number {
 	return (prefix.match(/>/g) ?? []).length;
 }
 

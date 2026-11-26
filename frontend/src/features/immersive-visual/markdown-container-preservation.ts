@@ -1,7 +1,6 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import {
 	isNestedList,
-	LEADING_FOUR_COLUMN_INDENT,
 	nodePreventsFollowingIndentedCode,
 	PARAGRAPH_INTERRUPTING_LIST_FIRST_LINE,
 } from "./markdown-list-serialization";
@@ -40,9 +39,16 @@ const ATX_HEADING_FIRST_LINE = /^ {0,3}#{1,6}(?:[ \t]|$)/;
 // Shared depth-aware, join, lazy-absorption, and list-swallow guards
 // ---------------------------------------------------------------------------
 
+/**
+ * Whether CommonMark would lazily absorb `node` (serialized depth-stripped as
+ * `serialized`, whose exact column-aware leading indent at its container
+ * depth is `leadIndent`, see `leadingIndentAtDepth`) into a preceding open
+ * paragraph across a tight join.
+ */
 export function wouldBeLazilyAbsorbedByPrevious(
 	node: ProseMirrorNode,
 	serialized: string,
+	leadIndent: number,
 ): boolean {
 	const name = node.type.name;
 	if (name === "paragraph") {
@@ -52,7 +58,7 @@ export function wouldBeLazilyAbsorbedByPrevious(
 		return !ATX_HEADING_FIRST_LINE.test(firstLine(serialized));
 	}
 	if (name === "code_block") {
-		return LEADING_FOUR_COLUMN_INDENT.test(firstLine(serialized));
+		return leadIndent >= 4;
 	}
 	if (name === "table") {
 		return !serialized.startsWith("<!-- ");
@@ -159,14 +165,21 @@ export function leadingIndentAtDepth(
 }
 
 /**
- * Computes the CommonMark §5.2 content indentation column of the trailing
- * top-level item in `listText` for `listNode`.
+ * Computes the CommonMark §5.2 content indentation (relative to the content
+ * column at `depth`) of the trailing top-level item in `listEmitted`, the
+ * exact emitted text of `listNode` including its `depth` blockquote markers.
+ * Every candidate line strips exactly `depth` markers and measures its
+ * indent and list marker from the real CommonMark column at which its
+ * remainder starts, so tabs before and after the marker expand to their true
+ * tab stops. Lazy continuation lines (fewer than `depth` markers) can never
+ * open a top-level item at `depth` and are skipped.
  */
 function trailingListItemContentIndent(
-	listText: string,
+	listEmitted: string,
 	listNode: ProseMirrorNode,
+	depth: number,
 ): number {
-	const lines = listText.split("\n");
+	const lines = listEmitted.split("\n");
 	if (lines.length === 0) return 0;
 	const isOrdered = listNode.type.name === "ordered_list";
 	const expectedDelimiter =
@@ -174,8 +187,8 @@ function trailingListItemContentIndent(
 	const expectedBullet = isOrdered
 		? null
 		: sanitizeBulletMarker(listNode.attrs.marker);
-	const matchTopItem = (line: string): number | null => {
-		const marker = matchListMarker(line);
+	const matchTopItem = (rest: string, column: number): number | null => {
+		const marker = matchListMarker(rest, column);
 		if (!marker || marker.leadCols > 3) return null;
 		if (isOrdered) {
 			if (marker.orderedDigits === null) return null;
@@ -192,16 +205,18 @@ function trailingListItemContentIndent(
 		return marker.contentIndent;
 	};
 	if (listNode.childCount <= 1) {
-		return matchTopItem(lines[0] ?? "") ?? 0;
+		const head = stripBlockquoteDepthWithColumn(lines[0] ?? "", depth);
+		return head === null ? 0 : (matchTopItem(head.rest, head.column) ?? 0);
 	}
 	let currentIndent = -1;
 	for (let i = 0; i < lines.length; i += 1) {
-		const line = lines[i] ?? "";
-		const leadCols = measureIndentColumns(line);
+		const stripped = stripBlockquoteDepthWithColumn(lines[i] ?? "", depth);
+		if (stripped === null) continue;
+		const leadCols = measureIndentColumns(stripped.rest, stripped.column);
 		if (leadCols > 3 || (currentIndent >= 0 && leadCols >= currentIndent)) {
 			continue;
 		}
-		const matchedIndent = matchTopItem(line);
+		const matchedIndent = matchTopItem(stripped.rest, stripped.column);
 		if (matchedIndent !== null) {
 			currentIndent = matchedIndent;
 		}
@@ -210,28 +225,33 @@ function trailingListItemContentIndent(
 }
 
 /**
- * Reports whether `nextText`'s leading indent would be swallowed into the
- * trailing item of an edited or newly adjacent preceding list (`prevNode`),
- * even across a blank line (CommonMark §5.2). `nextLeadIndent`, when known,
- * is the exact column-aware indent of `nextText` (`leadingIndentAtDepth`),
- * since depth-stripped text alone loses the column of a tab after `>`.
+ * Reports whether the block emitted as `nextEmitted` would be swallowed into
+ * the trailing item of an edited or newly adjacent preceding list
+ * (`prevNode`, emitted as `prevEmitted()`), even across a blank line
+ * (CommonMark §5.2). Both texts are the exact emitted Markdown INCLUDING
+ * their `depth` blockquote markers: depth-stripped text loses the column at
+ * which its remainder starts, so the list's content indent and the next
+ * block's leading indent are both measured column-aware at `depth`.
  */
 export function isListSwallowingFollowingBlock(
 	prevNode: ProseMirrorNode | null,
-	prevBlockText: string,
-	nextText: string,
+	prevEmitted: () => string,
+	nextEmitted: string,
+	depth: number,
 	prevWasVerbatimAdjacent: boolean,
-	nextLeadIndent?: number,
 ): boolean {
 	if (!prevNode || prevWasVerbatimAdjacent || !isNestedList(prevNode)) {
 		return false;
 	}
-	const childIndent =
-		nextLeadIndent ?? measureIndentColumns(firstLine(nextText));
+	const childIndent = leadingIndentAtDepth(nextEmitted, depth);
 	if (childIndent <= 0) {
 		return false;
 	}
-	const trailingIndent = trailingListItemContentIndent(prevBlockText, prevNode);
+	const trailingIndent = trailingListItemContentIndent(
+		prevEmitted(),
+		prevNode,
+		depth,
+	);
 	return trailingIndent > 0 && childIndent >= trailingIndent;
 }
 
@@ -280,15 +300,17 @@ export function needsPrevInnerForRiskCheck(
 /**
  * Single authoritative check for 4-column indented-code risk and preceding-list
  * swallow risk shared by liveness analysis and container serialization.
+ * `rawEmitted` / `prevEmitted()` are the exact emitted texts (with their
+ * `depth` quote markers); `prevInner` is the depth-stripped previous text.
  */
 export function checkRawPreservationRisks(
 	child: ProseMirrorNode,
 	depth: number,
 	rawEmitted: string,
-	rawInner: string,
 	sep: string,
 	prevNode: ProseMirrorNode | null,
 	prevInner: string,
+	prevEmitted: () => string,
 	prevWasVerbatimAdjacent: boolean,
 ): Readonly<{ indentedRisk: boolean; swallowRisk: boolean }> {
 	const leadIndent = leadingIndentAtDepth(rawEmitted, depth);
@@ -303,10 +325,10 @@ export function checkRawPreservationRisks(
 		leadIndent > 0 &&
 		isListSwallowingFollowingBlock(
 			prevNode,
-			prevInner,
-			rawInner,
+			prevEmitted,
+			rawEmitted,
+			depth,
 			prevWasVerbatimAdjacent,
-			leadIndent,
 		);
 	return { indentedRisk, swallowRisk };
 }

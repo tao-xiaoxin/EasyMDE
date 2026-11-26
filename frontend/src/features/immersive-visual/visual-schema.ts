@@ -14,7 +14,7 @@ const VISUAL_IMAGE_SCALES: ReadonlyArray<VisualImageScale> = [
 ];
 
 export type TableTextAlign = "left" | "center" | "right" | null;
-export type BulletListMarker = "-" | "*" | "+";
+type BulletListMarker = "-" | "*" | "+";
 export type ProtectedBlockKind =
 	| "math"
 	| "mermaid"
@@ -23,7 +23,7 @@ export type ProtectedBlockKind =
 	| "raw";
 export type ProtectedInlineKind = "math-inline" | "footnote-ref" | "raw-inline";
 
-export type VisualNodeName =
+type VisualNodeName =
 	| "doc"
 	| "paragraph"
 	| "heading"
@@ -45,7 +45,7 @@ export type VisualNodeName =
 	| "image"
 	| "protected_inline";
 
-export type VisualMarkName = "link" | "em" | "strong" | "strike" | "code";
+type VisualMarkName = "link" | "em" | "strong" | "strike" | "code";
 
 const PROTECTED_BLOCK_KINDS: ReadonlyArray<ProtectedBlockKind> = [
 	"math",
@@ -72,7 +72,7 @@ const SAFE_IMAGE_DATA_URL_PATTERN =
 const INTERNAL_SENTINEL_TOKEN_PATTERN =
 	/EASYMDEPH[A-Z]*(?:INL|BLK|TBLALIGN|BR)\d*END/g;
 
-export type SanitizeDomUrlOptions = Readonly<{
+type SanitizeDomUrlOptions = Readonly<{
 	allowImageDataUrl?: boolean;
 }>;
 

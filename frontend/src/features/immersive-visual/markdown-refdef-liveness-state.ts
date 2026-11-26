@@ -122,6 +122,12 @@ export type LivenessState = Readonly<{
 	 */
 	partialTitleNodeWaiters: Map<ProseMirrorNode, InvalidationTask[]>;
 	partialTitleRefNodes: Set<ProseMirrorNode>;
+	/**
+	 * Still-live partial-title labels whose first definition is each node of
+	 * `partialTitleRefNodes`; a node leaves that set only once its own set
+	 * empties (`releasePartialTitleLabel`).
+	 */
+	partialTitleLabelsByNode: Map<ProseMirrorNode, Set<string>>;
 	pendingListHeap: PendingListCheck[];
 	plan: PreservationPlan;
 	/** Tracked list whose items declare each partial-title candidate label. */
@@ -480,6 +486,12 @@ export function registerRefDefNode(
 			if (st.partialLabels?.has(label)) {
 				st.partialTitleIntact.add(label);
 				st.partialTitleRefNodes.add(child);
+				const liveLabels = st.partialTitleLabelsByNode.get(child);
+				if (liveLabels === undefined) {
+					st.partialTitleLabelsByNode.set(child, new Set([label]));
+				} else {
+					liveLabels.add(label);
+				}
 				let list = st.candidatesByParent.get(parent);
 				if (!list) {
 					list = [];
@@ -517,6 +529,23 @@ function removePartialTitleRefNode(
 }
 
 /**
+ * Keeps `st.partialTitleRefNodes` isomorphic to the first-definition nodes of
+ * the still-live partial-title labels: invalidating `label` releases its
+ * node only when `label` is a partial-title label of that node and no other
+ * partial-title label declared by the same (multi-definition) node is live.
+ */
+function releasePartialTitleLabel(st: LivenessState, label: string): void {
+	if (!st.partialLabels?.has(label)) return;
+	const refNode = st.firstByLabel.get(label);
+	if (refNode === undefined) return;
+	const liveLabels = st.partialTitleLabelsByNode.get(refNode);
+	if (liveLabels === undefined || !liveLabels.delete(label)) return;
+	if (liveLabels.size > 0) return;
+	st.partialTitleLabelsByNode.delete(refNode);
+	removePartialTitleRefNode(st, refNode);
+}
+
+/**
  * Registers `task` to re-run once `node` leaves `st.partialTitleRefNodes`.
  * No-op when `node` is not currently a partial-title refdef.
  */
@@ -536,8 +565,7 @@ export function scheduleInvalidation(
 	label: string,
 	defer: boolean,
 ): void {
-	const refNode = st.firstByLabel.get(label);
-	if (refNode) removePartialTitleRefNode(st, refNode);
+	releasePartialTitleLabel(st, label);
 	if (defer) {
 		if (!st.deferredInvalidatedSet.has(label)) {
 			st.deferredInvalidatedSet.add(label);

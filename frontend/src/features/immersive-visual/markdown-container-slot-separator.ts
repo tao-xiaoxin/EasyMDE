@@ -2,6 +2,7 @@ import type { Node as ProseMirrorNode } from "prosemirror-model";
 import {
 	endsWithBlankBlockquoteLine,
 	isListSwallowingFollowingBlock,
+	leadingIndentAtDepth,
 	wouldBeLazilyAbsorbedByPrevious,
 } from "./markdown-container-preservation";
 import {
@@ -33,14 +34,23 @@ type ContainerSlotJoinInput = Readonly<{
 	child: ProseMirrorNode;
 	/** Blank separator for the container depth (`\n\n` or `\n>\n`). */
 	defaultBlankSep: string;
+	/** Blockquote depth of the container the slot belongs to. */
+	depth: number;
 	/** Effective baseline index of `child`, or `-1` when not inherited. */
 	effIdx: number;
+	/** Exact Markdown emitted for `child`, including its `depth` markers. */
+	emittedText: string;
 	/** Separator of an intact shared group starting at `child`. */
 	groupSep: string | undefined;
 	/** Depth-stripped Markdown that will be emitted for `child`. */
 	innerText: string;
 	isPartialTitleRefDef: PartialTitleRefDefPredicate | null;
 	prevEffIdx: number;
+	/**
+	 * Lazily computes the exact Markdown emitted for `prevNode`, including its
+	 * `depth` markers (column-aware list-swallow checks).
+	 */
+	prevEmittedText: () => string;
 	/** Lazily computes the depth-stripped Markdown emitted for `prevNode`. */
 	prevInnerText: () => string;
 	prevNode: ProseMirrorNode | null;
@@ -90,10 +100,16 @@ function shouldEscalateLazyContinuation(
 ): boolean {
 	return (
 		!input.prevWasVerbatimAdjacent &&
-		!(isDirectRefDefBlock(prevNode) && input.child.type.name !== "code_block") &&
+		!(
+			isDirectRefDefBlock(prevNode) && input.child.type.name !== "code_block"
+		) &&
 		nodeCanLazilyContinue(prevNode) &&
 		!endsWithBlankBlockquoteLine(input.prevInnerText()) &&
-		wouldBeLazilyAbsorbedByPrevious(input.child, input.innerText)
+		wouldBeLazilyAbsorbedByPrevious(
+			input.child,
+			input.innerText,
+			leadingIndentAtDepth(input.emittedText, input.depth),
+		)
 	);
 }
 
@@ -127,8 +143,9 @@ export function resolveContainerSlotJoin(
 			hasRefDefAbsorbRisk(prevNode, innerText)) ||
 		isListSwallowingFollowingBlock(
 			prevNode,
-			input.prevInnerText(),
-			innerText,
+			input.prevEmittedText,
+			input.emittedText,
+			input.depth,
 			input.prevWasVerbatimAdjacent,
 		) ||
 		shouldEscalateLazyContinuation(input, prevNode);

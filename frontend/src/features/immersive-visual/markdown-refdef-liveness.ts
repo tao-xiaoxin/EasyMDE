@@ -113,6 +113,7 @@ export function computeIntactRefDefLabels(
 		parsed,
 		partialLabels,
 		partialTitleIntact: new Set<string>(),
+		partialTitleLabelsByNode: new Map<ProseMirrorNode, Set<string>>(),
 		partialTitleLostQueue: [],
 		partialTitleNodeWaiters: new Map<ProseMirrorNode, InvalidationTask[]>(),
 		partialTitleRefNodes,

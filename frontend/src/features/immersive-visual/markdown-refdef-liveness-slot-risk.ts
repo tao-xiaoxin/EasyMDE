@@ -1,5 +1,10 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { evaluateMatchedContainerHeadRisk } from "./markdown-container-head-line";
+import { prefixAtDepth, stripAtDepth } from "./markdown-container-preservation";
+import {
+	createMathNewlineSentinelForNode,
+	restoreMathNewlineSentinel,
+} from "./markdown-list-serialization";
 import type {
 	BuiltVisualBlockSources,
 	ParsedVisualSharedGroup,
@@ -52,11 +57,12 @@ export type ContainerState = {
 	 */
 	readonly headLineAt: Array<string | null>;
 	/**
-	 * Lazily computes the depth-stripped text the serializer emits for each
-	 * slot when it is verbatim or a preserved nested container (its tail
-	 * decides list-swallow / lazy-continuation joins); `null` = canonical.
+	 * Lazily computes the exact text (with its `depth` quote markers) the
+	 * serializer emits for each slot when it is verbatim or a preserved nested
+	 * container (its tail decides list-swallow / lazy-continuation joins);
+	 * `null` = canonical.
 	 */
-	readonly innerAt: Array<(() => string) | null>;
+	readonly emittedAt: Array<(() => string) | null>;
 	readonly keepsTrailingSuffix: boolean;
 	readonly matchedOrigIndex: ReadonlyArray<number>;
 	readonly pairedOrigIndex: ReadonlyArray<number>;
@@ -69,6 +75,27 @@ export type ContainerState = {
 	readonly tailAt: Array<TailSource | null>;
 	hasAny: boolean;
 };
+
+/**
+ * Mirrors the serializer's canonical `serializeChildAtDepth` emission of
+ * `node` at `depth`: every line gets `depth` quote markers except the
+ * newlines inside display math, which stay unprefixed.
+ */
+function canonicalEmittedAtDepth(
+	st: LivenessState,
+	node: ProseMirrorNode,
+	depth: number,
+): string {
+	if (depth <= 0) return st.serializeBlock(node);
+	const token = createMathNewlineSentinelForNode(node);
+	const prefixed = prefixAtDepth(
+		st.serializeBlock(node, token ?? undefined),
+		depth,
+	);
+	return token !== null
+		? restoreMathNewlineSentinel(prefixed, token)
+		: prefixed;
+}
 
 /**
  * Predicts the serializer's separator and raw-preservation risks for emitting
@@ -104,18 +131,30 @@ export function evaluateSlotJoin(
 		}
 		watchPartialTitleRefNode(st, prevNode, recheck);
 	}
-	const prevInnerSource = idx > 0 ? (cs.innerAt[idx - 1] ?? null) : null;
+	const prevEmittedSource = idx > 0 ? (cs.emittedAt[idx - 1] ?? null) : null;
 	let prevInner: string | null = null;
+	let prevEmitted: string | null = null;
 	const readPrevInner = (): string => {
 		if (prevInner === null) {
 			prevInner =
-				prevInnerSource !== null
-					? prevInnerSource()
+				prevEmittedSource !== null
+					? stripAtDepth(prevEmittedSource(), cs.depth)
 					: prevNode !== null
 						? st.serializeBlock(prevNode)
 						: "";
 		}
 		return prevInner;
+	};
+	const readPrevEmitted = (): string => {
+		if (prevEmitted === null) {
+			prevEmitted =
+				prevEmittedSource !== null
+					? prevEmittedSource()
+					: prevNode !== null
+						? canonicalEmittedAtDepth(st, prevNode, cs.depth)
+						: "";
+		}
+		return prevEmitted;
 	};
 	return evaluateMatchedContainerHeadRisk({
 		baselineBlocks: cs.source.blocks,
@@ -127,6 +166,7 @@ export function evaluateSlotJoin(
 		headLine: rawCandidate,
 		isPartialTitleRefDef: (node) => st.partialTitleRefNodes.has(node),
 		prevEffIdx: idx > 0 ? (cs.effectiveOrigIndex[idx - 1] ?? -1) : -1,
+		prevEmittedText: readPrevEmitted,
 		prevInnerText: readPrevInner,
 		prevNode,
 		prevWasVerbatimAdjacent,

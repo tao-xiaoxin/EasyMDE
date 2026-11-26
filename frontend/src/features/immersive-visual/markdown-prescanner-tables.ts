@@ -48,7 +48,7 @@ export type PhpDocumentMathIndex = Readonly<{
 	ranges: ReadonlyArray<PhpMarkdownMathRange>;
 }>;
 
-export type TableAlignMarkerMatch = Readonly<{
+type TableAlignMarkerMatch = Readonly<{
 	containers: ReadonlyArray<ContainerStep>;
 	markerPrefix: string;
 	text: string;
@@ -63,7 +63,7 @@ export type GfmTableMatch = Readonly<{
 	lazyRowStartLines: ReadonlySet<number>;
 }>;
 
-export type GfmTableEndResult = Readonly<{
+type GfmTableEndResult = Readonly<{
 	brokenByDisplayMathLine: number;
 	endLine: number;
 	lazyRowStartLines: ReadonlySet<number>;
@@ -372,7 +372,7 @@ export function isTableSeparatorInterruptedByHigherPriorityBlock(
 	return opensNonParagraphBlock(candidate, candidateColumn, true);
 }
 
-export type ParagraphInterruptingBlockOptions = Readonly<{
+type ParagraphInterruptingBlockOptions = Readonly<{
 	/**
 	 * When `true` (e.g. continuing a `TableParser`, whose active block is not a
 	 * `Paragraph`), 4+ columns of indentation opens an indented code block and

@@ -205,13 +205,13 @@ function bindNestedTail(
 	idx: number,
 	tail: TailSource | null,
 ): void {
-	cs.innerAt[idx] = tail ? tail.read : null;
+	cs.emittedAt[idx] = tail ? () => prefixAtDepth(tail.read(), cs.depth) : null;
 	cs.tailAt[idx] = tail;
 	if (tail) tail.onChange = () => onSlotInnerChanged(st, cs, idx);
 }
 
-function verbatimInner(raw: string, depth: number): () => string {
-	return () => stripAtDepth(raw, depth);
+function verbatimEmitted(raw: string): () => string {
+	return () => raw;
 }
 
 function descendNonVerbatimChild(
@@ -295,7 +295,7 @@ function installPreservedContainerSlot(
 			// inherits its paired baseline index, so the following slot's
 			// tight-left / inherited-separator checks see the real join.
 			cs.effectiveOrigIndex[idx] = canonicalEffectiveOrigIndex(cs, idx);
-			cs.innerAt[idx] = null;
+			cs.emittedAt[idx] = null;
 			cs.headLineAt[idx] = null;
 			cs.tailAt[idx] = null;
 			if (st.subtreeHasCandidates.has(child)) {
@@ -341,7 +341,7 @@ function processIntactGroup(
 		discoverVerbatimChild(st, cs, slot, cs.container.child(slot));
 	}
 	const lastSlot = groupStart + groupLen - 1;
-	cs.innerAt[lastSlot] = verbatimInner(group.raw, cs.depth);
+	cs.emittedAt[lastSlot] = verbatimEmitted(group.raw);
 
 	const breakGroupTask: InvalidationTask = {
 		fired: false,
@@ -350,7 +350,7 @@ function processIntactGroup(
 				const slot = groupStart + offset;
 				cs.slotState[slot] = "canonical";
 				cs.effectiveOrigIndex[slot] = -1;
-				cs.innerAt[slot] = null;
+				cs.emittedAt[slot] = null;
 				const memberChild = cs.container.child(slot);
 				if (
 					memberChild.childCount > 0 &&
@@ -390,7 +390,7 @@ function processMatchedSlot(
 		// Risk fallback or null-raw plain match: serializer emits canonical
 		// directly (`ensureGenerated()`), NEVER nested container preservation.
 		cs.slotState[idx] = "canonical";
-		cs.innerAt[idx] = null;
+		cs.emittedAt[idx] = null;
 		if (
 			child.childCount > 0 &&
 			isBlockContainerForRefDefs(child) &&
@@ -402,7 +402,7 @@ function processMatchedSlot(
 	}
 	const origRaw = origBlock.raw;
 	cs.slotState[idx] = "verbatim";
-	cs.innerAt[idx] = verbatimInner(origRaw, cs.depth);
+	cs.emittedAt[idx] = verbatimEmitted(origRaw);
 	if (
 		cs.discover &&
 		child.childCount > 0 &&
@@ -416,7 +416,7 @@ function processMatchedSlot(
 		fired: false,
 		run: () => {
 			cs.slotState[idx] = "canonical";
-			cs.innerAt[idx] = null;
+			cs.emittedAt[idx] = null;
 			// An invalidated match is re-preserved as a nested container by the
 			// serializer unless its immutable matched head line is risky; a
 			// risk break ALWAYS emits canonically (monotonic).
@@ -684,7 +684,7 @@ export function openContainer(
 		source.trailingSuffix.length > 0 &&
 		(baselineBlocks.length === 1 ||
 			matchedOrigIndex.some((origIdx) => origIdx >= 0));
-	const innerAt = new Array<(() => string) | null>(newLen).fill(null);
+	const emittedAt = new Array<(() => string) | null>(newLen).fill(null);
 	const tailAt = new Array<TailSource | null>(newLen).fill(null);
 	const cs: ContainerState = {
 		container,
@@ -702,7 +702,7 @@ export function openContainer(
 		groupTasks: new Map<number, InvalidationTask>(),
 		hasAny: false,
 		headLineAt: new Array<string | null>(newLen).fill(null),
-		innerAt,
+		emittedAt,
 		keepsTrailingSuffix,
 		matchedOrigIndex,
 		pairedOrigIndex,
@@ -720,9 +720,11 @@ export function openContainer(
 				}
 				const last = newLen - 1;
 				if (last < 0) return "";
-				const lastInner = innerAt[last];
+				const lastEmitted = emittedAt[last];
 				return prefixAtDepth(
-					lastInner ? lastInner() : st.serializeBlock(container.child(last)),
+					lastEmitted
+						? stripAtDepth(lastEmitted(), depth)
+						: st.serializeBlock(container.child(last)),
 					1,
 				);
 			},

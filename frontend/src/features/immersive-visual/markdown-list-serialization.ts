@@ -148,7 +148,7 @@ export function restoreMathNewlineSentinel(
  * CommonMark §2.2 four-column leading indentation (four spaces, or 0-3 spaces
  * followed by a tab stop advancing to column 4).
  */
-export const LEADING_FOUR_COLUMN_INDENT = /^(?: {4}| {0,3}\t)/;
+const LEADING_FOUR_COLUMN_INDENT = /^(?: {4}| {0,3}\t)/;
 
 /** Largest CommonMark §5.2 ordered-list marker number (9 digits). */
 const MAX_ORDERED_LIST_NUMBER = 999999999;

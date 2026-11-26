@@ -28,28 +28,21 @@ import {
 } from "./markdown-prescanner-containers";
 
 export {
-	type BlockquotePrefixResult,
-	blockquoteDepth,
 	type ContainerStep,
 	canListMarkerInterruptParagraph,
-	createLineCursor,
-	cursorPrefix,
 	formatContainerPrefix,
 	hasListBeforeQuote,
 	isCommonMarkBlankLine,
-	type ListMarkerMatch,
 	matchListMarker,
 	measureIndentColumns,
 	type PeeledLineContainers,
 	peelContainerStepsForLine,
 	readBlockquotePrefix,
-	type StrippedContainerResult,
 	stripBlockContainerPrefix,
 	stripBlockquoteDepth,
 	stripContainers,
 	stripContainersWithColumn,
 	stripPartialContainers,
-	stripUpToIndentColumns,
 	sumListContainerIndent,
 } from "./markdown-prescanner-containers";
 
@@ -60,7 +53,7 @@ export {
  * classification, and standalone block math scanning.
  */
 
-export type ListPrefixedHtmlMatch = Readonly<{
+type ListPrefixedHtmlMatch = Readonly<{
 	containers: ReadonlyArray<ContainerStep>;
 	content: string;
 	contentIndent: number;
@@ -161,7 +154,7 @@ export type DetectableFence = Readonly<{
 	quoteDepth: number;
 }>;
 
-export type FenceLineSummary = Readonly<{
+type FenceLineSummary = Readonly<{
 	column: number;
 	containerIndent: number;
 	content: string;
@@ -394,7 +387,7 @@ export function analyzeLine(line: string, containerIndent: number): LineAnalysis
 	};
 }
 
-export type ResolvedLineContainerContext = Readonly<{
+type ResolvedLineContainerContext = Readonly<{
 	acceptedListMarker: ListMarkerMatch | null;
 	activeInterleavedContainers: ReadonlyArray<ContainerStep> | null;
 	analysis: LineAnalysis;

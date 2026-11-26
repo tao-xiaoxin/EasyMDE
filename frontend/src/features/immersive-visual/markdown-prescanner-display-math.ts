@@ -90,7 +90,7 @@ export type TrailingParagraphState = Readonly<{
 	paragraphRefParser: ParagraphReferenceParser | null;
 }>;
 
-export type UnclosedHtmlBlockEmitResult =
+type UnclosedHtmlBlockEmitResult =
 	| Readonly<{
 			kind: "resume";
 			cursorOffset: number;

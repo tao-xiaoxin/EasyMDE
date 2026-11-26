@@ -8,6 +8,7 @@ import {
 	checkRawPreservationRisks,
 	createTightSharedGroupChecker,
 	isListSwallowingFollowingBlock,
+	leadingIndentAtDepth,
 	prefixAtDepth,
 	sharedGroupHasInvalidatedRef,
 	stripAtDepth,
@@ -23,7 +24,6 @@ import {
 	createMathNewlineSentinelForNode,
 	isNestedList,
 	joinSerializedBlocks,
-	LEADING_FOUR_COLUMN_INDENT,
 	restoreMathNewlineSentinel,
 } from "./markdown-list-serialization";
 import { nodesSemanticallyEqual } from "./markdown-node-alignment";
@@ -306,6 +306,8 @@ function serializeContainerPreservingChildren(
 	};
 
 	let prevInnerText = "";
+	// Exact text emitted for slot `idx - 1`, including its `depth` markers.
+	let prevEmittedText = "";
 	// Whether slot `idx - 1` was emitted byte-for-byte from its own baseline
 	// raw (a plain match or intact shared group), never rewritten after refdef
 	// invalidation or partial nested-container preservation.
@@ -374,6 +376,7 @@ function serializeContainerPreservingChildren(
 				isPartialTitleRefDef:
 					ctx.resolveReferences?.isPartialTitleRefDef ?? null,
 				prevEffIdx: idx > 0 ? (effectiveOrigIndex[idx - 1] ?? -1) : -1,
+				prevEmittedText: () => prevEmittedText,
 				prevInnerText: () => prevInnerText,
 				prevNode,
 				prevWasVerbatimAdjacent,
@@ -421,6 +424,7 @@ function serializeContainerPreservingChildren(
 		};
 
 		const resolveJoin = (
+			emittedText: string,
 			innerText: string,
 			effIdx: number,
 			groupSep?: string,
@@ -429,12 +433,15 @@ function serializeContainerPreservingChildren(
 				baselineBlocks,
 				child,
 				defaultBlankSep,
+				depth,
 				effIdx,
+				emittedText,
 				groupSep,
 				innerText,
 				isPartialTitleRefDef:
 					ctx.resolveReferences?.isPartialTitleRefDef ?? null,
 				prevEffIdx: idx > 0 ? (effectiveOrigIndex[idx - 1] ?? -1) : -1,
+				prevEmittedText: () => prevEmittedText,
 				prevInnerText: () => prevInnerText,
 				prevNode,
 				prevWasVerbatimAdjacent,
@@ -448,25 +455,27 @@ function serializeContainerPreservingChildren(
 				? stripAtDepth(serialized, depth)
 				: ensureGenerated().inner;
 		let { refDefMode, separator } = resolveJoin(
+			candidateEmitted,
 			candidateInner,
 			effectiveOrigIndex[idx] ?? -1,
 			intactGroup?.separatorBefore,
 		);
-		const isSwallowRisk = (innerText: string): boolean =>
+		const isSwallowRisk = (emittedText: string): boolean =>
 			isListSwallowingFollowingBlock(
 				prevNode,
-				prevInnerText,
-				innerText,
+				() => prevEmittedText,
+				emittedText,
+				depth,
 				prevWasVerbatimAdjacent,
 			);
 		let { indentedRisk, swallowRisk } = checkRawPreservationRisks(
 			child,
 			depth,
 			candidateEmitted,
-			candidateInner,
 			separator,
 			prevNode,
 			prevInnerText,
+			() => prevEmittedText,
 			prevWasVerbatimAdjacent,
 		);
 		const brokenTightLeft =
@@ -485,15 +494,19 @@ function serializeContainerPreservingChildren(
 			const canonical = ensureGenerated();
 			candidateEmitted = canonical.emitted;
 			candidateInner = canonical.inner;
-			({ refDefMode, separator } = resolveJoin(candidateInner, -1));
+			({ refDefMode, separator } = resolveJoin(
+				candidateEmitted,
+				candidateInner,
+				-1,
+			));
 			({ indentedRisk, swallowRisk } = checkRawPreservationRisks(
 				child,
 				depth,
 				candidateEmitted,
-				candidateInner,
 				separator,
 				prevNode,
 				prevInnerText,
+				() => prevEmittedText,
 				prevWasVerbatimAdjacent,
 			));
 		}
@@ -506,7 +519,7 @@ function serializeContainerPreservingChildren(
 			if (child.type.name === "protected_block") {
 				if (swallowRisk && child.attrs.kind !== "math") {
 					const canonical = ensureGenerated();
-					if (isSwallowRisk(canonical.inner)) {
+					if (isSwallowRisk(canonical.emitted)) {
 						({ emitted: blockEmitted, inner: blockInner } =
 							dedentAllToLineZeroAtDepth(
 								child,
@@ -546,7 +559,7 @@ function serializeContainerPreservingChildren(
 
 		if (
 			refDefMode === "indented" &&
-			!LEADING_FOUR_COLUMN_INDENT.test(blockInner)
+			leadingIndentAtDepth(blockEmitted, depth) < 4
 		) {
 			({ emitted: blockEmitted, inner: blockInner } = indentFirstLineAtDepth(
 				blockEmitted,
@@ -557,6 +570,7 @@ function serializeContainerPreservingChildren(
 
 		parts.push(blockEmitted);
 		prevInnerText = blockInner;
+		prevEmittedText = blockEmitted;
 		prevEmittedVerbatim =
 			serializedFromRaw && serialized !== null && blockEmitted === serialized;
 		if (intactGroup) {

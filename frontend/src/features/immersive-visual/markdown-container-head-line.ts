@@ -49,6 +49,8 @@ type MatchedContainerHeadRiskInput = Readonly<{
 	 */
 	isPartialTitleRefDef: PartialTitleRefDefPredicate | null;
 	prevEffIdx: number;
+	/** Lazily computes the exact Markdown emitted for `prevNode` (with markers). */
+	prevEmittedText: () => string;
 	/** Lazily computes the depth-stripped Markdown emitted for `prevNode`. */
 	prevInnerText: () => string;
 	prevNode: ProseMirrorNode | null;
@@ -77,11 +79,14 @@ export function evaluateMatchedContainerHeadRisk(
 		baselineBlocks: input.baselineBlocks,
 		child,
 		defaultBlankSep: input.defaultBlankSep,
+		depth,
 		effIdx: input.effIdx,
+		emittedText: headLine,
 		groupSep: input.groupSep,
 		innerText: rawInner,
 		isPartialTitleRefDef: input.isPartialTitleRefDef,
 		prevEffIdx: input.prevEffIdx,
+		prevEmittedText: input.prevEmittedText,
 		prevInnerText: input.prevInnerText,
 		prevNode,
 		prevWasVerbatimAdjacent,
@@ -104,10 +109,10 @@ export function evaluateMatchedContainerHeadRisk(
 		child,
 		depth,
 		headLine,
-		rawInner,
 		separator,
 		prevNode,
 		prevInnerForRisk,
+		input.prevEmittedText,
 		prevWasVerbatimAdjacent,
 	);
 	return { indentedRisk, separator, swallowRisk };

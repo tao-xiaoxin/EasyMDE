@@ -51,7 +51,7 @@ export async function runMermaidPngScenario3({ baseURL, context, login, page, te
     const oracleEvidence = [];
     const intrinsicMermaidRoles = ['gantt', 'sequence', 'timeline'];
     const intrinsicViewBoxBaseline = new Map();
-    const intrinsicWidthBaseline = new Map();
+    const intrinsicCrossDprBaseline = new Map();
     let uploadRoute = null;
     const copyBloomIntrinsicMermaid = async ({ mode, preview, width, themeId, dpr }) => {
       const candidateOrder = await preview.evaluate((root) => [...root.querySelectorAll(
@@ -112,9 +112,16 @@ export async function runMermaidPngScenario3({ baseURL, context, login, page, te
         const previousViewBox = intrinsicViewBoxBaseline.get(viewBoxKey);
         if (previousViewBox) expect(live.svg.viewBox, `${role} viewBox stability at dpr ${dpr}`).toEqual(previousViewBox);
         else intrinsicViewBoxBaseline.set(viewBoxKey, live.svg.viewBox);
-        const previousWidth = intrinsicWidthBaseline.get(role);
-        if (previousWidth !== undefined) expect(live.svg.viewBox.width, `${role} intrinsic width stability across dpr`).toBe(previousWidth);
-        else intrinsicWidthBaseline.set(role, live.svg.viewBox.width);
+        const previousCrossDpr = intrinsicCrossDprBaseline.get(role);
+        if (previousCrossDpr) {
+          expect(live.svg.viewBox.width, `${role} intrinsic width stability across dpr`).toBe(previousCrossDpr.width);
+          expect(
+            Math.abs(live.svg.viewBox.height - previousCrossDpr.height),
+            `${role} intrinsic height drift across dpr`
+          ).toBeLessThanOrEqual(12);
+        } else {
+          intrinsicCrossDprBaseline.set(role, live.svg.viewBox);
+        }
         expect(live.role).toBe(role);
         const liveCtm = assertIntrinsicMermaidCtm(`${role} live`, live.svg);
         expect(sourceOwner.svg.viewBox).toEqual(live.svg.viewBox);

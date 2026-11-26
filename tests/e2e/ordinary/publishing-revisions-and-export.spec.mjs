@@ -1098,7 +1098,7 @@ JSON text: {"path":"C:\\Temp\\file","quote":"\"value\""}
       const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
       await publishDialog.getByRole('button', { name: labels.publish, exact: true }).click();
       await navigation;
-      await page.waitForLoadState('networkidle');
+      await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
       const permalink = postPermalink(postId);
       expect(page.url()).toBe(permalink);
 
@@ -1108,7 +1108,8 @@ JSON text: {"path":"C:\\Temp\\file","quote":"\"value\""}
         { width: 320, height: 720 }
       ]) {
         await page.setViewportSize(viewport);
-        await page.goto(permalink, { waitUntil: 'networkidle' });
+        await page.goto(permalink, { waitUntil: 'load' });
+        await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
         const article = page.locator('.easymde-rendered-content').first();
         await expect(article).toBeVisible();
         await expect.poll(() => article.evaluate((root) => {

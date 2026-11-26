@@ -11,7 +11,7 @@
     "name": "shared"
   },
   "frontend/src/entrypoints/admin-editor.tsx": {
-    "file": "assets/admin-editor-CUB0dLdg.js",
+    "file": "assets/admin-editor-Dr5chTO1.js",
     "name": "editor",
     "src": "frontend/src/entrypoints/admin-editor.tsx",
     "isEntry": true,
@@ -58,7 +58,7 @@
     ]
   },
   "frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts": {
-    "file": "assets/admin-editor-chunk-JEjfI8rG.js",
+    "file": "assets/admin-editor-chunk-DkAMbtEp.js",
     "name": "create-browser-wechat-clipboard",
     "src": "frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts",
     "isDynamicEntry": true,

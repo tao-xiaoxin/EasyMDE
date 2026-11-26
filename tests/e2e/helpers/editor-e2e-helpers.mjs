@@ -228,9 +228,9 @@ export async function login(page, user) {
   await expect(page.locator('#wpadminbar')).toBeVisible();
   await page.waitForLoadState('load');
   // WordPress 7.1+ Dashboard triggers post-load emoji/thickbox asset fetches;
-  // let them finish before tests navigate straight to post-new.php under
-  // privacy-safe browser request monitoring.
-  await page.waitForLoadState('networkidle');
+  // give them a short bounded settle window so navigation to post-new.php does
+  // not abort them under privacy-safe monitoring without hanging on slow widgets.
+  await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
 }
 
 async function pulseWordPressHeartbeat(page) {

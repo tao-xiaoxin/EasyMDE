@@ -240,8 +240,11 @@ function selectorMatchesSourceConservatively(
 function selectorUsesSiblingOrNegatedNesting(selector: string): boolean {
 	let quote: '"' | "'" | null = null;
 	let bracketDepth = 0;
-	let parenDepth = 0;
 	let escaped = false;
+	let notParenDepth = 0;
+	const notDepthStack: number[] = [];
+	let parenDepth = 0;
+	const lower = selector.toLowerCase();
 	for (let index = 0; index < selector.length; index += 1) {
 		const ch = selector[index] ?? "";
 		if (escaped) {
@@ -249,6 +252,10 @@ function selectorUsesSiblingOrNegatedNesting(selector: string): boolean {
 			continue;
 		}
 		if ("\\" === ch) {
+			if (!quote && 0 === bracketDepth) {
+				// Fail closed on CSS identifier escapes in selector pseudo-classes (e.g. `:\6e ot(&)`).
+				return true;
+			}
 			escaped = true;
 			continue;
 		}
@@ -269,19 +276,112 @@ function selectorUsesSiblingOrNegatedNesting(selector: string): boolean {
 			continue;
 		}
 		if (bracketDepth > 0) continue;
+		if ("+" === ch || "~" === ch) {
+			return true;
+		}
+		if (":" === ch) {
+			if (lower.startsWith(":has(", index)) return true;
+			if (lower.startsWith(":not(", index)) {
+				notDepthStack.push(parenDepth + 1);
+			}
+		}
 		if ("(" === ch) {
 			parenDepth += 1;
+			if (notDepthStack[notDepthStack.length - 1] === parenDepth) {
+				notParenDepth += 1;
+			}
 			continue;
 		}
 		if (")" === ch) {
+			if (notDepthStack[notDepthStack.length - 1] === parenDepth) {
+				notDepthStack.pop();
+				notParenDepth = Math.max(0, notParenDepth - 1);
+			}
 			parenDepth = Math.max(0, parenDepth - 1);
 			continue;
 		}
-		if (0 === parenDepth && ("+" === ch || "~" === ch)) {
+		if ("&" === ch && notParenDepth > 0) {
 			return true;
 		}
 	}
-	return /:not\s*\([^)]*&/iu.test(selector) || /:has\s*\(/iu.test(selector);
+	return false;
+}
+
+function isRuleKind(
+	rule: CSSRule,
+	defaultView: (Window & typeof globalThis) | null | undefined,
+	constructorName: string,
+	tagName: string,
+): boolean {
+	const ctor =
+		defaultView && constructorName in defaultView
+			? (defaultView as unknown as Record<string, unknown>)[constructorName]
+			: undefined;
+	return (
+		("function" === typeof ctor && rule instanceof (ctor as new () => CSSRule)) ||
+		tagName === Object.prototype.toString.call(rule)
+	);
+}
+
+function isTransparentNestedGroupingRule(
+	rule: CSSRule,
+	defaultView: (Window & typeof globalThis) | null | undefined,
+): rule is CSSGroupingRule {
+	if (
+		(defaultView?.CSSMediaRule && rule instanceof defaultView.CSSMediaRule) ||
+		("undefined" !== typeof CSSMediaRule && rule instanceof CSSMediaRule)
+	) {
+		return true;
+	}
+	if (
+		(defaultView?.CSSSupportsRule &&
+			rule instanceof defaultView.CSSSupportsRule) ||
+		("undefined" !== typeof CSSSupportsRule && rule instanceof CSSSupportsRule)
+	) {
+		return true;
+	}
+	return isRuleKind(
+		rule,
+		defaultView,
+		"CSSLayerBlockRule",
+		"[object CSSLayerBlockRule]",
+	);
+}
+
+function isSkippableNestedNonSelectorRule(
+	rule: CSSRule,
+	defaultView: (Window & typeof globalThis) | null | undefined,
+): boolean {
+	if (
+		(defaultView?.CSSFontFaceRule &&
+			rule instanceof defaultView.CSSFontFaceRule) ||
+		(defaultView?.CSSRule && defaultView.CSSRule.FONT_FACE_RULE === rule.type)
+	) {
+		return true;
+	}
+	if (
+		(defaultView?.CSSKeyframesRule &&
+			rule instanceof defaultView.CSSKeyframesRule) ||
+		(defaultView?.CSSRule && defaultView.CSSRule.KEYFRAMES_RULE === rule.type)
+	) {
+		return true;
+	}
+	if (
+		isRuleKind(
+			rule,
+			defaultView,
+			"CSSViewTransitionRule",
+			"[object CSSViewTransitionRule]",
+		)
+	) {
+		return true;
+	}
+	return isRuleKind(
+		rule,
+		defaultView,
+		"CSSLayerStatementRule",
+		"[object CSSLayerStatementRule]",
+	);
 }
 
 function sourceOrAncestorMatchesConservatively(
@@ -341,10 +441,14 @@ function subtreeAffectsPadding(
 				}
 				continue;
 			}
-			const isNestedDeclarations =
-				"[object CSSNestedDeclarations]" ===
-				Object.prototype.toString.call(rule);
-			if (isNestedDeclarations) {
+			if (
+				isRuleKind(
+					rule,
+					defaultView,
+					"CSSNestedDeclarations",
+					"[object CSSNestedDeclarations]",
+				)
+			) {
 				const style = (rule as CSSRule & { style?: CSSStyleDeclaration }).style;
 				if (!style || "function" !== typeof style.getPropertyValue) return true;
 				if (
@@ -356,21 +460,8 @@ function subtreeAffectsPadding(
 				}
 				continue;
 			}
-			if (
-				"style" in rule &&
-				rule.style &&
-				typeof (rule.style as CSSStyleDeclaration).getPropertyValue ===
-					"function"
-			) {
-				if (styleAffectsPadding(rule.style as CSSStyleDeclaration, property)) {
-					return true;
-				}
-			}
-			if (
-				"cssRules" in rule &&
-				(rule as { cssRules?: CSSRuleList }).cssRules
-			) {
-				const childRules = (rule as { cssRules: CSSRuleList }).cssRules;
+			if (isTransparentNestedGroupingRule(rule, defaultView)) {
+				const childRules = rule.cssRules;
 				if (
 					childRules.length > 0 &&
 					subtreeAffectsPadding(
@@ -383,7 +474,14 @@ function subtreeAffectsPadding(
 				) {
 					return true;
 				}
+				continue;
 			}
+			if (isSkippableNestedNonSelectorRule(rule, defaultView)) {
+				continue;
+			}
+			// Fail closed on scope-rebinding or unrecognized nested rules
+			// (e.g. CSSScopeRule `@scope`, CSSContainerRule, CSSStartingStyleRule).
+			return true;
 		}
 	} catch {
 		return true;

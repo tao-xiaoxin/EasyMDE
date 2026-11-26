@@ -526,6 +526,51 @@ describe("responsive portable padding semantics", () => {
 		}
 	});
 
+	it("fails closed when an unrelated parent rule contains a nested @scope rule", () => {
+		const fixture = portableQuoteFixture();
+		const hostStyle = document.createElement("style");
+		hostStyle.textContent = ".absent {}";
+		document.head.append(hostStyle);
+		try {
+			const parentRule = hostStyle.sheet?.cssRules.item(0);
+			if (!parentRule) throw new Error("absent parent rule missing");
+			const innerRule = document.createElement("style");
+			innerRule.textContent = "blockquote { padding-left: 41px !important; }";
+			document.head.append(innerRule);
+			const scopedChild = innerRule.sheet?.cssRules.item(0);
+			innerRule.remove();
+			if (!scopedChild) throw new Error("scoped child rule missing");
+			class FakeScopeRule {
+				readonly type = 0;
+				readonly cssRules = [scopedChild];
+				get [Symbol.toStringTag](): string {
+					return "CSSScopeRule";
+				}
+			}
+			Object.defineProperty(parentRule, "cssRules", {
+				configurable: true,
+				value: [new FakeScopeRule()],
+			});
+			const measured = style({
+				padding: "18px 20px 18px 41px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			hostStyle.remove();
+			fixture.cleanup();
+		}
+	});
+
 	it("walks nested child and grandchild rules before falling back", () => {
 		const fixture = portableQuoteFixture();
 		const override = document.createElement("style");

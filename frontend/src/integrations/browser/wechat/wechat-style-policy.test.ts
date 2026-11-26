@@ -694,14 +694,53 @@ describe("responsive portable padding semantics", () => {
 				]),
 			]),
 		);
+		assertRuleFailsClosed(
+			"Unicode U+0130 preceding top-level :scope",
+			createStyleRule("html:not(.İ):scope blockquote", paddingDecl),
+		);
+		assertRuleFailsClosed(
+			"Unicode U+0130 class preceding :scope",
+			createStyleRule(".İ:scope blockquote", paddingDecl),
+		);
+		assertRuleFailsClosed(
+			"Unicode U+0130 inside nested :is(.İ, html:scope, &)",
+			createStyleRule(".absent", "", [
+				createStyleRule(":is(.İ, html:scope, &)", "", [nestedBlockquote()]),
+			]),
+		);
+		assertRuleFailsClosed(
+			"Unicode U+0130 preceding nested :not(&)",
+			createStyleRule(".absent", "", [
+				createStyleRule(".İ:not(&)", paddingDecl),
+			]),
+		);
+		assertRuleFailsClosed(
+			"escaped nested pseudo-class :\\6e ot(&)",
+			createStyleRule(".absent", "", [
+				createStyleRule(":\\6e ot(&)", paddingDecl),
+			]),
+		);
 
 		const benignFixture = portableQuoteFixture();
 		const benignStyle = document.createElement("style");
 		benignStyle.textContent = `
 			.sm\\:px-4 { padding-left: 16px !important; }
 			[data-test=":scope &"] { padding-left: 16px !important; }
+			[data-a="İİİİİİİİ:scope"]:hover { color: red; }
 		`;
 		document.head.append(benignStyle);
+		const nestedBenignHost = document.createElement("style");
+		nestedBenignHost.textContent = ".host-placeholder {}";
+		document.head.append(nestedBenignHost);
+		if (!nestedBenignHost.sheet) throw new Error("nested benign sheet missing");
+		Object.defineProperty(nestedBenignHost.sheet, "cssRules", {
+			configurable: true,
+			value: [
+				createStyleRule(".absent", "", [
+					createStyleRule(".sm\\:px-4", "padding-left: 16px !important;"),
+				]),
+			],
+		});
 		try {
 			const measured = style({
 				padding: "18px 20px 18px 48px",
@@ -718,6 +757,7 @@ describe("responsive portable padding semantics", () => {
 				),
 			).toBe("9%");
 		} finally {
+			nestedBenignHost.remove();
 			benignStyle.remove();
 			benignFixture.cleanup();
 		}

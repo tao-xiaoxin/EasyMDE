@@ -239,6 +239,20 @@ function isCssIdentChar(ch: string): boolean {
 	);
 }
 
+function matchesAsciiCaseInsensitiveAt(
+	input: string,
+	index: number,
+	asciiLowerTarget: string,
+): boolean {
+	if (index + asciiLowerTarget.length > input.length) return false;
+	for (let offset = 0; offset < asciiLowerTarget.length; offset += 1) {
+		const code = input.charCodeAt(index + offset);
+		const lowered = code >= 0x41 && code <= 0x5a ? code + 0x20 : code;
+		if (lowered !== asciiLowerTarget.charCodeAt(offset)) return false;
+	}
+	return true;
+}
+
 /**
  * Detects selectors whose DOM `matches()` / `closest()` semantics diverge from
  * document stylesheet matching (`:scope`, escaped pseudo-classes, and top-level
@@ -253,7 +267,6 @@ function selectorHasScopeOrTopLevelNesting(
 	let bracketDepth = 0;
 	let escaped = false;
 	let inPseudoIdent = false;
-	const lower = selector.toLowerCase();
 	for (let index = 0; index < selector.length; index += 1) {
 		const ch = selector[index] ?? "";
 		if (escaped) {
@@ -293,8 +306,8 @@ function selectorHasScopeOrTopLevelNesting(
 		}
 		if (":" === ch) {
 			if (
-				lower.startsWith(":scope", index) &&
-				!isCssIdentChar(lower[index + 6] ?? "")
+				matchesAsciiCaseInsensitiveAt(selector, index, ":scope") &&
+				!isCssIdentChar(selector[index + 6] ?? "")
 			) {
 				return true;
 			}
@@ -332,7 +345,6 @@ function selectorUsesSiblingOrNegatedNesting(selector: string): boolean {
 	let notParenDepth = 0;
 	const notDepthStack: number[] = [];
 	let parenDepth = 0;
-	const lower = selector.toLowerCase();
 	for (let index = 0; index < selector.length; index += 1) {
 		const ch = selector[index] ?? "";
 		if (escaped) {
@@ -340,10 +352,6 @@ function selectorUsesSiblingOrNegatedNesting(selector: string): boolean {
 			continue;
 		}
 		if ("\\" === ch) {
-			if (!quote && 0 === bracketDepth) {
-				// Fail closed on CSS identifier escapes in selector pseudo-classes (e.g. `:\6e ot(&)`).
-				return true;
-			}
 			escaped = true;
 			continue;
 		}
@@ -368,8 +376,8 @@ function selectorUsesSiblingOrNegatedNesting(selector: string): boolean {
 			return true;
 		}
 		if (":" === ch) {
-			if (lower.startsWith(":has(", index)) return true;
-			if (lower.startsWith(":not(", index)) {
+			if (matchesAsciiCaseInsensitiveAt(selector, index, ":has(")) return true;
+			if (matchesAsciiCaseInsensitiveAt(selector, index, ":not(")) {
 				notDepthStack.push(parenDepth + 1);
 			}
 		}

@@ -12,12 +12,9 @@ import {
 	throwIfBackgroundPreparationAborted,
 } from "./wechat-clipboard-runtime";
 import {
+	createWechatTreePredicateCache,
 	FULL_WIDTH_TABLE_CLONES,
 	HIDDEN_NODES,
-	isKaTeXVisualNode,
-	isMermaidForeignObject,
-	isMermaidSvgRoot,
-	isSvgDefinition,
 	isTaskListCheckbox,
 	KATEX_VISUAL_NODES,
 	KATEX_VISUAL_ROOTS,
@@ -31,6 +28,7 @@ import {
 	TABLE_SCROLL_OWNER_METADATA,
 	TASK_LIST_CHECKBOX_CLONES,
 	THEME_HEADING_SUFFIX_CLONES,
+	type WechatTreePredicateCache,
 } from "./wechat-clone-metadata";
 import type { WechatDimensionSemanticsContext } from "./wechat-dimension-semantics";
 import {
@@ -118,6 +116,7 @@ function applyNodeFidelity(
 	sourceRoot: HTMLElement,
 	dimensionSemantics: WechatDimensionSemanticsContext | null,
 	taskGeometry: TaskCheckboxGeometryContext | null,
+	predicates: WechatTreePredicateCache,
 	conversionActive = false,
 ): NodeFidelityResult {
 	const imageLayers = dataImageLayersFromDeclarations(declarations);
@@ -164,8 +163,9 @@ function applyNodeFidelity(
 		if (source.classList.contains("easymde-math-block"))
 			MATH_BLOCK_ROOTS.add(clone);
 	}
-	if (isMermaidSvgRoot(source)) MERMAID_SVG_ROOTS.add(clone);
-	if (isMermaidForeignObject(source)) MERMAID_FOREIGN_OBJECTS.add(clone);
+	if (predicates.isMermaidSvgRoot(source)) MERMAID_SVG_ROOTS.add(clone);
+	if (predicates.isMermaidForeignObject(source))
+		MERMAID_FOREIGN_OBJECTS.add(clone);
 	if (
 		"TABLE" === source.tagName &&
 		fullWidthTableLayout(
@@ -182,7 +182,11 @@ function applyNodeFidelity(
 		const metadata = tableScrollOwnerMetadata(source, computed);
 		if (metadata) TABLE_SCROLL_OWNER_METADATA.set(clone, metadata);
 	}
-	const registeredVisualRoot = markVisualRasterizationClone(source, clone);
+	const registeredVisualRoot = markVisualRasterizationClone(
+		source,
+		clone,
+		predicates,
+	);
 	// Register math source/clone roles while source classes still identify their
 	// semantic owners. The final payload removes classes, so normalization must
 	// consume this frozen record rather than re-querying a classless clone.
@@ -193,12 +197,13 @@ function applyNodeFidelity(
 			computed,
 			runtime.getComputedStyle,
 			dimensionSemantics?.getFormattingOwnerDisplay(source) ?? null,
+			predicates,
 		);
 	}
 	if (isVisiblePaintedThemeHeadingSuffix(source, computed)) {
 		THEME_HEADING_SUFFIX_CLONES.add(clone);
 	}
-	if (isKaTeXVisualNode(source)) {
+	if (predicates.isKaTeXVisualNode(source)) {
 		KATEX_VISUAL_NODES.add(clone);
 		// WeChat applies `white-space:pre-wrap` and `overflow-wrap:break-word`
 		// to pasted spans. KaTeX's vlist/table geometry relies on these values
@@ -241,9 +246,11 @@ export async function inlineStyles(
 	quoteFlowCollector?: QuotePseudoFlowCollector,
 	inlinePseudoPaintCaptures?: WechatInlinePseudoPaintRawCapture[],
 	nestedListProjectionCaptures?: WechatNestedListProjectionCapture[],
+	predicates?: WechatTreePredicateCache,
 ): Promise<void> {
 	throwIfBackgroundPreparationAborted(signal);
 	if (!(source instanceof Element) || !(clone instanceof Element)) return;
+	const activePredicates = predicates ?? createWechatTreePredicateCache();
 	cloneIdentity?.set(source, clone);
 	const computed = getComputedStyle(source);
 	// SVG definition trees are commonly hidden by design, but visible shapes
@@ -252,7 +259,7 @@ export async function inlineStyles(
 	if (
 		!root &&
 		"none" === computed.getPropertyValue("display") &&
-		!isSvgDefinition(source)
+		!activePredicates.isSvgDefinition(source)
 	) {
 		HIDDEN_NODES.add(clone);
 		return;
@@ -268,6 +275,8 @@ export async function inlineStyles(
 		yieldToBrowser,
 		signal,
 		dimensionSemantics,
+		undefined,
+		activePredicates,
 	);
 	throwIfBackgroundPreparationAborted(signal);
 	const fidelity = applyNodeFidelity(
@@ -281,6 +290,7 @@ export async function inlineStyles(
 		sourceRoot,
 		dimensionSemantics,
 		taskGeometry,
+		activePredicates,
 		Boolean(conversion),
 	);
 	if (conversion && fidelity.registeredVisualRoot) {
@@ -325,6 +335,7 @@ export async function inlineStyles(
 				quoteFlowCollector,
 				inlinePseudoPaintCaptures,
 				nestedListProjectionCaptures,
+				activePredicates,
 			);
 		}
 	}
@@ -341,6 +352,7 @@ export async function inlineStyles(
 		dimensionSemantics,
 		headingFlowCollector,
 		quoteFlowCollector,
+		activePredicates,
 	);
 	await addPseudoElement(
 		source,
@@ -355,6 +367,7 @@ export async function inlineStyles(
 		dimensionSemantics,
 		headingFlowCollector,
 		quoteFlowCollector,
+		activePredicates,
 	);
 	if (nestedListProjectionCaptures && source instanceof HTMLElement) {
 		collectNestedOrdinaryListProjection(
@@ -390,14 +403,16 @@ export function inlineStylesSynchronously(
 	quoteFlowCollector?: QuotePseudoFlowCollector,
 	inlinePseudoPaintCaptures?: WechatInlinePseudoPaintRawCapture[],
 	nestedListProjectionCaptures?: WechatNestedListProjectionCapture[],
+	predicates?: WechatTreePredicateCache,
 ): boolean {
 	if (!(source instanceof Element) || !(clone instanceof Element)) return true;
+	const activePredicates = predicates ?? createWechatTreePredicateCache();
 	cloneIdentity?.set(source, clone);
 	const computed = getComputedStyle(source);
 	if (
 		!root &&
 		"none" === computed.getPropertyValue("display") &&
-		!isSvgDefinition(source)
+		!activePredicates.isSvgDefinition(source)
 	) {
 		HIDDEN_NODES.add(clone);
 		return true;
@@ -410,6 +425,8 @@ export function inlineStylesSynchronously(
 		root,
 		runtime,
 		dimensionSemantics,
+		undefined,
+		activePredicates,
 	);
 	if (null === declarations) return false;
 	const fidelity = applyNodeFidelity(
@@ -423,6 +440,7 @@ export function inlineStylesSynchronously(
 		sourceRoot,
 		dimensionSemantics,
 		taskGeometry,
+		activePredicates,
 	);
 	if (
 		inlinePseudoPaintCaptures &&
@@ -458,6 +476,7 @@ export function inlineStylesSynchronously(
 				quoteFlowCollector,
 				inlinePseudoPaintCaptures,
 				nestedListProjectionCaptures,
+				activePredicates,
 			)
 		)
 			return false;
@@ -473,6 +492,7 @@ export function inlineStylesSynchronously(
 			dimensionSemantics,
 			headingFlowCollector,
 			quoteFlowCollector,
+			activePredicates,
 		)
 	)
 		return false;
@@ -487,6 +507,7 @@ export function inlineStylesSynchronously(
 			dimensionSemantics,
 			headingFlowCollector,
 			quoteFlowCollector,
+			activePredicates,
 		)
 	)
 		return false;

@@ -34,14 +34,15 @@ import {
 import {
 	rootExportComputedStyle,
 	semanticMarginSource,
-	semanticMarginValue,
-	semanticPaddingValue,
+	semanticMarginValueForEligibleStyle,
+	semanticPaddingValueForEligibleStyle,
 	transportableTransformOriginSemantics,
 } from "./wechat-style-policy-semantics";
 import {
 	fontWithoutZeroLineHeight,
 	shouldOmitZeroLineHeight,
 } from "./wechat-task-checkbox-style";
+import type { WechatTreePredicateCache } from "./wechat-tree-predicates";
 
 export { splitSelectorList } from "../../../shared/css/selector-list";
 export {
@@ -102,6 +103,8 @@ export {
 	supportsSpecialLayout,
 } from "./wechat-style-policy-content-box";
 export {
+	buildPaddingCascadeIndex,
+	type PaddingCascadeIndex,
 	rootExportComputedStyle,
 	semanticMarginSignature,
 	semanticMarginSource,
@@ -178,6 +181,7 @@ export function keepStyle(
 	sourceValue = value,
 	omitDefaultValues = true,
 	pseudoElementContent = "",
+	svgElement?: boolean,
 ): boolean {
 	if (
 		omitDefaultValues &&
@@ -209,7 +213,7 @@ export function keepStyle(
 		return false;
 	if (UNSAFE_STYLE_VALUE.test(value)) {
 		const svgFragmentUrl =
-			isSvgElement(source) &&
+			(svgElement ?? isSvgElement(source)) &&
 			/^url\(\s*["']?#[a-z\d:_.-]+["']?\s*\)$/i.test(value);
 		const safeDataImageStyle =
 			("background" === property || "background-image" === property) &&
@@ -424,6 +428,7 @@ export function generatedBlockImageAlignment(
 export type PortableStyleDeclarationContext = Readonly<{
 	computed: CSSStyleDeclaration;
 	dimensionSemantics: WechatDimensionSemanticsContext | null;
+	predicates: WechatTreePredicateCache | undefined;
 	promoteContentBoxBounds: boolean;
 	pseudoElement: boolean;
 	pseudoElementContent: string;
@@ -436,6 +441,8 @@ export type PortableStyleDeclarationContext = Readonly<{
 	source: Element;
 	specialLayout: boolean;
 	style: CSSStyleDeclaration;
+	svg: boolean;
+	taskCheckbox: boolean;
 }>;
 
 const PORTABLE_ORDINARY_ROOT_PROPERTIES = COPY_STYLE_PROPERTIES;
@@ -466,10 +473,17 @@ export function portableStyleProperties(
 	source: Element,
 	pseudoElement: boolean,
 	root: boolean,
+	precomputed?: Readonly<{
+		specialLayout?: boolean;
+		svg?: boolean;
+		taskCheckbox?: boolean;
+	}>,
 ): readonly string[] {
-	const taskCheckbox = isTaskListCheckbox(source) && !pseudoElement;
-	const svg = isSvgElement(source);
-	const specialLayout = supportsSpecialLayout(source);
+	const taskCheckbox =
+		precomputed?.taskCheckbox ?? (isTaskListCheckbox(source) && !pseudoElement);
+	const svg = precomputed?.svg ?? isSvgElement(source);
+	const specialLayout =
+		precomputed?.specialLayout ?? supportsSpecialLayout(source);
 	if (!taskCheckbox && !svg) {
 		if (specialLayout) return PORTABLE_SPECIAL_PROPERTIES;
 		if (!root) return PORTABLE_ORDINARY_PROPERTIES;
@@ -503,8 +517,15 @@ export function createStyleDeclarationContext(
 	root: boolean,
 	dimensionSemantics?: WechatDimensionSemanticsContext | null,
 	pseudoElementName?: "::before" | "::after",
+	predicates?: WechatTreePredicateCache,
 ): PortableStyleDeclarationContext {
-	const specialLayout = supportsSpecialLayout(source);
+	const svg = predicates
+		? predicates.isSvgElement(source)
+		: isSvgElement(source);
+	const specialLayout = predicates
+		? predicates.supportsSpecialLayout(source)
+		: supportsSpecialLayout(source);
+	const taskCheckbox = !pseudoElement && isTaskListCheckbox(source);
 	const style =
 		root && !pseudoElement
 			? rootExportComputedStyle(source, computed, dimensionSemantics)
@@ -521,6 +542,7 @@ export function createStyleDeclarationContext(
 				source,
 				computed,
 				pseudoElement ? pseudoElementName : undefined,
+				predicates,
 			),
 	);
 	const semanticMarginComputed = semanticMarginEligible
@@ -541,10 +563,12 @@ export function createStyleDeclarationContext(
 		dimensionSemantics ?? null,
 		pseudoElement,
 		root,
+		predicates,
 	);
 	return {
 		computed,
 		dimensionSemantics: dimensionSemantics ?? null,
+		predicates,
 		promoteContentBoxBounds,
 		pseudoElement,
 		pseudoElementContent,
@@ -557,6 +581,8 @@ export function createStyleDeclarationContext(
 		source,
 		specialLayout,
 		style,
+		svg,
+		taskCheckbox,
 	};
 }
 
@@ -567,30 +593,6 @@ export function appendPortableStyleDeclaration(
 	materializedValue: string,
 	declarations: string[],
 ): void {
-	const semanticCandidate =
-		context.semanticComputed?.getPropertyValue(property).trim() ?? "";
-	const semanticMarginCandidate =
-		context.semanticMarginEligible && SEMANTIC_MARGIN_PROPERTY_SET.has(property)
-			? semanticMarginValue(
-					property,
-					context.source,
-					context.computed,
-					context.dimensionSemantics,
-					context.pseudoElement ? context.pseudoElementName : undefined,
-					context.semanticMarginComputed,
-				)
-			: null;
-	const semanticPaddingCandidate =
-		context.semanticPaddingEligible &&
-		("padding-left" === property || "padding-right" === property)
-			? semanticPaddingValue(
-					property,
-					context.source,
-					context.computed,
-					context.dimensionSemantics,
-					context.semanticComputed,
-				)
-			: null;
 	const isOrdinaryDimension =
 		!context.pseudoElement &&
 		!context.specialLayout &&
@@ -598,6 +600,31 @@ export function appendPortableStyleDeclaration(
 	const preserveRawContentBoxTuple =
 		context.promoteContentBoxBounds &&
 		("box-sizing" === property || isOrdinaryDimension);
+	const needsSemanticCandidate =
+		"transform-origin" === property ||
+		preserveRawContentBoxTuple ||
+		isOrdinaryDimension;
+	const semanticCandidate =
+		needsSemanticCandidate && context.semanticComputed
+			? context.semanticComputed.getPropertyValue(property).trim()
+			: "";
+	const semanticMarginCandidate =
+		context.semanticMarginEligible && SEMANTIC_MARGIN_PROPERTY_SET.has(property)
+			? semanticMarginValueForEligibleStyle(
+					property,
+					context.semanticMarginComputed,
+				)
+			: null;
+	const semanticPaddingCandidate =
+		context.semanticPaddingEligible &&
+		("padding-left" === property || "padding-right" === property)
+			? semanticPaddingValueForEligibleStyle(
+					property,
+					context.source,
+					context.semanticMarginComputed,
+					context.dimensionSemantics,
+				)
+			: null;
 	// Ordinary `transform-origin` transports the raw percentage/pixel/keyword
 	// semantics when the raw context still exposes them, so the origin stays
 	// relative to the paste target's own box instead of the source measurement
@@ -637,6 +664,7 @@ export function appendPortableStyleDeclaration(
 			value,
 			true,
 			pseudoElementContent,
+			context.svg,
 		)
 	) {
 		declarations.push(

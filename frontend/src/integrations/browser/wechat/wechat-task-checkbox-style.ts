@@ -6,7 +6,7 @@ const FONT_SHORTHAND_ZERO_LINE_HEIGHT = new RegExp(`^\\s*${ZERO_LINE_HEIGHT_TOKE
 const ZERO_LINE_HEIGHT_VALUE = new RegExp(`^${ZERO_LINE_HEIGHT_TOKEN}$`, 'iu');
 
 function isInlineScriptElement(source: Element, pseudoElement: boolean): boolean {
-  return !pseudoElement && !isSvgElement(source) && ('SUB' === source.tagName || 'SUP' === source.tagName);
+  return !pseudoElement && ('SUB' === source.tagName || 'SUP' === source.tagName) && !isSvgElement(source);
 }
 
 /**

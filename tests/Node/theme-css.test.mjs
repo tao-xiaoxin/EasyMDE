@@ -2064,3 +2064,68 @@ test('shared code-block CSS preserves horizontal scrolling while hiding bottom s
     assert.equal(codeStyle.whiteSpace, 'pre');
   }
 });
+
+function targetsHeadingTextContainer(selector) {
+  const normalized = normalizeCssSelector(selector);
+  if (/:{1,2}(?:before|after)\b/i.test(normalized)) {
+    return false;
+  }
+
+  return /(?:^|[\s>+~])h[1-6](?:[.#][a-zA-Z0-9_-]+|\[[^\]]*\]|:[a-z-]+(?:\([^)]*\))?)*(?:\s*(?:>\s*)?(?:span)?\.content(?:[.#][a-zA-Z0-9_-]+|\[[^\]]*\]|:[a-z-]+(?:\([^)]*\))?)*)?$/i.test(
+    normalized
+  );
+}
+
+test('non-default article themes avoid fixed pixel heights on heading text containers', () => {
+  const nonDefaultThemes = registeredArticleThemes().filter(({ id }) => id !== 'default');
+  assert.ok(nonDefaultThemes.length >= 45, 'expected at least 45 non-default registered article themes');
+
+  const violations = [];
+  for (const { id, assetPath } of nonDefaultThemes) {
+    const css = readFileSync(join(repoRoot, assetPath), 'utf8');
+    for (const rule of parseCssRules(css)) {
+      const headingSelectors = rule.selectors
+        .map(normalizeCssSelector)
+        .filter(targetsHeadingTextContainer);
+      if (headingSelectors.length === 0) continue;
+
+      const declarations = splitCssDeclarations(rule.body);
+      const heightDeclarations = declarations.filter((declaration) => declaration.property === 'height');
+      if (heightDeclarations.length === 0) continue;
+
+      const effectiveHeight = heightDeclarations[heightDeclarations.length - 1].value;
+      if (/^\d+(?:\.\d+)?px(?:\s*!important)?$/i.test(effectiveHeight)) {
+        violations.push({
+          assetPath,
+          height: effectiveHeight,
+          id,
+          selectors: headingSelectors
+        });
+      }
+    }
+  }
+
+  assert.deepEqual(
+    violations,
+    [],
+    `article themes must use min-height + height: auto instead of fixed pixel height on heading text containers: ${JSON.stringify(violations)}`
+  );
+
+  for (const [themeId, headingTag] of [
+    ['cute-green', 'h2'],
+    ['frontend-peak', 'h2'],
+    ['fullstack-blue', 'h3']
+  ]) {
+    const css = readFileSync(join(repoRoot, `assets/themes/article/${themeId}.css`), 'utf8');
+    const dom = new JSDOM(
+      `<style>${css}</style>
+      <article class="easymde-rendered-content easymde-markdown-theme-${themeId}">
+        <${headingTag}><span class="prefix"></span><span class="content">Wrapped heading title</span><span class="suffix"></span></${headingTag}>
+      </article>`
+    );
+    const contentEl = dom.window.document.querySelector(`${headingTag} .content`);
+    const style = dom.window.getComputedStyle(contentEl);
+    assert.equal(style.minHeight, '38px', `${themeId} ${headingTag} .content should preserve min-height: 38px`);
+    assert.equal(style.height, 'auto', `${themeId} ${headingTag} .content should allow height: auto wrapping`);
+  }
+});

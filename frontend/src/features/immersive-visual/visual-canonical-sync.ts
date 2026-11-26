@@ -11,6 +11,7 @@ import type { EditorView } from "prosemirror-view";
 import type {
 	VisualCanonicalChangeRequest,
 	VisualEditorSelection,
+	VisualExpectedSnapshot,
 	VisualToolbarCommandResult,
 } from "../../contracts/visual-editor";
 import type { EditorDocumentSession } from "../document-source/editor-document-session";
@@ -21,6 +22,13 @@ import {
 	serializeVisualDocToMarkdown,
 } from "./markdown-serializer";
 import { PROTECTED_CARD_COMMIT_META } from "./node-views/protected-atom-node-view";
+import {
+	captureVisualEmptyParagraphLayout,
+	inferVisualEmptyParagraphLayoutFromCanonical,
+	restoreVisualEmptyParagraphLayout,
+	type VisualEmptyParagraphLayout,
+} from "./visual-empty-paragraph-layout";
+import { buildPostInsertionRoundTripGuard } from "./visual-post-insertion-guard";
 import {
 	createVisualSourceIndex,
 	deriveVisualSourceIndex,
@@ -50,9 +58,20 @@ export type VisualCanonicalSyncOptions = Readonly<{
 	onReconciled?: () => void;
 }>;
 
+export type VisualInsertionWithNodeRequest = Readonly<{
+	change: VisualCanonicalChangeRequest["change"];
+	expected: VisualExpectedSnapshot;
+	insertNode: ProseMirrorNode;
+	insertPos: number;
+	selectionPos: number;
+}>;
+
 export type VisualCanonicalSync = Readonly<{
 	applyCanonicalChange: (
 		request: VisualCanonicalChangeRequest,
+	) => VisualToolbarCommandResult;
+	applyInsertionWithVisualNode: (
+		request: VisualInsertionWithNodeRequest,
 	) => VisualToolbarCommandResult;
 	attach: (view: EditorView) => void;
 	/** Ends any active contiguous typing run (caret move, mark toggle). */
@@ -228,6 +247,29 @@ function restoreScroll(snapshot: ScrollSnapshot): void {
 	}
 }
 
+const MAX_VISUAL_INSERTION_RECORDS = 512;
+
+function visualInsertionRecordKey(value: string, selection: VisualEditorSelection): string {
+	let h1 = 0x811c9dc5;
+	let h2 = 0x9e3779b1;
+	let h3 = 0x85ebca77;
+	let h4 = 0xc2b2ae3d;
+	const len = value.length;
+	for (let i = 0; i < len; i += 1) {
+		const c = value.charCodeAt(i);
+		h1 = Math.imul(h1 ^ c, 0x01000193) ^ (h4 >>> 12);
+		h2 = Math.imul(h2 ^ (c + i), 0x85ebca6b) ^ (h1 >>> 13);
+		h3 = Math.imul(h3 ^ (c ^ ((i & 0xffff) << 1)), 0xc2b2ae35) ^ (h2 >>> 11);
+		h4 = Math.imul(h4 ^ ((c << 7) | (c >>> 9)), 0x27d4eb2f) ^ (h3 >>> 15);
+	}
+	const mix = (n: number): string => {
+		const a = Math.imul(n ^ (n >>> 16), 0x85ebca6b);
+		const b = Math.imul(a ^ (a >>> 13), 0xc2b2ae35);
+		return ((b ^ (b >>> 16)) >>> 0).toString(16).padStart(8, "0");
+	};
+	return `${selection.start}:${selection.end}:${selection.direction}:${len}:${mix(h1 ^ len ^ 0x243f6a88)}${mix(h2 ^ len ^ 0x85a308d3)}${mix(h3 ^ len ^ 0x13198a2e)}${mix(h4 ^ len ^ 0x03707344)}`;
+}
+
 /**
  * Single authoritative bridge between the ProseMirror projection and the
  * canonical CodeMirror document, which is the only history owner. Accepted
@@ -247,6 +289,23 @@ export function createVisualCanonicalSync(
 	let lastSyncFailed = false;
 	let pendingBase: EditorState | null = null;
 	let typingRun: TypingRun | null = null;
+	const visualInsertionRecords = new Map<string, VisualEmptyParagraphLayout>();
+
+	const recordVisualInsertionLayout = (
+		value: string,
+		selection: VisualEditorSelection,
+		layout: VisualEmptyParagraphLayout | null,
+	): void => {
+		if (!layout) return;
+		const key = visualInsertionRecordKey(value, selection);
+		visualInsertionRecords.delete(key);
+		visualInsertionRecords.set(key, layout);
+		while (visualInsertionRecords.size > MAX_VISUAL_INSERTION_RECORDS) {
+			const oldestKey = visualInsertionRecords.keys().next().value;
+			if (oldestKey === undefined) break;
+			visualInsertionRecords.delete(oldestKey);
+		}
+	};
 
 	const initialMarkdown = canonical.getValue();
 	const initialParsed = parseMarkdownWithBlockSources(initialMarkdown);
@@ -584,6 +643,63 @@ export function createVisualCanonicalSync(
 		return commitPending() && !lastSyncFailed;
 	};
 
+	const restoreVisualInsertionSnapshot = (
+		value: string,
+		revision: number,
+		selection: VisualEditorSelection,
+		context: ReconcileViewContext | null,
+	): boolean => {
+		const activeView = view;
+		if (disposed || !activeView) return false;
+		const layout =
+			(visualInsertionRecords.size > 0
+				? visualInsertionRecords.get(visualInsertionRecordKey(value, selection))
+				: undefined) ??
+			inferVisualEmptyParagraphLayoutFromCanonical(value, selection);
+		if (!layout) return false;
+		const restored = restoreVisualEmptyParagraphLayout(value, selection, layout);
+		if (
+			!restored ||
+			restored.selectionPos < 0 ||
+			restored.selectionPos > restored.doc.content.size
+		) {
+			return false;
+		}
+		try {
+			const tr = activeView.state.tr.replaceWith(
+				0,
+				activeView.state.doc.content.size,
+				restored.doc.content,
+			);
+			tr.setSelection(TextSelection.create(tr.doc, restored.selectionPos));
+			if (!context) tr.scrollIntoView();
+			tr.setMeta(CANONICAL_SYNC_TRANSACTION_META, true).setMeta(
+				"addToHistory",
+				false,
+			);
+			roundTripGuard = restored.roundTripGuard;
+			acceptedDoc = tr.doc;
+			acceptedMarkdown = value;
+			acceptedRevision = revision;
+			sourceIndex = restored.sourceIndex;
+			pendingBase = null;
+			lastSyncFailed = false;
+			activeView.dispatch(tr);
+			if (
+				context?.focused &&
+				activeView.dom.isConnected &&
+				!activeView.hasFocus()
+			) {
+				activeView.focus();
+			}
+			if (context) restoreScroll(context.scroll);
+			options.onReconciled?.();
+			return true;
+		} catch {
+			return false;
+		}
+	};
+
 	const history = (
 		direction: VisualHistoryDirection,
 	): VisualToolbarCommandResult => {
@@ -605,13 +721,11 @@ export function createVisualCanonicalSync(
 		}
 		if (!changed) return "blocked";
 		const value = canonical.getValue();
+		const revision = canonical.getRevision();
+		const selection = canonical.getSelection();
 		if (
-			!reconcile(
-				value,
-				canonical.getRevision(),
-				canonical.getSelection(),
-				viewContext,
-			)
+			!restoreVisualInsertionSnapshot(value, revision, selection, viewContext) &&
+			!reconcile(value, revision, selection, viewContext)
 		) {
 			return "failed";
 		}
@@ -619,18 +733,27 @@ export function createVisualCanonicalSync(
 		return "handled";
 	};
 
-	const applyCanonicalChange = (
+	type CanonicalChangeCommitOutcome =
+		| Readonly<{
+				ok: true;
+				revision: number;
+				value: string;
+				viewContext: ReconcileViewContext | null;
+		  }>
+		| Readonly<{ ok: false; result: "blocked" | "failed" }>;
+
+	const commitCanonicalChangeRequest = (
 		request: VisualCanonicalChangeRequest,
-	): VisualToolbarCommandResult => {
+	): CanonicalChangeCommitOutcome => {
 		typingRun = null;
-		if (!settleNow()) return "failed";
+		if (!settleNow()) return { ok: false, result: "failed" };
 		const precondition = assertCanonicalChangePrecondition(
 			request,
 			canonical.getRevision(),
 			canonical.getValue(),
 			canonical.getSelection(),
 		);
-		if (!precondition.ok) return "blocked";
+		if (!precondition.ok) return { ok: false, result: "blocked" };
 		const viewContext = captureViewContext();
 		try {
 			runWithEchoSuppressed(() =>
@@ -646,25 +769,96 @@ export function createVisualCanonicalSync(
 			);
 		} catch {
 			fail();
-			return "failed";
+			return { ok: false, result: "failed" };
 		}
 		const value = canonical.getValue();
 		if (value !== request.change.value) {
 			fail();
-			return "failed";
+			return { ok: false, result: "failed" };
 		}
+		return {
+			ok: true,
+			revision: canonical.getRevision(),
+			value,
+			viewContext,
+		};
+	};
+
+	const applyCanonicalChange = (
+		request: VisualCanonicalChangeRequest,
+	): VisualToolbarCommandResult => {
+		const committed = commitCanonicalChangeRequest(request);
+		if (!committed.ok) return committed.result;
 		if (
 			!reconcile(
-				value,
-				canonical.getRevision(),
+				committed.value,
+				committed.revision,
 				request.change.selection,
-				viewContext,
+				committed.viewContext,
 			)
 		) {
 			return "failed";
 		}
-		onCanonicalChange(value);
+		onCanonicalChange(committed.value);
 		return "handled";
+	};
+
+	const applyInsertionWithVisualNode = (
+		request: VisualInsertionWithNodeRequest,
+	): VisualToolbarCommandResult => {
+		const activeView = view;
+		if (disposed || !activeView) {
+			typingRun = null;
+			return "failed";
+		}
+		const committed = commitCanonicalChangeRequest({
+			change: request.change,
+			expected: request.expected,
+		});
+		if (!committed.ok) return committed.result;
+		try {
+			const tr = activeView.state.tr.insert(
+				request.insertPos,
+				request.insertNode,
+			);
+			tr.setSelection(TextSelection.create(tr.doc, request.selectionPos));
+			tr.scrollIntoView();
+			tr.setMeta(CANONICAL_SYNC_TRANSACTION_META, true).setMeta(
+				"addToHistory",
+				false,
+			);
+			const nextDoc = tr.doc;
+			const nextIndex = deriveVisualSourceIndex(
+				sourceIndex,
+				nextDoc,
+				committed.value,
+				request.change.changes,
+			);
+			const nextRoundTripGuard = buildPostInsertionRoundTripGuard(
+				nextDoc,
+				committed.value,
+				nextIndex,
+			);
+			recordVisualInsertionLayout(
+				committed.value,
+				request.change.selection,
+				captureVisualEmptyParagraphLayout(nextDoc, request.selectionPos),
+			);
+			roundTripGuard = nextRoundTripGuard;
+			acceptedDoc = nextDoc;
+			acceptedMarkdown = committed.value;
+			acceptedRevision = committed.revision;
+			sourceIndex = nextIndex;
+			pendingBase = null;
+			lastSyncFailed = false;
+			activeView.dispatch(tr);
+			if (activeView.dom.isConnected) activeView.focus();
+			onCanonicalChange(committed.value);
+			return "handled";
+		} catch {
+			fail();
+			return "failed";
+		}
 	};
 
 	const syncSelection = (selection: Selection): void => {
@@ -688,6 +882,7 @@ export function createVisualCanonicalSync(
 
 	return {
 		applyCanonicalChange,
+		applyInsertionWithVisualNode,
 		attach(nextView) {
 			view = nextView;
 		},
@@ -701,6 +896,7 @@ export function createVisualCanonicalSync(
 			view = null;
 			pendingBase = null;
 			typingRun = null;
+			visualInsertionRecords.clear();
 		},
 		getAcceptedDoc: () => acceptedDoc,
 		getInitialSelection: () =>

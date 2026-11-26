@@ -1,9 +1,13 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
+import { advanceMarkdownColumns } from "../../shared/markdown/markdown-char-codes";
+import { appendAll } from "../../shared/markdown/markdown-source-projection";
 import {
 	type ParsedVisualBlockSource,
 	type ParsedVisualDocument,
 	parseMarkdownWithBlockSources,
 } from "./markdown-parser";
+import { isSelfTerminatingProtectedBlock } from "./markdown-prescanner-blocks";
+import { appendContainerSignature, isInterruptingListMarker, isMarkdownBlankLine, type ListContainerMarker } from "./markdown-prescanner-containers";
 import { sanitizeBulletMarker } from "./visual-schema";
 
 /**
@@ -25,33 +29,52 @@ export type MarkdownRoundTripGuard = Readonly<{
 	serialize: (doc: ProseMirrorNode) => string;
 }>;
 
-export type BlockSerializer = (node: ProseMirrorNode) => string;
+export type SerializedLine = Readonly<{
+	fixedPrefix: string | null;
+	text: string;
+}>;
+
+type BlockSerializer = (node: ProseMirrorNode) => string;
+
+type BlockLineSerializer = (
+	node: ProseMirrorNode,
+	containerSignature: string,
+) => SerializedLine[];
 
 export type MarkdownSerializers = Readonly<{
 	serializeBlock: BlockSerializer;
+	serializeBlockLines: BlockLineSerializer;
 	serializeDoc: (doc: ProseMirrorNode) => string;
 }>;
+
+export function joinSerializedLines(lines: ReadonlyArray<SerializedLine>): string {
+	return lines
+		.map((line) => (line.fixedPrefix !== null ? `${line.fixedPrefix}${line.text}` : line.text))
+		.join("\n");
+}
 
 // ---------------------------------------------------------------------------
 // List serialization
 // ---------------------------------------------------------------------------
 
-function prefixMultiline(
-	text: string,
+function prefixMultilineLines(
+	lines: ReadonlyArray<SerializedLine>,
 	firstLinePrefix: string,
 	continuationPrefix: string,
-): string {
-	const lines = text.split("\n");
-	return lines
-		.map((line, index) => {
-			if (index === 0) {
-				return line.length > 0
-					? `${firstLinePrefix}${line}`
-					: firstLinePrefix.trimEnd();
-			}
-			return line.length > 0 ? `${continuationPrefix}${line}` : "";
-		})
-		.join("\n");
+): SerializedLine[] {
+	return lines.map((line, index) => {
+		if (line.fixedPrefix !== null) return line;
+		if (index === 0) {
+			return {
+				fixedPrefix: null,
+				text: line.text.length > 0 ? `${firstLinePrefix}${line.text}` : firstLinePrefix.trimEnd(),
+			};
+		}
+		return {
+			fixedPrefix: null,
+			text: line.text.length > 0 ? `${continuationPrefix}${line.text}` : "",
+		};
+	});
 }
 
 function isNestedList(node: ProseMirrorNode): boolean {
@@ -63,121 +86,124 @@ function isNestedList(node: ProseMirrorNode): boolean {
 }
 
 function isLooseList(listNode: ProseMirrorNode): boolean {
-	if (listNode.attrs.tight === false) {
-		return true;
-	}
-	if (listNode.attrs.tight === true) {
-		return false;
-	}
+	if (listNode.attrs.tight === false) return true;
+	if (listNode.attrs.tight === true) return false;
 	for (let i = 0; i < listNode.childCount; i += 1) {
 		const item = listNode.child(i);
 		let nonListBlocks = 0;
 		for (let j = 0; j < item.childCount; j += 1) {
-			if (!isNestedList(item.child(j))) {
-				nonListBlocks += 1;
-			}
+			if (!isNestedList(item.child(j))) nonListBlocks += 1;
 		}
-		if (nonListBlocks > 1) {
-			return true;
-		}
+		if (nonListBlocks > 1) return true;
 	}
 	return false;
 }
 
-function canInterruptParagraphInTightList(node: ProseMirrorNode): boolean {
-	const name = node.type.name;
-	return (
-		name === "code_block" ||
-		name === "blockquote" ||
-		name === "heading" ||
-		name === "horizontal_rule"
-	);
+function isSelfTerminatingProtected(node: ProseMirrorNode): boolean {
+	return isSelfTerminatingProtectedBlock(String(node.attrs.kind ?? ""), String(node.attrs.rawMarkdown ?? ""));
 }
 
-function serializeListItemBody(
+function needsBlankLineBetweenInListItem(
+	prev: ProseMirrorNode,
+	child: ProseMirrorNode,
+	loose: boolean,
+	blankBeforeNestedList: boolean,
+	nextFirstLine: string,
+): boolean {
+	const prevName = prev.type.name;
+	const childName = child.type.name;
+	const childIsList = isNestedList(child);
+	if (prevName === "paragraph" && childIsList)
+		return isInterruptingListMarker(nextFirstLine, false, 0) ? blankBeforeNestedList : true;
+	if (loose) return true;
+	if (prevName === "protected_block") {
+		return isSelfTerminatingProtected(prev) ? (childIsList ? blankBeforeNestedList : false) : true;
+	}
+	if (prevName === "code_block" || prevName === "heading" || prevName === "horizontal_rule") {
+		return childIsList ? blankBeforeNestedList : false;
+	}
+	if (prevName === "table") {
+		if (childName === "paragraph" || childName === "table" || nextFirstLine.includes("|")) return true;
+		if (childIsList) return blankBeforeNestedList;
+		if (childName === "protected_block") return !isSelfTerminatingProtected(child);
+		return !(childName === "code_block" || childName === "heading" || childName === "blockquote" || childName === "horizontal_rule");
+	}
+	if (prevName === "paragraph") {
+		if (childName === "table") return nextFirstLine.startsWith("<!--");
+		if (childName === "protected_block") return !isSelfTerminatingProtected(child);
+		return !(childName === "code_block" || childName === "blockquote" || childName === "heading");
+	}
+	return true;
+}
+
+function serializeListItemBodyLines(
 	itemNode: ProseMirrorNode,
 	loose: boolean,
-	serializeBlock: BlockSerializer,
+	serializeBlockLines: BlockLineSerializer,
 	blankBeforeNestedList: boolean,
-): string {
+	containerSignature: string,
+): SerializedLine[] {
 	const firstChild = itemNode.child(0);
 	const hasPhantomParagraph =
-		itemNode.childCount > 1 &&
-		firstChild.type.name === "paragraph" &&
-		firstChild.childCount === 0;
+		itemNode.childCount > 1 && firstChild.type.name === "paragraph" && firstChild.childCount === 0;
 	const startIndex = hasPhantomParagraph ? 1 : 0;
-	const parts: string[] = [];
+	const lines: SerializedLine[] = [];
 	for (let i = startIndex; i < itemNode.childCount; i += 1) {
 		const child = itemNode.child(i);
-		const serialized = serializeBlock(child);
+		const prev = i > startIndex ? itemNode.child(i - 1) : null;
+		const serialized = serializeBlockLines(child, containerSignature);
 		if (i === startIndex) {
-			// A leading non-paragraph block starts on the line after the marker
-			// (`-\n  ```js`), which keeps it inside the list item.
-			parts.push(hasPhantomParagraph ? `\n${serialized}` : serialized);
-		} else if (
-			isNestedList(child) &&
-			itemNode.child(i - 1).type.name === "paragraph"
-		) {
-			// Keep an original blank line before a nested sublist when the
-			// baseline item had one; otherwise the sublist follows directly.
-			parts.push(
-				blankBeforeNestedList ? `\n\n${serialized}` : `\n${serialized}`,
-			);
-		} else if (!loose && canInterruptParagraphInTightList(child)) {
-			// Keep a parsed tight list tight: fences, quotes, headings and rules
-			// may interrupt a paragraph, so no blank line is needed.
-			parts.push(`\n${serialized}`);
-		} else {
-			parts.push(`\n\n${serialized}`);
+			if (hasPhantomParagraph) lines.push({ fixedPrefix: null, text: "" });
+		} else if (prev && needsBlankLineBetweenInListItem(prev, child, loose, blankBeforeNestedList, serialized[0]?.text ?? "")) {
+			lines.push({ fixedPrefix: null, text: "" });
 		}
+		appendAll(lines, serialized);
 	}
-	return parts.join("");
+	return lines;
 }
 
-function serializeListItemAt(
+function serializeListItemAtLines(
 	listNode: ProseMirrorNode,
 	index: number,
 	loose: boolean,
-	serializeBlock: BlockSerializer,
+	serializeBlockLines: BlockLineSerializer,
 	blankBeforeNestedList: boolean,
-): string {
+	containerSignature: string,
+): SerializedLine[] {
 	const item = listNode.child(index);
-	const body = serializeListItemBody(
-		item,
-		loose,
-		serializeBlock,
-		blankBeforeNestedList,
-	);
 	const bulletMarker = sanitizeBulletMarker(listNode.attrs.marker);
+	let listMarker: ListContainerMarker = bulletMarker;
 	let prefix = `${bulletMarker} `;
 	let indent = "  ";
 	if (listNode.type.name === "ordered_list") {
 		const delimiter = listNode.attrs.delimiter === ")" ? ")" : ".";
+		listMarker = delimiter;
 		const order = listNode.attrs.order;
-		const startOrder =
-			typeof order === "number" && Number.isInteger(order) && order >= 0
-				? order
-				: 1;
+		const startOrder = typeof order === "number" && Number.isInteger(order) && order >= 0 ? order : 1;
 		prefix = `${startOrder + index}${delimiter} `;
 		indent = " ".repeat(prefix.length);
 	} else if (listNode.type.name === "task_list") {
-		prefix = item.attrs.checked
-			? `${bulletMarker} [x] `
-			: `${bulletMarker} [ ] `;
+		prefix = item.attrs.checked ? `${bulletMarker} [x] ` : `${bulletMarker} [ ] `;
 	}
-	return prefixMultiline(body, prefix, indent);
+	const itemSignature = appendContainerSignature(containerSignature, { contentIndent: indent.length, kind: "list", marker: listMarker });
+	return prefixMultilineLines(
+		serializeListItemBodyLines(item, loose, serializeBlockLines, blankBeforeNestedList, itemSignature),
+		prefix, indent,
+	);
 }
 
-export function serializeList(
+export function serializeListLines(
 	listNode: ProseMirrorNode,
-	serializeBlock: BlockSerializer,
-): string {
+	serializeBlockLines: BlockLineSerializer,
+	containerSignature: string,
+): SerializedLine[] {
 	const loose = isLooseList(listNode);
-	const items: string[] = [];
+	const lines: SerializedLine[] = [];
 	for (let i = 0; i < listNode.childCount; i += 1) {
-		items.push(serializeListItemAt(listNode, i, loose, serializeBlock, false));
+		if (i > 0 && loose) lines.push({ fixedPrefix: null, text: "" });
+		appendAll(lines, serializeListItemAtLines(listNode, i, loose, serializeBlockLines, false, containerSignature));
 	}
-	return items.join(loose ? "\n\n" : "\n");
+	return lines;
 }
 
 // ---------------------------------------------------------------------------
@@ -397,20 +423,12 @@ function matchGap(
 		const orig = origNodes[o];
 		return next !== undefined && orig !== undefined && nodesMatch(next, orig);
 	};
-	while (
-		newStart < newEnd &&
-		origStart < origEnd &&
-		same(newStart, origStart)
-	) {
+	while (newStart < newEnd && origStart < origEnd && same(newStart, origStart)) {
 		matched[newStart] = origStart;
 		newStart += 1;
 		origStart += 1;
 	}
-	while (
-		newStart < newEnd &&
-		origStart < origEnd &&
-		same(newEnd - 1, origEnd - 1)
-	) {
+	while (newStart < newEnd && origStart < origEnd && same(newEnd - 1, origEnd - 1)) {
 		newEnd -= 1;
 		origEnd -= 1;
 		matched[newEnd] = origEnd;
@@ -419,28 +437,10 @@ function matchGap(
 	const origLength = origEnd - origStart;
 	if (newLength <= 0 || origLength <= 0) return;
 	if (newLength * origLength <= DP_CELL_BUDGET) {
-		matchGapExact(
-			newNodes,
-			origNodes,
-			nodesMatch,
-			matched,
-			newStart,
-			newLength,
-			origStart,
-			origLength,
-		);
+		matchGapExact(newNodes, origNodes, nodesMatch, matched, newStart, newLength, origStart, origLength);
 		return;
 	}
-	matchGapIndexed(
-		newNodes,
-		origNodes,
-		nodesMatch,
-		matched,
-		newStart,
-		newEnd,
-		origStart,
-		origEnd,
-	);
+	matchGapIndexed(newNodes, origNodes, nodesMatch, matched, newStart, newEnd, origStart, origEnd);
 }
 
 /**
@@ -461,16 +461,7 @@ function alignNodes(
 	for (let n = 0; n <= newLen; n += 1) {
 		const o = n < newLen ? (matched[n] ?? -1) : origNodes.length;
 		if (o < 0) continue;
-		matchGap(
-			newNodes,
-			origNodes,
-			nodesMatch,
-			matched,
-			prevNew + 1,
-			n,
-			prevOrig + 1,
-			o,
-		);
+		matchGap(newNodes, origNodes, nodesMatch, matched, prevNew + 1, n, prevOrig + 1, o);
 		prevNew = n;
 		prevOrig = o;
 	}
@@ -521,7 +512,6 @@ type ListItemSlices = Readonly<{
 }>;
 
 const LIST_ITEM_START = /^( {0,3})([-*+]|\d{1,9}[.)])([ \t]+|$)/;
-const BLANK_LINE = /^[ \t]*$/;
 const BLANK_BEFORE_NESTED_LIST =
 	/\n[ \t]*\n[ \t]+(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/;
 
@@ -557,7 +547,7 @@ function splitListItemSlices(raw: string): ListItemSlices | null {
 		const start = starts[k] ?? 0;
 		const end = starts[k + 1] ?? lines.length;
 		let last = end - 1;
-		while (last > start && BLANK_LINE.test(lines[last] ?? "")) {
+		while (last > start && isMarkdownBlankLine(lines[last] ?? "")) {
 			last -= 1;
 		}
 		items.push(lines.slice(start, last + 1).join("\n"));
@@ -618,18 +608,9 @@ function listAttrsCompatible(
 ): boolean {
 	if (next.type !== orig.type) return false;
 	for (const key of Object.keys(orig.attrs)) {
-		if (key !== "tight" && next.attrs[key] !== orig.attrs[key]) return false;
+		if (key !== "tight" && key !== "order" && next.attrs[key] !== orig.attrs[key]) return false;
 	}
 	return true;
-}
-
-/** Column reached after `text`, expanding tabs to 4-column stops. */
-function advanceColumns(text: string, startColumn: number): number {
-	let column = startColumn;
-	for (const ch of text) {
-		column = ch === "\t" ? column + 4 - (column % 4) : column + 1;
-	}
-	return column;
 }
 
 const ORDERED_FIRST_LINE = /^([ \t]*)(\d{1,9})([.)])([ \t]*)(.*)$/;
@@ -666,11 +647,11 @@ function alignFirstOrderedMarker(
 	if (delta === 0) return [[firstLine, ...lines.slice(1)].join("\n")];
 
 	// Original content column, in Markdown columns (4-column tab stops).
-	const markerEnd = advanceColumns(
+	const markerEnd = advanceMarkdownColumns(
 		`${match[2]}${delimiter}`,
-		advanceColumns(indent, 0),
+		advanceMarkdownColumns(indent, 0),
 	);
-	const spacingWidth = advanceColumns(spacing, markerEnd) - markerEnd;
+	const spacingWidth = advanceMarkdownColumns(spacing, markerEnd) - markerEnd;
 	const oldContentColumn =
 		content.length > 0 && spacingWidth >= 1 && spacingWidth <= 4
 			? markerEnd + spacingWidth
@@ -681,9 +662,9 @@ function alignFirstOrderedMarker(
 	// content column) by the width change. Lazy continuation lines indented
 	// less than the content column keep their exact bytes.
 	const shifted = lines.slice(1).map((line) => {
-		if (line.trim().length === 0) return line;
+		if (isMarkdownBlankLine(line)) return line;
 		const leading = /^[ \t]*/.exec(line)?.[0] ?? "";
-		const width = advanceColumns(leading, 0);
+		const width = advanceMarkdownColumns(leading, 0);
 		if (width < oldContentColumn) return line;
 		return `${" ".repeat(Math.max(0, width + delta))}${line.slice(leading.length)}`;
 	});
@@ -714,10 +695,19 @@ function listMarkdownParsesTo(
 	listNode: ProseMirrorNode,
 ): boolean {
 	const doc = parseMarkdownWithBlockSources(markdown).doc;
+	const reparsed = doc.childCount === 1 ? doc.firstChild : null;
+	if (!reparsed) return false;
+	if (reparsed.eq(listNode)) return true;
+	// A 1-item single-paragraph list in CommonMark can only parse as tight even
+	// when its surviving node inherited `tight: false` from a deleted sibling.
 	return (
-		doc.childCount === 1 &&
-		doc.firstChild !== null &&
-		doc.firstChild.eq(listNode)
+		listNode.childCount === 1 &&
+		reparsed.type === listNode.type &&
+		reparsed.childCount === 1 &&
+		reparsed.attrs.order === listNode.attrs.order &&
+		reparsed.attrs.delimiter === listNode.attrs.delimiter &&
+		reparsed.attrs.marker === listNode.attrs.marker &&
+		reparsed.child(0).eq(listNode.child(0))
 	);
 }
 
@@ -729,7 +719,7 @@ function listMarkdownParsesTo(
 function serializeListPreservingItems(
 	listNode: ProseMirrorNode,
 	origBlock: ParsedVisualBlockSource,
-	serializeBlock: BlockSerializer,
+	serializeBlockLines: BlockLineSerializer,
 ): string | null {
 	const orig = origBlock.node;
 	if (!listAttrsCompatible(listNode, orig)) return null;
@@ -770,12 +760,11 @@ function serializeListPreservingItems(
 				continue;
 			}
 			const pairedSlice = pairedIdx >= 0 ? slices.items[pairedIdx] : undefined;
-			output += serializeListItemAt(
-				listNode,
-				idx,
-				loose,
-				serializeBlock,
-				pairedSlice !== undefined && BLANK_BEFORE_NESTED_LIST.test(pairedSlice),
+			output += joinSerializedLines(
+				serializeListItemAtLines(
+					listNode, idx, loose, serializeBlockLines,
+					pairedSlice !== undefined && BLANK_BEFORE_NESTED_LIST.test(pairedSlice), "",
+				),
 			);
 		}
 		if (newLen > 0 && (paired[newLen - 1] ?? -1) === origLen - 1) {
@@ -858,7 +847,7 @@ function serializeDocPreservingUntouchedBlocks(
 				serialized = serializeListPreservingItems(
 					child,
 					pairedBlock,
-					serializers.serializeBlock,
+					serializers.serializeBlockLines,
 				);
 				if (serialized !== null) effectiveOrigIndex[idx] = pairedIdx;
 			}
@@ -960,6 +949,7 @@ export function createPreservingRoundTripGuard(
 	};
 	const cachedSerializers: MarkdownSerializers = {
 		serializeBlock: serializeBlockCached,
+		serializeBlockLines: serializers.serializeBlockLines,
 		serializeDoc(doc) {
 			if (isEmptyDoc(doc)) {
 				return "";

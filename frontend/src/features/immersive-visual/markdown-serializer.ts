@@ -1,9 +1,12 @@
 import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
+import { appendAll } from "../../shared/markdown/markdown-source-projection";
 import {
 	createPreservingRoundTripGuard,
+	joinSerializedLines,
 	type MarkdownRoundTripGuard,
 	type MarkdownSerializers,
-	serializeList,
+	type SerializedLine,
+	serializeListLines,
 } from "./markdown-block-preservation";
 import {
 	escapeCodeSpanTableContent,
@@ -12,11 +15,16 @@ import {
 } from "./markdown-escape";
 import type { ParsedVisualDocument } from "./markdown-parser";
 import {
+	appendContainerSignature,
+	trimAsciiSpaceTab,
+} from "./markdown-prescanner-containers";
+import {
 	reconcileTableAlignComment,
 	type TableAlignSnapshot,
 } from "./table-alignment-codec";
 import {
 	containsAsciiControlCharacter,
+	getProtectedInlineContinuationHint,
 	isValidTableTextAlign,
 	isValidVisualImageScale,
 	normalizeHeadingLevel,
@@ -29,6 +37,7 @@ import {
 export type { MarkdownRoundTripGuard } from "./markdown-block-preservation";
 
 type InlineSerializeOptions = Readonly<{
+	containerSignature?: string;
 	inHeading?: boolean;
 	inTableCell?: boolean;
 }>;
@@ -135,26 +144,40 @@ function formatCodeSpan(content: string, inTableCell: boolean): string {
 		: `${fence}${body}${fence}`;
 }
 
+// Union of CommonMark §2.5 / League 2.8.2 (`#\d{1,7}`, `#x[0-9a-f]{1,6}`) and
+// markdown-it 15 (`#\d{1,8}`, `#x[0-9a-f]{1,8}`) entity grammars so neither
+// parser double-decodes literal entity-like text on round-trip.
+const COMMONMARK_ENTITY_AMP_RE =
+	/&(?=(?:#\d{1,8}|#[xX][0-9a-fA-F]{1,8}|[a-zA-Z][a-zA-Z0-9]{1,31});)/g;
+
 function escapeQuotedTitle(title: string): string {
-	return title.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+	return title
+		.replace(COMMONMARK_ENTITY_AMP_RE, "&amp;")
+		.replace(/\\/g, "\\\\")
+		.replace(/"/g, '\\"')
+		.replace(/\0/g, "&#00;")
+		.replace(/\r/g, "&#13;")
+		.replace(/\n/g, "&#10;");
 }
 
 function formatLinkDestination(href: string, inTableCell: boolean): string {
-	const trimmed = href.trim();
+	const trimmed = href.replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, "");
 	if (trimmed.length === 0) {
 		return "";
 	}
-	let destination = trimmed;
+	let destination = trimmed
+		.replace(/\\/g, "%5C")
+		.replace(COMMONMARK_ENTITY_AMP_RE, "&amp;");
 	if (
-		/[\s()<>]/.test(destination) ||
+		/[ \t\r\n()<>]/.test(destination) ||
 		containsAsciiControlCharacter(destination)
 	) {
-		// Angle-bracketed destinations may not contain raw `<`, `>` or spaces;
-		// encode them so the wrapper stays valid CommonMark §6.3.
+		// Angle-bracketed destinations may not contain raw `<`, `>` or ASCII
+		// whitespace; encode only ASCII spaces/tabs/newlines so NBSP survives.
 		const encoded = stripAsciiControlCharacters(destination)
 			.replace(/</g, "%3C")
 			.replace(/>/g, "%3E")
-			.replace(/\s/g, "%20");
+			.replace(/[ \t\r\n]/g, "%20");
 		destination = `<${encoded}>`;
 	}
 	return inTableCell ? escapeTablePipes(destination) : destination;
@@ -251,12 +274,32 @@ function markCloseSyntax(mark: Mark, inTableCell: boolean): string {
 	}
 }
 
-function serializeInlineContent(
+function readMatchingContinuationPrefixes(
+	node: ProseMirrorNode,
+	rawLineCount: number,
+	containerSignature: string,
+): ReadonlyArray<string> | null {
+	if (containerSignature.length === 0 || rawLineCount < 2) {
+		return null;
+	}
+	const hint = getProtectedInlineContinuationHint(node);
+	if (
+		!hint ||
+		hint.containerSignature !== containerSignature ||
+		hint.continuationPrefixes.length !== rawLineCount - 1
+	) {
+		return null;
+	}
+	return hint.continuationPrefixes;
+}
+
+function serializeInlineContentLines(
 	parent: ProseMirrorNode,
 	options: InlineSerializeOptions = {},
-): string {
+): SerializedLine[] {
 	const inTableCell = options.inTableCell ?? false;
 	const inHeading = options.inHeading ?? false;
+	const containerSignature = options.containerSignature ?? "";
 	const markSpans = computeMarkSpans(parent);
 	const markKeysAt = (index: number): Set<string> => {
 		const set = new Set<string>();
@@ -272,14 +315,35 @@ function serializeInlineContent(
 			.sort(compareMarkSpans)
 			.map((span) => span.mark);
 
-	let output = "";
+	const lines: Array<{ fixedPrefix: string | null; text: string }> = [
+		{ fixedPrefix: null, text: "" },
+	];
+	const appendText = (value: string): void => {
+		if (value.length === 0) return;
+		const last = lines[lines.length - 1] as {
+			fixedPrefix: string | null;
+			text: string;
+		};
+		if (!value.includes("\n")) {
+			last.text += value;
+			return;
+		}
+		const parts = value.split("\n");
+		last.text += parts[0] ?? "";
+		for (let k = 1; k < parts.length; k += 1) {
+			lines.push({ fixedPrefix: null, text: parts[k] ?? "" });
+		}
+	};
+	const isAtLineStart = (): boolean =>
+		(lines[lines.length - 1]?.text.length ?? 0) === 0;
+
 	const activeMarks: Mark[] = [];
 
 	const closeMarksTo = (targetDepth: number): void => {
 		while (activeMarks.length > targetDepth) {
 			const popped = activeMarks.pop();
 			if (popped) {
-				output += markCloseSyntax(popped, inTableCell);
+				appendText(markCloseSyntax(popped, inTableCell));
 			}
 		}
 	};
@@ -297,7 +361,7 @@ function serializeInlineContent(
 		for (let i = sharedDepth; i < nextMarks.length; i += 1) {
 			const mark = nextMarks[i];
 			if (mark) {
-				output += markOpenSyntax(mark);
+				appendText(markOpenSyntax(mark));
 				activeMarks.push(mark);
 			}
 		}
@@ -323,7 +387,7 @@ function serializeInlineContent(
 
 		if (child.type.name === "hard_break") {
 			syncMarks(sortedMarks);
-			output += inTableCell ? "<br>" : inHeading ? " " : "\\\n";
+			appendText(inTableCell ? "<br>" : inHeading ? " " : "\\\n");
 			continue;
 		}
 
@@ -333,13 +397,39 @@ function serializeInlineContent(
 				typeof child.attrs.rawMarkdown === "string"
 					? child.attrs.rawMarkdown
 					: "";
-			output += inTableCell ? escapeTablePipes(raw) : raw;
+			if (inTableCell) {
+				appendText(escapeTablePipes(raw));
+				continue;
+			}
+			if (raw.includes("\n")) {
+				const rawParts = raw.split("\n");
+				const prefixes = readMatchingContinuationPrefixes(
+					child,
+					rawParts.length,
+					containerSignature,
+				);
+				if (prefixes) {
+					const last = lines[lines.length - 1] as {
+						fixedPrefix: string | null;
+						text: string;
+					};
+					last.text += rawParts[0] ?? "";
+					for (let k = 1; k < rawParts.length; k += 1) {
+						lines.push({
+							fixedPrefix: prefixes[k - 1] ?? "",
+							text: rawParts[k] ?? "",
+						});
+					}
+					continue;
+				}
+			}
+			appendText(raw);
 			continue;
 		}
 
 		if (child.type.name === "image") {
 			syncMarks(sortedMarks.filter((mark) => mark.type.name !== "code"));
-			output += serializeImageNode(child, inTableCell);
+			appendText(serializeImageNode(child, inTableCell));
 			continue;
 		}
 
@@ -351,7 +441,7 @@ function serializeInlineContent(
 		const hasCodeMark = sortedMarks.some((mark) => mark.type.name === "code");
 		if (hasCodeMark) {
 			syncMarks(sortedMarks.filter((mark) => mark.type.name !== "code"));
-			output += formatCodeSpan(text, inTableCell);
+			appendText(formatCodeSpan(text, inTableCell));
 			continue;
 		}
 
@@ -398,12 +488,14 @@ function serializeInlineContent(
 				keptMarks.push(mark);
 			}
 			syncMarks(keptMarks);
-			output += escapeInlineMarkdownText(text, {
-				atLineStart: output.length === 0 || output.endsWith("\n"),
-				inHeading,
-				inLinkLabel: keptMarks.some((mark) => mark.type.name === "link"),
-				inTableCell,
-			});
+			appendText(
+				escapeInlineMarkdownText(text, {
+					atLineStart: isAtLineStart(),
+					inHeading,
+					inLinkLabel: keptMarks.some((mark) => mark.type.name === "link"),
+					inTableCell,
+				}),
+			);
 			continue;
 		}
 
@@ -419,15 +511,17 @@ function serializeInlineContent(
 				keepDepth += 1;
 			}
 			closeMarksTo(keepDepth);
-			output += leadingSpace;
+			appendText(leadingSpace);
 		}
 		syncMarks(sortedMarks);
-		output += escapeInlineMarkdownText(core, {
-			atLineStart: output.length === 0 || output.endsWith("\n"),
-			inHeading,
-			inLinkLabel: sortedMarks.some((mark) => mark.type.name === "link"),
-			inTableCell,
-		});
+		appendText(
+			escapeInlineMarkdownText(core, {
+				atLineStart: isAtLineStart(),
+				inHeading,
+				inLinkLabel: sortedMarks.some((mark) => mark.type.name === "link"),
+				inTableCell,
+			}),
+		);
 		if (trailingSpace.length > 0) {
 			let keepDepth = 0;
 			while (
@@ -437,19 +531,36 @@ function serializeInlineContent(
 				keepDepth += 1;
 			}
 			closeMarksTo(keepDepth);
-			output += trailingSpace;
+			appendText(trailingSpace);
 		}
 	}
 
 	closeMarksTo(0);
-	return output;
+	return lines;
 }
 
-function prefixBlockquote(text: string): string {
-	return text
-		.split("\n")
-		.map((line) => (line.length > 0 ? `> ${line}` : ">"))
-		.join("\n");
+function serializeInlineContent(
+	parent: ProseMirrorNode,
+	options: InlineSerializeOptions = {},
+): string {
+	return joinSerializedLines(serializeInlineContentLines(parent, options));
+}
+
+function prefixBlockquoteLines(
+	lines: ReadonlyArray<SerializedLine>,
+): SerializedLine[] {
+	return lines.map((line) =>
+		line.fixedPrefix !== null
+			? line
+			: {
+					fixedPrefix: null,
+					text: line.text.length > 0 ? `> ${line.text}` : ">",
+				},
+	);
+}
+
+function toPlainSerializedLines(text: string): SerializedLine[] {
+	return text.split("\n").map((line) => ({ fixedPrefix: null, text: line }));
 }
 
 function serializeCodeBlock(node: ProseMirrorNode): string {
@@ -460,9 +571,11 @@ function serializeCodeBlock(node: ProseMirrorNode): string {
 	const fenceLength = Math.max(minFenceLen, bodyMaxRun + 1);
 	const fence = fenceChar.repeat(fenceLength);
 	const rawInfo =
-		typeof node.attrs.info === "string" ? node.attrs.info.trim() : "";
+		typeof node.attrs.info === "string" ? trimAsciiSpaceTab(node.attrs.info) : "";
 	const rawLang =
-		typeof node.attrs.language === "string" ? node.attrs.language.trim() : "";
+		typeof node.attrs.language === "string"
+			? trimAsciiSpaceTab(node.attrs.language)
+			: "";
 	const info = rawInfo.length > 0 ? rawInfo : rawLang;
 
 	if (body.length === 0) {
@@ -584,44 +697,62 @@ function serializeTable(tableNode: ProseMirrorNode): string {
 	return lines.join("\n");
 }
 
-function serializeBlockNode(node: ProseMirrorNode): string {
+function serializeBlockLines(
+	node: ProseMirrorNode,
+	containerSignature: string,
+): SerializedLine[] {
 	switch (node.type.name) {
 		case "paragraph":
-			return serializeInlineContent(node, {});
+			return serializeInlineContentLines(node, { containerSignature });
 		case "heading": {
 			const level = normalizeHeadingLevel(node.attrs.level);
 			const content = serializeInlineContent(node, { inHeading: true }).replace(
 				/#+$/,
 				(run) => run.replace(/#/g, "\\#"),
 			);
-			return content.length > 0
-				? `${"#".repeat(level)} ${content}`
-				: "#".repeat(level);
+			return toPlainSerializedLines(
+				content.length > 0
+					? `${"#".repeat(level)} ${content}`
+					: "#".repeat(level),
+			);
 		}
 		case "blockquote": {
-			const innerBlocks: string[] = [];
+			const childSignature = appendContainerSignature(containerSignature, {
+				kind: "quote",
+			});
+			const innerLines: SerializedLine[] = [];
 			for (let i = 0; i < node.childCount; i += 1) {
-				innerBlocks.push(serializeBlockNode(node.child(i)));
+				if (i > 0) innerLines.push({ fixedPrefix: null, text: "" });
+				appendAll(
+					innerLines,
+					serializeBlockLines(node.child(i), childSignature),
+				);
 			}
-			return prefixBlockquote(innerBlocks.join("\n\n"));
+			return prefixBlockquoteLines(innerLines);
 		}
 		case "bullet_list":
 		case "ordered_list":
 		case "task_list":
-			return serializeList(node, serializeBlockNode);
+			return serializeListLines(node, serializeBlockLines, containerSignature);
 		case "code_block":
-			return serializeCodeBlock(node);
+			return toPlainSerializedLines(serializeCodeBlock(node));
 		case "horizontal_rule":
-			return "---";
+			return [{ fixedPrefix: null, text: "---" }];
 		case "table":
-			return serializeTable(node);
+			return toPlainSerializedLines(serializeTable(node));
 		case "protected_block":
-			return typeof node.attrs.rawMarkdown === "string"
-				? node.attrs.rawMarkdown
-				: "";
+			return toPlainSerializedLines(
+				typeof node.attrs.rawMarkdown === "string"
+					? node.attrs.rawMarkdown
+					: "",
+			);
 		default:
-			return node.textContent;
+			return toPlainSerializedLines(node.textContent);
 	}
+}
+
+function serializeBlockNode(node: ProseMirrorNode): string {
+	return joinSerializedLines(serializeBlockLines(node, ""));
 }
 
 export function serializeVisualDocToMarkdown(doc: ProseMirrorNode): string {
@@ -642,6 +773,7 @@ export function serializeVisualDocToMarkdown(doc: ProseMirrorNode): string {
 
 const MARKDOWN_SERIALIZERS: MarkdownSerializers = {
 	serializeBlock: serializeBlockNode,
+	serializeBlockLines,
 	serializeDoc: serializeVisualDocToMarkdown,
 };
 

@@ -943,11 +943,21 @@ async function runVisualCrossHeadingBold(page, visualEditor, source, markdown, s
     }
     return { prefix: command.prefix, suffix: command.suffix };
   });
-  const expected = markdown.slice(0, sourceSelection.start)
-    + boldCommand.prefix
-    + markdown.slice(sourceSelection.start, sourceSelection.end)
-    + boldCommand.suffix
-    + markdown.slice(sourceSelection.end);
+  const newline = markdown.includes('\r\n') ? '\r\n' : '\n';
+  const crossHeadingBefore =
+    `# 一级标题 Heading 1${newline}${newline}## 二级标题 Heading 2`;
+  const crossHeadingAfter =
+    `# ${boldCommand.prefix}一级标题 Heading 1${boldCommand.suffix}`
+    + `${newline}${newline}`
+    + `## ${boldCommand.prefix}二级标题 Heading 2${boldCommand.suffix}`;
+  const expected = replaceVisualSourceOccurrence(
+    markdown,
+    crossHeadingBefore,
+    crossHeadingAfter,
+    0
+  );
+  const boldHeading1 = visualEditor.locator('h1', { hasText: '一级标题 Heading 1' }).first();
+  const boldHeading2 = visualEditor.locator('h2', { hasText: '二级标题 Heading 2' }).first();
   await rootItem(page, 'bold').click();
   await expect(page.locator(menuSelector)).toHaveCount(0);
   await waitForSourceExactValue(source, expected, `${suffix}-cross-heading-bold-applied`);
@@ -961,6 +971,10 @@ async function runVisualCrossHeadingBold(page, visualEditor, source, markdown, s
     previewBefore.domHash,
     page
   );
+  await expect(boldHeading1.locator('strong')).toHaveText('一级标题 Heading 1');
+  await expect(boldHeading2.locator('strong')).toHaveText('二级标题 Heading 2');
+  await expect(boldHeading1).not.toContainText('**');
+  await expect(boldHeading2).not.toContainText('**');
   if (!verifyHistory) {
     await source.evaluate((field, value) => {
       if (!('value' in field)) throw new Error('source-bridge-unavailable');
@@ -984,6 +998,8 @@ async function runVisualCrossHeadingBold(page, visualEditor, source, markdown, s
     await readVisualActionState(visualEditor),
     `${suffix}-cross-heading-bold-undo`
   );
+  await expect(boldHeading1.locator('strong')).toHaveCount(0);
+  await expect(boldHeading2.locator('strong')).toHaveCount(0);
   await visualEditor.press('ControlOrMeta+Shift+z');
   await waitForSourceExactValue(source, expected, `${suffix}-cross-heading-bold-redo`);
   const redoPreview = await waitForVisualPreviewAccepted(
@@ -996,6 +1012,10 @@ async function runVisualCrossHeadingBold(page, visualEditor, source, markdown, s
     await readVisualActionState(visualEditor),
     `${suffix}-cross-heading-bold-redo`
   );
+  await expect(boldHeading1.locator('strong')).toHaveText('一级标题 Heading 1');
+  await expect(boldHeading2.locator('strong')).toHaveText('二级标题 Heading 2');
+  await expect(boldHeading1).not.toContainText('**');
+  await expect(boldHeading2).not.toContainText('**');
   await visualEditor.press('ControlOrMeta+z');
   await waitForSourceExactValue(source, markdown, `${suffix}-cross-heading-bold-reset`);
   await waitForVisualPreviewAccepted(
@@ -1004,6 +1024,8 @@ async function runVisualCrossHeadingBold(page, visualEditor, source, markdown, s
     redoPreview.domHash,
     page
   );
+  await expect(boldHeading1.locator('strong')).toHaveCount(0);
+  await expect(boldHeading2.locator('strong')).toHaveCount(0);
 }
 
 async function runVisualImageScaleAction(

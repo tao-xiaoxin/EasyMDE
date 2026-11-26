@@ -8,6 +8,12 @@ import type {
 	VisualEditorMarkdownImageScaleMatch,
 	VisualEditorSourceRange,
 } from "../../contracts/visual-editor";
+import {
+	normalizeLineEndingsToLf,
+	VISUAL_MARKDOWN_SOURCE_ATTRIBUTE,
+} from "../../shared/markdown/normalize-math-tex";
+import { mathElementMatchesSource } from "../generated-content-export/generated-content-target";
+import { pairMathDomIndexToSpanIndex } from "../generated-content-export/generated-math-pairing";
 
 /**
  * Pure DOM and source-index target resolution for the ProseMirror visual
@@ -296,60 +302,173 @@ function extractMermaidOriginal(
 	};
 }
 
+function mermaidElementMatchesSource(element: Element, full: string): boolean {
+	const domRaw = element.getAttribute(VISUAL_MARKDOWN_SOURCE_ATTRIBUTE);
+	return (
+		domRaw === null ||
+		normalizeLineEndingsToLf(domRaw) === normalizeLineEndingsToLf(full)
+	);
+}
+
+function resolveByCountParityOrUniqueMatch<T>(
+	candidates: ReadonlyArray<T>,
+	ordinal: number,
+	options: Readonly<{
+		allowFallback: boolean;
+		hasCountParity: boolean;
+		hasExcessDomElements: boolean;
+		matchesAtOrdinal: (candidate: T) => boolean;
+		matchesFallback: (candidate: T) => boolean;
+	}>,
+): number {
+	if (options.hasExcessDomElements) return -1;
+	const atOrdinal = candidates[ordinal];
+	if (
+		options.hasCountParity &&
+		atOrdinal !== undefined &&
+		options.matchesAtOrdinal(atOrdinal)
+	) {
+		return ordinal;
+	}
+	if (!options.allowFallback) return -1;
+	let matchedIdx = -1;
+	for (let i = 0; i < candidates.length; i += 1) {
+		const candidate = candidates[i];
+		if (candidate !== undefined && options.matchesFallback(candidate)) {
+			if (matchedIdx >= 0) return -1;
+			matchedIdx = i;
+		}
+	}
+	return matchedIdx;
+}
+
+export function resolveMermaidBlockOriginal(
+	source: string,
+	entry: Readonly<{ blockIdx: number; from: number; to: number }>,
+	ordinal: number,
+): GeneratedContentResolution | null {
+	const original = extractMermaidOriginal(source, entry.from, entry.to);
+	return original
+		? { blockId: `pm-block-${entry.blockIdx}`, ordinal, original }
+		: null;
+}
+
+export function pickMermaidDomElement(
+	elements: ReadonlyArray<Element>,
+	expectedCount: number,
+	ordinal: number,
+	full: string,
+): Element | null {
+	const resolvedIdx = resolveByCountParityOrUniqueMatch(elements, ordinal, {
+		allowFallback: true,
+		hasCountParity: elements.length === expectedCount,
+		hasExcessDomElements: elements.length > expectedCount,
+		matchesAtOrdinal: (el) => mermaidElementMatchesSource(el, full),
+		matchesFallback: (el) =>
+			el.getAttribute(VISUAL_MARKDOWN_SOURCE_ATTRIBUTE) !== null &&
+			mermaidElementMatchesSource(el, full),
+	});
+	return resolvedIdx < 0 ? null : (elements[resolvedIdx] ?? null);
+}
+
+function resolveMathSpanOriginal(
+	index: VisualEditorGeneratedContentTargetIndex,
+	spanIndex: number,
+): GeneratedContentResolution | null {
+	const span = index.mathSpans[spanIndex];
+	if (!span) return null;
+	const source = index.source;
+	if (
+		span.from < 0 ||
+		span.from >= span.to ||
+		span.bodyFrom < span.from ||
+		span.bodyTo > span.to ||
+		span.bodyFrom > span.bodyTo ||
+		span.to > source.length
+	) {
+		return null;
+	}
+	return {
+		blockId: blockIdFor(index.blocks, span.from, spanIndex),
+		ordinal: spanIndex,
+		original: {
+			body: source.slice(span.bodyFrom, span.bodyTo),
+			bodyRange: { from: span.bodyFrom, to: span.bodyTo },
+			full: source.slice(span.from, span.to),
+			fullRange: { from: span.from, to: span.to },
+		},
+	};
+}
+
 export function findGeneratedContentOriginal(
 	index: VisualEditorGeneratedContentTargetIndex,
 	kind: VisualEditorGeneratedContentKind,
 	ordinal: number,
 	element: Element | null,
 ): GeneratedContentResolution | null {
+	if (!Number.isSafeInteger(ordinal) || ordinal < 0) return null;
 	const source = index.source;
-	const domRaw =
-		element?.getAttribute("data-easymde-visual-markdown-source") ?? null;
-
-	const pick = <T>(
-		entries: ReadonlyArray<T>,
-		rawOf: (entry: T) => string,
-	): number => {
-		const atOrdinal = entries[ordinal];
-		if (
-			atOrdinal !== undefined &&
-			(domRaw === null || rawOf(atOrdinal) === domRaw)
-		) {
-			return ordinal;
-		}
-		const matched =
-			domRaw !== null
-				? entries.findIndex((entry) => rawOf(entry) === domRaw)
-				: -1;
-		return matched >= 0 ? matched : ordinal;
-	};
+	const domRaw = element?.getAttribute(VISUAL_MARKDOWN_SOURCE_ATTRIBUTE) ?? null;
+	const selector = kind === "math" ? ".easymde-math" : ".easymde-mermaid";
+	const editorRoot = element?.closest(".ProseMirror") ?? null;
 
 	if (kind === "math") {
-		const resolvedIdx = pick(index.mathSpans, (span) =>
-			source.slice(span.from, span.to),
-		);
-		const span = index.mathSpans[resolvedIdx];
-		if (!span) return null;
-		return {
-			blockId: blockIdFor(index.blocks, span.from, resolvedIdx),
-			ordinal: resolvedIdx,
-			original: {
+		if (element === null) {
+			return resolveMathSpanOriginal(index, ordinal);
+		}
+		if (editorRoot) {
+			const renderedRoots = Array.from(editorRoot.querySelectorAll(selector));
+			if (renderedRoots[ordinal] !== element) return null;
+			const spanIdx = pairMathDomIndexToSpanIndex(
+				source,
+				renderedRoots,
+				index.mathSpans,
+				ordinal,
+			);
+			return spanIdx === null ? null : resolveMathSpanOriginal(index, spanIdx);
+		}
+		const span = index.mathSpans[ordinal];
+		if (
+			!span ||
+			!mathElementMatchesSource(element, {
 				body: source.slice(span.bodyFrom, span.bodyTo),
-				bodyRange: { from: span.bodyFrom, to: span.bodyTo },
+				displayMode: span.displayMode,
 				full: source.slice(span.from, span.to),
-				fullRange: { from: span.from, to: span.to },
-			},
-		};
+			})
+		) {
+			return null;
+		}
+		return resolveMathSpanOriginal(index, ordinal);
 	}
 
+	const domCount = editorRoot
+		? editorRoot.querySelectorAll(selector).length
+		: null;
 	const mermaidBlocks = collectMermaidBlocks(index);
-	const resolvedIdx = pick(mermaidBlocks, (entry) =>
-		source.slice(entry.from, entry.to),
+	const resolvedIdx = resolveByCountParityOrUniqueMatch(
+		mermaidBlocks,
+		ordinal,
+		{
+			allowFallback: domRaw !== null,
+			hasCountParity: domCount === null || domCount === mermaidBlocks.length,
+			hasExcessDomElements:
+				domCount !== null && domCount > mermaidBlocks.length,
+			matchesAtOrdinal: (entry) =>
+				element === null
+					? true
+					: mermaidElementMatchesSource(
+							element,
+							source.slice(entry.from, entry.to),
+						),
+			matchesFallback: (entry) =>
+				element === null
+					? true
+					: mermaidElementMatchesSource(
+							element,
+							source.slice(entry.from, entry.to),
+						),
+		},
 	);
 	const entry = mermaidBlocks[resolvedIdx];
-	if (!entry) return null;
-	const original = extractMermaidOriginal(source, entry.from, entry.to);
-	return original
-		? { blockId: `pm-block-${entry.blockIdx}`, ordinal: resolvedIdx, original }
-		: null;
+	return entry ? resolveMermaidBlockOriginal(source, entry, resolvedIdx) : null;
 }

@@ -180,16 +180,123 @@ const exitHeadingOnEnter: Command = (state, dispatch) => {
 	return splitBlock(state, dispatch);
 };
 
+/**
+ * Toggles an inline mark with all-or-add semantics on non-empty selections:
+ * - removes `markType` only when every markable text range in the selection
+ *   already carries `markType`;
+ * - otherwise adds `markType` across all markable text ranges in one
+ *   transaction (so mixed selections add missing formatting instead of
+ *   stripping existing formatting).
+ */
+function createToggleInlineMarkCommand(markType: MarkType): Command {
+	return (state, dispatch) => {
+		const { selection } = state;
+		if (selection.empty) {
+			if (isSelectionInCodeBlock(state)) {
+				return false;
+			}
+			return toggleMark(markType)(state, dispatch);
+		}
+
+		let hasMarkableText = false;
+		let allMarked = true;
+		for (const range of selection.ranges) {
+			const from = range.$from.pos;
+			const to = range.$to.pos;
+			if (from >= to) continue;
+			state.doc.nodesBetween(from, to, (node, pos, parent) => {
+				if (
+					!node.isText ||
+					!parent?.isTextblock ||
+					!parent.type.allowsMarkType(markType)
+				) {
+					return;
+				}
+				const overlapFrom = Math.max(pos, from);
+				const overlapTo = Math.min(pos + node.nodeSize, to);
+				if (overlapFrom >= overlapTo) return;
+				hasMarkableText = true;
+				if (!markType.isInSet(node.marks)) {
+					allMarked = false;
+				}
+			});
+		}
+		if (!hasMarkableText) {
+			return false;
+		}
+
+		const tr = state.tr;
+		if (allMarked) {
+			for (const range of selection.ranges) {
+				tr.removeMark(range.$from.pos, range.$to.pos, markType);
+			}
+		} else {
+			const mark = markType.create();
+			for (const range of selection.ranges) {
+				tr.addMark(range.$from.pos, range.$to.pos, mark);
+			}
+		}
+		if (!tr.docChanged) {
+			return false;
+		}
+		dispatch?.(tr.scrollIntoView());
+		return true;
+	};
+}
+
 function toggleInlineMark(
 	view: EditorView,
 	markType: MarkType,
 ): VisualToolbarCommandResult {
-	if (isSelectionInCodeBlock(view.state)) {
+	const { state } = view;
+	if (state.selection.empty && isSelectionInCodeBlock(state)) {
 		return "blocked";
 	}
-	return toggleMark(markType)(view.state, view.dispatch)
-		? "handled"
-		: "blocked";
+	let applied = false;
+	const handled = createToggleInlineMarkCommand(markType)(state, (tr) => {
+		if (state.selection.empty || tr.docChanged) {
+			applied = true;
+			view.dispatch(tr);
+		}
+	});
+	return handled && applied ? "handled" : "blocked";
+}
+
+export function resolveNestedCodeInsertPos(
+	view: EditorView,
+	relative: "after" | "before",
+): number | null {
+	const { $from } = view.state.selection;
+	const paragraphType = NODES.paragraph;
+	for (let depth = $from.depth; depth >= 2; depth -= 1) {
+		if ($from.node(depth).type.name !== "code_block") continue;
+		const parent = $from.node(depth - 1);
+		if (
+			parent.type.name !== "blockquote" &&
+			parent.type.name !== "list_item" &&
+			parent.type.name !== "task_item"
+		) {
+			return null;
+		}
+		const indexInParent =
+			relative === "before" ? $from.index(depth - 1) : $from.index(depth - 1) + 1;
+		if (!parent.canReplaceWith(indexInParent, indexInParent, paragraphType)) {
+			return null;
+		}
+		return relative === "before" ? $from.before(depth) : $from.after(depth);
+	}
+	return null;
+}
+
+export function insertVisualParagraphRelative(
+	view: EditorView,
+	insertPos: number,
+): void {
+	const paragraph = NODES.paragraph.create();
+	const tr = view.state.tr.insert(insertPos, paragraph);
+	tr.setSelection(TextSelection.create(tr.doc, insertPos + 1));
+	tr.scrollIntoView();
+	view.dispatch(tr);
 }
 
 function toggleBlockquoteCommand(view: EditorView): VisualToolbarCommandResult {
@@ -608,10 +715,9 @@ export function createVisualKeymapPlugins(
 		"Mod-z": history.undo,
 		"Mod-Shift-z": history.redo,
 		"Mod-y": history.redo,
-		"Mod-b": toggleMark(MARKS.strong),
-		"Mod-i": toggleMark(MARKS.em),
-		"Mod-`": (state, dispatch) =>
-			!isSelectionInCodeBlock(state) && toggleMark(MARKS.code)(state, dispatch),
+		"Mod-b": createToggleInlineMarkCommand(MARKS.strong),
+		"Mod-i": createToggleInlineMarkCommand(MARKS.em),
+		"Mod-`": createToggleInlineMarkCommand(MARKS.code),
 		"Mod-a": selectAll,
 		"Mod-Enter": exitCode,
 		"Shift-Enter": chainCommands(insertHardBreakCommand, exitHeadingOnEnter),

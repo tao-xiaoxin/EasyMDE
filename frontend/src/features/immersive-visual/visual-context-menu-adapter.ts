@@ -16,13 +16,18 @@ import type {
 	VisualEditorGeneratedImageTarget,
 	VisualEditorGeneratedPreviewIdentity,
 	VisualEditorImageTargetIndex,
+	VisualInsertParagraphRequest,
 	VisualToolbarCommandOptions,
 	VisualToolbarCommandResult,
 } from "../../contracts/visual-editor";
+import { buildNestedCodeParagraphInsertion } from "../../shared/markdown/markdown-nested-code-paragraph";
 import type { EditorDocumentSession } from "../document-source/editor-document-session";
+import { pairMathSpanIndexToDomIndex } from "../generated-content-export/generated-math-pairing";
 import type { VisualCanonicalSync } from "./visual-canonical-sync";
 import {
 	executeVisualToolbarCommand,
+	insertVisualParagraphRelative,
+	resolveNestedCodeInsertPos,
 	type VisualHistoryCommands,
 } from "./visual-commands";
 import {
@@ -33,9 +38,17 @@ import {
 	type GeneratedContentResolution,
 	type ImageMatchResolution,
 	imageSlotIdentity,
+	pickMermaidDomElement,
+	resolveMermaidBlockOriginal,
 	resolveSelectionForPointerTarget,
 	selectionMatchesRange,
 } from "./visual-context-menu-target-resolution";
+import { visualEditorSchema } from "./visual-schema";
+import {
+	getCachedVisualSourceIndex,
+	type VisualSourceBlock,
+} from "./visual-source-index";
+import { assertExpectedVisualSnapshot } from "./visual-source-mapping";
 
 export type ProseMirrorVisualRuntimeOptions = Readonly<{
 	disposeSignal?: AbortSignal;
@@ -106,6 +119,33 @@ function createPinLease<TRoot extends Element, TTarget>(
 				: null,
 		target,
 	};
+}
+
+function findTargetBlockForRange(
+	blocks: ReadonlyArray<VisualSourceBlock>,
+	normFrom: number,
+	normTo: number,
+): VisualSourceBlock | null {
+	const exact = blocks.find(
+		(block) => block.mdStart === normFrom && block.mdEnd === normTo,
+	);
+	if (exact) return exact;
+	const containing = blocks.find(
+		(block) => block.mdStart <= normFrom && normTo <= block.mdEnd,
+	);
+	if (containing) return containing;
+	if (normFrom < normTo) {
+		const overlapping = blocks.find(
+			(block) =>
+				Math.min(block.mdEnd, normTo) > Math.max(block.mdStart, normFrom),
+		);
+		if (overlapping) return overlapping;
+	}
+	return (
+		blocks.find(
+			(block) => block.mdStart <= normFrom && normFrom <= block.mdEnd,
+		) ?? null
+	);
 }
 
 export function createProseMirrorVisualRuntime(
@@ -286,6 +326,70 @@ export function createProseMirrorVisualRuntime(
 			return sync.applyCanonicalChange(request);
 		},
 
+		insertParagraphRelative(
+			request: VisualInsertParagraphRequest,
+		): VisualToolbarCommandResult {
+			if (!isLiveEditable()) return "blocked";
+			if (!sync.settleNow()) return "failed";
+			const doc = documentSession.document;
+			const { expected, nestedCode, relative, targetRange } = request;
+			const currentValue = doc.getValue();
+			const snapshot = assertExpectedVisualSnapshot(
+				expected,
+				doc.getRevision(),
+				currentValue,
+				doc.getSelection(),
+			);
+			if (!snapshot.ok) {
+				return "blocked";
+			}
+			if (
+				!Number.isSafeInteger(targetRange.from) ||
+				!Number.isSafeInteger(targetRange.to) ||
+				targetRange.from < 0 ||
+				targetRange.to < targetRange.from ||
+				targetRange.to > currentValue.length
+			) {
+				return "unsupported";
+			}
+			if (nestedCode) {
+				const nestedInsertPos = resolveNestedCodeInsertPos(view, relative);
+				if (nestedInsertPos !== null) {
+					const insertionChange = buildNestedCodeParagraphInsertion(
+						currentValue,
+						targetRange,
+						relative,
+					);
+					if (!insertionChange) return "unsupported";
+					return sync.applyInsertionWithVisualNode({
+						change: insertionChange,
+						expected,
+						insertNode: visualEditorSchema.nodes.paragraph.create(),
+						insertPos: nestedInsertPos,
+						selectionPos: nestedInsertPos + 1,
+					});
+				}
+			}
+			const sourceIndex = getCachedVisualSourceIndex(
+				view.state.doc,
+				expected.value,
+			);
+			const normFrom = sourceIndex.toNormalized(targetRange.from);
+			const normTo = sourceIndex.toNormalized(targetRange.to);
+			const block = findTargetBlockForRange(
+				sourceIndex.blocks,
+				normFrom,
+				normTo,
+			);
+			if (!block) return "unsupported";
+			const insertPos = relative === "before" ? block.pmPos : block.pmEnd;
+			insertVisualParagraphRelative(view, insertPos);
+			if (!sync.settleNow()) return "failed";
+			sync.syncSelection(view.state.selection);
+			if (view.dom.isConnected) view.focus();
+			return "handled";
+		},
+
 		getGeneratedPreviewIdentity: () =>
 			disposed ? null : (getGeneratedPreviewIdentity?.() ?? null),
 		isEditable: isLiveEditable,
@@ -430,6 +534,7 @@ export function createProseMirrorVisualRuntime(
 				return null;
 			let kind: VisualEditorGeneratedContentKind | null = null;
 			let resolved: GeneratedContentResolution | null = null;
+			let rootElement: Element | null = null;
 			const mathIdx = request.index.mathSpans.findIndex((span) =>
 				selectionMatchesRange(request.selection, span.from, span.to),
 			);
@@ -441,38 +546,46 @@ export function createProseMirrorVisualRuntime(
 					mathIdx,
 					null,
 				);
-			} else {
-				const mermaidIdx = collectMermaidBlocks(request.index).findIndex(
-					(entry) =>
-						selectionMatchesRange(request.selection, entry.from, entry.to),
-				);
-				if (mermaidIdx >= 0) {
-					kind = "mermaid";
-					resolved = findGeneratedContentOriginal(
-						request.index,
-						"mermaid",
-						mermaidIdx,
-						null,
+				if (resolved) {
+					const elements = Array.from(
+						view.dom.querySelectorAll(".easymde-math"),
 					);
+					const domIdx = pairMathSpanIndexToDomIndex(
+						request.index.source,
+						elements,
+						request.index.mathSpans,
+						mathIdx,
+					);
+					rootElement = domIdx !== null ? (elements[domIdx] ?? null) : null;
+				}
+			} else {
+				const mermaidBlocks = collectMermaidBlocks(request.index);
+				const mermaidIdx = mermaidBlocks.findIndex((entry) =>
+					selectionMatchesRange(request.selection, entry.from, entry.to),
+				);
+				const mermaidEntry =
+					mermaidIdx >= 0 ? mermaidBlocks[mermaidIdx] : undefined;
+				if (mermaidEntry) {
+					kind = "mermaid";
+					resolved = resolveMermaidBlockOriginal(
+						request.index.source,
+						mermaidEntry,
+						mermaidIdx,
+					);
+					if (resolved) {
+						const elements = Array.from(
+							view.dom.querySelectorAll(".easymde-mermaid"),
+						);
+						rootElement = pickMermaidDomElement(
+							elements,
+							mermaidBlocks.length,
+							resolved.ordinal,
+							resolved.original.full,
+						);
+					}
 				}
 			}
-			if (!resolved || !kind) return null;
-			const elements = Array.from(
-				view.dom.querySelectorAll(
-					kind === "math" ? ".easymde-math" : ".easymde-mermaid",
-				),
-			);
-			const sourceOf = (el: Element | undefined) =>
-				el?.getAttribute("data-easymde-visual-markdown-source") ?? null;
-			const atOrdinal = elements[resolved.ordinal];
-			const rootElement =
-				atOrdinal &&
-				(sourceOf(atOrdinal) === null ||
-					sourceOf(atOrdinal) === resolved.original.full)
-					? atOrdinal
-					: (elements.find((el) => sourceOf(el) === resolved.original.full) ??
-						atOrdinal);
-			if (!rootElement?.isConnected) return null;
+			if (!resolved || !kind || !rootElement?.isConnected) return null;
 			const target = buildGeneratedTarget(kind, resolved, request.index);
 			const handle = createTrackedHandle(
 				() =>

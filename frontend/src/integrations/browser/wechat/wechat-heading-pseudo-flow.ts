@@ -3,11 +3,13 @@ import type { BrowserWechatClipboardRuntime } from './wechat-clipboard-runtime';
 import {
   EXPORT_TEXT_NORMALIZATIONS,
   GENERATED_EMPTY_HEADING_SUFFIX_CLONES,
+  GENERATED_PSEUDO_CLONE_OWNERS,
   HEADING_EMPTY_PSEUDO_FLOW_CLONES
 } from './wechat-clone-metadata';
-import { splitCssDeclarations } from './wechat-css-list';
+import { type CssDeclaration, splitCssDeclarations } from './wechat-css-list';
 import { finiteCssPixelValue } from './wechat-preview-measurement';
 import { pseudoContent } from './wechat-pseudo-content';
+import { replaceDeclarations } from './wechat-style-declarations';
 import {
   appendDeclarations,
   isHiddenPseudoPaint,
@@ -32,18 +34,29 @@ export type HeadingBeforeEmptyPseudoFlow = Readonly<{
   width: number;
 }>;
 
+export type HeadingAfterEmptyPseudoFlowPlacement = 'below-border' | 'in-box';
+
 export type HeadingAfterEmptyPseudoFlow = Readonly<{
   kind: 'after';
+  placement: HeadingAfterEmptyPseudoFlowPlacement;
   background: string;
+  backgroundDeclarations: readonly CssDeclaration[];
+  borderBottom: number;
+  borderLeft: number;
   borderRadius: string;
+  borderTop: number;
+  bottom: number;
+  gapBelowBorder: number;
+  hasGradientBackground: boolean;
+  headingMarginBottom: number;
   height: number;
+  left: number;
   marginLeft: number;
   marginTop: number;
   opacity: number;
-  borderBottom: number;
-  borderTop: number;
   paddingBottom: number;
   paddingLeft: number;
+  remainingMarginBottom: number;
   width: number;
 }>;
 
@@ -647,13 +660,15 @@ export function headingAfterEmptyPseudoFlowFor(
   const borderRight = headingEmptyPseudoFinitePixel(sourceComputed, 'border-right-width');
   const borderBottom = headingEmptyPseudoFinitePixel(sourceComputed, 'border-bottom-width');
   const borderLeft = headingEmptyPseudoFinitePixel(sourceComputed, 'border-left-width');
+  const headingMarginBottom = headingEmptyPseudoFinitePixel(sourceComputed, 'margin-bottom');
   const borderRadius = computed.getPropertyValue('border-radius').trim();
   if (
     null === width || width <= 0 || null === height || height <= 0 ||
     null === top || null === bottom || null === left || null === right ||
     null === paddingBottom || paddingBottom < 0 || null === paddingLeft || paddingLeft < 0 ||
     null === borderTop || borderTop < 0 || null === borderRight || borderRight < 0 ||
-    null === borderBottom || borderBottom < 0 || null === borderLeft || borderLeft < 0 || !borderRadius
+    null === borderBottom || borderBottom < 0 || null === borderLeft || borderLeft < 0 ||
+    null === headingMarginBottom || headingMarginBottom < 0 || !borderRadius
   ) return null;
   const rect = source.getBoundingClientRect();
   if (
@@ -662,20 +677,106 @@ export function headingAfterEmptyPseudoFlowFor(
     Math.abs(left + width + right - (rect.width - borderLeft - borderRight)) > HEADING_EMPTY_PSEUDO_FLOW_EPSILON
   ) return null;
 
+  const cleanPixel = (pixel: number): number => (0 === pixel ? 0 : pixel);
+  const rawGapBelowBorder = -bottom - borderBottom - height;
+  let placement: HeadingAfterEmptyPseudoFlowPlacement;
+  let gapBelowBorder: number;
+  let remainingMarginBottom: number;
+  let marginLeft: number;
+  let marginTop: number;
+  if (rawGapBelowBorder >= -HEADING_EMPTY_PSEUDO_FLOW_EPSILON) {
+    placement = 'below-border';
+    gapBelowBorder = cleanPixel(Math.max(0, rawGapBelowBorder));
+    remainingMarginBottom = cleanPixel(Math.max(0, headingMarginBottom - gapBelowBorder - height));
+    marginLeft = cleanPixel(borderLeft + left);
+    marginTop = gapBelowBorder;
+  } else if (bottom >= -HEADING_EMPTY_PSEUDO_FLOW_EPSILON) {
+    placement = 'in-box';
+    const effectiveBottom = cleanPixel(Math.max(0, bottom));
+    gapBelowBorder = 0;
+    remainingMarginBottom = cleanPixel(headingMarginBottom);
+    marginLeft = cleanPixel(left - paddingLeft);
+    marginTop = cleanPixel(paddingBottom - effectiveBottom - height);
+  } else {
+    return null;
+  }
+
+  const hasGradientBackground = backgroundDeclarations.some(
+    (entry) =>
+      ('background' === entry.property || 'background-image' === entry.property) &&
+      /gradient\(/iu.test(entry.value)
+  );
+
   return {
     kind: 'after',
+    placement,
     background: JSON.stringify(backgroundDeclarations),
-    borderRadius,
+    backgroundDeclarations,
     borderBottom,
+    borderLeft,
+    borderRadius,
     borderTop,
+    bottom,
+    gapBelowBorder,
+    hasGradientBackground,
+    headingMarginBottom,
     height,
-    marginLeft: left - paddingLeft,
-    marginTop: paddingBottom - bottom - height,
+    left,
+    marginLeft,
+    marginTop,
     opacity,
     paddingBottom,
     paddingLeft,
+    remainingMarginBottom,
     width
   };
+}
+
+function cleanHeadingAfterPixel(pixel: number): number {
+  return 0 === pixel ? 0 : pixel;
+}
+
+function serializeHeadingAfterBackgroundDeclarations(declarations: readonly CssDeclaration[]): string[] {
+  return declarations.map(
+    (entry) => `${entry.property}:${entry.value}${entry.important ? '!important' : ''}`
+  );
+}
+
+function buildHeadingAfterFlowStyle(flow: HeadingAfterEmptyPseudoFlow): string {
+  const fontSize = Math.max(1, Math.round(flow.height));
+  const marginBottom = 'below-border' === flow.placement ? flow.remainingMarginBottom : 0;
+  return [
+    'display:block',
+    'position:static',
+    'float:none',
+    'transform:none',
+    'overflow:hidden',
+    `width:${cleanHeadingAfterPixel(flow.width)}px`,
+    `height:${cleanHeadingAfterPixel(flow.height)}px`,
+    `line-height:${cleanHeadingAfterPixel(flow.height)}px`,
+    `font-size:${fontSize}px`,
+    `margin-top:${cleanHeadingAfterPixel(flow.marginTop)}px`,
+    'margin-right:0px',
+    `margin-bottom:${cleanHeadingAfterPixel(marginBottom)}px`,
+    `margin-left:${cleanHeadingAfterPixel(flow.marginLeft)}px`,
+    ...['top', 'right', 'bottom', 'left'].flatMap((side) => [
+      `padding-${side}:0px`,
+      `border-${side}-width:0px`
+    ]),
+    `border-radius:${flow.borderRadius}`,
+    `opacity:${flow.opacity}`,
+    ...serializeHeadingAfterBackgroundDeclarations(flow.backgroundDeclarations)
+  ].join(';');
+}
+
+function hasZeroAfterFlowDimensionDeclaration(element: Element): boolean {
+  return splitCssDeclarations(element.getAttribute('style') ?? '').some((entry) => {
+    if (!['height', 'line-height', 'font-size'].includes(entry.property)) return false;
+    const pixels = finiteCssPixelValue(entry.value);
+    if (null !== pixels) return pixels <= 0;
+    const numeric = taskCheckboxStrictNumber(entry.value.trim());
+    return null !== numeric && numeric <= 0;
+  });
 }
 
 export function applyHeadingEmptyPseudoFlow(
@@ -708,32 +809,95 @@ export function applyHeadingEmptyPseudoFlow(
 }
 
 export function applyHeadingAfterEmptyPseudoFlow(
+  sourceClone: Element,
   paint: Element,
   flow: HeadingAfterEmptyPseudoFlow
 ): Element {
-  const wrapper = paint.ownerDocument.createElement('span');
-  wrapper.setAttribute('aria-hidden', 'true');
-  appendDeclarations(wrapper, [
-    'display:block', 'position:static', 'float:none', 'transform:none', 'height:0px',
-    'line-height:0px', 'font-size:0px', 'overflow:visible', 'text-align:left',
-    ...['top', 'right', 'bottom', 'left'].flatMap((side) => [
-      `margin-${side}:0px`, `padding-${side}:0px`, `border-${side}-width:0px`
-    ])
-  ]);
-  appendDeclarations(paint, [
-    'display:inline-block', 'position:static', 'top:auto', 'right:auto', 'bottom:auto', 'left:auto',
-    'float:none', 'transform:none', 'vertical-align:top',
-    `width:${flow.width}px`, `height:${flow.height}px`, `opacity:${flow.opacity}`,
-    `margin-top:${flow.marginTop}px`, 'margin-right:0px', 'margin-bottom:0px', `margin-left:${flow.marginLeft}px`
-  ]);
-  wrapper.appendChild(paint);
-  return wrapper;
+  paint.setAttribute('style', buildHeadingAfterFlowStyle(flow));
+  if ('in-box' === flow.placement) {
+    const adjustedPaddingBottom = cleanHeadingAfterPixel(Math.max(0, flow.bottom));
+    replaceDeclarations(sourceClone, [`padding-bottom:${adjustedPaddingBottom}px`]);
+    if (flow.hasGradientBackground) {
+      paint.setAttribute('data-ignore-dm', 'text-bg-gradient');
+    }
+  }
+  return paint;
+}
+
+export function materializeHeadingAfterEmptyPseudoFlows(
+  outputRoot: HTMLElement,
+  expectations: HeadingEmptyPseudoFlowExpectation[]
+): void {
+  for (let index = 0; index < expectations.length; index += 1) {
+    const expectation = expectations[index];
+    if ('after' !== expectation?.flow.kind) continue;
+    const { cloneHeading, flow, marker, paint, source } = expectation;
+    if ('below-border' !== flow.placement) continue;
+    if (
+      !outputRoot.contains(cloneHeading) ||
+      marker !== paint ||
+      marker.parentElement !== cloneHeading
+    ) {
+      continue;
+    }
+    const parent = cloneHeading.parentElement;
+    if (!parent) continue;
+    if (
+      marker.childNodes.length !== 1 ||
+      marker.firstChild?.nodeType !== 3 ||
+      '\u2060' !== marker.firstChild.nodeValue
+    ) {
+      continue;
+    }
+    const transportText = marker.firstChild as Text;
+    const sibling = outputRoot.ownerDocument.createElement('section');
+    sibling.setAttribute('aria-hidden', 'true');
+    if (flow.hasGradientBackground) {
+      sibling.setAttribute('data-ignore-dm', 'text-bg-gradient');
+    }
+    sibling.setAttribute('style', buildHeadingAfterFlowStyle(flow));
+    sibling.appendChild(transportText);
+    marker.remove();
+    parent.insertBefore(sibling, cloneHeading.nextSibling);
+    replaceDeclarations(cloneHeading, ['margin-bottom:0px']);
+
+    HEADING_EMPTY_PSEUDO_FLOW_CLONES.delete(marker);
+    GENERATED_EMPTY_HEADING_SUFFIX_CLONES.delete(marker);
+    GENERATED_PSEUDO_CLONE_OWNERS.delete(marker);
+    HEADING_EMPTY_PSEUDO_FLOW_EXPECTATIONS.delete(marker);
+
+    HEADING_EMPTY_PSEUDO_FLOW_CLONES.add(sibling);
+    GENERATED_EMPTY_HEADING_SUFFIX_CLONES.add(sibling);
+    GENERATED_PSEUDO_CLONE_OWNERS.set(sibling, { owner: cloneHeading, pseudo: '::after' });
+
+    const materialized: HeadingEmptyPseudoFlowExpectation = {
+      cloneHeading,
+      flow,
+      marker: sibling,
+      paint: sibling,
+      source
+    };
+    HEADING_EMPTY_PSEUDO_FLOW_EXPECTATIONS.set(sibling, materialized);
+    expectations[index] = materialized;
+  }
+}
+
+function headingFlowPropertyValue(element: Element, property: string): string {
+  const wanted = property.trim().toLowerCase();
+  let declared = '';
+  let declaredImportant = false;
+  splitCssDeclarations(element.getAttribute('style') ?? '').forEach((candidate) => {
+    if (candidate.property !== wanted) return;
+    if (declaredImportant && !candidate.important) return;
+    declared = candidate.value;
+    declaredImportant = candidate.important;
+  });
+  if (declared) return declared;
+  return (element as Element & { style?: CSSStyleDeclaration }).style?.getPropertyValue(wanted) ?? '';
 }
 
 export function headingEmptyPseudoFlowNumberMatches(element: Element, property: string, expected: number): boolean {
-  const value = finiteCssPixelValue(
-    (element as Element & { style?: CSSStyleDeclaration }).style?.getPropertyValue(property) ?? ''
-  );
+  const value = finiteCssPixelValue(headingFlowPropertyValue(element, property));
   return null !== value && Math.abs(value - expected) <= HEADING_EMPTY_PSEUDO_FLOW_EPSILON;
 }
 
@@ -745,62 +909,92 @@ export function assertHeadingEmptyPseudoFlows(
     const registered = HEADING_EMPTY_PSEUDO_FLOW_EXPECTATIONS.get(expectation.marker);
     if (
       registered !== expectation ||
-      !outputRoot.contains(expectation.cloneHeading) ||
-      expectation.marker.parentElement !== expectation.cloneHeading
+      !outputRoot.contains(expectation.cloneHeading)
     ) {
       throw new Error('wechat-heading-pseudo-flow-carrier-missing');
     }
     const { cloneHeading, flow, marker, paint } = expectation;
     if ('after' === flow.kind) {
+      const belowBorder = 'below-border' === flow.placement;
+      const validPlacement = belowBorder
+        ? 'SECTION' === marker.tagName &&
+          null !== cloneHeading.parentElement &&
+          marker.parentElement === cloneHeading.parentElement &&
+          cloneHeading.nextSibling === marker
+        : 'SPAN' === marker.tagName && marker.parentElement === cloneHeading;
       if (
-        'true' !== marker.getAttribute('aria-hidden') || 'true' !== paint.getAttribute('aria-hidden') ||
-        marker.childNodes.length !== 1 || marker.firstChild !== paint || paint.parentElement !== marker ||
-        paint.childNodes.length !== 1 || paint.firstChild?.nodeType !== 3 || '\u2060' !== paint.textContent ||
-        !GENERATED_EMPTY_HEADING_SUFFIX_CLONES.has(paint) || !HEADING_EMPTY_PSEUDO_FLOW_CLONES.has(paint)
-      ) throw new Error('wechat-heading-pseudo-flow-carrier-missing');
-      const normalization = EXPORT_TEXT_NORMALIZATIONS.get(outputRoot)?.get(paint.firstChild as Text);
+        marker !== paint ||
+        !outputRoot.contains(marker) ||
+        !validPlacement ||
+        'true' !== marker.getAttribute('aria-hidden') ||
+        marker.childNodes.length !== 1 ||
+        marker.firstChild?.nodeType !== 3 ||
+        '\u2060' !== marker.textContent ||
+        !GENERATED_EMPTY_HEADING_SUFFIX_CLONES.has(marker) ||
+        !HEADING_EMPTY_PSEUDO_FLOW_CLONES.has(marker)
+      ) {
+        throw new Error('wechat-heading-pseudo-flow-carrier-missing');
+      }
+      const normalization = EXPORT_TEXT_NORMALIZATIONS.get(outputRoot)?.get(marker.firstChild as Text);
       if ('' !== normalization?.original || '\u2060' !== normalization.encoded) {
         throw new Error('wechat-heading-pseudo-flow-carrier-missing');
       }
       const markerStyle = (marker as HTMLElement).style;
-      const paintStyle = (paint as HTMLElement).style;
       const zero = (element: Element, property: string): boolean =>
-        0 === finiteCssPixelValue((element as HTMLElement).style.getPropertyValue(property));
-      const zeroOrAbsent = (element: Element, property: string): boolean =>
-        zero(element, property) || !(element as HTMLElement).style.getPropertyValue(property);
+        0 === finiteCssPixelValue(headingFlowPropertyValue(element, property));
       const headingNumber = (property: string, expected: number): boolean =>
         headingEmptyPseudoFlowNumberMatches(cloneHeading, property, expected) ||
-        (0 === expected && !(cloneHeading as HTMLElement).style.getPropertyValue(property));
+        (0 === expected && !headingFlowPropertyValue(cloneHeading, property));
+      const expectedFontSize = Math.max(1, Math.round(flow.height));
+      const expectedMarginBottom = belowBorder ? flow.remainingMarginBottom : 0;
+      const expectedHeadingPaddingBottom = belowBorder
+        ? flow.paddingBottom
+        : cleanHeadingAfterPixel(Math.max(0, flow.bottom));
+      const headingBoxMatches =
+        headingNumber('padding-left', flow.paddingLeft) &&
+        headingNumber('padding-bottom', expectedHeadingPaddingBottom) &&
+        headingNumber('border-top-width', flow.borderTop) &&
+        headingNumber('border-bottom-width', flow.borderBottom) &&
+        (!belowBorder || (headingNumber('border-left-width', flow.borderLeft) && zero(cloneHeading, 'margin-bottom')));
       if (
-        'block' !== markerStyle.display || 'static' !== markerStyle.position || 'none' !== markerStyle.float ||
-        'none' !== markerStyle.transform || 'visible' !== markerStyle.overflow || 'left' !== markerStyle.textAlign ||
-        !zero(marker, 'height') || !zero(marker, 'line-height') || !zero(marker, 'font-size') ||
-        !['top', 'right', 'bottom', 'left'].every((side) =>
-          zero(marker, `margin-${side}`) && zero(marker, `padding-${side}`) && zero(marker, `border-${side}-width`)
+        hasZeroAfterFlowDimensionDeclaration(marker) ||
+        flow.width <= 0 ||
+        flow.height <= 0 ||
+        'block' !== markerStyle.display ||
+        'static' !== markerStyle.position ||
+        'none' !== markerStyle.float ||
+        'none' !== markerStyle.transform ||
+        'hidden' !== markerStyle.overflow ||
+        !headingEmptyPseudoFlowNumberMatches(marker, 'width', flow.width) ||
+        !headingEmptyPseudoFlowNumberMatches(marker, 'height', flow.height) ||
+        !headingEmptyPseudoFlowNumberMatches(marker, 'line-height', flow.height) ||
+        !headingEmptyPseudoFlowNumberMatches(marker, 'font-size', expectedFontSize) ||
+        !headingEmptyPseudoFlowNumberMatches(marker, 'margin-top', flow.marginTop) ||
+        !zero(marker, 'margin-right') ||
+        !headingEmptyPseudoFlowNumberMatches(marker, 'margin-bottom', expectedMarginBottom) ||
+        !headingEmptyPseudoFlowNumberMatches(marker, 'margin-left', flow.marginLeft) ||
+        !['top', 'right', 'bottom', 'left'].every(
+          (side) => zero(marker, `padding-${side}`) && zero(marker, `border-${side}-width`)
         ) ||
-        'inline-block' !== paintStyle.display || 'static' !== paintStyle.position || 'none' !== paintStyle.float ||
-        'none' !== paintStyle.transform || 'top' !== paintStyle.verticalAlign ||
-        !headingNumber('padding-left', flow.paddingLeft) || !headingNumber('padding-bottom', flow.paddingBottom) ||
-        !headingNumber('border-top-width', flow.borderTop) || !headingNumber('border-bottom-width', flow.borderBottom) ||
-        !headingEmptyPseudoFlowNumberMatches(paint, 'width', flow.width) ||
-        !headingEmptyPseudoFlowNumberMatches(paint, 'height', flow.height) ||
-        !headingEmptyPseudoFlowNumberMatches(paint, 'margin-top', flow.marginTop) ||
-        !headingEmptyPseudoFlowNumberMatches(paint, 'margin-left', flow.marginLeft) ||
-        !zero(paint, 'margin-right') || !zero(paint, 'margin-bottom') ||
-        !['top', 'right', 'bottom', 'left'].every((side) =>
-          zeroOrAbsent(paint, `padding-${side}`) && zeroOrAbsent(paint, `border-${side}-width`)
-        ) ||
-        flow.borderRadius.toLowerCase() !== paintStyle.borderRadius.trim().toLowerCase()
-      ) throw new Error('wechat-heading-pseudo-flow-geometry-mismatch');
-      const background = splitCssDeclarations(paint.getAttribute('style') ?? '').filter((entry) =>
+        flow.borderRadius.toLowerCase() !== markerStyle.borderRadius.trim().toLowerCase() ||
+        !headingBoxMatches
+      ) {
+        throw new Error('wechat-heading-pseudo-flow-geometry-mismatch');
+      }
+      const background = splitCssDeclarations(marker.getAttribute('style') ?? '').filter((entry) =>
         entry.property.startsWith('background')
       );
-      if (JSON.stringify(background) !== flow.background || Number.parseFloat(paintStyle.opacity) !== flow.opacity) {
+      const expectedDarkModeAttr = flow.hasGradientBackground ? 'text-bg-gradient' : null;
+      if (
+        JSON.stringify(background) !== flow.background ||
+        Number.parseFloat(markerStyle.opacity) !== flow.opacity ||
+        marker.getAttribute('data-ignore-dm') !== expectedDarkModeAttr
+      ) {
         throw new Error('wechat-heading-pseudo-flow-paint-mismatch');
       }
       return;
     }
-    if ('\u2060' !== marker.textContent) {
+    if (marker.parentElement !== cloneHeading || '\u2060' !== marker.textContent) {
       throw new Error('wechat-heading-pseudo-flow-carrier-missing');
     }
     const outputStyle = (marker as HTMLElement).style;

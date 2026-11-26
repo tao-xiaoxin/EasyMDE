@@ -77,7 +77,8 @@ export {
   headingEmptyPseudoFlowNumberMatches,
   headingEmptyPseudoPaintColorIsVisible,
   headingEmptyPseudoTransformOrNull,
-  headingEmptyPseudoUsedTop
+  headingEmptyPseudoUsedTop,
+  materializeHeadingAfterEmptyPseudoFlows
 } from './wechat-heading-pseudo-flow';
 
 export function inlineTextMarkerEligibility(
@@ -440,7 +441,12 @@ export function createPseudoMarker(
   const appendedImageLayers = preserveRepeatingBackground ? [] : imageLayers;
   const portableDeclarations = removeDataImageBackgroundDeclarations(declarations, preserveRepeatingBackground);
   const taskPaintOnlyPseudo = isTaskListCheckbox(source) && !textContent && !appendedImageLayers.length && !svgContent;
-  if (!textContent && !taskPaintOnlyPseudo) portableDeclarations.push('font-size:0');
+  const headingEmptyPseudoFlow =
+    headingEmptyPseudoFlowFor(source, pseudo, computed, textContent, getComputedStyle, root) ??
+    headingAfterEmptyPseudoFlowFor(source, pseudo, computed, textContent, getComputedStyle, portableDeclarations, root);
+  if (!textContent && !taskPaintOnlyPseudo && 'after' !== headingEmptyPseudoFlow?.kind) {
+    portableDeclarations.push('font-size:0');
+  }
   const generatedEmptyHeadingSuffix = isGeneratedEmptyHeadingAfter(
     source,
     pseudo,
@@ -450,8 +456,6 @@ export function createPseudoMarker(
     imageLayers,
     root
   );
-  const headingEmptyPseudoFlow = headingEmptyPseudoFlowFor(source, pseudo, computed, textContent, getComputedStyle, root) ??
-    headingAfterEmptyPseudoFlowFor(source, pseudo, computed, textContent, getComputedStyle, portableDeclarations, root);
   const marker = clone.ownerDocument.createElement('span');
   marker.setAttribute('aria-hidden', 'true');
   GENERATED_PSEUDO_CLONE_OWNERS.set(marker, { owner: clone, pseudo });
@@ -468,11 +472,7 @@ export function createPseudoMarker(
   let outputMarker: Element = marker;
   if (headingEmptyPseudoFlow) {
     if ('before' === headingEmptyPseudoFlow.kind) applyHeadingEmptyPseudoFlow(clone, marker, headingEmptyPseudoFlow);
-    else {
-      outputMarker = applyHeadingAfterEmptyPseudoFlow(marker, headingEmptyPseudoFlow);
-      GENERATED_PSEUDO_CLONE_OWNERS.delete(marker);
-      GENERATED_PSEUDO_CLONE_OWNERS.set(outputMarker, { owner: clone, pseudo });
-    }
+    else outputMarker = applyHeadingAfterEmptyPseudoFlow(clone, marker, headingEmptyPseudoFlow);
     HEADING_EMPTY_PSEUDO_FLOW_CLONES.add(marker);
     const expectation: HeadingEmptyPseudoFlowExpectation = {
       cloneHeading: clone,

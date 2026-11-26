@@ -894,4 +894,123 @@ describe('createBrowserWechatVisualRasterizer', () => {
     ).rejects.toThrow('wechat-png-font-failed');
     expect(fetch).toHaveBeenCalledOnce();
   });
+
+  it('skips cssText and style reads on ordinary CSSStyleRule entries while invalidating on @font-face changes', async () => {
+    stubCanvas();
+    const sheetHref = `${document.location.origin}/wp-content/plugins/easymde/assets/themes/article/ordinary-rules.css`;
+    const importedHref = `${document.location.origin}/wp-content/plugins/easymde/assets/css/admin/editor.css`;
+    const styleRuleReads = { cssText: 0, style: 0 };
+    const ordinaryStyleRule = {
+      type: 1,
+      get cssText(): string {
+        styleRuleReads.cssText += 1;
+        return '.ordinary { color: red; }';
+      },
+      get style(): CSSStyleDeclaration {
+        styleRuleReads.style += 1;
+        return { getPropertyValue: () => '' } as unknown as CSSStyleDeclaration;
+      },
+    };
+    const directFaceValues: Record<string, string> = {
+      'font-family': 'EasyMDE Inter',
+      'font-style': 'normal',
+      'font-weight': '400',
+      src: 'url("../../vendor/fonts/inter/inter-latin-400-normal.woff2") format("woff2")',
+    };
+    const directFace = {
+      style: {
+        getPropertyValue: (property: string) => directFaceValues[property] ?? '',
+      },
+      type: 5,
+    };
+    const nestedFaceValues: Record<string, string> = {
+      'font-family': 'EasyMDE Lora',
+      'font-style': 'normal',
+      'font-weight': '400',
+      src: 'url("../../vendor/fonts/lora/lora-latin-400-normal.woff2") format("woff2")',
+    };
+    const nestedFace = {
+      style: {
+        getPropertyValue: (property: string) => nestedFaceValues[property] ?? '',
+      },
+      type: 5,
+    };
+    const importedFaceValues: Record<string, string> = {
+      'font-family': 'EasyMDE JetBrains Mono',
+      'font-style': 'normal',
+      'font-weight': '400',
+      src: 'url("../../vendor/fonts/jetbrains-mono/jetbrains-mono-latin-400-normal.woff2") format("woff2")',
+    };
+    const importedRules: unknown[] = [
+      ordinaryStyleRule,
+      {
+        style: {
+          getPropertyValue: (property: string) => importedFaceValues[property] ?? '',
+        },
+        type: 5,
+      },
+    ];
+    const mediaRules: unknown[] = [ordinaryStyleRule, nestedFace];
+    const topRules: unknown[] = [
+      ordinaryStyleRule,
+      directFace,
+      { cssRules: mediaRules, type: 4 },
+      { styleSheet: { cssRules: importedRules, href: importedHref }, type: 3 },
+    ];
+    Object.defineProperty(document, 'styleSheets', {
+      configurable: true,
+      value: [{ cssRules: topRules, href: sheetHref }],
+    });
+
+    const fetch = vi.fn(async (input: RequestInfo | URL) => bundledFontResponse(input));
+    const managedFacesCache = createManagedFontFacesCache();
+    const fontCache = new Map();
+    const runEmbed = async (family: string): Promise<string> => {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('font-family', family);
+      await embedFontFaces(
+        svg,
+        runtime({ fetch }),
+        new AbortController().signal,
+        fontCache,
+        managedFacesCache,
+      );
+      return svg.querySelector('style')?.textContent ?? '';
+    };
+
+    expect(await runEmbed('"EasyMDE Inter"')).toContain('font-weight:400');
+    expect(styleRuleReads).toEqual({ cssText: 0, style: 0 });
+
+    // Modify nested @media/@layer @font-face
+    nestedFaceValues['font-weight'] = '700';
+    expect(await runEmbed('"EasyMDE Lora"')).toContain('font-weight:700');
+    expect(styleRuleReads).toEqual({ cssText: 0, style: 0 });
+
+    // Modify @import @font-face
+    importedFaceValues['font-weight'] = '600';
+    expect(await runEmbed('"EasyMDE JetBrains Mono"')).toContain('font-weight:600');
+    expect(styleRuleReads).toEqual({ cssText: 0, style: 0 });
+
+    // Add a new @font-face rule to top-level sheet
+    topRules.push({
+      style: {
+        getPropertyValue: (property: string) => ({
+          'font-family': 'EasyMDE Inter',
+          'font-style': 'italic',
+          'font-weight': '700',
+          src: 'url("../../vendor/fonts/inter/inter-latin-700-normal.woff2") format("woff2")',
+        }[property] ?? ''),
+      },
+      type: 5,
+    });
+    const withAdded = await runEmbed('"EasyMDE Inter"');
+    expect(withAdded).toContain('font-style:italic;font-weight:700');
+    expect(styleRuleReads).toEqual({ cssText: 0, style: 0 });
+
+    // Remove the added @font-face rule
+    topRules.pop();
+    const afterRemoved = await runEmbed('"EasyMDE Inter"');
+    expect(afterRemoved).not.toContain('font-style:italic;font-weight:700');
+    expect(styleRuleReads).toEqual({ cssText: 0, style: 0 });
+  });
 });

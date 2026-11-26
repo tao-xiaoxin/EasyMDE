@@ -5,11 +5,7 @@ import {
 	createDimensionSemanticsContext,
 	type WechatDimensionSemanticsContext,
 } from "./wechat-dimension-semantics";
-import {
-	preparedDimensionGeometrySignature,
-	preparedDimensionSemanticsSignature,
-	preparedLayoutSignature,
-} from "./wechat-fidelity-signature";
+import { preparedLayoutSignature } from "./wechat-fidelity-signature";
 import type { WechatInlinePseudoPaintReadiness } from "./wechat-inline-pseudo-paint";
 import {
 	eligibleWechatMathVectorOwners,
@@ -363,32 +359,29 @@ export function fallbackAfterSynchronousModernFailure(
 		}
 		const copyRuntime = geometry.runtime;
 		const currentMarkup = clipboardSourceMarkup(preview);
+		const currentDimensionSignatureSink = { value: "" };
+		const currentDimensionGeometrySignatureSink = { value: "" };
+		const hasMathCandidate =
+			hasWechatMathStaticFlowCandidate(serializationPreview);
 		const currentLayoutSignature = preparedLayoutSignature(
 			preview,
 			copyRuntime,
 			serializationPreview,
 			dimensionSemantics,
+			currentDimensionSignatureSink,
+			false,
+			false,
+			hasMathCandidate ? currentDimensionGeometrySignatureSink : undefined,
 		);
-		dimensionSemantics.refresh();
-		const currentDimensionSignature = preparedDimensionSemanticsSignature(
-			serializationPreview,
-			copyRuntime,
-			dimensionSemantics,
-		);
-		const mathSourceCapture = hasWechatMathStaticFlowCandidate(
-			serializationPreview,
-		)
+		const currentDimensionSignature = currentDimensionSignatureSink.value;
+		const mathSourceCapture = hasMathCandidate
 			? captureWechatMathSourceAdmissionSynchronously(
 					serializationPreview,
 					copyRuntime,
 					true,
 					undefined,
 					undefined,
-					preparedDimensionGeometrySignature(
-						serializationPreview,
-						copyRuntime,
-						dimensionSemantics,
-					),
+					currentDimensionGeometrySignatureSink.value,
 				)
 			: null;
 		const preparedFallback = reusablePreparedClipboardPayload(
@@ -577,32 +570,29 @@ export function executeLegacyWechatCopy(
 		}
 		const copyRuntime = geometry.runtime;
 		const currentMarkup = clipboardSourceMarkup(preview);
+		const currentDimensionSignatureSink = { value: "" };
+		const currentDimensionGeometrySignatureSink = { value: "" };
+		const hasMathCandidate =
+			hasWechatMathStaticFlowCandidate(serializationPreview);
 		const currentLayoutSignature = preparedLayoutSignature(
 			preview,
 			copyRuntime,
 			serializationPreview,
 			dimensionSemantics,
+			currentDimensionSignatureSink,
+			false,
+			false,
+			hasMathCandidate ? currentDimensionGeometrySignatureSink : undefined,
 		);
-		dimensionSemantics.refresh();
-		const currentDimensionSignature = preparedDimensionSemanticsSignature(
-			serializationPreview,
-			copyRuntime,
-			dimensionSemantics,
-		);
-		const mathSourceCapture = hasWechatMathStaticFlowCandidate(
-			serializationPreview,
-		)
+		const currentDimensionSignature = currentDimensionSignatureSink.value;
+		const mathSourceCapture = hasMathCandidate
 			? captureWechatMathSourceAdmissionSynchronously(
 					serializationPreview,
 					copyRuntime,
 					true,
 					undefined,
 					undefined,
-					preparedDimensionGeometrySignature(
-						serializationPreview,
-						copyRuntime,
-						dimensionSemantics,
-					),
+					currentDimensionGeometrySignatureSink.value,
 				)
 			: null;
 		const payload = reusablePreparedClipboardPayload(

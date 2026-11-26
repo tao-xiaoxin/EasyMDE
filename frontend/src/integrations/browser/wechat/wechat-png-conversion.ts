@@ -81,14 +81,35 @@ import { findKaTeXMathMl } from './wechat-portable-content';
 import { replaceCompletedVisuals } from './wechat-png-replacement';
 import { resolveMermaidInheritedBackground } from './wechat-mermaid-background';
 
-export function nativeVisualStyleProperties(source: Element, _computed: CSSStyleDeclaration): readonly string[] {
-  const layoutProperties = [
-    ...(supportsSpecialLayout(source) ? SPECIAL_LAYOUT_PROPERTIES : ORDINARY_LAYOUT_PROPERTIES),
+const NATIVE_ORDINARY_PROPERTIES: readonly string[] = Object.freeze([
+  ...new Set([...COPY_STYLE_PROPERTIES, ...ORDINARY_LAYOUT_PROPERTIES, ...NATIVE_LAYOUT_PROPERTIES])
+]);
+const NATIVE_SPECIAL_PROPERTIES: readonly string[] = Object.freeze([
+  ...new Set([...COPY_STYLE_PROPERTIES, ...SPECIAL_LAYOUT_PROPERTIES, ...NATIVE_LAYOUT_PROPERTIES])
+]);
+const NATIVE_SVG_ORDINARY_PROPERTIES: readonly string[] = Object.freeze([
+  ...new Set([
+    ...COPY_STYLE_PROPERTIES,
+    ...SVG_STYLE_PROPERTIES,
+    ...ORDINARY_LAYOUT_PROPERTIES,
     ...NATIVE_LAYOUT_PROPERTIES
-  ];
-  return [
-    ...new Set([...COPY_STYLE_PROPERTIES, ...(isSvgElement(source) ? SVG_STYLE_PROPERTIES : []), ...layoutProperties])
-  ];
+  ])
+]);
+const NATIVE_SVG_SPECIAL_PROPERTIES: readonly string[] = Object.freeze([
+  ...new Set([
+    ...COPY_STYLE_PROPERTIES,
+    ...SVG_STYLE_PROPERTIES,
+    ...SPECIAL_LAYOUT_PROPERTIES,
+    ...NATIVE_LAYOUT_PROPERTIES
+  ])
+]);
+
+export function nativeVisualStyleProperties(source: Element, _computed: CSSStyleDeclaration): readonly string[] {
+  const special = supportsSpecialLayout(source);
+  if (isSvgElement(source)) {
+    return special ? NATIVE_SVG_SPECIAL_PROPERTIES : NATIVE_SVG_ORDINARY_PROPERTIES;
+  }
+  return special ? NATIVE_SPECIAL_PROPERTIES : NATIVE_ORDINARY_PROPERTIES;
 }
 
 export async function nativeVisualStyleDeclarations(

@@ -1142,4 +1142,229 @@ describe("wechat-fidelity-signature", () => {
 			expect(textPseudo.computedStyleMapSpy).not.toHaveBeenCalled();
 		});
 	});
+
+	describe("single-pass dimensionGeometrySignatureSink and pseudo style deduplication", () => {
+		it.each([false, true])(
+			"emits byte-for-byte identical dimension geometry signatures from layout walks (conversionActive=%s)",
+			async (conversionActive) => {
+				const preview = document.createElement("article");
+				preview.setAttribute("data-easymde-preview-html-sink", "1");
+				preview.innerHTML = [
+					"<h2>Heading</h2>",
+					'<p class="decorated">Paragraph</p>',
+					'<div class="easymde-math-block"><span class="katex"><span class="katex-html"><span class="mord">x</span></span></span></div>',
+					'<div class="easymde-mermaid"><svg viewBox="0 0 20 10"><rect width="20" height="10"></rect></svg></div>',
+					"<table><tbody><tr><td>Cell</td></tr></tbody></table>",
+				].join("");
+				document.body.append(preview);
+				try {
+					const runtime: BrowserWechatClipboardRuntime = {
+						blob: Blob,
+						clipboardItem: null,
+						document,
+						getComputedStyle: (element, pseudoElement) => {
+							if (
+								element.classList.contains("decorated") &&
+								"::before" === pseudoElement
+							) {
+								return {
+									getPropertyValue: (property: string) =>
+										({
+											content: '"*"',
+											display: "inline-block",
+											"margin-left": "4px",
+											position: "static",
+										})[property] ?? "",
+								} as unknown as CSSStyleDeclaration;
+							}
+							if (pseudoElement) {
+								return {
+									getPropertyValue: (property: string) =>
+										"content" === property ? "none" : "",
+								} as unknown as CSSStyleDeclaration;
+							}
+							return computedStyle(element);
+						},
+						getSelection: () => null,
+						pageOffset: () => ({ x: 0, y: 0 }),
+						scrollTo: vi.fn(),
+						write: async () => undefined,
+					};
+					const dimensionSemantics = createDimensionSemanticsContext(
+						preview,
+						preview,
+						runtime,
+						conversionActive,
+					);
+					try {
+						const expectedSync = preparedDimensionGeometrySignature(
+							preview,
+							runtime,
+							dimensionSemantics,
+							conversionActive,
+						);
+						const syncDimensionSink = { value: "" };
+						const syncGeometrySink = { value: "" };
+						const syncLayout = preparedLayoutSignature(
+							preview,
+							runtime,
+							preview,
+							dimensionSemantics,
+							syncDimensionSink,
+							conversionActive,
+							false,
+							syncGeometrySink,
+						);
+
+						const layoutYield = createSerializationYield(runtime, true);
+						const geometryYield = createSerializationYield(runtime, true);
+						if (!layoutYield || !geometryYield)
+							throw new Error("yield unavailable");
+						const expectedAsync =
+							await preparedDimensionGeometrySignatureWithYield(
+								preview,
+								runtime,
+								geometryYield,
+								undefined,
+								dimensionSemantics,
+								conversionActive,
+							);
+						const asyncDimensionSink = { value: "" };
+						const asyncGeometrySink = { value: "" };
+						const asyncLayout = await preparedLayoutSignatureWithYield(
+							preview,
+							runtime,
+							layoutYield,
+							undefined,
+							preview,
+							dimensionSemantics,
+							asyncDimensionSink,
+							conversionActive,
+							false,
+							asyncGeometrySink,
+						);
+
+						expect(syncGeometrySink.value).toBe(expectedSync);
+						expect(asyncGeometrySink.value).toBe(expectedAsync);
+						expect(syncGeometrySink.value).toBe(asyncGeometrySink.value);
+						expect(syncLayout).toBe(asyncLayout);
+						expect(syncDimensionSink.value).toBe(asyncDimensionSink.value);
+						if (!conversionActive) {
+							expect(syncDimensionSink.value).toBe(
+								preparedDimensionSemanticsSignature(
+									preview,
+									runtime,
+									dimensionSemantics,
+								),
+							);
+						}
+					} finally {
+						dimensionSemantics.cleanup();
+					}
+				} finally {
+					preview.remove();
+				}
+			},
+		);
+
+		it("avoids duplicate ::before and ::after computed style reads when dimensionSemantics is active", async () => {
+			const preview = document.createElement("article");
+			preview.setAttribute("data-easymde-preview-html-sink", "1");
+			preview.innerHTML = '<p class="item-a">Alpha</p><p class="item-b">Beta</p>';
+			document.body.append(preview);
+			try {
+				const itemA = preview.querySelector(".item-a");
+				if (!itemA) throw new Error("item-a missing");
+				const livePseudoCounts = new Map<string, number>();
+				const mirrorPseudoCounts = new Map<string, number>();
+				const runtime: BrowserWechatClipboardRuntime = {
+					blob: Blob,
+					clipboardItem: null,
+					document,
+					getComputedStyle: (element, pseudoElement) => {
+						if (pseudoElement && element === itemA) {
+							livePseudoCounts.set(
+								pseudoElement,
+								(livePseudoCounts.get(pseudoElement) ?? 0) + 1,
+							);
+						} else if (
+							pseudoElement &&
+							element.classList.contains("item-a") &&
+							element.closest(".easymde-wechat-raw-dimension-context")
+						) {
+							mirrorPseudoCounts.set(
+								pseudoElement,
+								(mirrorPseudoCounts.get(pseudoElement) ?? 0) + 1,
+							);
+						}
+						if (
+							element.classList.contains("item-a") &&
+							"::before" === pseudoElement
+						) {
+							return {
+								getPropertyValue: (property: string) =>
+									({
+										content: '"•"',
+										display: "inline-block",
+										"margin-right": "6px",
+										position: "static",
+									})[property] ?? "",
+							} as unknown as CSSStyleDeclaration;
+						}
+						if (pseudoElement) {
+							return {
+								getPropertyValue: (property: string) =>
+									"content" === property ? "none" : "",
+							} as unknown as CSSStyleDeclaration;
+						}
+						return computedStyle(element);
+					},
+					getSelection: () => null,
+					pageOffset: () => ({ x: 0, y: 0 }),
+					scrollTo: vi.fn(),
+					write: async () => undefined,
+				};
+
+				preparedLayoutSignature(preview, runtime, preview, null);
+				const baselineBefore = livePseudoCounts.get("::before") ?? 0;
+				const baselineAfter = livePseudoCounts.get("::after") ?? 0;
+
+				const dimensionSemantics = createDimensionSemanticsContext(
+					preview,
+					preview,
+					runtime,
+				);
+				try {
+					livePseudoCounts.clear();
+					mirrorPseudoCounts.clear();
+					preparedLayoutSignature(preview, runtime, preview, dimensionSemantics);
+					expect(livePseudoCounts.get("::before")).toBe(baselineBefore);
+					expect(livePseudoCounts.get("::after")).toBe(baselineAfter);
+					expect(mirrorPseudoCounts.get("::before")).toBe(1);
+					expect(mirrorPseudoCounts.get("::after") ?? 0).toBe(0);
+
+					livePseudoCounts.clear();
+					mirrorPseudoCounts.clear();
+					const yieldToBrowser = createSerializationYield(runtime, true);
+					if (!yieldToBrowser) throw new Error("yield unavailable");
+					await preparedLayoutSignatureWithYield(
+						preview,
+						runtime,
+						yieldToBrowser,
+						undefined,
+						preview,
+						dimensionSemantics,
+					);
+					expect(livePseudoCounts.get("::before")).toBe(baselineBefore);
+					expect(livePseudoCounts.get("::after")).toBe(baselineAfter);
+					expect(mirrorPseudoCounts.get("::before")).toBe(1);
+					expect(mirrorPseudoCounts.get("::after") ?? 0).toBe(0);
+				} finally {
+					dimensionSemantics.cleanup();
+				}
+			} finally {
+				preview.remove();
+			}
+		});
+	});
 });

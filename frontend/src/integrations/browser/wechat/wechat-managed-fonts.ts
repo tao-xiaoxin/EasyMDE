@@ -270,7 +270,9 @@ function fontFaceFromRule(
 function cssRules(value: unknown): readonly CssRuleLike[] {
   if (!value || 'object' !== typeof value) return [];
   try {
-    return Array.from(value as CSSRuleList) as unknown as CssRuleLike[];
+    const list = value as ArrayLike<CssRuleLike>;
+    if (0 === list.length) return [];
+    return Array.from(list);
   } catch {
     return [];
   }
@@ -361,15 +363,19 @@ function ruleContentFingerprint(
   const rule = value as object;
   if (visitedRules.has(rule)) return 'rule-cycle';
   visitedRules.add(rule);
-  const cssText = cssRuleProperty(value, 'cssText');
-  const style = cssRuleProperty(value, 'style');
+  const type = cssRuleProperty(value, 'type');
   const nestedRules = cssRules(cssRuleProperty(value, 'cssRules'));
   const importedSheet = cssRuleProperty(value, 'styleSheet');
+  if (FONT_FACE_RULE_TYPE !== type && !nestedRules.length && !importedSheet) {
+    return `type:${String(type ?? '')}`;
+  }
+  const cssText = FONT_FACE_RULE_TYPE === type ? cssRuleProperty(value, 'cssText') : null;
+  const style = FONT_FACE_RULE_TYPE === type ? cssRuleProperty(value, 'style') : null;
   return contentFingerprint([
-    `type:${String(cssRuleProperty(value, 'type') ?? '')}`,
+    `type:${String(type ?? '')}`,
     `cssText:${'string' === typeof cssText ? cssText : ''}`,
     `style:${styleContentFingerprint(style)}`,
-    `nested:${nestedRules.map((rule) => ruleContentFingerprint(rule, visitedSheets, visitedRules)).join('\u0002')}`,
+    `nested:${nestedRules.map((nestedRule) => ruleContentFingerprint(nestedRule, visitedSheets, visitedRules)).join('\u0002')}`,
     `import:${stylesheetContentFingerprint(importedSheet, visitedSheets, visitedRules)}`,
   ].join('\u0000'));
 }

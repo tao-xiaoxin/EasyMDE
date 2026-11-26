@@ -8,11 +8,7 @@ import {
 	createDimensionSemanticsContext,
 	type WechatDimensionSemanticsContext,
 } from "./wechat-dimension-semantics";
-import {
-	preparedDimensionGeometrySignatureWithYield,
-	preparedDimensionSemanticsSignature,
-	preparedLayoutSignatureWithYield,
-} from "./wechat-fidelity-signature";
+import { preparedLayoutSignatureWithYield } from "./wechat-fidelity-signature";
 import type { WechatMathVectorAtlasLoader } from "./wechat-math-vector-portable";
 import {
 	createMermaidContentBoxLease,
@@ -21,6 +17,7 @@ import {
 import {
 	captureWechatMathSourceAdmission,
 	hasWechatMathStaticFlowCandidate,
+	type WechatMathSourceCaptureResult,
 } from "./wechat-portable-serialization";
 import { preparedClipboardPayload } from "./wechat-prepared-payload-builder";
 import {
@@ -202,23 +199,9 @@ export async function preparedClipboardPayloadAfterWrite(
 				),
 			);
 		}
-		const mathSourceCaptureResult = await captureWechatMathSourceAdmission(
-			serializationPreview,
-			runtime,
-			yieldToBrowser,
-			guard.signal,
-			isCurrent,
-			true,
-			hasWechatMathStaticFlowCandidate(serializationPreview)
-				? await preparedDimensionGeometrySignatureWithYield(
-						serializationPreview,
-						runtime,
-						yieldToBrowser,
-						guard.signal,
-						dimensionSemantics,
-					)
-				: "",
-		);
+		const hasMathCandidate =
+			hasWechatMathStaticFlowCandidate(serializationPreview);
+		let mathSourceCaptureResult: WechatMathSourceCaptureResult | null = null;
 
 		if (
 			existing?.payload &&
@@ -226,19 +209,29 @@ export async function preparedClipboardPayloadAfterWrite(
 		) {
 			assertPortableCopyCurrent(preview, guard, sourceFreshness);
 			const sourceMarkup = clipboardSourceMarkup(preview);
+			const currentDimensionSignatureSink = { value: "" };
+			const currentDimensionGeometrySignatureSink = { value: "" };
 			const layoutSignature = await preparedLayoutSignatureWithYield(
 				preview,
 				runtime,
 				yieldToBrowser,
-				undefined,
+				guard.signal,
 				serializationPreview,
 				dimensionSemantics,
+				currentDimensionSignatureSink,
+				false,
+				false,
+				hasMathCandidate ? currentDimensionGeometrySignatureSink : undefined,
 			);
-			dimensionSemantics.refresh();
-			const currentDimensionSignature = preparedDimensionSemanticsSignature(
+			const currentDimensionSignature = currentDimensionSignatureSink.value;
+			mathSourceCaptureResult = await captureWechatMathSourceAdmission(
 				serializationPreview,
 				runtime,
-				dimensionSemantics,
+				yieldToBrowser,
+				guard.signal,
+				isCurrent,
+				true,
+				hasMathCandidate ? currentDimensionGeometrySignatureSink.value : "",
 			);
 			assertPortableCopyCurrent(preview, guard, sourceFreshness);
 			const liveSourceMarkup = clipboardSourceMarkup(preview);

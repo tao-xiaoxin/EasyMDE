@@ -91,6 +91,7 @@ export function createPortableCopyTransaction(
 				contentBoxEvidence: recovery.contentBoxEvidence ?? null,
 				fallback: recovery,
 				dimensionSignature: recovery.dimensionSignature,
+				hasMathVectorAtlas: Boolean(recovery.hasMathVectorAtlas),
 				layoutOwner: owned.prepared.layoutOwner,
 				layoutSignature: recovery.layoutSignature,
 				payload: recovery.payload,

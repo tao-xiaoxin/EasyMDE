@@ -179,12 +179,17 @@ export async function executeModernCopyTransaction(
 	prestartedWrite?: PrestartedModernClipboardWrite,
 ): Promise<WechatClipboardResult> {
 	let rejectDeferredPayload: ((error: unknown) => void) | null = null;
+	let deferredFailure: { error: unknown } | null = null;
 	const deferredPayloadFailure = new Promise<never>((_resolve, reject) => {
 		rejectDeferredPayload = reject;
 	});
 	void deferredPayloadFailure.catch(() => undefined);
+	const rejectDeferred = (error: unknown): void => {
+		if (!deferredFailure) deferredFailure = { error };
+		rejectDeferredPayload?.(error);
+	};
 	const abortDeferredPayload = (): void => {
-		rejectDeferredPayload?.(new Error("wechat-copy-cancelled"));
+		rejectDeferred(new Error("wechat-copy-cancelled"));
 	};
 	const detachCopyAbort = (): void => {
 		options.signal?.removeEventListener("abort", abortDeferredPayload);
@@ -198,30 +203,29 @@ export async function executeModernCopyTransaction(
 			});
 		}
 	}
-	const gateBlob = (source: Promise<Blob>): Promise<Blob> =>
-		Promise.race([
-			source.then((blob) => {
-				transaction.assertBlobCurrent();
-				return blob;
-			}),
-			deferredPayloadFailure,
-		]);
-	const htmlBlob = gateBlob(
-		transaction.payload.then(
+	const gatedPayload = transaction.payload.then((payload) => {
+		if (deferredFailure) throw deferredFailure.error;
+		transaction.assertBlobCurrent();
+		return payload;
+	});
+	void gatedPayload.catch(() => undefined);
+	const validatedPayload = Promise.race([gatedPayload, deferredPayloadFailure]);
+	void validatedPayload.catch(() => undefined);
+	const htmlBlob = Promise.race([
+		validatedPayload.then(
 			({ html }) => new runtime.blob([html], { type: "text/html" }),
 		),
-	);
-	const textBlob = gateBlob(
-		transaction.payload.then(
+		deferredPayloadFailure,
+	]);
+	const textBlob = Promise.race([
+		validatedPayload.then(
 			({ text }) => new runtime.blob([text], { type: "text/plain" }),
 		),
-	);
+		deferredPayloadFailure,
+	]);
 	const observeBlobRejections = (): void => {
 		void htmlBlob.catch(() => undefined);
 		void textBlob.catch(() => undefined);
-	};
-	const rejectDeferred = (error: unknown): void => {
-		rejectDeferredPayload?.(error);
 	};
 	let writePromise: Promise<void>;
 	if (prestartedWrite) {

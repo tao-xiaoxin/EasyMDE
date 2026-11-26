@@ -1,8 +1,5 @@
 import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
-import {
-	type ContainerAlignmentPlan,
-	firstLine,
-} from "./markdown-container-preservation";
+import type { ContainerAlignmentPlan } from "./markdown-container-preservation";
 import { normalizeReferenceLabel } from "./markdown-escape";
 import type { PreparedListPreservation } from "./markdown-list-preservation";
 import {
@@ -17,6 +14,7 @@ import {
 	type ReferenceLinkOrigin,
 	wouldReferenceDefinitionAbsorbFollowingBlock,
 } from "./markdown-parser";
+import { firstLine } from "./markdown-prescanner-containers";
 import { extractPhpPartialReferenceTitle } from "./markdown-reference-preservation";
 
 /**
@@ -40,6 +38,11 @@ export type BlockWithRefsSerializer = (
 
 export type PreservationPlan = Readonly<{
 	containers: Map<ProseMirrorNode, ContainerAlignmentPlan>;
+	/**
+	 * Live per-item liveness reuse mask of each planned list; the serializer
+	 * never re-preserves an item liveness transitioned to canonical.
+	 */
+	listItemReusable: Map<ProseMirrorNode, ReadonlyArray<boolean>>;
 	lists: Map<ProseMirrorNode, PreparedListPreservation>;
 }>;
 
@@ -110,6 +113,14 @@ export type LivenessState = Readonly<{
 	parsed: ParsedVisualDocument;
 	partialLabels: ReadonlySet<string> | undefined;
 	partialTitleIntact: Set<string>;
+	/** Tasks of slots whose join relied on a lost partial-title refdef. */
+	partialTitleLostQueue: InvalidationTask[];
+	/**
+	 * Re-evaluation tasks of slots whose join / raw-risk prediction relied on
+	 * a refdef node still being in `partialTitleRefNodes`; queued by
+	 * `removePartialTitleRefNode` and drained with the invalidation queue.
+	 */
+	partialTitleNodeWaiters: Map<ProseMirrorNode, InvalidationTask[]>;
 	partialTitleRefNodes: Set<ProseMirrorNode>;
 	pendingListHeap: PendingListCheck[];
 	plan: PreservationPlan;
@@ -489,13 +500,44 @@ export function registerRefDefNode(
 	return addedCandidate;
 }
 
+/**
+ * The ONLY way a refdef leaves `st.partialTitleRefNodes`: every slot whose
+ * tight join relied on it being a partial-title refdef is queued for
+ * re-evaluation (drained in Pass 2 alongside the invalidation queue).
+ */
+function removePartialTitleRefNode(
+	st: LivenessState,
+	node: ProseMirrorNode,
+): void {
+	if (!st.partialTitleRefNodes.delete(node)) return;
+	const waiters = st.partialTitleNodeWaiters.get(node);
+	if (waiters === undefined) return;
+	st.partialTitleNodeWaiters.delete(node);
+	for (const task of waiters) st.partialTitleLostQueue.push(task);
+}
+
+/**
+ * Registers `task` to re-run once `node` leaves `st.partialTitleRefNodes`.
+ * No-op when `node` is not currently a partial-title refdef.
+ */
+export function watchPartialTitleRefNode(
+	st: LivenessState,
+	node: ProseMirrorNode,
+	task: InvalidationTask,
+): void {
+	if (!st.partialTitleRefNodes.has(node)) return;
+	const waiters = st.partialTitleNodeWaiters.get(node);
+	if (waiters === undefined) st.partialTitleNodeWaiters.set(node, [task]);
+	else if (!waiters.includes(task)) waiters.push(task);
+}
+
 export function scheduleInvalidation(
 	st: LivenessState,
 	label: string,
 	defer: boolean,
 ): void {
 	const refNode = st.firstByLabel.get(label);
-	if (refNode) st.partialTitleRefNodes.delete(refNode);
+	if (refNode) removePartialTitleRefNode(st, refNode);
 	if (defer) {
 		if (!st.deferredInvalidatedSet.has(label)) {
 			st.deferredInvalidatedSet.add(label);

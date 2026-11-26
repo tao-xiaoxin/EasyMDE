@@ -170,7 +170,7 @@ export type FenceLineSummary = Readonly<{
 	quoteDepth: number;
 }>;
 
-export function fenceContainersOf(
+function fenceContainersOf(
 	fence: DetectableFence,
 ): ReadonlyArray<ContainerStep> {
 	if (fence.containers !== undefined) {

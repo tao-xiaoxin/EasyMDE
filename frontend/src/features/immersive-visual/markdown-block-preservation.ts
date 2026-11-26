@@ -202,9 +202,14 @@ function tryPreserveListAtDepth(
 	ctx: PreservationContext,
 ): string | null {
 	if (origBlock.raw === null) return null;
-	const canReuseItem = ctx.hasInvalidatedRefDefs
-		? (origItem: ProseMirrorNode) => !ctx.nodeHasInvalidatedRef(origItem)
-		: null;
+	// Never re-preserve an item liveness already transitioned to canonical.
+	const liveReusable = ctx.plan.listItemReusable.get(listNode);
+	const canReuseItem =
+		ctx.hasInvalidatedRefDefs || liveReusable !== undefined
+			? (origItem: ProseMirrorNode, itemIdx: number) =>
+					liveReusable?.[itemIdx] !== false &&
+					!(ctx.hasInvalidatedRefDefs && ctx.nodeHasInvalidatedRef(origItem))
+			: null;
 	const cachedPrepared = ctx.plan.lists.get(listNode);
 	if (depth <= 0) {
 		return serializeListPreservingItems(
@@ -366,6 +371,8 @@ function serializeContainerPreservingChildren(
 				effIdx,
 				groupSep: undefined,
 				headLine,
+				isPartialTitleRefDef:
+					ctx.resolveReferences?.isPartialTitleRefDef ?? null,
 				prevEffIdx: idx > 0 ? (effectiveOrigIndex[idx - 1] ?? -1) : -1,
 				prevInnerText: () => prevInnerText,
 				prevNode,

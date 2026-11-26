@@ -17,10 +17,12 @@ import type {
 	ParsedVisualSharedGroup,
 } from "./markdown-parser";
 import {
+	type ContainerStep,
+	firstLine,
 	matchListMarker,
 	measureIndentColumns,
-	readBlockquotePrefix,
 	stripBlockquoteDepth,
+	stripContainersWithColumn,
 } from "./markdown-prescanner-containers";
 import { wouldRawHtmlInterruptParagraph } from "./markdown-prescanner-inline";
 import { sanitizeBulletMarker } from "./visual-schema";
@@ -47,14 +49,10 @@ export function wouldBeLazilyAbsorbedByPrevious(
 		return true;
 	}
 	if (name === "heading") {
-		const nl = serialized.indexOf("\n");
-		const firstLine = nl === -1 ? serialized : serialized.slice(0, nl);
-		return !ATX_HEADING_FIRST_LINE.test(firstLine);
+		return !ATX_HEADING_FIRST_LINE.test(firstLine(serialized));
 	}
 	if (name === "code_block") {
-		const nl = serialized.indexOf("\n");
-		const firstLine = nl === -1 ? serialized : serialized.slice(0, nl);
-		return LEADING_FOUR_COLUMN_INDENT.test(firstLine);
+		return LEADING_FOUR_COLUMN_INDENT.test(firstLine(serialized));
 	}
 	if (name === "table") {
 		return !serialized.startsWith("<!-- ");
@@ -64,9 +62,7 @@ export function wouldBeLazilyAbsorbedByPrevious(
 		name === "bullet_list" ||
 		name === "task_list"
 	) {
-		const nl = serialized.indexOf("\n");
-		const firstLine = nl === -1 ? serialized : serialized.slice(0, nl);
-		return !PARAGRAPH_INTERRUPTING_LIST_FIRST_LINE.test(firstLine);
+		return !PARAGRAPH_INTERRUPTING_LIST_FIRST_LINE.test(firstLine(serialized));
 	}
 	if (name === "protected_block") {
 		if (node.attrs.kind === "mermaid") {
@@ -76,13 +72,11 @@ export function wouldBeLazilyAbsorbedByPrevious(
 			node.attrs.kind === "raw" &&
 			typeof node.attrs.rawMarkdown === "string"
 		) {
-			const raw = node.attrs.rawMarkdown;
-			const nl = raw.indexOf("\n");
-			const firstLine = (nl === -1 ? raw : raw.slice(0, nl)).replace(
+			const rawHead = firstLine(node.attrs.rawMarkdown).replace(
 				/^[ \t]{0,3}/,
 				"",
 			);
-			return !wouldRawHtmlInterruptParagraph(firstLine);
+			return !wouldRawHtmlInterruptParagraph(rawHead);
 		}
 		return true;
 	}
@@ -114,11 +108,6 @@ export function prefixAtDepth(text: string, depth: number): string {
 		.join("\n");
 }
 
-export function firstLine(text: string): string {
-	const nl = text.indexOf("\n");
-	return nl === -1 ? text : text.slice(0, nl);
-}
-
 export function tryStripAllLinesAtDepth(
 	text: string,
 	depth: number,
@@ -134,20 +123,39 @@ export function tryStripAllLinesAtDepth(
 	return stripped.join("\n");
 }
 
+const BLOCKQUOTE_STEP: ContainerStep = { kind: "blockquote" };
+
+/**
+ * Strips exactly `depth` blockquote markers from `line`, returning the
+ * remainder and the CommonMark §2.2 / §5.1 virtual column at which it starts.
+ * A tab following `>` is expanded to its 4-column stop, one column of which is
+ * the marker's optional space (its leftover columns stay in `rest` as virtual
+ * spaces), and every later tab expands from the tracked absolute column.
+ * `null` when `line` carries fewer than `depth` markers (lazy continuation).
+ */
+function stripBlockquoteDepthWithColumn(
+	line: string,
+	depth: number,
+): Readonly<{ column: number; rest: string }> | null {
+	const steps = new Array<ContainerStep>(depth).fill(BLOCKQUOTE_STEP);
+	return stripContainersWithColumn(line, steps);
+}
+
+/**
+ * Exact CommonMark indentation (in columns) of the first line of
+ * `emittedText` once `depth` blockquote levels are stripped, measured from
+ * the real content column so tabs after `>` expand to their true tab stop.
+ */
 export function leadingIndentAtDepth(
 	emittedText: string,
 	depth: number,
 ): number {
 	const head = firstLine(emittedText);
-	if (depth <= 0) {
-		return measureIndentColumns(head);
-	}
-	const bq = readBlockquotePrefix(head);
-	if (bq.depth === depth) {
-		return measureIndentColumns(bq.rest, bq.column);
-	}
-	const stripped = stripBlockquoteDepth(head, depth);
-	return measureIndentColumns(stripped ?? head);
+	if (depth <= 0) return measureIndentColumns(head);
+	const stripped = stripBlockquoteDepthWithColumn(head, depth);
+	return stripped !== null
+		? measureIndentColumns(stripped.rest, stripped.column)
+		: measureIndentColumns(head);
 }
 
 /**
@@ -204,20 +212,22 @@ function trailingListItemContentIndent(
 /**
  * Reports whether `nextText`'s leading indent would be swallowed into the
  * trailing item of an edited or newly adjacent preceding list (`prevNode`),
- * even across a blank line (CommonMark §5.2).
+ * even across a blank line (CommonMark §5.2). `nextLeadIndent`, when known,
+ * is the exact column-aware indent of `nextText` (`leadingIndentAtDepth`),
+ * since depth-stripped text alone loses the column of a tab after `>`.
  */
 export function isListSwallowingFollowingBlock(
 	prevNode: ProseMirrorNode | null,
 	prevBlockText: string,
 	nextText: string,
 	prevWasVerbatimAdjacent: boolean,
+	nextLeadIndent?: number,
 ): boolean {
 	if (!prevNode || prevWasVerbatimAdjacent || !isNestedList(prevNode)) {
 		return false;
 	}
-	const nl = nextText.indexOf("\n");
-	const firstLine = nl === -1 ? nextText : nextText.slice(0, nl);
-	const childIndent = measureIndentColumns(firstLine);
+	const childIndent =
+		nextLeadIndent ?? measureIndentColumns(firstLine(nextText));
 	if (childIndent <= 0) {
 		return false;
 	}
@@ -296,6 +306,7 @@ export function checkRawPreservationRisks(
 			prevInner,
 			rawInner,
 			prevWasVerbatimAdjacent,
+			leadIndent,
 		);
 	return { indentedRisk, swallowRisk };
 }

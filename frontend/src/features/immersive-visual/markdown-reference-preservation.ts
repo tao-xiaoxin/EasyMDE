@@ -13,6 +13,7 @@ import {
 } from "./markdown-parser-inline";
 import { restoreProtectedInlineSentinels } from "./markdown-prescanner";
 import {
+	firstLine,
 	measureIndentColumns,
 	stripUpToIndentColumns,
 } from "./markdown-prescanner-containers";
@@ -226,9 +227,7 @@ export function extractRawReferenceParts(
  * starts at column 0 (idempotent).
  */
 export function dedentBlockToLineZero(text: string): string {
-	const nl = text.indexOf("\n");
-	const firstLine = nl === -1 ? text : text.slice(0, nl);
-	const baseIndent = measureIndentColumns(firstLine);
+	const baseIndent = measureIndentColumns(firstLine(text));
 	if (baseIndent <= 0) {
 		return text;
 	}

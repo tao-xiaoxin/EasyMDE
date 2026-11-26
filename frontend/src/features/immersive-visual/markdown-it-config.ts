@@ -71,9 +71,7 @@ type BlockRuleState = Parameters<BlockRuleFn>[0];
  * standalone block parsing for prescanned `TBLALIGN` sentinels (preserving
  * tight lists), and CommonMark §4.8 / §4.3 continuation-indent stripping.
  */
-export function createVisualMarkdownItParser(): InstanceType<
-	typeof MarkdownIt
-> {
+function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> {
 	const parser = new MarkdownIt({
 		html: false,
 		linkify: false,

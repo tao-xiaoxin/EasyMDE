@@ -534,7 +534,7 @@ export function extendLogicalSpanForDisplayMath(
  * `mathIndex.maskedDoc` so closers inside `$-->$` / `$$ --> $$` never trigger
  * while any real closer stops right BEFORE a trailing display-math block.
  */
-export function findDisplayMathAwareHtmlBlockCloseOnLine(
+function findDisplayMathAwareHtmlBlockCloseOnLine(
 	mathIndex: PhpDocumentMathIndex,
 	htmlType: 1 | 2 | 3 | 4 | 5,
 	startOffset: number,

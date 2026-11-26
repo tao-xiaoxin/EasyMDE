@@ -157,7 +157,7 @@ export function firstMathRangeEndingAfter(
 	return low;
 }
 
-export function findMathRangesInOffsetSlice(
+function findMathRangesInOffsetSlice(
 	ranges: ReadonlyArray<PhpMarkdownMathRange>,
 	startOffset: number,
 	endOffset: number,

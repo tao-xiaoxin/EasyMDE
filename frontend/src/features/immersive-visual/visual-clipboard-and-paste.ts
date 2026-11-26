@@ -31,7 +31,7 @@ const SEMANTIC_HTML_TAG_PATTERN =
 	/<\/?(?:h[1-6]|strong|b|em|i|del|s|a|img|ul|ol|li|table|thead|tbody|tr|th|td|blockquote|pre|code|hr)\b/i;
 
 const MARKDOWN_SYNTAX_SIGNAL_PATTERN =
-	/(?:^|\n)(?: {0,3}(?:#{1,6}\s|>\s|[-+*]\s|\d+\.\s|```|~~~|\$\$|---+|\*\*\*+|___+)|\|[^\n]+\|\n\|?[ \t]*:?-{1,}:?[ \t]*\|)|\*\*[^*\n]+\*\*|~~[^~\n]+~~|`[^`\n]+`|!?\[[^\]\n]+\]\([^)\n]+\)/;
+	/(?:^|\n)(?: {0,3}(?:#{1,6}\s|>\s|[-+*]\s|\d{1,9}\.\s|```|~~~|\$\$|---+|\*\*\*+|___+)|\|[^\n]+\|\n\|?[ \t]*:?-{1,}:?[ \t]*\|)|\*\*[^*\n]+\*\*|~~[^~\n]+~~|`[^`\n]+`|!?\[[^\]\n]+\]\([^)\n]+\)/;
 
 function resolveBooleanOption(
 	option: boolean | (() => boolean) | undefined,

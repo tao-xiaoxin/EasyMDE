@@ -25,6 +25,7 @@ import {
 	parseMarkdownWithBlockSources,
 } from "./markdown-parser";
 import {
+	firstLine,
 	matchListMarker,
 	measureIndentColumns,
 } from "./markdown-prescanner-containers";
@@ -179,8 +180,8 @@ function alignFirstOrderedMarker(
 	const digits = String(expected);
 	const delta = digits.length - match[2].length;
 	const head = `${indent}${digits}${delimiter}`;
-	const firstLine = `${head}${spacing}${content}`;
-	if (delta === 0) return [[firstLine, ...lines.slice(1)].join("\n")];
+	const rewrittenHead = `${head}${spacing}${content}`;
+	if (delta === 0) return [[rewrittenHead, ...lines.slice(1)].join("\n")];
 
 	const markerEnd = advanceColumns(
 		`${match[2]}${delimiter}`,
@@ -200,7 +201,7 @@ function alignFirstOrderedMarker(
 		if (width < oldContentColumn) return line;
 		return `${" ".repeat(Math.max(0, width + delta))}${line.slice(leading.length)}`;
 	});
-	candidates.push([firstLine, ...shifted].join("\n"));
+	candidates.push([rewrittenHead, ...shifted].join("\n"));
 
 	const paddedWidth = spacingWidth - delta;
 	if (
@@ -246,9 +247,11 @@ export type PreparedListPreservation = Readonly<{
 type AuthoritativeListResolution = Readonly<{
 	firstEmittedSlice: string | null;
 	/**
-	 * Per-item reusability with `allowShift = true` (base reuse, item 0's
-	 * first-marker outcome, and genuinely failing left-shifts) BEFORE any
-	 * whole-list `allowShift = false` fallback disables shiftable items.
+	 * Per-item reusability with `allowShift = true` (base reuse and genuinely
+	 * failing left-shifts) BEFORE any whole-list `allowShift = false` fallback
+	 * disables shiftable items. Item 0 is intrinsically reusable whenever a
+	 * first-marker candidate re-parses to it in isolation, even if the whole
+	 * list does not validate yet (a trailing fallback item may still block it).
 	 */
 	intrinsicItemReusable: ReadonlyArray<boolean>;
 	itemReusable: boolean[];
@@ -258,9 +261,7 @@ type AuthoritativeListResolution = Readonly<{
 
 /** CommonMark §5.2 content indentation column of a single serialized list item. */
 function listItemContentIndent(itemText: string): number {
-	const nl = itemText.indexOf("\n");
-	const firstLine = nl === -1 ? itemText : itemText.slice(0, nl);
-	return matchListMarker(firstLine)?.contentIndent ?? 0;
+	return matchListMarker(firstLine(itemText))?.contentIndent ?? 0;
 }
 
 function hasMultilineMathInSlice(rawSlice: string): boolean {
@@ -355,10 +356,9 @@ export function prepareListPreservation(
 		structurallyEqual,
 	);
 	const paired = pairUnmatched(matched, orig.childCount);
-	const itemLeadCols = slices.items.map((slice) => {
-		const nl = slice.indexOf("\n");
-		return measureIndentColumns(nl === -1 ? slice : slice.slice(0, nl));
-	});
+	const itemLeadCols = slices.items.map((slice) =>
+		measureIndentColumns(firstLine(slice)),
+	);
 	let hasIndentedTrailingItem = false;
 	for (let idx = 1; idx < matched.length; idx += 1) {
 		const matchedIdx = matched[idx] ?? -1;
@@ -381,14 +381,18 @@ export function prepareListPreservation(
 /**
  * Single authoritative whole-list preservation and first-ordered-marker
  * validation shared by `computeIntactRefDefLabels` and
- * `serializeListPreservingItems`.
+ * `serializeListPreservingItems`. `isReusableOrigItem(origIdx, itemIdx)`
+ * gates base reuse of edited item `itemIdx` (matched to baseline `origIdx`).
+ * Left-shift attempts and canonical item text are memoized per item for the
+ * duration of one call, so repeated assemblies never re-parse or
+ * re-serialize the same item.
  */
 export function resolveAuthoritativeListPreservation(
 	listNode: ProseMirrorNode,
 	prepared: PreparedListPreservation,
 	serializeBlock: BlockSerializer,
 	envReferences: ParsedEnvReferences | undefined,
-	isReusableOrigItem: (origIdx: number) => boolean,
+	isReusableOrigItem: (origIdx: number, itemIdx: number) => boolean,
 	isPartialTitleRefDef?: PartialTitleRefDefPredicate | null,
 	mathNewlineToken?: string,
 	buildOutput = true,
@@ -408,8 +412,40 @@ export function resolveAuthoritativeListPreservation(
 	const baseReusable = new Array<boolean>(newLen);
 	for (let idx = 0; idx < newLen; idx += 1) {
 		const matchedIdx = matched[idx] ?? -1;
-		baseReusable[idx] = matchedIdx >= 0 && isReusableOrigItem(matchedIdx);
+		baseReusable[idx] = matchedIdx >= 0 && isReusableOrigItem(matchedIdx, idx);
 	}
+	const shiftCache = new Map<number, string | null>();
+	const shiftItem = (idx: number, reused: string, leadCols: number) => {
+		let shifted = shiftCache.get(idx);
+		if (shifted === undefined) {
+			shifted = tryLeftShiftReusableItem(
+				reused,
+				leadCols,
+				listNode,
+				idx,
+				envReferences,
+			);
+			shiftCache.set(idx, shifted);
+		}
+		return shifted;
+	};
+	const canonicalCache = new Map<number, string>();
+	const canonicalItem = (idx: number, pairedSlice: string | undefined) => {
+		let text = canonicalCache.get(idx);
+		if (text === undefined) {
+			text = serializeListItemAt(
+				listNode,
+				idx,
+				loose,
+				serializeBlock,
+				pairedSlice !== undefined && BLANK_BEFORE_NESTED_LIST.test(pairedSlice),
+				mathNewlineToken,
+				isPartialTitleRefDef,
+			);
+			canonicalCache.set(idx, text);
+		}
+		return text;
+	};
 
 	const assemble = (
 		firstRaw: string | null,
@@ -449,15 +485,7 @@ export function resolveAuthoritativeListPreservation(
 					prevContentIndent > 0 &&
 					leadCols >= prevContentIndent
 				) {
-					const shifted = allowShift
-						? tryLeftShiftReusableItem(
-								reused,
-								leadCols,
-								listNode,
-								idx,
-								envReferences,
-							)
-						: null;
+					const shifted = allowShift ? shiftItem(idx, reused, leadCols) : null;
 					if (shifted !== null) {
 						reused = shifted;
 						hasShiftedItem = true;
@@ -482,16 +510,7 @@ export function resolveAuthoritativeListPreservation(
 			if (needOutput || needNextIndent) {
 				const pairedSlice =
 					pairedIdx >= 0 ? slices.items[pairedIdx] : undefined;
-				const serializedItem = serializeListItemAt(
-					listNode,
-					idx,
-					loose,
-					serializeBlock,
-					pairedSlice !== undefined &&
-						BLANK_BEFORE_NESTED_LIST.test(pairedSlice),
-					mathNewlineToken,
-					isPartialTitleRefDef,
-				);
+				const serializedItem = canonicalItem(idx, pairedSlice);
 				if (needOutput) parts.push(serializedItem);
 				if (needNextIndent) {
 					prevContentIndent = listItemContentIndent(serializedItem);
@@ -512,6 +531,11 @@ export function resolveAuthoritativeListPreservation(
 		};
 	};
 
+	const unmask = (text: string): string =>
+		mathNewlineToken !== undefined
+			? restoreMathNewlineSentinel(text, mathNewlineToken)
+			: text;
+
 	const finalizeDirect = (
 		firstRaw: string | null,
 	): AuthoritativeListResolution => {
@@ -529,12 +553,10 @@ export function resolveAuthoritativeListPreservation(
 		let assembled = assemble(firstRaw, buildOutput, true);
 		const intrinsicItemReusable = assembled.effectiveReusable;
 		if (assembled.hasShiftedItem) {
+			// Shift results and canonical items are memoized, so building the
+			// full text after a mask-only pass re-parses nothing.
 			const full = buildOutput ? assembled : assemble(firstRaw, true, true);
-			const unmasked =
-				mathNewlineToken !== undefined
-					? restoreMathNewlineSentinel(full.output, mathNewlineToken)
-					: full.output;
-			if (!listMarkdownParsesTo(unmasked, listNode, envReferences)) {
+			if (!listMarkdownParsesTo(unmask(full.output), listNode, envReferences)) {
 				assembled = assemble(firstRaw, buildOutput, false);
 			}
 		}
@@ -559,14 +581,19 @@ export function resolveAuthoritativeListPreservation(
 	if (candidates.length === 1 && candidates[0] === firstReused) {
 		return finalizeDirect(firstReused);
 	}
+	// Masks of the first candidate that re-parses to item 0 in isolation but
+	// fails whole-list validation: its trailing items (not item 0) decide
+	// which items must stabilize before item 0 is retried.
+	let locallyValid: Readonly<{
+		fallback: ReadonlyArray<boolean>;
+		intrinsic: ReadonlyArray<boolean>;
+	}> | null = null;
 	for (const candidate of candidates) {
 		let assembled = assemble(candidate, true, true);
 		const intrinsicItemReusable = assembled.effectiveReusable;
-		let unmasked =
-			mathNewlineToken !== undefined
-				? restoreMathNewlineSentinel(assembled.output, mathNewlineToken)
-				: assembled.output;
-		if (listMarkdownParsesTo(unmasked, listNode, envReferences)) {
+		if (
+			listMarkdownParsesTo(unmask(assembled.output), listNode, envReferences)
+		) {
 			return {
 				firstEmittedSlice: candidate,
 				intrinsicItemReusable,
@@ -577,11 +604,9 @@ export function resolveAuthoritativeListPreservation(
 		}
 		if (assembled.hasShiftedItem) {
 			assembled = assemble(candidate, true, false);
-			unmasked =
-				mathNewlineToken !== undefined
-					? restoreMathNewlineSentinel(assembled.output, mathNewlineToken)
-					: assembled.output;
-			if (listMarkdownParsesTo(unmasked, listNode, envReferences)) {
+			if (
+				listMarkdownParsesTo(unmask(assembled.output), listNode, envReferences)
+			) {
 				return {
 					firstEmittedSlice: candidate,
 					intrinsicItemReusable,
@@ -591,8 +616,28 @@ export function resolveAuthoritativeListPreservation(
 				};
 			}
 		}
+		if (
+			locallyValid === null &&
+			sliceParsesToItem(candidate, listNode, 0, envReferences)
+		) {
+			locallyValid = {
+				fallback: assembled.effectiveReusable,
+				intrinsic: intrinsicItemReusable,
+			};
+		}
 	}
-	return finalizeDirect(null);
+	if (locallyValid === null) return finalizeDirect(null);
+	const intrinsic = locallyValid.intrinsic.slice();
+	intrinsic[0] = true;
+	const fallback = locallyValid.fallback.slice();
+	fallback[0] = false;
+	return {
+		firstEmittedSlice: null,
+		intrinsicItemReusable: intrinsic,
+		itemReusable: fallback,
+		needsFirstOrderedValidation: true,
+		output: buildOutput ? finalizeDirect(null).output : null,
+	};
 }
 
 /**
@@ -607,7 +652,9 @@ export function serializeListPreservingItems(
 	serializeBlock: BlockSerializer,
 	envReferences?: ParsedEnvReferences,
 	isPartialTitleRefDef?: PartialTitleRefDefPredicate | null,
-	canReuseItem?: ((origItem: ProseMirrorNode) => boolean) | null,
+	canReuseItem?:
+		| ((origItem: ProseMirrorNode, itemIdx: number) => boolean)
+		| null,
 	rawOverride?: string,
 	mathNewlineToken?: string,
 	preparedOverride?: PreparedListPreservation,
@@ -616,9 +663,9 @@ export function serializeListPreservingItems(
 		preparedOverride ??
 		prepareListPreservation(listNode, origBlock, 0, envReferences, rawOverride);
 	if (!prepared) return null;
-	const isReusableOrigItem = (origIdx: number): boolean =>
+	const isReusableOrigItem = (origIdx: number, itemIdx: number): boolean =>
 		origIdx >= 0 &&
-		(!canReuseItem || canReuseItem(prepared.orig.child(origIdx)));
+		(!canReuseItem || canReuseItem(prepared.orig.child(origIdx), itemIdx));
 	return resolveAuthoritativeListPreservation(
 		listNode,
 		prepared,

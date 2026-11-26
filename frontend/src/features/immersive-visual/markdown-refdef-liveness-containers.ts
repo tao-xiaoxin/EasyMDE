@@ -4,6 +4,7 @@ import {
 	alignContainerChildren,
 	canPreserveContainerHeadStructurally,
 	createTightSharedGroupChecker,
+	prefixAtDepth,
 	sharedGroupHasInvalidatedRef,
 	stripAtDepth,
 } from "./markdown-container-preservation";
@@ -55,13 +56,6 @@ import {
  */
 
 type SharedGroupChecker = ReturnType<typeof createTightSharedGroupChecker>;
-
-function prefixOneLevel(text: string): string {
-	return text
-		.split("\n")
-		.map((line) => (line.length > 0 ? `> ${line}` : ">"))
-		.join("\n");
-}
 
 function isNextVerbatimTightInContainer(
 	cs: ContainerState,
@@ -694,6 +688,10 @@ export function openContainer(
 	const tailAt = new Array<TailSource | null>(newLen).fill(null);
 	const cs: ContainerState = {
 		container,
+		partialTitleRechecks: new Array<InvalidationTask | undefined>(newLen),
+		recheckSlot: (idx) => {
+			if (idx > 0) recheckFollowingIndentRisks(st, cs, idx - 1);
+		},
 		defaultBlankSep: blankSeparatorAtDepth(depth),
 		deferInvalidation,
 		depth,
@@ -723,8 +721,9 @@ export function openContainer(
 				const last = newLen - 1;
 				if (last < 0) return "";
 				const lastInner = innerAt[last];
-				return prefixOneLevel(
+				return prefixAtDepth(
 					lastInner ? lastInner() : st.serializeBlock(container.child(last)),
+					1,
 				);
 			},
 		},

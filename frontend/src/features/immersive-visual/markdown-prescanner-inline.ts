@@ -100,7 +100,7 @@ function isEscapedAt(text: string, index: number): boolean {
 	return slashes % 2 === 1;
 }
 
-export function skipInlineCodeSpan(line: string, start: number): number {
+function skipInlineCodeSpan(line: string, start: number): number {
 	const length = line.length;
 	let tickEnd = start;
 	while (tickEnd < length && line[tickEnd] === "`") tickEnd += 1;

@@ -9,7 +9,7 @@ import type { VisualEditorImageScalePercentage } from "../../contracts/visual-ed
 
 export type VisualImageScale = VisualEditorImageScalePercentage;
 
-export const VISUAL_IMAGE_SCALES: ReadonlyArray<VisualImageScale> = [
+const VISUAL_IMAGE_SCALES: ReadonlyArray<VisualImageScale> = [
 	25, 33, 50, 67, 100, 150, 200,
 ];
 

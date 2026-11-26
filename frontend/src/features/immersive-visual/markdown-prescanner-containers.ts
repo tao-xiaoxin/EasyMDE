@@ -470,3 +470,9 @@ export function peelContainerStepsForLine(
 		rest: cursorRemainder(cursor),
 	};
 }
+
+/** The text before the first `\n` (the whole text when single-line). */
+export function firstLine(text: string): string {
+	const nl = text.indexOf("\n");
+	return nl === -1 ? text : text.slice(0, nl);
+}

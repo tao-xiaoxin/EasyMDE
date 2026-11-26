@@ -2,7 +2,6 @@ import type { Node as ProseMirrorNode } from "prosemirror-model";
 import {
 	alignContainerChildren,
 	checkRawPreservationRisks,
-	firstLine,
 	leadingIndentAtDepth,
 	needsPrevInnerForRiskCheck,
 	prefixAtDepth,
@@ -10,11 +9,15 @@ import {
 } from "./markdown-container-preservation";
 import { resolveContainerSlotJoin } from "./markdown-container-slot-separator";
 import { prepareListPreservation } from "./markdown-list-preservation";
-import { isNestedList } from "./markdown-list-serialization";
+import {
+	isNestedList,
+	type PartialTitleRefDefPredicate,
+} from "./markdown-list-serialization";
 import type {
 	ParsedVisualBlockSource,
 	ParsedVisualDocument,
 } from "./markdown-parser";
+import { firstLine } from "./markdown-prescanner-containers";
 import type { PreservationPlan } from "./markdown-refdef-liveness-state";
 
 /**
@@ -39,6 +42,12 @@ type MatchedContainerHeadRiskInput = Readonly<{
 	groupSep: string | undefined;
 	/** Raw emitted text (with `depth` quote prefixes) whose join is checked. */
 	headLine: string;
+	/**
+	 * Live partial-title refdef predicate: the serializer's
+	 * `resolveReferences.isPartialTitleRefDef` and liveness's current
+	 * `st.partialTitleRefNodes`, so both resolve the same tight join.
+	 */
+	isPartialTitleRefDef: PartialTitleRefDefPredicate | null;
 	prevEffIdx: number;
 	/** Lazily computes the depth-stripped Markdown emitted for `prevNode`. */
 	prevInnerText: () => string;
@@ -50,9 +59,10 @@ type MatchedContainerHeadRiskInput = Readonly<{
  * The one authoritative separator + `indentedRisk` / `swallowRisk` evaluation
  * for emitting raw text (an immutable matched container head line or a
  * verbatim raw candidate) at a container slot. A tight partial-title join
- * depends on final liveness, which a later invalidation may withdraw, so the
- * blank join is predicted conservatively. Text with no leading indent at
- * `depth` can never form indented code or be swallowed by a preceding list.
+ * uses the caller's live `isPartialTitleRefDef`; liveness re-evaluates the
+ * slot whenever that refdef later leaves `st.partialTitleRefNodes`
+ * (`removePartialTitleRefNode`). Text with no leading indent at `depth` can
+ * never form indented code or be swallowed by a preceding list.
  */
 export function evaluateMatchedContainerHeadRisk(
 	input: MatchedContainerHeadRiskInput,
@@ -70,7 +80,7 @@ export function evaluateMatchedContainerHeadRisk(
 		effIdx: input.effIdx,
 		groupSep: input.groupSep,
 		innerText: rawInner,
-		isPartialTitleRefDef: null,
+		isPartialTitleRefDef: input.isPartialTitleRefDef,
 		prevEffIdx: input.prevEffIdx,
 		prevInnerText: input.prevInnerText,
 		prevNode,

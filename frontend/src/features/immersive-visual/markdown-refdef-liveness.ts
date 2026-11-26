@@ -55,6 +55,7 @@ export function computeIntactRefDefLabels(
 }> {
 	const plan: PreservationPlan = {
 		containers: new Map<ProseMirrorNode, ContainerAlignmentPlan>(),
+		listItemReusable: new Map<ProseMirrorNode, ReadonlyArray<boolean>>(),
 		lists: new Map<ProseMirrorNode, PreparedListPreservation>(),
 	};
 	const firstByLabel = parsed.firstRefDefNodeByLabel;
@@ -112,6 +113,8 @@ export function computeIntactRefDefLabels(
 		parsed,
 		partialLabels,
 		partialTitleIntact: new Set<string>(),
+		partialTitleLostQueue: [],
+		partialTitleNodeWaiters: new Map<ProseMirrorNode, InvalidationTask[]>(),
 		partialTitleRefNodes,
 		pendingListHeap: [],
 		plan,
@@ -163,16 +166,28 @@ export function computeIntactRefDefLabels(
 	// priority order (`pendingUpstreamCount`, `liveUpstreamCount`, non-sink
 	// before sink, smallest `listNode.nodeSize` first), draining any newly invalidated labels before
 	// another list pops so downstream lists re-validate at most once.
+	// Slots whose tight join relied on a since-lost partial-title refdef
+	// (`removePartialTitleRefNode`) re-evaluate in the same worklist.
 	let queueHead = 0;
+	let lostHead = 0;
 	while (true) {
-		while (queueHead < st.invalidQueue.length) {
-			const label = st.invalidQueue[queueHead];
-			queueHead += 1;
-			if (label === undefined) continue;
-			const deps = st.dependentsByLabel.get(label);
-			if (!deps) continue;
-			st.dependentsByLabel.delete(label);
-			for (const task of deps) fireTask(task);
+		while (
+			queueHead < st.invalidQueue.length ||
+			lostHead < st.partialTitleLostQueue.length
+		) {
+			if (queueHead < st.invalidQueue.length) {
+				const label = st.invalidQueue[queueHead];
+				queueHead += 1;
+				if (label === undefined) continue;
+				const deps = st.dependentsByLabel.get(label);
+				if (!deps) continue;
+				st.dependentsByLabel.delete(label);
+				for (const task of deps) fireTask(task);
+				continue;
+			}
+			const lost = st.partialTitleLostQueue[lostHead];
+			lostHead += 1;
+			if (lost) lost.run();
 		}
 		if (!drainNextPendingList(st)) break;
 	}

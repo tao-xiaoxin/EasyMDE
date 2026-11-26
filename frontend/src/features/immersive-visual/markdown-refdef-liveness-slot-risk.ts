@@ -5,10 +5,11 @@ import type {
 	ParsedVisualSharedGroup,
 } from "./markdown-parser";
 import type { TailSource } from "./markdown-refdef-liveness-lists";
-import type {
-	CandidatePartialRefDef,
-	InvalidationTask,
-	LivenessState,
+import {
+	type CandidatePartialRefDef,
+	type InvalidationTask,
+	type LivenessState,
+	watchPartialTitleRefNode,
 } from "./markdown-refdef-liveness-state";
 
 /**
@@ -29,6 +30,13 @@ type SlotRisks = Readonly<{
 
 export type ContainerState = {
 	readonly container: ProseMirrorNode;
+	/**
+	 * Per-slot re-evaluation task run when the previous slot's refdef leaves
+	 * `st.partialTitleRefNodes` (its tight partial-title join may vanish).
+	 */
+	readonly partialTitleRechecks: Array<InvalidationTask | undefined>;
+	/** Re-checks slot `idx`'s join / raw risks against the current state. */
+	readonly recheckSlot: (idx: number) => void;
 	readonly defaultBlankSep: string;
 	readonly deferInvalidation: boolean;
 	readonly depth: number;
@@ -86,6 +94,16 @@ export function evaluateSlotJoin(
 		prevMatched >= 0 &&
 		origIdx >= 0 &&
 		origIdx === prevMatched + 1;
+	if (prevNode !== null && st.partialTitleRefNodes.has(prevNode)) {
+		// The join may be tight ONLY because `prevNode` is still a partial-title
+		// refdef: re-check this slot if it later stops being one.
+		let recheck = cs.partialTitleRechecks[idx];
+		if (recheck === undefined) {
+			recheck = { fired: false, run: () => cs.recheckSlot(idx) };
+			cs.partialTitleRechecks[idx] = recheck;
+		}
+		watchPartialTitleRefNode(st, prevNode, recheck);
+	}
 	const prevInnerSource = idx > 0 ? (cs.innerAt[idx - 1] ?? null) : null;
 	let prevInner: string | null = null;
 	const readPrevInner = (): string => {
@@ -107,6 +125,7 @@ export function evaluateSlotJoin(
 		effIdx,
 		groupSep,
 		headLine: rawCandidate,
+		isPartialTitleRefDef: (node) => st.partialTitleRefNodes.has(node),
 		prevEffIdx: idx > 0 ? (cs.effectiveOrigIndex[idx - 1] ?? -1) : -1,
 		prevInnerText: readPrevInner,
 		prevNode,

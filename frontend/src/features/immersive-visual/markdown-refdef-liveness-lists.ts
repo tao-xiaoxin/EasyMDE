@@ -32,8 +32,8 @@ import {
  * (first ordered marker, indented-item left-shifts, and the whole-list
  * `allowShift = false` fallback) goes through the authoritative
  * `resolveAuthoritativeListPreservation`, stabilizing intrinsically
- * non-reusable trailing items (and their partial-title refdefs) BEFORE
- * committing item 0, and `allowShift = false` fallback items only after;
+ * non-reusable items, then trailing `allowShift = false` fallback items (and
+ * their partial-title refdefs), BEFORE committing a non-reusable item 0;
  * dirty lists drain one at a time in exact active-producer topological order
  * (`pendingUpstreamCount`, `liveUpstreamCount`, non-sink before sink, smallest
  * `listNode.nodeSize` first) so multi-wave cascades never re-validate a heavy
@@ -82,13 +82,17 @@ function resolveListReuse(
 	listNode: ProseMirrorNode,
 	prepared: PreparedListPreservation,
 	buildOutput: boolean,
+	isDowngraded: (itemIdx: number) => boolean,
 ): ReturnType<typeof resolveAuthoritativeListPreservation> {
 	return resolveAuthoritativeListPreservation(
 		listNode,
 		prepared,
 		createLiveBlockSerializer(st),
 		st.parsed.envReferences,
-		(origIdx) =>
+		// Monotonic: an item liveness already transitioned to canonical never
+		// resurrects, whatever later re-validation would allow.
+		(origIdx, itemIdx) =>
+			!isDowngraded(itemIdx) &&
 			!nodeHasCurrentInvalidatedRef(st, prepared.orig.child(origIdx)),
 		(node) => st.partialTitleRefNodes.has(node),
 		undefined,
@@ -96,21 +100,42 @@ function resolveListReuse(
 	);
 }
 
+/** Lazily built list-local inverted index: referenced label -> item indices. */
+function buildItemRefIndex(
+	st: LivenessState,
+	prepared: PreparedListPreservation,
+): Map<string, number[]> {
+	const index = new Map<string, number[]>();
+	for (let idx = 0; idx < prepared.matched.length; idx += 1) {
+		const origIdx = prepared.matched[idx] ?? -1;
+		if (origIdx < 0) continue;
+		visitReferencedLabels(prepared.orig.child(origIdx), st.parsed, (label) => {
+			const items = index.get(label);
+			if (items === undefined) index.set(label, [idx]);
+			else if (items[items.length - 1] !== idx) items.push(idx);
+			return false;
+		});
+	}
+	return index;
+}
+
 /**
- * Resolves list reuse to a monotonic fixed point in three stages, re-resolving
- * (and restarting from stage 1) whenever a downgrade shrinks
- * `st.partialTitleRefNodes` (which changes canonical blank-line emission and
- * therefore tight/loose, first-marker, and left-shift re-validation):
+ * Resolves list reuse to a monotonic fixed point. Each round runs ONE
+ * authoritative resolution and commits the first non-empty stage:
  *
- * 1. downgrade only INTRINSICALLY non-reusable trailing items (`idx >= 1`,
- *    failing even with `allowShift = true`);
- * 2. commit a non-reusable item 0;
- * 3. only then downgrade trailing items that fail solely through the
- *    whole-list `allowShift = false` fallback.
+ * 1. every INTRINSICALLY non-reusable item (any index; item 0 only when no
+ *    first-marker candidate re-parses to it in isolation);
+ * 2. trailing items (`idx >= 1`) failing the whole-list `allowShift = false`
+ *    fallback, which may be what still blocks a locally valid item 0;
+ * 3. only then a non-reusable item 0.
  *
- * A trailing item that only failed because a still-pending partial-title
- * refdef forced the fallback therefore survives once that refdef is gone.
- * Each item downgrades at most once.
+ * Any committed downgrade re-runs the resolution (it may shrink
+ * `st.partialTitleRefNodes` or change canonical emission). With immediate
+ * invalidation, each batch first closes same-list label invalidations in
+ * O(K) through a list-local inverted index (an item referencing a freshly
+ * invalidated label is non-reusable for good), so a same-list refdef chain
+ * costs O(1) resolutions instead of one whole-list parse per hop. Each item
+ * downgrades at most once and never resurrects (`isDowngraded`).
  */
 function resolveStableListReuse(
 	st: LivenessState,
@@ -118,36 +143,65 @@ function resolveStableListReuse(
 	prepared: PreparedListPreservation,
 	isDowngraded: (itemIdx: number) => boolean,
 	downgrade: (itemIdx: number) => void,
+	deferInvalidation: boolean,
 ): ReturnType<typeof resolveListReuse> {
 	const itemCount = listNode.childCount;
-	const downgradeTrailing = (mask: ReadonlyArray<boolean>): void => {
-		for (let idx = 1; idx < itemCount; idx += 1) {
-			if (mask[idx] !== true && !isDowngraded(idx)) downgrade(idx);
+	let refIndex: Map<string, number[]> | null = null;
+	const closeSameListInvalidations = (queueFrom: number): void => {
+		for (let head = queueFrom; head < st.invalidQueue.length; head += 1) {
+			const label = st.invalidQueue[head];
+			if (label === undefined) continue;
+			refIndex ??= buildItemRefIndex(st, prepared);
+			const items = refIndex.get(label);
+			if (items === undefined) continue;
+			for (const idx of items) {
+				if (!isDowngraded(idx)) downgrade(idx);
+			}
 		}
 	};
+	const commit = (idx: number): boolean => {
+		if (isDowngraded(idx)) return false;
+		const queueFrom = st.invalidQueue.length;
+		downgrade(idx);
+		if (!deferInvalidation) closeSameListInvalidations(queueFrom);
+		return true;
+	};
 	while (true) {
-		const resolution = resolveListReuse(st, listNode, prepared, false);
-		const before = st.partialTitleRefNodes.size;
-		downgradeTrailing(resolution.intrinsicItemReusable);
-		if (st.partialTitleRefNodes.size !== before) continue;
+		const resolution = resolveListReuse(
+			st,
+			listNode,
+			prepared,
+			false,
+			isDowngraded,
+		);
+		// Downgrading items the resolution already emits canonically leaves it
+		// valid; only a change to partial-title or invalidated-label state
+		// forces a fresh resolution. Once item 0 is committed, only indented
+		// trailing items (left-shifts and their fallback) depend on its text.
+		const partialSize = st.partialTitleRefNodes.size;
+		const invalidCount = st.invalidQueue.length;
+		const deferredCount = st.deferredInvalidations.length;
+		const stateChanged = (): boolean =>
+			st.partialTitleRefNodes.size !== partialSize ||
+			st.invalidQueue.length !== invalidCount ||
+			st.deferredInvalidations.length !== deferredCount;
+		for (let idx = 0; idx < itemCount; idx += 1) {
+			if (resolution.intrinsicItemReusable[idx] !== true) commit(idx);
+		}
+		if (stateChanged()) continue;
+		for (let idx = 1; idx < itemCount; idx += 1) {
+			if (resolution.itemReusable[idx] !== true) commit(idx);
+		}
+		if (stateChanged()) continue;
 		if (
 			itemCount > 0 &&
 			resolution.itemReusable[0] !== true &&
-			!isDowngraded(0)
+			commit(0) &&
+			prepared.hasIndentedTrailingItem &&
+			(stateChanged() || resolution.intrinsicItemReusable[0] === true)
 		) {
-			downgrade(0);
-			// Only indented trailing items (left-shifts and the whole-list
-			// `allowShift = false` fallback) depend on canonical item 0 text.
-			if (
-				prepared.hasIndentedTrailingItem &&
-				st.partialTitleRefNodes.size !== before
-			) {
-				continue;
-			}
+			continue;
 		}
-		const beforeFallback = st.partialTitleRefNodes.size;
-		downgradeTrailing(resolution.itemReusable);
-		if (st.partialTitleRefNodes.size !== beforeFallback) continue;
 		return resolution;
 	}
 }
@@ -327,15 +381,17 @@ export function openList(
 		}
 	}
 
-	// 3. Stabilize intrinsically non-reusable trailing items (and their
-	//    partial-title refdefs), then item 0, then `allowShift = false`
-	//    fallback items; every downgraded item is evaluated canonically once.
+	// 3. Stabilize intrinsically non-reusable items, then trailing
+	//    `allowShift = false` fallback items (and their partial-title
+	//    refdefs), then item 0; every downgraded item is evaluated
+	//    canonically once and never resurrects.
 	const resolution = resolveStableListReuse(
 		st,
 		listNode,
 		prepared,
 		(itemIdx) => preEvaluatedCanonical[itemIdx] === true,
 		(itemIdx) => {
+			preEvaluatedCanonical[itemIdx] = true;
 			walkSubtree(
 				st,
 				listNode.child(itemIdx),
@@ -343,8 +399,8 @@ export function openList(
 				false,
 				deferInvalidation,
 			);
-			preEvaluatedCanonical[itemIdx] = true;
 		},
+		deferInvalidation,
 	);
 	// One unified Pass-2 re-validation trigger: a reused first ordered item
 	// with candidates needing whole-list marker validation, or ANY indented
@@ -363,7 +419,14 @@ export function openList(
 	}
 	const tail: TailSource = {
 		onChange: null,
-		read: () => resolveListReuse(st, listNode, prepared, true).output ?? "",
+		read: () =>
+			resolveListReuse(
+				st,
+				listNode,
+				prepared,
+				true,
+				(idx) => check.itemReusable[idx] !== true,
+			).output ?? "",
 	};
 	const itemUpstream = new Array<ReadonlyArray<string>>(itemCount);
 	const check: PendingListCheck = {
@@ -391,6 +454,8 @@ export function openList(
 		tracksValidation,
 	};
 	for (const label of selfLabels) st.producerListByLabel.set(label, check);
+	// The serializer never re-preserves an item liveness emitted canonically.
+	st.plan.listItemReusable.set(listNode, check.itemReusable);
 
 	const lastIdx = itemCount - 1;
 	for (let itemIdx = 0; itemIdx < itemCount; itemIdx += 1) {
@@ -479,6 +544,7 @@ export function drainNextPendingList(st: LivenessState): boolean {
 				if (task) task.fired = true;
 				check.downgradeItem(idx);
 			},
+			false,
 		);
 		check.firstEmittedSlice =
 			check.itemReusable[0] === true ? recheck.firstEmittedSlice : null;

@@ -10,6 +10,7 @@ import {
 	TASK_LIST_MARKER_PATTERN,
 	wouldReferenceDefinitionAbsorbFollowingBlock,
 } from "./markdown-it-config";
+import { firstLine } from "./markdown-prescanner-containers";
 import { wouldRawHtmlInterruptParagraph } from "./markdown-prescanner-inline";
 import { sanitizeBulletMarker } from "./visual-schema";
 
@@ -238,8 +239,8 @@ function isClosedHtmlBlockTypes1To5(node: ProseMirrorNode): boolean {
 		return false;
 	}
 	const lines = maskPhpMarkdownMathForTableScan(raw).split("\n");
-	const firstLine = (lines[0] ?? "").replace(/^[ \t]{0,3}/, "");
-	const htmlType = matchHtmlBlockOpen(firstLine, false);
+	const head = (lines[0] ?? "").replace(/^[ \t]{0,3}/, "");
+	const htmlType = matchHtmlBlockOpen(head, false);
 	if (htmlType === null || htmlType === 6 || htmlType === 7) {
 		return false;
 	}
@@ -251,9 +252,7 @@ function isStandaloneType7HtmlFirstLine(text: string): boolean {
 	if (text.length === 0) {
 		return false;
 	}
-	const nl = text.indexOf("\n");
-	const firstLine = nl === -1 ? text : text.slice(0, nl);
-	const trimmedLead = firstLine.replace(/^[ \t]+/, "");
+	const trimmedLead = firstLine(text).replace(/^[ \t]+/, "");
 	return matchHtmlBlockOpen(trimmedLead, true) === 7;
 }
 
@@ -290,12 +289,8 @@ export function nodeCanLazilyContinue(node: ProseMirrorNode): boolean {
 					typeof node.attrs.rawMarkdown === "string"
 						? node.attrs.rawMarkdown
 						: "";
-				const nl = raw.indexOf("\n");
-				const firstLine = (nl === -1 ? raw : raw.slice(0, nl)).replace(
-					/^[ \t]{0,3}/,
-					"",
-				);
-				return matchHtmlBlockOpen(firstLine, true) === null;
+				const rawHead = firstLine(raw).replace(/^[ \t]{0,3}/, "");
+				return matchHtmlBlockOpen(rawHead, true) === null;
 			}
 			return true;
 		}
@@ -386,9 +381,7 @@ function canInterruptPreviousInTightList(
 		}
 	}
 	if (prev.type.name === "table") {
-		const nl = serialized.indexOf("\n");
-		const firstLine = nl === -1 ? serialized : serialized.slice(0, nl);
-		if (firstLine.includes("|")) return false;
+		if (firstLine(serialized).includes("|")) return false;
 		if (name === "table") return serialized.startsWith("<!-- ");
 	}
 	if (
@@ -397,12 +390,8 @@ function canInterruptPreviousInTightList(
 		typeof node.attrs.rawMarkdown === "string"
 	) {
 		const raw = node.attrs.rawMarkdown;
-		const nl = raw.indexOf("\n");
-		const firstLine = (nl === -1 ? raw : raw.slice(0, nl)).replace(
-			/^ {0,3}/,
-			"",
-		);
-		if (wouldRawHtmlInterruptParagraph(firstLine)) {
+		const rawHead = firstLine(raw).replace(/^ {0,3}/, "");
+		if (wouldRawHtmlInterruptParagraph(rawHead)) {
 			return true;
 		}
 	}
@@ -472,9 +461,7 @@ export function isTightPartialTitleFollower(
 	) {
 		return false;
 	}
-	const nl = serializedNext.indexOf("\n");
-	const firstLine = nl === -1 ? serializedNext : serializedNext.slice(0, nl);
-	if (!/^[ \t]*["'(]/.test(firstLine)) {
+	if (!/^[ \t]*["'(]/.test(firstLine(serializedNext))) {
 		return false;
 	}
 	const prevRef = inspectProtectedReferenceBlock(prev);
@@ -660,8 +647,7 @@ function serializeListItemBody(
 		) {
 			// A nested list that cannot interrupt a paragraph (`2. x`, empty
 			// item) would be absorbed as lazy paragraph text without a blank.
-			const nl = serialized.indexOf("\n");
-			const nestedFirstLine = nl === -1 ? serialized : serialized.slice(0, nl);
+			const nestedFirstLine = firstLine(serialized);
 			parts.push(
 				blankBeforeNestedList ||
 					!PARAGRAPH_INTERRUPTING_LIST_FIRST_LINE.test(nestedFirstLine)

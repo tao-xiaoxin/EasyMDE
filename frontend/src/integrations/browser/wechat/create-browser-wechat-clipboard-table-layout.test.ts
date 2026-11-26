@@ -6,6 +6,7 @@ import {
   blobText,
   computedStyle,
   declaration,
+  declaredStyleDeclarations,
   declaredStyleValue,
   dispatchSuccessfulLegacyCopy,
   installClipboardTestEnvironment,
@@ -64,6 +65,8 @@ describe('createBrowserWechatClipboard', () => {
     const scrollOwnerStyle = scrollOwner?.getAttribute('style') ?? '';
     const tableStyle = table?.getAttribute('style') ?? '';
     expect(scrollOwner?.tagName).toBe('SECTION');
+    expect(scrollOwner?.getAttribute('data-ignore-width')).toBe('');
+    expect(table?.getAttribute('data-ignore-width')).toBe('');
     expect(scrollOwnerStyle).toContain('display:block!important');
     expect(scrollOwnerStyle).toContain('width:100%!important');
     expect(scrollOwnerStyle).toContain('overflow-x:auto!important');
@@ -71,6 +74,24 @@ describe('createBrowserWechatClipboard', () => {
     expect(tableStyle).toContain('display:table!important');
     expect(tableStyle).toContain('width:max-content!important');
     expect(tableStyle).toContain('max-width:none!important');
+    expect(declaredStyleDeclarations(table as Element, 'width')).toEqual([
+      { property: 'width', value: 'max-content', important: true }
+    ]);
+    expect(declaredStyleDeclarations(table as Element, 'max-width')).toEqual([
+      { property: 'max-width', value: 'none', important: true }
+    ]);
+    expect(declaredStyleDeclarations(table as Element, 'margin-left')).toEqual([
+      { property: 'margin-left', value: 'auto', important: true }
+    ]);
+    expect(declaredStyleDeclarations(table as Element, 'margin-right')).toEqual([
+      { property: 'margin-right', value: 'auto', important: true }
+    ]);
+    expect(declaredStyleDeclarations(table as Element, 'overflow-x')).toEqual([
+      { property: 'overflow-x', value: 'visible', important: true }
+    ]);
+    expect(declaredStyleDeclarations(table as Element, 'overflow-y')).toEqual([
+      { property: 'overflow-y', value: 'visible', important: true }
+    ]);
     expect(tableStyle).not.toContain('min-width:0');
     expect(scrollOwnerStyle).toContain('min-width:0!important');
     expect(tableStyle).toContain('margin-left:auto!important');

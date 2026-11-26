@@ -8,9 +8,12 @@ import {
 	appendPortableStyleDeclaration,
 	COPY_STYLE_PROPERTIES,
 	createStyleDeclarationContext,
+	hasFinalizedBackgroundGradient,
+	markWechatGradientDarkmodeExemptions,
 	portableStyleProperties,
-	semanticTransformOriginSignature,
+	removeTransientAttributes,
 	semanticPaddingValue,
+	semanticTransformOriginSignature,
 	transportableTransformOriginSemantics,
 } from "./wechat-style-policy";
 import {
@@ -1095,5 +1098,100 @@ describe("portable style property catalog deduplication", () => {
 				modern.filter((entry) => entry.startsWith(`${property}:`)),
 			).toHaveLength(1);
 		}
+	});
+});
+
+describe("WeChat gradient darkmode exemption metadata", () => {
+	it("strips untrusted data-ignore-width and data-ignore-dm in removeTransientAttributes", () => {
+		const element = document.createElement("p");
+		element.setAttribute("data-ignore-width", "untrusted");
+		element.setAttribute("data-ignore-dm", "text-bg-gradient");
+		element.setAttribute("data-custom", "1");
+		element.setAttribute("id", "keep-id");
+
+		removeTransientAttributes(element);
+
+		expect(element.hasAttribute("data-ignore-width")).toBe(false);
+		expect(element.hasAttribute("data-ignore-dm")).toBe(false);
+		expect(element.hasAttribute("data-custom")).toBe(false);
+		expect(element.getAttribute("id")).toBe("keep-id");
+	});
+
+	it("detects effective finalized CSS gradient declarations in background and background-image only", () => {
+		expect(
+			hasFinalizedBackgroundGradient(
+				"background-image:linear-gradient(90deg, red, blue)",
+			),
+		).toBe(true);
+		expect(
+			hasFinalizedBackgroundGradient(
+				"background:rgb(255, 255, 255) radial-gradient(circle, red, blue) no-repeat",
+			),
+		).toBe(true);
+		expect(
+			hasFinalizedBackgroundGradient(
+				"background-image:conic-gradient(from 90deg, red, blue)",
+			),
+		).toBe(true);
+		expect(
+			hasFinalizedBackgroundGradient(
+				"background-image:repeating-linear-gradient(45deg, red 0px, blue 4px)",
+			),
+		).toBe(true);
+		expect(
+			hasFinalizedBackgroundGradient(
+				"background-image:none, linear-gradient(90deg, red, blue)",
+			),
+		).toBe(true);
+		expect(
+			hasFinalizedBackgroundGradient(
+				"background:linear-gradient(90deg, red, blue)!important;background-image:none",
+			),
+		).toBe(true);
+		expect(
+			hasFinalizedBackgroundGradient(
+				"background-image:linear-gradient(90deg, red, blue);background-image:none",
+			),
+		).toBe(false);
+		expect(
+			hasFinalizedBackgroundGradient(
+				"background-image:linear-gradient(90deg, red, blue);background:rgb(255, 255, 255)",
+			),
+		).toBe(false);
+		expect(
+			hasFinalizedBackgroundGradient("background-color:rgb(255, 255, 255)"),
+		).toBe(false);
+		expect(
+			hasFinalizedBackgroundGradient(
+				"border-image:linear-gradient(90deg, red, blue)",
+			),
+		).toBe(false);
+	});
+
+	it("marks finalized non-SVG gradient elements including root while skipping plain and SVG nodes", () => {
+		const root = document.createElement("section");
+		root.setAttribute(
+			"style",
+			"background:linear-gradient(180deg, rgb(255, 255, 255), rgb(248, 250, 252))",
+		);
+		root.innerHTML = [
+			'<p style="background-color:rgb(255, 255, 255)">Solid</p>',
+			'<span style="background-image:repeating-radial-gradient(circle, rgb(1, 2, 3), rgb(4, 5, 6))">Gradient</span>',
+			'<svg style="background-image:linear-gradient(red, blue)"><foreignObject><div style="background-image:linear-gradient(red, blue)">SVG HTML</div></foreignObject></svg>',
+		].join("");
+
+		markWechatGradientDarkmodeExemptions(root);
+
+		expect(root.getAttribute("data-ignore-dm")).toBe("text-bg-gradient");
+		expect(root.querySelector("p")?.hasAttribute("data-ignore-dm")).toBe(false);
+		expect(root.querySelector("span")?.getAttribute("data-ignore-dm")).toBe(
+			"text-bg-gradient",
+		);
+		expect(root.querySelector("svg")?.hasAttribute("data-ignore-dm")).toBe(
+			false,
+		);
+		expect(root.querySelector("div")?.hasAttribute("data-ignore-dm")).toBe(
+			false,
+		);
 	});
 });

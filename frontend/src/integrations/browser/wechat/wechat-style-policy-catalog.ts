@@ -360,6 +360,13 @@ export function hasOnlySafeDataImageUrls(value: string): boolean {
 export const WECHAT_EXPORT_STYLE_CONTEXT_ATTRIBUTE =
 	"data-easymde-wechat-export-style-context";
 
+export const WECHAT_IGNORE_DARKMODE_ATTRIBUTE = "data-ignore-dm";
+
+export const WECHAT_DARKMODE_GRADIENT_EXEMPTION = "text-bg-gradient";
+
+export const WECHAT_GRADIENT_FUNCTION =
+	/(?:^|[\s,(])(?:(?:-(?:webkit|moz|ms|o)-)?(?:repeating-)?(?:linear|radial|conic)-gradient|-webkit-gradient)\s*\(/i;
+
 export const SIGNATURE_ORDINARY_ROOT_PROPERTIES = uniqueStyleProperties(
 	COPY_STYLE_PROPERTIES,
 	["direction", "position"],

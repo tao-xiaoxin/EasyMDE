@@ -6,6 +6,7 @@ import {
 } from './wechat-clone-metadata';
 import type { BrowserWechatClipboardRuntime } from './wechat-clipboard-runtime';
 import { finiteCssPixelValue } from './wechat-preview-measurement';
+import { replaceDeclarations } from './wechat-style-declarations';
 import { appendDeclarations, sourceDirection, supportsSpecialLayout } from './wechat-style-policy';
 
 export const FULL_WIDTH_TABLE_SOURCE_LAYOUT = new WeakMap<Element, boolean>();
@@ -545,24 +546,23 @@ export function wrapTableScrollOwners(root: HTMLElement): void {
       true
     );
     markWechatOwnedScrollOwner(wrapper);
+    markWechatOwnedScrollOwner(table);
     parent.insertBefore(wrapper, table);
     wrapper.appendChild(table);
     const preservesBlockScroll = 'block' === (table as HTMLElement).style.display;
     const preservesFullWidth = FULL_WIDTH_TABLE_CLONES.has(table);
-    appendDeclarations(
+    const metadata = TABLE_SCROLL_OWNER_METADATA.get(table);
+    replaceDeclarations(
       table,
       [
         ...(preservesFullWidth && preservesBlockScroll
           ? ['width:100%', 'max-width:100%']
           : tableIntrinsicSizingDeclarations(table, preservesFullWidth)),
         ...(preservesFullWidth ? ['margin-left:0', 'margin-right:0'] : ['margin-left:auto', 'margin-right:auto']),
-        'overflow:visible',
-        'overflow-x:visible',
-        'overflow-y:visible'
+        ...(metadata ? ['overflow:visible'] : ['overflow:visible', 'overflow-x:visible', 'overflow-y:visible'])
       ],
       true
     );
-    const metadata = TABLE_SCROLL_OWNER_METADATA.get(table);
     if (metadata) appendDeclarations(table, tableScrollOwnerDeclarations(metadata), true);
   });
 }
@@ -573,50 +573,18 @@ export function normalizePortableTables(normalized: HTMLElement): void {
     // display mode and intrinsic sizing, then wrap it in a real block scroll
     // owner because overflow on display:table is ignored by browsers.
     const preservesBlockScroll = 'block' === element.style.display;
-    const preservesFullWidth = FULL_WIDTH_TABLE_CLONES.has(element);
-    appendDeclarations(
+    const metadata = TABLE_SCROLL_OWNER_METADATA.get(element);
+    replaceDeclarations(
       element,
-      preservesFullWidth
-        ? [
-            preservesBlockScroll ? 'display:block' : 'display:table',
-            ...(preservesBlockScroll
-              ? ['width:100%', 'max-width:100%']
-              : tableIntrinsicSizingDeclarations(element, true)),
-            'margin-left:0',
-            'margin-right:0',
-            ...(preservesBlockScroll ? [] : ['table-layout:auto', 'border-collapse:collapse']),
-            'overflow:visible',
-            'overflow-x:visible',
-            'overflow-y:visible',
-            'box-sizing:border-box'
-          ]
-        : preservesBlockScroll
-          ? [
-              'display:block',
-              ...tableIntrinsicSizingDeclarations(element, false),
-              'margin-left:auto',
-              'margin-right:auto',
-              'overflow:visible',
-              'overflow-x:visible',
-              'overflow-y:visible',
-              'box-sizing:border-box'
-            ]
-          : [
-              'display:table',
-              ...tableIntrinsicSizingDeclarations(element, false),
-              'margin-left:auto',
-              'margin-right:auto',
-              'table-layout:auto',
-              'border-collapse:collapse',
-              'overflow:visible',
-              'overflow-x:visible',
-              'overflow-y:visible',
-              'box-sizing:border-box'
-            ],
+      [
+        preservesBlockScroll ? 'display:block' : 'display:table',
+        ...(preservesBlockScroll
+          ? []
+          : ['table-layout:auto', ...(metadata ? [] : ['border-collapse:collapse'])]),
+        'box-sizing:border-box'
+      ],
       true
     );
-    const metadata = TABLE_SCROLL_OWNER_METADATA.get(element);
-    if (metadata) appendDeclarations(element, tableScrollOwnerDeclarations(metadata), true);
   });
   wrapTableScrollOwners(normalized);
 }

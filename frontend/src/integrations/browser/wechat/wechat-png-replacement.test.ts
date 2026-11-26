@@ -83,15 +83,192 @@ describe('replaceCompletedVisuals', () => {
     expect(candidate.getAttribute('style')?.match(/background:/g)).toHaveLength(1);
     expect(candidate.getAttribute('style')?.match(/opacity:/g)).toHaveLength(1);
     expect(candidate.getAttribute('style')?.match(/overflow-x:auto/g)).toHaveLength(1);
+    expect(candidate.getAttribute('data-ignore-width')).toBe('');
     expect(image.getAttribute('style')).toContain('width:134px!important');
     expect(image.getAttribute('style')).toContain('height:32px!important');
-    expect(image.getAttribute('style')).toContain('margin-left:auto!important');
-    expect(image.getAttribute('style')).toContain('margin-right:auto!important');
+    expect(declaredStyleDeclarations(image, 'margin-left')).toEqual([
+      { important: true, property: 'margin-left', value: 'auto' },
+    ]);
+    expect(declaredStyleDeclarations(image, 'margin-right')).toEqual([
+      { important: true, property: 'margin-right', value: 'auto' },
+    ]);
     expect(image.getAttribute('style')).not.toMatch(/(?:^|;)padding/);
     expect(image.getAttribute('style')).not.toMatch(/(?:^|;)border/);
     expect(image.getAttribute('style')).not.toContain('background');
     expect(image.getAttribute('style')).not.toContain('opacity');
     expect(image.getAttribute('style')).not.toContain('left:-');
+  });
+
+  it.each([
+    {
+      baseline: 18,
+      expectedVerticalAlign: '-4px',
+      height: 22,
+      label: 'zero paintOffsetY matching allocation height',
+      paintOffsetY: 0,
+      rasterHeight: 22,
+    },
+    {
+      baseline: 18,
+      expectedVerticalAlign: '-6px',
+      height: 24,
+      label: 'negative paintOffsetY ascender overhang',
+      paintOffsetY: -3,
+      rasterHeight: 27,
+    },
+    {
+      baseline: 18,
+      expectedVerticalAlign: '2px',
+      height: 24,
+      label: 'positive paintOffsetY superscript above baseline',
+      paintOffsetY: 2,
+      rasterHeight: 14,
+    },
+    {
+      baseline: 18,
+      expectedVerticalAlign: '-10px',
+      height: 24,
+      label: 'combined ascender and descender overhang',
+      paintOffsetY: -2,
+      rasterHeight: 30,
+    },
+  ])(
+    'replaces unclipped inline math with a static inline-block image for $label',
+    ({ baseline, expectedVerticalAlign, height, paintOffsetY, rasterHeight }) => {
+      const root = document.createElement('article');
+      root.setAttribute('data-easymde-preview-html-sink', 'true');
+      root.innerHTML =
+        '<p>Before <span class="easymde-math-inline" style="display:inline;margin-left:7px;margin-right:11px;margin-top:5px">' +
+        '<span class="katex"><span class="katex-html">x</span></span></span> after</p>';
+      const candidate = root.querySelector<HTMLElement>('.easymde-math-inline');
+      if (!candidate) throw new Error('wechat-png-replacement-test-inline-root-missing');
+      const completed: CompletedUpload = {
+        candidate: { element: candidate, kind: 'math', source: candidate },
+        captureSize: { height, width: 40 },
+        inlineParent: candidate.parentElement,
+        kind: 'math',
+        mathCapture: 'full-root',
+        mode: 'math-inline',
+        rasterized: {
+          file: new File(['png'], 'inline.png', { type: 'image/png' }),
+          height: rasterHeight,
+          inlineLayout: {
+            baseline,
+            height,
+            overflowX: 'visible',
+            overflowY: 'visible',
+            paintOffsetX: -2,
+            paintOffsetY,
+            width: 40,
+          },
+          pixelCount: 44 * rasterHeight,
+          width: 44,
+        },
+        sourceRect: { height, width: 40 },
+        url: 'https://example.test/inline.png',
+      };
+
+      replaceCompletedVisuals(root, conversionContext(root), [completed]);
+
+      const paragraph = root.querySelector('p');
+      const image = paragraph?.querySelector('img');
+      if (!paragraph || !image) throw new Error('wechat-png-replacement-test-inline-image-missing');
+      expect(paragraph.querySelector('.easymde-math-inline')).toBeNull();
+      expect(paragraph.querySelector('span')).toBeNull();
+      expect(image.parentElement).toBe(paragraph);
+      const style = image.getAttribute('style') ?? '';
+      expect(declaredStyleDeclarations(image, 'display')).toEqual([
+        { important: true, property: 'display', value: 'inline-block' },
+      ]);
+      expect(declaredStyleDeclarations(image, 'width')).toEqual([
+        { important: true, property: 'width', value: '44px' },
+      ]);
+      expect(declaredStyleDeclarations(image, 'height')).toEqual([
+        { important: true, property: 'height', value: `${rasterHeight}px` },
+      ]);
+      expect(declaredStyleDeclarations(image, 'max-width')).toEqual([
+        { important: true, property: 'max-width', value: 'none' },
+      ]);
+      expect(declaredStyleDeclarations(image, 'vertical-align')).toEqual([
+        { important: true, property: 'vertical-align', value: expectedVerticalAlign },
+      ]);
+      expect(declaredStyleDeclarations(image, 'margin-left')).toEqual([
+        { important: false, property: 'margin-left', value: '5px' },
+      ]);
+      expect(declaredStyleDeclarations(image, 'margin-right')).toEqual([
+        { important: false, property: 'margin-right', value: '9px' },
+      ]);
+      expect(style).not.toContain('position:relative');
+      expect(style).not.toContain('position:absolute');
+      expect(style).not.toContain('display:block');
+      expect(style).not.toContain('margin-top');
+    },
+  );
+
+  it('uses static flow margins without positioning for clipped inline math viewports', () => {
+    const root = document.createElement('article');
+    root.setAttribute('data-easymde-preview-html-sink', 'true');
+    root.innerHTML =
+      '<p><span class="easymde-math-inline" style="display:inline-block;overflow-x:auto;overflow-y:hidden;width:12px;height:18px">' +
+      '<span class="katex"><span class="katex-html">wide</span></span></span></p>';
+    const candidate = root.querySelector<HTMLElement>('.easymde-math-inline');
+    if (!candidate) throw new Error('wechat-png-replacement-test-clipped-inline-missing');
+    const completed: CompletedUpload = {
+      candidate: { element: candidate, kind: 'math', source: candidate },
+      captureSize: { height: 18, width: 12 },
+      inlineParent: candidate.parentElement,
+      kind: 'math',
+      mathCapture: 'full-root',
+      mode: 'math-inline',
+      rasterized: {
+        file: new File(['png'], 'clipped.png', { type: 'image/png' }),
+        height: 22,
+        inlineLayout: {
+          baseline: 20,
+          height: 24,
+          overflowX: 'auto',
+          overflowY: 'hidden',
+          paintOffsetX: 1,
+          paintOffsetY: 1,
+          viewport: { height: 18, offsetX: 2, offsetY: 3, width: 12 },
+          width: 16,
+        },
+        pixelCount: 35 * 22,
+        width: 35,
+      },
+      sourceRect: { height: 18, width: 12 },
+      url: 'https://example.test/clipped.png',
+    };
+
+    replaceCompletedVisuals(root, conversionContext(root), [completed]);
+
+    const image = candidate.querySelector('img');
+    if (!image) throw new Error('wechat-png-replacement-test-clipped-image-missing');
+    expect(candidate.children).toHaveLength(1);
+    expect(candidate.firstElementChild).toBe(image);
+    const wrapperStyle = candidate.getAttribute('style') ?? '';
+    const imageStyle = image.getAttribute('style') ?? '';
+    expect(wrapperStyle).toContain('display:inline-block!important');
+    expect(wrapperStyle).toContain('overflow-x:auto!important');
+    expect(wrapperStyle).toContain('overflow-y:hidden!important');
+    expect(wrapperStyle).toContain('width:12px!important');
+    expect(wrapperStyle).toContain('height:18px!important');
+    expect(wrapperStyle).toContain('vertical-align:-1px!important');
+    expect(wrapperStyle).toContain('margin-left:2px');
+    expect(wrapperStyle).toContain('margin-right:2px');
+    expect(wrapperStyle).not.toContain('position:relative');
+    expect(wrapperStyle).not.toContain('position:absolute');
+    expect(wrapperStyle).not.toContain('display:block');
+    expect(imageStyle).toContain('display:inline-block!important');
+    expect(imageStyle).toContain('margin-left:-1px!important');
+    expect(imageStyle).toContain('margin-top:-2px!important');
+    expect(imageStyle).toContain('vertical-align:top!important');
+    expect(imageStyle).toContain('width:35px!important');
+    expect(imageStyle).toContain('height:22px!important');
+    expect(imageStyle).toContain('max-width:none!important');
+    expect(imageStyle).not.toContain('position:relative');
+    expect(imageStyle).not.toContain('position:absolute');
+    expect(imageStyle).not.toContain('display:block');
   });
   it('serializes one decisive source-cap width, responsive bound, and height for a responsive Mermaid frame', () => {
     const { candidate, root, svg } = mermaidFixture();

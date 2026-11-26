@@ -374,8 +374,8 @@ describe('createBrowserWechatClipboard', () => {
     expect(images[0]?.getAttribute('style')).toContain('width:134px!important');
     expect(images[0]?.getAttribute('style')).toContain('max-width:none!important');
     expect(images[0]?.getAttribute('style')).toContain('display:block');
-    expect(images[0]?.getAttribute('style')).toContain('margin-left:auto!important');
-    expect(images[0]?.getAttribute('style')).toContain('margin-right:auto!important');
+    expect(images[0]?.getAttribute('style')?.match(/margin-left:auto!important/g)).toHaveLength(1);
+    expect(images[0]?.getAttribute('style')?.match(/margin-right:auto!important/g)).toHaveLength(1);
     expect(images[0]?.getAttribute('style')).not.toContain('width:auto!important');
     expect(images[0]?.getAttribute('style')).not.toContain('inline-size:100%!important');
     expect(images[0]?.getAttribute('style')).not.toMatch(/(?:^|;)padding-/);
@@ -405,6 +405,10 @@ describe('createBrowserWechatClipboard', () => {
     expect(images[1]?.getAttribute('style')).toContain('margin-right:9px');
     expect(images[1]?.getAttribute('style')).toContain('vertical-align:middle');
     expect(images[2]?.getAttribute('style')).toContain('width:40px!important');
+    expect(images[2]?.getAttribute('style')).toContain('display:inline-block!important');
+    expect(images[2]?.getAttribute('style')).toContain('vertical-align:-15px!important');
+    expect(images[2]?.getAttribute('style')).not.toContain('position:');
+    expect(images[2]?.getAttribute('style')).not.toContain('display:block');
     expect(images[0]?.parentElement?.getAttribute('data-ignore-width')).toBe('');
     expect(images[1]?.parentElement?.hasAttribute('data-ignore-width')).toBe(false);
     expect(images[2]?.parentElement?.hasAttribute('data-ignore-width')).toBe(false);

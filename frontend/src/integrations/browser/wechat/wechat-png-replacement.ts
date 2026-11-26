@@ -55,6 +55,56 @@ export function positiveDimensionOrFallback(value: number, fallback: number): nu
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+function normalizeCssPixel(value: number): number {
+  const rounded = Math.round(value * 1_000_000) / 1_000_000;
+  return Object.is(rounded, -0) ? 0 : rounded;
+}
+
+function parseFiniteCssPixel(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed || '0' === trimmed) return 0;
+  const match = /^(-?\d+(?:\.\d+)?)px$/iu.exec(trimmed);
+  if (!match) return null;
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function inlineFlowMarginDeclaration(
+  property: 'margin-left' | 'margin-right',
+  sourceStyle: CSSStyleDeclaration | undefined,
+  deltaPx: number,
+): string | null {
+  const sourceValue = sourceStyle?.getPropertyValue(property).trim() ?? '';
+  const normalizedDelta = normalizeCssPixel(deltaPx);
+  if (0 === normalizedDelta) {
+    return sourceValue ? `${property}:${sourceValue}` : null;
+  }
+  const sourcePx = parseFiniteCssPixel(sourceValue);
+  if (null === sourcePx) {
+    return sourceValue ? `${property}:${sourceValue}` : null;
+  }
+  const combined = normalizeCssPixel(sourcePx + normalizedDelta);
+  if (0 === combined && !sourceValue) return null;
+  return `${property}:${combined}px`;
+}
+
+function inlineFlowDeclarations(
+  sourceStyle: CSSStyleDeclaration | undefined,
+  leftDeltaPx: number,
+  rightDeltaPx: number,
+): string[] {
+  const leftMargin = inlineFlowMarginDeclaration('margin-left', sourceStyle, leftDeltaPx);
+  const rightMargin = inlineFlowMarginDeclaration('margin-right', sourceStyle, rightDeltaPx);
+  return [
+    ...(leftMargin ? [leftMargin] : []),
+    ...(rightMargin ? [rightMargin] : []),
+    ...(['float', 'clear'] as const).flatMap((property) => {
+      const value = sourceStyle?.getPropertyValue(property).trim() ?? '';
+      return value ? [`${property}:${value}`] : [];
+    }),
+  ];
+}
+
 function replaceMathBlockContent(
   owner: Element,
   image: HTMLImageElement,
@@ -104,13 +154,15 @@ function replaceMathBlockContent(
       'width:100%',
       'min-width:0',
       'max-width:100%',
+      'overflow-x:auto',
       'height:auto',
       'max-height:none',
       'box-sizing:border-box',
     ],
     true,
   );
-  appendDeclarations(
+  markWechatOwnedScrollOwner(owner);
+  replaceDeclarations(
     image,
     ['display:block', 'margin-left:auto', 'margin-right:auto'],
     true,
@@ -127,7 +179,121 @@ function replaceMathBlockContent(
 export function inlineVerticalAlignValue(sourceStyle: CSSStyleDeclaration | undefined, measuredValue: number): string {
   const sourceValue = sourceStyle?.getPropertyValue('vertical-align').trim().toLowerCase();
   if ('top' === sourceValue || 'bottom' === sourceValue) return sourceValue;
-  return `${Object.is(measuredValue, -0) ? 0 : measuredValue}px`;
+  return `${normalizeCssPixel(measuredValue)}px`;
+}
+
+function replaceInlineMathVisual(
+  completed: Extract<CompletedUpload, { mode: 'math-inline' }>,
+  image: HTMLImageElement,
+  sourceStyle: CSSStyleDeclaration | undefined,
+  timingPerformance: Performance | undefined,
+  timingMetadata: WechatTimingMetadata,
+): void {
+  const inlineLayout = completed.rasterized.inlineLayout;
+  if (!inlineLayout) {
+    throw new WechatPngConversionError('wechat-png-rasterization-failed');
+  }
+  const imageWidth = Math.round(completed.rasterized.width);
+  const imageHeight = Math.round(completed.rasterized.height);
+  const overflowX = inlineOverflowStyleValue(inlineLayout.overflowX, sourceStyle, 'overflow-x');
+  const overflowY = inlineOverflowStyleValue(inlineLayout.overflowY, sourceStyle, 'overflow-y');
+  const preservesSourceViewport = usesInlineOverflowViewport(overflowX, overflowY);
+
+  // Ordinary unclipped inline math replaces the source span directly with one
+  // static inline-block image. Keeping positioned wrappers or block images
+  // inside inline spans causes WeChat's ProseMirror editor to split nodes
+  // while async image transfer holds stale positions.
+  if (!preservesSourceViewport) {
+    const verticalAlign = inlineVerticalAlignValue(
+      sourceStyle,
+      inlineLayout.baseline - (inlineLayout.paintOffsetY + imageHeight),
+    );
+    const flowDeclarations = inlineFlowDeclarations(
+      sourceStyle,
+      inlineLayout.paintOffsetX,
+      inlineLayout.width - (inlineLayout.paintOffsetX + imageWidth),
+    );
+    if (flowDeclarations.length) {
+      replaceDeclarations(image, flowDeclarations);
+    }
+    replaceDeclarations(
+      image,
+      [
+        'display:inline-block',
+        `width:${imageWidth}px`,
+        `height:${imageHeight}px`,
+        'max-width:none',
+        `vertical-align:${verticalAlign}`,
+      ],
+      true,
+    );
+    WECHAT_PNG_GENERATED_IMAGES.add(image);
+    runWechatSyncTiming(
+      timingPerformance,
+      WECHAT_COPY_TIMING_NAMES.replacement,
+      timingMetadata,
+      () => completed.candidate.element.replaceWith(image),
+    );
+    return;
+  }
+
+  const viewport = inlineLayout.viewport;
+  const hasLocalViewport = Boolean(viewport);
+  const wrapperWidth = hasLocalViewport && viewport
+    ? viewport.width
+    : positiveDimensionOrFallback(completed.sourceRect.width, inlineLayout.width);
+  const wrapperHeight = hasLocalViewport && viewport
+    ? viewport.height
+    : positiveDimensionOrFallback(completed.sourceRect.height, inlineLayout.height);
+  const verticalAlign = inlineVerticalAlignValue(
+    sourceStyle,
+    hasLocalViewport && viewport
+      ? inlineLayout.baseline - (viewport.offsetY + viewport.height)
+      : inlineLayout.baseline - inlineLayout.height,
+  );
+  const wrapperDeclarations = [
+    ...inlineFlowDeclarations(
+      sourceStyle,
+      hasLocalViewport && viewport ? viewport.offsetX : 0,
+      hasLocalViewport && viewport ? inlineLayout.width - (viewport.offsetX + viewport.width) : 0,
+    ),
+    'display:inline-block!important',
+    `overflow-x:${overflowX}!important`,
+    `overflow-y:${overflowY}!important`,
+    `width:${wrapperWidth}px!important`,
+    `height:${wrapperHeight}px!important`,
+    'max-width:none!important',
+    'max-height:none!important',
+    `vertical-align:${verticalAlign}!important`,
+    'box-sizing:border-box!important',
+  ];
+  const imageLeft = normalizeCssPixel(
+    hasLocalViewport && viewport ? inlineLayout.paintOffsetX - viewport.offsetX : inlineLayout.paintOffsetX,
+  );
+  const imageTop = normalizeCssPixel(
+    hasLocalViewport && viewport ? inlineLayout.paintOffsetY - viewport.offsetY : inlineLayout.paintOffsetY,
+  );
+  replaceDeclarations(
+    image,
+    [
+      'display:inline-block',
+      `margin-left:${imageLeft}px`,
+      `margin-top:${imageTop}px`,
+      'vertical-align:top',
+      `width:${imageWidth}px`,
+      `height:${imageHeight}px`,
+      'max-width:none',
+    ],
+    true,
+  );
+  WECHAT_PNG_GENERATED_IMAGES.add(image);
+  completed.candidate.element.setAttribute('style', wrapperDeclarations.join(';'));
+  runWechatSyncTiming(
+    timingPerformance,
+    WECHAT_COPY_TIMING_NAMES.replacement,
+    timingMetadata,
+    () => completed.candidate.element.replaceChildren(image),
+  );
 }
 
 export function replaceCompletedVisuals(
@@ -162,7 +328,6 @@ export function replaceCompletedVisuals(
         );
         const sourceStyle = (completed.candidate.element as Element & { style?: CSSStyleDeclaration }).style;
         const sourceDisplay = sourceStyle?.getPropertyValue('display').trim().toLowerCase() ?? '';
-        const inlineLayout = completed.rasterized.inlineLayout;
         if ('math-block' === completed.mode && 'content' === completed.mathCapture) {
           replaceMathBlockContent(
             completed.candidate.element,
@@ -251,96 +416,13 @@ export function replaceCompletedVisuals(
           continue;
         }
         if ('math-inline' === completed.mode) {
-          if (!inlineLayout) {
-            throw new WechatPngConversionError('wechat-png-rasterization-failed');
-          }
-          const wrapperProperties = ['margin-right', 'margin-left', 'float', 'clear'];
-          const wrapperDeclarations = wrapperProperties.flatMap((property) => {
-            const value = sourceStyle?.getPropertyValue(property).trim() ?? '';
-            return value ? [`${property}:${value}`] : [];
-          });
-          const verticalAlign = inlineVerticalAlignValue(sourceStyle, inlineLayout.baseline - inlineLayout.height);
-          const overflowX = inlineOverflowStyleValue(inlineLayout.overflowX, sourceStyle, 'overflow-x');
-          const overflowY = inlineOverflowStyleValue(inlineLayout.overflowY, sourceStyle, 'overflow-y');
-          const preservesSourceViewport = usesInlineOverflowViewport(overflowX, overflowY);
-          const hasLocalViewport = preservesSourceViewport && Boolean(inlineLayout.viewport);
-          const wrapperWidth = hasLocalViewport
-            ? inlineLayout.width
-            : preservesSourceViewport
-              ? positiveDimensionOrFallback(completed.sourceRect.width, inlineLayout.width)
-              : inlineLayout.width;
-          const wrapperHeight = hasLocalViewport
-            ? inlineLayout.height
-            : preservesSourceViewport
-              ? positiveDimensionOrFallback(completed.sourceRect.height, inlineLayout.height)
-              : inlineLayout.height;
-          wrapperDeclarations.push(
-            'display:inline-block!important',
-            'position:relative!important',
-            `overflow-x:${hasLocalViewport ? 'visible' : overflowX}!important`,
-            `overflow-y:${hasLocalViewport ? 'visible' : overflowY}!important`,
-            `width:${wrapperWidth}px!important`,
-            `height:${wrapperHeight}px!important`,
-            'max-width:none!important',
-            'max-height:none!important',
-            `vertical-align:${verticalAlign}!important`
-          );
-          const viewport = inlineLayout.viewport;
-          const viewportElement = hasLocalViewport && viewport ? root.ownerDocument.createElement('span') : null;
-          if (viewportElement && viewport) {
-            appendDeclarations(
-              viewportElement,
-              [
-                'display:block',
-                'position:absolute',
-                `left:${Object.is(viewport.offsetX, -0) ? 0 : viewport.offsetX}px`,
-                `top:${Object.is(viewport.offsetY, -0) ? 0 : viewport.offsetY}px`,
-                `width:${viewport.width}px`,
-                `height:${viewport.height}px`,
-                `overflow-x:${overflowX}`,
-                `overflow-y:${overflowY}`,
-                'max-width:none',
-                'max-height:none',
-                'box-sizing:border-box'
-              ],
-              true
-            );
-          }
-          const imageLeft =
-            viewportElement && viewport ? inlineLayout.paintOffsetX - viewport.offsetX : inlineLayout.paintOffsetX;
-          const imageTop =
-            viewportElement && viewport ? inlineLayout.paintOffsetY - viewport.offsetY : inlineLayout.paintOffsetY;
-          appendDeclarations(
+          replaceInlineMathVisual(
+            completed,
             image,
-            [
-              'position:absolute',
-              `left:${Object.is(imageLeft, -0) ? 0 : imageLeft}px`,
-              `top:${Object.is(imageTop, -0) ? 0 : imageTop}px`,
-              `width:${Math.round(completed.rasterized.width)}px`,
-              `height:${Math.round(completed.rasterized.height)}px`,
-              'max-width:none',
-              'display:block'
-            ],
-            true
+            sourceStyle,
+            timingPerformance,
+            timingMetadata(completedIndex, completed.candidate.kind, 'sync'),
           );
-          WECHAT_PNG_GENERATED_IMAGES.add(image);
-          completed.candidate.element.setAttribute('style', wrapperDeclarations.join(';'));
-          if (viewportElement) {
-            viewportElement.appendChild(image);
-            runWechatSyncTiming(
-              timingPerformance,
-              WECHAT_COPY_TIMING_NAMES.replacement,
-              timingMetadata(completedIndex, completed.candidate.kind, 'sync'),
-              () => completed.candidate.element.replaceChildren(viewportElement)
-            );
-          } else {
-            runWechatSyncTiming(
-              timingPerformance,
-              WECHAT_COPY_TIMING_NAMES.replacement,
-              timingMetadata(completedIndex, completed.candidate.kind, 'sync'),
-              () => completed.candidate.element.replaceChildren(image)
-            );
-          }
           continue;
         }
         const preserveOverflowOwner = isVisualOverflowOwner(sourceStyle);

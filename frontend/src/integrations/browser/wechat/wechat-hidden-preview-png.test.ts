@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { Blob as NodeBlob } from "node:buffer";
+import { webcrypto } from "node:crypto";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ImageUploadPort } from "../../../contracts/ports/image-upload-port";
 import type { WechatClipboardCopyOptions } from "../../../contracts/ports/wechat-clipboard-port";
@@ -160,11 +163,27 @@ function uploadPort() {
 	};
 }
 
+let cryptoDescriptor: PropertyDescriptor | undefined;
+
+beforeEach(() => {
+	cryptoDescriptor = Object.getOwnPropertyDescriptor(window, "crypto");
+	Object.defineProperty(window, "crypto", {
+		configurable: true,
+		value: webcrypto,
+	});
+});
+
 afterEach(() => {
 	vi.restoreAllMocks();
 	ImageStub.sources = [];
 	document.head.replaceChildren();
 	document.body.replaceChildren();
+	if (cryptoDescriptor) {
+		Object.defineProperty(window, "crypto", cryptoDescriptor);
+		cryptoDescriptor = undefined;
+	} else {
+		Reflect.deleteProperty(window, "crypto");
+	}
 });
 
 describe("WeChat PNG export from a hidden formal Preview owner", () => {
@@ -252,7 +271,7 @@ describe("WeChat PNG export from a hidden formal Preview owner", () => {
 		} as unknown as CanvasRenderingContext2D);
 		vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(
 			(callback) => {
-				callback(new Blob(["png"], { type: "image/png" }));
+				callback(new NodeBlob(["png"], { type: "image/png" }) as unknown as Blob);
 			},
 		);
 		const rasterizer = createBrowserWechatVisualRasterizer({
@@ -322,7 +341,7 @@ describe("Mermaid background ancestor walk", () => {
 		} as unknown as CanvasRenderingContext2D);
 		vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(
 			(callback) => {
-				callback(new Blob(["png"], { type: "image/png" }));
+				callback(new NodeBlob(["png"], { type: "image/png" }) as unknown as Blob);
 			},
 		);
 		const themed = document.createElement("section");
@@ -373,7 +392,7 @@ describe("Mermaid background ancestor walk", () => {
 		} as unknown as CanvasRenderingContext2D);
 		vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(
 			(callback) => {
-				callback(new Blob(["png"], { type: "image/png" }));
+				callback(new NodeBlob(["png"], { type: "image/png" }) as unknown as Blob);
 			},
 		);
 		document.body.style.backgroundColor = "rgb(240, 240, 241)";
@@ -563,7 +582,7 @@ describe("Mermaid background ancestor walk", () => {
 			} as unknown as CanvasRenderingContext2D);
 			vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(
 				(callback) => {
-					callback(new Blob(["png"], { type: "image/png" }));
+					callback(new NodeBlob(["png"], { type: "image/png" }) as unknown as Blob);
 				},
 			);
 			const canvas = document.createElement("div");
@@ -848,7 +867,7 @@ describe("Mermaid background ancestor walk", () => {
 		} as unknown as CanvasRenderingContext2D);
 		vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(
 			(callback) => {
-				callback(new Blob(["png"], { type: "image/png" }));
+				callback(new NodeBlob(["png"], { type: "image/png" }) as unknown as Blob);
 			},
 		);
 		const canvas = document.createElement("div");
@@ -992,7 +1011,7 @@ describe("Mermaid background ancestor walk", () => {
 			} as unknown as CanvasRenderingContext2D);
 			vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(
 				(callback) => {
-					callback(new Blob(["png"], { type: "image/png" }));
+					callback(new NodeBlob(["png"], { type: "image/png" }) as unknown as Blob);
 				},
 			);
 			const canvas = document.createElement("div");
@@ -1262,7 +1281,7 @@ describe("Mermaid background ancestor walk", () => {
 			} as unknown as CanvasRenderingContext2D);
 			vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(
 				(callback) => {
-					callback(new Blob(["png"], { type: "image/png" }));
+					callback(new NodeBlob(["png"], { type: "image/png" }) as unknown as Blob);
 				},
 			);
 			const canvas = document.createElement("div");

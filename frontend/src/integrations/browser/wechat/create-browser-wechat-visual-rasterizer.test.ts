@@ -2542,7 +2542,7 @@ describe('createBrowserWechatVisualRasterizer', () => {
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext')
       .mockReturnValue(canvasContext as unknown as CanvasRenderingContext2D);
     vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation((callback) => {
-      callback(new Blob(['png'], { type: 'image/png' }));
+      callback(new NodeBlob(['png'], { type: 'image/png' }) as unknown as Blob);
     });
     const stylesheet = document.createElement('style');
     stylesheet.textContent = [

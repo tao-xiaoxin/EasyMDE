@@ -1219,48 +1219,93 @@ final class MarkdownRendererTest extends WP_UnitTestCase
 	public function test_image_scale_numeric_entity_markers_are_deterministic_with_or_without_unrelated_prose()
 	{
 		$valid_cases = array(
-			'standalone &amp;#123; 50%'      => '![Alt](https://example.test/image.png "Caption &amp;#123;width=50%&amp;#125;")',
-			'prose-accompanied &amp;#123; 50%' => "Unrelated {width= note\n\n" . '![Alt](https://example.test/image.png "Caption &amp;#123;width=50%&amp;#125;")',
-			'standalone padded entity 50%'   => '![Alt](https://example.test/image.png "Caption &#00000123;width=50%&#00000125;")',
-			'prose-accompanied padded 50%'   => "Unrelated {width= note\n\n" . '![Alt](https://example.test/image.png "Caption &#00000123;width=50%&#00000125;")',
+			'&amp;#123; 50%' => array(
+				'standalone'        => '![Alt](https://example.test/image.png "Caption &amp;#123;width=50%&amp;#125;")',
+				'prose_accompanied' => "Unrelated {width= note\n\n" . '![Alt](https://example.test/image.png "Caption &amp;#123;width=50%&amp;#125;")',
+				'kses_probe'        => '<img src="https://example.test/image.png" title="Caption &amp;#123;width=50%&amp;#125;" />',
+				'literal_title'     => 'Caption &#123;width=50%&#125;',
+			),
+			'padded entity 50%' => array(
+				'standalone'        => '![Alt](https://example.test/image.png "Caption &#00000123;width=50%&#00000125;")',
+				'prose_accompanied' => "Unrelated {width= note\n\n" . '![Alt](https://example.test/image.png "Caption &#00000123;width=50%&#00000125;")',
+				'kses_probe'        => '<img src="https://example.test/image.png" title="Caption &amp;#00000123;width=50%&amp;#00000125;" />',
+				'literal_title'     => 'Caption &#00000123;width=50%&#00000125;',
+			),
 		);
 
-		foreach ( $valid_cases as $case => $markdown ) {
-			$rendered = MarkdownRenderer::render( $markdown );
-			$preview  = MarkdownRenderer::render_preview( $markdown );
-			foreach ( array( 'render' => $rendered, 'render_preview' => $preview['html'] ) as $mode => $html ) {
-				$document              = new DOMDocument( '1.0', 'UTF-8' );
-				$previous_libxml_state = libxml_use_internal_errors( true );
-				try {
-					$loaded = $document->loadHTML(
-						'<?xml encoding="UTF-8"><div id="image-scale-entity-root">' . $html . '</div>',
-						LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD
-					);
-				} finally {
-					libxml_clear_errors();
-					libxml_use_internal_errors( $previous_libxml_state );
-				}
+		$parse_first_image = function ( $html, $context ) {
+			$document              = new DOMDocument( '1.0', 'UTF-8' );
+			$previous_libxml_state = libxml_use_internal_errors( true );
+			try {
+				$loaded = $document->loadHTML(
+					'<?xml encoding="UTF-8"><div id="image-scale-entity-root">' . $html . '</div>',
+					LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD
+				);
+			} finally {
+				libxml_clear_errors();
+				libxml_use_internal_errors( $previous_libxml_state );
+			}
 
-				$this->assertTrue( $loaded, $case . ':' . $mode );
-				$image = $document->getElementsByTagName( 'img' )->item( 0 );
-				$this->assertInstanceOf( DOMElement::class, $image, $case . ':' . $mode );
-				$this->assertSame( 'Caption', $image->getAttribute( 'title' ), $case . ':' . $mode );
-				$this->assertSame( '50%', $image->getAttribute( 'width' ), $case . ':' . $mode );
-				$this->assertSame( '50', $image->getAttribute( 'data-easymde-image-scale' ), $case . ':' . $mode );
+			$this->assertTrue( $loaded, $context );
+			$image = $document->getElementsByTagName( 'img' )->item( 0 );
+			$this->assertInstanceOf( DOMElement::class, $image, $context );
+			return $image;
+		};
+
+		foreach ( $valid_cases as $label => $spec ) {
+			// WordPress 6.7 wp_kses_normalize_entities() unwraps `&amp;#123;` into `&#123;`,
+			// whereas WordPress 7.1+ preserves `&amp;#123;` as literal text. Probe through
+			// DOMDocument so entity representation (`&amp;` vs `&#038;`) never skews the check;
+			// in every core version, adding unrelated `{width=` prose must stay deterministic.
+			$probe_image         = $parse_first_image( wp_kses_post( $spec['kses_probe'] ), 'kses-probe ' . $label );
+			$kses_unwraps_entity = false !== strpos( $probe_image->getAttribute( 'title' ), '{width=' );
+
+			foreach ( array( 'standalone' => $spec['standalone'], 'prose-accompanied' => $spec['prose_accompanied'] ) as $variant => $markdown ) {
+				$case     = $variant . ' ' . $label;
+				$rendered = MarkdownRenderer::render( $markdown );
+				$preview  = MarkdownRenderer::render_preview( $markdown );
+				foreach ( array( 'render' => $rendered, 'render_preview' => $preview['html'] ) as $mode => $html ) {
+					$image = $parse_first_image( $html, $case . ':' . $mode );
+					if ( $kses_unwraps_entity ) {
+						$this->assertSame( 'Caption', $image->getAttribute( 'title' ), $case . ':' . $mode );
+						$this->assertSame( '50%', $image->getAttribute( 'width' ), $case . ':' . $mode );
+						$this->assertSame( '50', $image->getAttribute( 'data-easymde-image-scale' ), $case . ':' . $mode );
+					} else {
+						$this->assertSame( $spec['literal_title'], $image->getAttribute( 'title' ), $case . ':' . $mode );
+						$this->assertSame( '', $image->getAttribute( 'width' ), $case . ':' . $mode );
+						$this->assertSame( '', $image->getAttribute( 'data-easymde-image-scale' ), $case . ':' . $mode );
+					}
+				}
 			}
 		}
 
-		$invalid_cases = array(
+		$probe_image_51  = $parse_first_image(
+			wp_kses_post( '<img src="https://example.test/image.png" title="Caption &amp;#123;width=51%&amp;#125;" />' ),
+			'kses-probe 51%'
+		);
+		$kses_unwraps_51 = false !== strpos( $probe_image_51->getAttribute( 'title' ), '{width=' );
+		$invalid_cases   = array(
 			'standalone &amp;#123; 51%'        => '![Alt](https://example.test/image.png "Caption &amp;#123;width=51%&amp;#125;")',
 			'prose-accompanied &amp;#123; 51%' => "Unrelated {width= note\n\n" . '![Alt](https://example.test/image.png "Caption &amp;#123;width=51%&amp;#125;")',
 		);
 
 		foreach ( $invalid_cases as $case => $markdown ) {
-			try {
-				MarkdownRenderer::render( $markdown );
-				$this->fail( 'Expected invalid numeric-entity scale marker to throw for ' . $case );
-			} catch ( RuntimeException $exception ) {
-				$this->assertSame( 'easymde_image_scale_syntax_invalid', $exception->getMessage(), $case );
+			if ( $kses_unwraps_51 ) {
+				try {
+					MarkdownRenderer::render( $markdown );
+					$this->fail( 'Expected invalid numeric-entity scale marker to throw for ' . $case );
+				} catch ( RuntimeException $exception ) {
+					$this->assertSame( 'easymde_image_scale_syntax_invalid', $exception->getMessage(), $case );
+				}
+			} else {
+				$rendered = MarkdownRenderer::render( $markdown );
+				$preview  = MarkdownRenderer::render_preview( $markdown );
+				foreach ( array( 'render' => $rendered, 'render_preview' => $preview['html'] ) as $mode => $html ) {
+					$image = $parse_first_image( $html, $case . ':' . $mode );
+					$this->assertSame( 'Caption &#123;width=51%&#125;', $image->getAttribute( 'title' ), $case . ':' . $mode );
+					$this->assertSame( '', $image->getAttribute( 'width' ), $case . ':' . $mode );
+					$this->assertSame( '', $image->getAttribute( 'data-easymde-image-scale' ), $case . ':' . $mode );
+				}
 			}
 		}
 	}

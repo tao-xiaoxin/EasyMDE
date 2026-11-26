@@ -1,15 +1,15 @@
 {
-  "_admin-editor-chunk-CxmAbEL3.js": {
-    "file": "assets/admin-editor-chunk-CxmAbEL3.js",
+  "_admin-editor-chunk-CyXntpik.js": {
+    "file": "assets/admin-editor-chunk-CyXntpik.js",
     "name": "shared"
   },
   "frontend/src/entrypoints/admin-editor.tsx": {
-    "file": "assets/admin-editor-B4IF4JMI.js",
+    "file": "assets/admin-editor-DLORA0Bd.js",
     "name": "editor",
     "src": "frontend/src/entrypoints/admin-editor.tsx",
     "isEntry": true,
     "imports": [
-      "_admin-editor-chunk-CxmAbEL3.js"
+      "_admin-editor-chunk-CyXntpik.js"
     ],
     "dynamicImports": [
       "frontend/src/features/appearance/ui/ImmersiveCustomCssDialog.tsx",
@@ -24,84 +24,84 @@
     ]
   },
   "frontend/src/features/appearance/ui/ImmersiveCustomCssDialog.tsx": {
-    "file": "assets/admin-editor-chunk-Br5nUNIU.js",
+    "file": "assets/admin-editor-chunk-D9sVWhM7.js",
     "name": "ImmersiveCustomCssDialog",
     "src": "frontend/src/features/appearance/ui/ImmersiveCustomCssDialog.tsx",
     "isDynamicEntry": true,
     "imports": [
-      "_admin-editor-chunk-CxmAbEL3.js"
+      "_admin-editor-chunk-CyXntpik.js"
     ]
   },
   "frontend/src/features/immersive-editor/ui/ImmersivePublishDialog.tsx": {
-    "file": "assets/admin-editor-chunk-BS5AzMJg.js",
+    "file": "assets/admin-editor-chunk-BaZ6DZzb.js",
     "name": "ImmersivePublishDialog",
     "src": "frontend/src/features/immersive-editor/ui/ImmersivePublishDialog.tsx",
     "isDynamicEntry": true,
     "imports": [
-      "_admin-editor-chunk-CxmAbEL3.js"
+      "_admin-editor-chunk-CyXntpik.js"
     ]
   },
   "frontend/src/features/immersive-visual/MountedProseMirrorVisualEditor.tsx": {
-    "file": "assets/admin-editor-chunk-yyk5sZ9d.js",
+    "file": "assets/admin-editor-chunk-DxBpQf37.js",
     "name": "MountedProseMirrorVisualEditor",
     "src": "frontend/src/features/immersive-visual/MountedProseMirrorVisualEditor.tsx",
     "isDynamicEntry": true,
     "imports": [
-      "_admin-editor-chunk-CxmAbEL3.js"
+      "_admin-editor-chunk-CyXntpik.js"
     ]
   },
   "frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts": {
-    "file": "assets/admin-editor-chunk-D39L3d6L.js",
+    "file": "assets/admin-editor-chunk-BHGfXlIk.js",
     "name": "create-browser-wechat-clipboard",
     "src": "frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts",
     "isDynamicEntry": true,
     "imports": [
-      "_admin-editor-chunk-CxmAbEL3.js"
+      "_admin-editor-chunk-CyXntpik.js"
     ]
   },
   "frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.ts": {
-    "file": "assets/admin-editor-chunk-Dk-U64iI.js",
+    "file": "assets/admin-editor-chunk-BntlVFDo.js",
     "name": "create-browser-wechat-visual-rasterizer",
     "src": "frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.ts",
     "isDynamicEntry": true,
     "imports": [
-      "_admin-editor-chunk-CxmAbEL3.js"
+      "_admin-editor-chunk-CyXntpik.js"
     ]
   },
   "node_modules/@codemirror/lang-json/dist/index.js": {
-    "file": "assets/admin-editor-chunk-BF7Li0xl.js",
+    "file": "assets/admin-editor-chunk-CXVXrFdf.js",
     "name": "dist",
     "src": "node_modules/@codemirror/lang-json/dist/index.js",
     "isDynamicEntry": true,
     "imports": [
-      "_admin-editor-chunk-CxmAbEL3.js"
+      "_admin-editor-chunk-CyXntpik.js"
     ]
   },
   "node_modules/@codemirror/lang-python/dist/index.js": {
-    "file": "assets/admin-editor-chunk-CgXwW-3d.js",
+    "file": "assets/admin-editor-chunk-72rtVxzX.js",
     "name": "dist",
     "src": "node_modules/@codemirror/lang-python/dist/index.js",
     "isDynamicEntry": true,
     "imports": [
-      "_admin-editor-chunk-CxmAbEL3.js"
+      "_admin-editor-chunk-CyXntpik.js"
     ]
   },
   "node_modules/@codemirror/lang-sql/dist/index.js": {
-    "file": "assets/admin-editor-chunk-B15qTCiO.js",
+    "file": "assets/admin-editor-chunk-D7yf8qWg.js",
     "name": "dist",
     "src": "node_modules/@codemirror/lang-sql/dist/index.js",
     "isDynamicEntry": true,
     "imports": [
-      "_admin-editor-chunk-CxmAbEL3.js"
+      "_admin-editor-chunk-CyXntpik.js"
     ]
   },
   "node_modules/@codemirror/lang-yaml/dist/index.js": {
-    "file": "assets/admin-editor-chunk-y3sMC2-n.js",
+    "file": "assets/admin-editor-chunk-CTnvd3bh.js",
     "name": "dist",
     "src": "node_modules/@codemirror/lang-yaml/dist/index.js",
     "isDynamicEntry": true,
     "imports": [
-      "_admin-editor-chunk-CxmAbEL3.js"
+      "_admin-editor-chunk-CyXntpik.js"
     ]
   }
 }

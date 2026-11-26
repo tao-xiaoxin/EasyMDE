@@ -474,7 +474,8 @@
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue h3 .content {
   display: inline-block;
-  height: 38px;
+  min-height: 38px;
+  height: auto;
   margin: 38px 0 10px;
   color: #2b2b2b;
   font-size: 18px;

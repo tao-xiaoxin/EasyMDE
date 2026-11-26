@@ -421,7 +421,8 @@
 .easymde-rendered-content.easymde-markdown-theme-frontend-peak h2 .content {
   text-align:center;
   display: inline-block;
-  height: 38px;
+  min-height: 38px;
+  height: auto;
   line-height: 42px;
   color: rgb(60, 112, 198);
   background-position: left center;

@@ -2995,7 +2995,7 @@ describe('Immersive visual editor bridges', () => {
     // Separate cold unlocked posts for list-item and lone-CR Mermaid fences.
     for (const sample of [
       '- ```mermaid\n  flowchart TD\n  X --> Y\n  ```',
-      '```mermaid\u00a0foo\rflowchart TD\r  A --> B\r```'
+      '```mermaid foo\rflowchart TD\r  A --> B\r```'
     ]) {
       delete win.mermaid;
       const run = await renderUnlocked('', '');

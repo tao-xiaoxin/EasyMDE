@@ -13,6 +13,11 @@ import {
 	MAX_EDITOR_BLOCK_INDEX_SOURCE_BYTES,
 } from "../../../contracts/ports/editor-block-index-port";
 import { createBrowserEditorBlockIndexWorker } from "./create-browser-editor-block-index-worker";
+import {
+	responseCode,
+	validateBuildInput,
+	validateData,
+} from "./editor-block-index-worker-protocol";
 
 type WorkerListener = (event: Event | MessageEvent<unknown>) => void;
 
@@ -259,9 +264,9 @@ describe("createBrowserEditorBlockIndexWorker", () => {
 		await pending;
 		adapter.dispose();
 	});
-	it("posts the exact source request and returns data without echoing source", async () => {
+	it("posts the exact source request, returns data without echoing source, and reuses the clean worker across sequential builds", async () => {
 		const adapter = createAdapter();
-		const pending = adapter.build(
+		const firstPending = adapter.build(
 			{
 				generation: 4,
 				revision: 8,
@@ -281,9 +286,99 @@ describe("createBrowserEditorBlockIndexWorker", () => {
 			type: "result",
 		});
 
-		await expect(pending).resolves.toEqual(data());
-		expect(worker.terminated).toBe(true);
+		await expect(firstPending).resolves.toEqual(data());
+		expect(worker.terminated).toBe(false);
+		expect(FakeWorker.instances).toHaveLength(1);
+
+		const secondPending = adapter.build(
+			{
+				generation: 4,
+				revision: 9,
+				source: "xyz",
+			},
+			signal(),
+		);
+		expect(FakeWorker.instances).toHaveLength(1);
+		expect(worker.posted).toHaveLength(2);
+		expect(worker.posted[1]).toEqual({
+			generation: 4,
+			revision: 9,
+			source: "xyz",
+			type: "build",
+			referenceLabelCaseFoldProfile: 14,
+		});
+		worker.emit({
+			data: packedData(1, 3),
+			generation: 4,
+			revision: 9,
+			type: "result",
+		});
+
+		await expect(secondPending).resolves.toEqual(data());
+		expect(worker.terminated).toBe(false);
 		adapter.dispose();
+		expect(worker.terminated).toBe(true);
+	});
+
+	it("terminates and replaces an idle worker that crashes or emits an unexpected message", async () => {
+		const adapter = createAdapter();
+		const first = adapter.build(
+			{ generation: 1, revision: 1, source: "abc" },
+			signal(),
+		);
+		const worker1 = await firstWorker();
+		worker1.emit({
+			data: packedData(1, 3),
+			generation: 1,
+			revision: 1,
+			type: "result",
+		});
+		await expect(first).resolves.toEqual(data());
+		expect(worker1.terminated).toBe(false);
+
+		worker1.emitError("error");
+		expect(worker1.terminated).toBe(true);
+
+		const second = adapter.build(
+			{ generation: 1, revision: 2, source: "abc" },
+			signal(),
+		);
+		expect(FakeWorker.instances).toHaveLength(2);
+		const worker2 = FakeWorker.instances[1];
+		if (!worker2) throw new Error("test-worker-missing");
+		worker2.emit({
+			data: packedData(1, 3),
+			generation: 1,
+			revision: 2,
+			type: "result",
+		});
+		await expect(second).resolves.toEqual(data());
+		expect(worker2.terminated).toBe(false);
+
+		worker2.emit({
+			data: packedData(1, 3),
+			generation: 1,
+			revision: 2,
+			type: "result",
+		});
+		expect(worker2.terminated).toBe(true);
+
+		const third = adapter.build(
+			{ generation: 1, revision: 3, source: "abc" },
+			signal(),
+		);
+		expect(FakeWorker.instances).toHaveLength(3);
+		const worker3 = FakeWorker.instances[2];
+		if (!worker3) throw new Error("test-worker-missing");
+		worker3.emit({
+			data: packedData(1, 3),
+			generation: 1,
+			revision: 3,
+			type: "result",
+		});
+		await expect(third).resolves.toEqual(data());
+		adapter.dispose();
+		expect(worker3.terminated).toBe(true);
 	});
 
 	it("bounds source-byte validation before constructing a worker", async () => {
@@ -1050,5 +1145,79 @@ describe("createBrowserEditorBlockIndexWorker", () => {
 				workerUrl,
 			}),
 		).toThrow("editor-block-index-worker-url-invalid");
+	});
+
+	it.each([
+		[
+			"mismatched result generation",
+			{ data: packedData(1, 3), generation: 2, revision: 1, type: "result" },
+		],
+		[
+			"mismatched result revision",
+			{ data: packedData(1, 3), generation: 1, revision: 2, type: "result" },
+		],
+		[
+			"missing result generation",
+			{ data: packedData(1, 3), revision: 1, type: "result" },
+		],
+		[
+			"mismatched error generation",
+			{
+				code: "editor-block-index-build-failed",
+				generation: 2,
+				revision: 1,
+				type: "error",
+			},
+		],
+		[
+			"missing error revision",
+			{
+				code: "editor-block-index-build-failed",
+				generation: 1,
+				type: "error",
+			},
+		],
+	])(
+		"rejects %s as stale and terminates the worker",
+		async (_label, response) => {
+			const adapter = createAdapter();
+			const pending = adapter.build(
+				{ generation: 1, revision: 1, source: "abc" },
+				signal(),
+			);
+			const worker = FakeWorker.instances[0];
+			if (!worker) throw new Error("test-worker-missing");
+			worker.emit(response as EditorBlockIndexWorkerResponse);
+
+			await expect(pending).rejects.toThrow("editor-block-index-stale");
+			expect(worker.terminated).toBe(true);
+			adapter.dispose();
+		},
+	);
+
+	it("exposes stateless protocol validation helpers with matching semantics", async () => {
+		expect(responseCode("editor-block-index-build-failed")).toBe(
+			"editor-block-index-build-failed",
+		);
+		expect(responseCode("editor-block-index-unknown")).toBeNull();
+		expect(
+			validateBuildInput(
+				{ generation: 1, revision: 2, source: "abc" },
+				signal(),
+				14,
+			),
+		).toEqual({
+			generation: 1,
+			referenceLabelCaseFoldProfile: 14,
+			revision: 2,
+			source: "abc",
+			type: "build",
+		});
+		await expect(
+			validateData(packedData(1, 3), "abc", () => false),
+		).resolves.toEqual({ status: "valid", value: data() });
+		await expect(
+			validateData({ format: "unknown" }, "abc", () => false),
+		).resolves.toEqual({ status: "invalid" });
 	});
 });

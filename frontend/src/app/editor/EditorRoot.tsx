@@ -307,6 +307,7 @@ export function EditorRoot(props: EditorRootProps) {
     previewRuntimeGeneration: visual.previewRuntimeGeneration,
     previewRuntimeRef,
     publishEditorStatus: session.publishEditorStatus,
+    referenceLabelCaseFoldProfile: props.referenceLabelCaseFoldProfile,
     releasePendingContextResourcesRef,
     remoteImageImportPort: media.remoteImageImportPort,
     reportFailure,

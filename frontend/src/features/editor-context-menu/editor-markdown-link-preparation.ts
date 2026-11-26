@@ -7,7 +7,7 @@ import {
 	originalRange,
 	type NewlineProjection,
 	type SourceRange,
-} from "./editor-markdown-source-projection";
+} from "../../shared/markdown/markdown-source-projection";
 import {
 	normalizeMarkdownReferenceLabel,
 	type ReferenceLabelCaseFoldProfile,
@@ -44,6 +44,8 @@ const LINK_BLOCKED_INLINE_ANCESTORS: Readonly<Record<string, true>> = {
 
 const URL_NODE_NAME_BIT = 1;
 const LINK_TITLE_NODE_NAME_BIT = 2;
+const BLOCKED_ANCESTOR_BIT = 1;
+const BLOCKED_INLINE_ANCESTOR_BIT = 2;
 
 function bracketLabelContent(value: string): string {
 	return value.startsWith("[") && value.endsWith("]")
@@ -52,12 +54,14 @@ function bracketLabelContent(value: string): string {
 }
 
 function directChildIndex(
-	children: ReadonlyArray<ReadonlyArray<number>>,
+	children: ReadonlyArray<ReadonlyArray<number> | undefined>,
 	nodes: ReadonlyArray<Readonly<{ name: string }>>,
 	parentIndex: number,
 	name: string,
 ): number | null {
-	for (const childIndex of children[parentIndex] ?? []) {
+	const childList = children[parentIndex];
+	if (!childList) return null;
+	for (const childIndex of childList) {
 		if (name === nodes[childIndex]?.name) return childIndex;
 	}
 	return null;
@@ -66,11 +70,27 @@ function directChildIndex(
 function markdownSyntaxStructure(
 	nodes: ReadonlyArray<MarkdownSyntaxNode>,
 ) {
-	const ancestorsAt: string[][] = nodes.map(() => []);
-	const children: number[][] = nodes.map(() => []);
+	const blockedAncestorMask = new Uint8Array(nodes.length);
+	const children: Array<number[] | undefined> = new Array(nodes.length);
 	const urlDescendants = new Uint8Array(nodes.length);
 	const namesAt = new Map<number, number>();
 	const open: number[] = [];
+	let blockedDepth = 0;
+	let blockedInlineDepth = 0;
+	const popOpen = (): void => {
+		const closedIndex = open.pop();
+		if (undefined === closedIndex) return;
+		const closedName = nodes[closedIndex]?.name ?? "";
+		if (LINK_BLOCKED_ANCESTORS[closedName]) blockedDepth -= 1;
+		if (LINK_BLOCKED_INLINE_ANCESTORS[closedName]) blockedInlineDepth -= 1;
+		const parentIndex = open[open.length - 1];
+		if (
+			undefined !== parentIndex &&
+			(1 === urlDescendants[closedIndex] || "URL" === closedName)
+		) {
+			urlDescendants[parentIndex] = 1;
+		}
+	};
 	for (let index = 0; index < nodes.length; index += 1) {
 		const node = nodes[index];
 		if (!node) break;
@@ -78,16 +98,24 @@ function markdownSyntaxStructure(
 			const parentIndex = open[open.length - 1] ?? -1;
 			const parent = nodes[parentIndex];
 			if (parent && parent.from <= node.from && node.to <= parent.to) break;
-			open.pop();
+			popOpen();
 		}
 		const parentIndex = open[open.length - 1];
-		if (undefined !== parentIndex) children[parentIndex]?.push(index);
-		ancestorsAt[index] = open.flatMap((ancestorIndex) => {
-			const name = nodes[ancestorIndex]?.name;
-			return name ? [name] : [];
-		});
+		if (undefined !== parentIndex) {
+			const parentName = nodes[parentIndex]?.name;
+			if ("Link" === parentName || "LinkReference" === parentName) {
+				let list = children[parentIndex];
+				if (!list) {
+					list = [];
+					children[parentIndex] = list;
+				}
+				list.push(index);
+			}
+		}
+		blockedAncestorMask[index] =
+			(blockedDepth > 0 ? BLOCKED_ANCESTOR_BIT : 0) |
+			(blockedInlineDepth > 0 ? BLOCKED_INLINE_ANCESTOR_BIT : 0);
 		if ("URL" === node.name) {
-			for (const ancestorIndex of open) urlDescendants[ancestorIndex] = 1;
 			namesAt.set(node.from, (namesAt.get(node.from) ?? 0) | URL_NODE_NAME_BIT);
 		} else if ("LinkTitle" === node.name) {
 			namesAt.set(
@@ -95,9 +123,12 @@ function markdownSyntaxStructure(
 				(namesAt.get(node.from) ?? 0) | LINK_TITLE_NODE_NAME_BIT,
 			);
 		}
+		if (LINK_BLOCKED_ANCESTORS[node.name]) blockedDepth += 1;
+		if (LINK_BLOCKED_INLINE_ANCESTORS[node.name]) blockedInlineDepth += 1;
 		open.push(index);
 	}
-	return { ancestorsAt, children, namesAt, urlDescendants };
+	while (open.length > 0) popOpen();
+	return { blockedAncestorMask, children, namesAt, urlDescendants };
 }
 
 function referenceLabelsFromStructure(
@@ -106,12 +137,12 @@ function referenceLabelsFromStructure(
 	structure: ReturnType<typeof markdownSyntaxStructure>,
 	profile: ReferenceLabelCaseFoldProfile,
 ): Set<string> {
-	const { ancestorsAt, children } = structure;
+	const { blockedAncestorMask, children } = structure;
 	const definedLabels = new Set<string>();
 	for (let index = 0; index < nodes.length; index += 1) {
 		const node = nodes[index];
 		if ("LinkReference" !== node?.name) continue;
-		if (ancestorsAt[index]?.some((ancestor) => LINK_BLOCKED_ANCESTORS[ancestor]))
+		if (0 !== ((blockedAncestorMask[index] ?? 0) & BLOCKED_ANCESTOR_BIT))
 			continue;
 		const labelIndex = directChildIndex(children, nodes, index, "LinkLabel");
 		const label = nodes[labelIndex ?? -1];
@@ -136,27 +167,17 @@ export function markdownReferenceLabels(
 	return referenceLabelsFromStructure(text, nodes, markdownSyntaxStructure(nodes), profile);
 }
 
-export function markdownReferenceLabelQuery(
-	text: string,
-	nodes: ReadonlyArray<MarkdownSyntaxNode>,
-	profile: ReferenceLabelCaseFoldProfile,
-): (label: string) => boolean {
-	const labels = markdownReferenceLabels(text, nodes, profile);
-	return (label) => labels.has(normalizeMarkdownReferenceLabel(label, profile));
-}
-
 export type MarkdownReferenceDefinition = Readonly<{
 	destination: string;
 	title: string | null;
 }>;
 
-/** First active parser-owned definition, retaining its exact source tokens. */
-export function markdownReferenceDefinitionQuery(
+function referenceDefinitionQueryFromStructure(
 	text: string,
 	nodes: ReadonlyArray<MarkdownSyntaxNode>,
+	structure: ReturnType<typeof markdownSyntaxStructure>,
 	profile: ReferenceLabelCaseFoldProfile,
 ): (label: string) => MarkdownReferenceDefinition | null {
-	const structure = markdownSyntaxStructure(nodes);
 	let definitions: Map<string, MarkdownReferenceDefinition> | null = null;
 	return (label) => {
 		const normalized = normalizeMarkdownReferenceLabel(label, profile);
@@ -164,22 +185,50 @@ export function markdownReferenceDefinitionQuery(
 			const collected = new Map<string, MarkdownReferenceDefinition>();
 			for (let index = 0; index < nodes.length; index += 1) {
 				const node = nodes[index];
-				if ("LinkReference" !== node?.name
-					|| structure.ancestorsAt[index]?.some((ancestor) => LINK_BLOCKED_ANCESTORS[ancestor])) continue;
-				const labelNode = nodes[directChildIndex(structure.children, nodes, index, "LinkLabel") ?? -1];
-				const url = nodes[directChildIndex(structure.children, nodes, index, "URL") ?? -1];
-				const title = nodes[directChildIndex(structure.children, nodes, index, "LinkTitle") ?? -1];
-				if (!labelNode || !url) throw new Error("visual-editor-reference-definition-map-failed");
-				const key = normalizeMarkdownReferenceLabel(bracketLabelContent(text.slice(labelNode.from, labelNode.to)), profile);
-				if (!collected.has(key)) collected.set(key, {
-					destination: text.slice(url.from, url.to),
-					title: title ? text.slice(title.from, title.to) : null,
-				});
+				if (
+					"LinkReference" !== node?.name ||
+					0 !== ((structure.blockedAncestorMask[index] ?? 0) & BLOCKED_ANCESTOR_BIT)
+				) {
+					continue;
+				}
+				const labelNode =
+					nodes[directChildIndex(structure.children, nodes, index, "LinkLabel") ?? -1];
+				const url =
+					nodes[directChildIndex(structure.children, nodes, index, "URL") ?? -1];
+				const title =
+					nodes[directChildIndex(structure.children, nodes, index, "LinkTitle") ?? -1];
+				if (!labelNode || !url) {
+					throw new Error("visual-editor-reference-definition-map-failed");
+				}
+				const key = normalizeMarkdownReferenceLabel(
+					bracketLabelContent(text.slice(labelNode.from, labelNode.to)),
+					profile,
+				);
+				if (!collected.has(key)) {
+					collected.set(key, {
+						destination: text.slice(url.from, url.to),
+						title: title ? text.slice(title.from, title.to) : null,
+					});
+				}
 			}
 			definitions = collected;
 		}
 		return definitions.get(normalized) ?? null;
 	};
+}
+
+/** First active parser-owned definition, retaining its exact source tokens. */
+export function markdownReferenceDefinitionQuery(
+	text: string,
+	nodes: ReadonlyArray<MarkdownSyntaxNode>,
+	profile: ReferenceLabelCaseFoldProfile,
+): (label: string) => MarkdownReferenceDefinition | null {
+	return referenceDefinitionQueryFromStructure(
+		text,
+		nodes,
+		markdownSyntaxStructure(nodes),
+		profile,
+	);
 }
 
 /** Bind each queried reference to the definition used by the formal Preview. */
@@ -213,39 +262,31 @@ export function projectedLinkNodes(
 	nodes: ReadonlyArray<MarkdownSyntaxNode>,
 	profile: ReferenceLabelCaseFoldProfile,
 ): ReadonlyArray<ParserLinkNode> {
-	return parserProjectedLinkNodes(text, nodes, profile);
-}
-
-function parserProjectedLinkNodes(
-	text: string,
-	nodes: ReadonlyArray<MarkdownSyntaxNode>,
-	profile: ReferenceLabelCaseFoldProfile,
-	referenceDefined?: (label: string) => boolean,
-): ReadonlyArray<ParserLinkNode> {
 	const structure = markdownSyntaxStructure(nodes);
-	const { ancestorsAt, children, namesAt, urlDescendants } = structure;
-	let definition: ReturnType<typeof markdownReferenceDefinitionQuery> | null = null;
+	const { blockedAncestorMask, children, namesAt, urlDescendants } = structure;
+	let definition: ReturnType<typeof referenceDefinitionQueryFromStructure> | null = null;
 	const created = new Uint8Array(nodes.length);
 	const referenceLinks = new Uint8Array(nodes.length);
-	const frames: Array<{ hasCreatedChild: boolean; index: number }> = [];
+	const frameIndices: number[] = [];
+	const frameHasCreatedChild: number[] = [];
 	const closeFrame = (): void => {
-		const frame = frames.pop();
-		if (!frame) return;
-		const frameNode = nodes[frame.index];
-		if ("Link" === frameNode?.name && frame.hasCreatedChild) {
-			created[frame.index] = 0;
+		const frameIndex = frameIndices.pop();
+		const hasCreatedChild = frameHasCreatedChild.pop() ?? 0;
+		if (undefined === frameIndex) return;
+		const frameNode = nodes[frameIndex];
+		if ("Link" === frameNode?.name && 0 !== hasCreatedChild) {
+			created[frameIndex] = 0;
 		}
-		const propagated = frame.hasCreatedChild || 0 !== created[frame.index];
-		const parent = frames[frames.length - 1];
-		if (parent && propagated) parent.hasCreatedChild = true;
+		const propagated = 0 !== hasCreatedChild || 0 !== created[frameIndex];
+		const parentTop = frameHasCreatedChild.length - 1;
+		if (parentTop >= 0 && propagated) frameHasCreatedChild[parentTop] = 1;
 	};
 	for (let index = 0; index < nodes.length; index += 1) {
 		const node = nodes[index];
 		if (!node) break;
-		while (frames.length > 0) {
-			const frame = frames[frames.length - 1];
-			if (!frame) break;
-			const frameNode = nodes[frame.index];
+		while (frameIndices.length > 0) {
+			const frameIndex = frameIndices[frameIndices.length - 1] ?? -1;
+			const frameNode = nodes[frameIndex];
 			if (frameNode && frameNode.from <= node.from && node.to <= frameNode.to)
 				break;
 			closeFrame();
@@ -254,7 +295,7 @@ function parserProjectedLinkNodes(
 			const hasUrl = 1 === urlDescendants[index];
 			if ("[" === text[node.from] && ")" === text[node.to - 1] && hasUrl) {
 				created[index] = 1;
-			} else if (referenceDefined || !(!hasUrl && "[^" === text.slice(node.from, node.from + 2))) {
+			} else if (hasUrl || "[^" !== text.slice(node.from, node.from + 2)) {
 				const malformed =
 					0 !== (namesAt.get(node.to) ?? 0) ||
 					"(" === text[node.to] ||
@@ -274,45 +315,34 @@ function parserProjectedLinkNodes(
 						0 < labelText.length
 							? labelText
 							: text.slice(node.from + 1, (label?.from ?? node.to) - 1);
-					definition ??= markdownReferenceDefinitionQuery(text, nodes, profile);
-					if (referenceDefined ? referenceDefined(rawLabel) : definition(rawLabel)) {
+					definition ??= referenceDefinitionQueryFromStructure(
+						text,
+						nodes,
+						structure,
+						profile,
+					);
+					if (definition(rawLabel)) {
 						created[index] = 1;
 						referenceLinks[index] = 1;
 					}
 				}
 			}
 		}
-		frames.push({ hasCreatedChild: false, index });
+		frameIndices.push(index);
+		frameHasCreatedChild.push(0);
 	}
-	while (frames.length > 0) closeFrame();
-	const createdLinkDepth = new Uint16Array(nodes.length);
-	{
-		const stack: Array<{ created: boolean; from: number; to: number }> = [];
-		let depth = 0;
-		for (let index = 0; index < nodes.length; index += 1) {
-			const node = nodes[index];
-			if (!node) break;
-			while (stack.length > 0) {
-				const top = stack[stack.length - 1];
-				if (top && top.from <= node.from && node.to <= top.to) break;
-				stack.pop();
-				if (top?.created) depth -= 1;
-			}
-			createdLinkDepth[index] = depth;
-			const isCreated = "Link" === node.name && 0 !== created[index];
-			if (isCreated) depth += 1;
-			stack.push({ created: isCreated, from: node.from, to: node.to });
-		}
-	}
+	while (frameIndices.length > 0) closeFrame();
 	const projected: ParserLinkNode[] = [];
+	let activeCreatedLinkTo = -1;
 	for (let index = 0; index < nodes.length; index += 1) {
 		const node = nodes[index];
 		if (!node) break;
-		if (ancestorsAt[index]?.some((ancestor) => LINK_BLOCKED_ANCESTORS[ancestor]))
-			continue;
+		const ancestorMask = blockedAncestorMask[index] ?? 0;
+		if (0 !== (ancestorMask & BLOCKED_ANCESTOR_BIT)) continue;
 		const hasUrl = 1 === urlDescendants[index];
 		if ("Link" === node.name) {
 			if (0 === created[index]) continue;
+			if (node.to > activeCreatedLinkTo) activeCreatedLinkTo = node.to;
 			projected.push({
 				from: node.from,
 				kind: "link",
@@ -321,14 +351,11 @@ function parserProjectedLinkNodes(
 			});
 			continue;
 		}
-		if (0 !== createdLinkDepth[index]) continue;
+		if (node.from < activeCreatedLinkTo && node.to <= activeCreatedLinkTo) {
+			continue;
+		}
 		if ("Autolink" === node.name) {
-			if (
-				ancestorsAt[index]?.some((ancestor) =>
-					LINK_BLOCKED_INLINE_ANCESTORS[ancestor],
-				)
-			)
-				continue;
+			if (0 !== (ancestorMask & BLOCKED_INLINE_ANCESTOR_BIT)) continue;
 			if ("<" === text[node.from] && ">" === text[node.to - 1] && hasUrl) {
 				projected.push({
 					from: node.from,
@@ -340,12 +367,7 @@ function parserProjectedLinkNodes(
 			continue;
 		}
 		if ("URL" === node.name) {
-			if (
-				ancestorsAt[index]?.some((ancestor) =>
-					LINK_BLOCKED_INLINE_ANCESTORS[ancestor],
-				)
-			)
-				continue;
+			if (0 !== (ancestorMask & BLOCKED_INLINE_ANCESTOR_BIT)) continue;
 			projected.push({
 				from: node.from,
 				kind: "link",
@@ -355,29 +377,6 @@ function parserProjectedLinkNodes(
 		}
 	}
 	return projected;
-}
-
-/** Render-mapping bindings only; Source command admission above is unchanged. */
-export function renderedReferenceLinkBodies(
-	text: string,
-	nodes: ReadonlyArray<MarkdownSyntaxNode>,
-	profile: ReferenceLabelCaseFoldProfile,
-	referenceDefined: (label: string) => boolean,
-): ReadonlyArray<ParserLinkNode & Readonly<{ bodyStart: number; bodyEnd: number }>> {
-	const projected = parserProjectedLinkNodes(text, nodes, profile, referenceDefined);
-	const structure = markdownSyntaxStructure(nodes);
-	return projected.flatMap((link) => {
-		const index = nodes.findIndex((node) => node.name === 'Link' && node.from === link.from && node.to === link.to);
-		if (index < 0) return [];
-		const marks = (structure.children[index] ?? []).flatMap((child) => {
-			const node = nodes[child];
-			return node?.name === 'LinkMark' ? [node] : [];
-		});
-		const open = marks[0];
-		const close = marks[1];
-		if (!open || !close || text.slice(open.from, open.to) !== '[' || text.slice(close.from, close.to) !== ']') return [];
-		return [{ ...link, bodyStart: open.to, bodyEnd: close.from }];
-	});
 }
 
 /**

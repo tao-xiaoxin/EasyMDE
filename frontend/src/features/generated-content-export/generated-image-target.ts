@@ -125,6 +125,7 @@ export type GeneratedImageTargetHydrationInput = Readonly<{
 
 const MAX_IMAGE_TARGET_SOURCE_UNITS = 16_384;
 const IMAGE_HYDRATION_SLICE_MS = 4;
+const IMAGE_HYDRATION_MAX_WORK_UNITS = 4096;
 
 type HydrationBudget = Readonly<{
 	deadline: number;
@@ -148,7 +149,7 @@ async function hydrationCheckpoint(budget: HydrationBudget): Promise<void> {
 	assertHydrationActive(budget);
 	budget.workUnits += 1;
 	if (
-		budget.workUnits < 256 &&
+		budget.workUnits < IMAGE_HYDRATION_MAX_WORK_UNITS &&
 		budget.now() - budget.sliceStarted < IMAGE_HYDRATION_SLICE_MS
 	)
 		return;
@@ -353,7 +354,11 @@ export async function hydrateGeneratedImageTargetIndex(
 		}
 		await hydrationCheckpoint(budget);
 	}
-	await budget.yield();
+	if (budget.now() - budget.sliceStarted >= IMAGE_HYDRATION_SLICE_MS) {
+		await budget.yield();
+	} else {
+		await Promise.resolve();
+	}
 	assertHydrationActive(budget);
 	return {
 		blockImages,

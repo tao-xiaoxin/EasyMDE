@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+	mathDomSourceMatchesSpan,
+	normalizeMathTex,
+} from "../../shared/markdown/normalize-math-tex";
+import {
 	associateGeneratedContentTarget,
 	createGeneratedContentTarget,
 	type GeneratedContentAcceptedPreview,
+	mathElementMatchesSource,
 } from "./generated-content-target";
 
 const preview: GeneratedContentAcceptedPreview = {
@@ -147,5 +152,200 @@ describe("generated content target association", () => {
 			code: "generated-content-target-original-mismatch",
 			status: "failed",
 		});
+	});
+
+	it("keeps normalizeMathTex at 2 backslashes for KaTeX while matching live-PHP 4-backslash matrices, NBSP, and HTML5-decoded entities (R32A #1, R32B #1)", () => {
+		expect(
+			normalizeMathTex("\\begin{pmatrix}a \\, b \\\\ c & d\\end{pmatrix}"),
+		).toBe("\\begin{pmatrix}a \\\\, b \\\\ c & d\\end{pmatrix}");
+
+		const phpPreviewCases: ReadonlyArray<
+			Readonly<{
+				body: string;
+				displayMode: boolean;
+				domSource: string;
+				full: string;
+				label: string;
+			}>
+		> = [
+			{
+				body: "\\begin{pmatrix}a \\, b \\\\ c & d\\end{pmatrix}",
+				displayMode: true,
+				domSource: "$$\\begin{pmatrix}a \\\\\\\\, b \\\\ c & d\\end{pmatrix}$$",
+				full: "$$\\begin{pmatrix}a \\, b \\\\ c & d\\end{pmatrix}$$",
+				label: "block pmatrix with \\, and \\\\",
+			},
+			{
+				body: "\\begin{array}{cc}a \\ b \\\\ c \\| d\\end{array}",
+				displayMode: true,
+				domSource:
+					"$$\\begin{array}{cc}a \\\\\\\\ b \\\\ c \\\\\\\\| d\\end{array}$$",
+				full: "$$\\begin{array}{cc}a \\ b \\\\ c \\| d\\end{array}$$",
+				label: "block array with single-backslash row break and \\|",
+			},
+			{
+				body: "\\begin{matrix}a \\; b \\: c \\! d \\} \\] \\_ \\%\\end{matrix}",
+				displayMode: true,
+				domSource:
+					"$$\\begin{matrix}a \\\\\\\\; b \\\\\\\\: c \\\\\\\\! d \\\\\\\\} \\\\\\\\] \\\\\\\\_ \\\\\\\\%\\end{matrix}$$",
+				full: "$$\\begin{matrix}a \\; b \\: c \\! d \\} \\] \\_ \\%\\end{matrix}$$",
+				label: "matrix punctuation escapes",
+			},
+			{
+				body: "frac\u00a0{1}{2}",
+				displayMode: false,
+				domSource: "\\(frac\u00a0{1}{2}\\)",
+				full: "$frac\u00a0{1}{2}$",
+				label: "NBSP before brace is not ASCII \\s in PHP",
+			},
+			{
+				body: "\u00a0x\u00a0",
+				displayMode: false,
+				domSource: "\\(\u00a0x\u00a0\\)",
+				full: "$\u00a0x\u00a0$",
+				label: "NBSP is not trimmed by PHP trim()",
+			},
+			{
+				body: "begin\u00a0{pmatrix}a\\end{pmatrix}",
+				displayMode: false,
+				domSource: "\\(begin\u00a0{pmatrix}a\\end{pmatrix}\\)",
+				full: "$begin\u00a0{pmatrix}a\\end{pmatrix}$",
+				label: "NBSP after begin",
+			},
+			{
+				body: "left\u00a0(x)right\u00a0)",
+				displayMode: false,
+				domSource: "\\(left\u00a0(x)right\u00a0)\\)",
+				full: "$left\u00a0(x)right\u00a0)$",
+				label: "NBSP after left/right",
+			},
+			{
+				body: "\\text{&lt;}",
+				displayMode: false,
+				domSource: "\\(\\text{<}\\)",
+				full: "$\\text{&lt;}$",
+				label: "HTML entity &lt;",
+			},
+			{
+				body: "\\text{&gt;}",
+				displayMode: false,
+				domSource: "\\(\\text{>}\\)",
+				full: "$\\text{&gt;}$",
+				label: "HTML entity &gt;",
+			},
+			{
+				body: "\\text{&amp;}",
+				displayMode: false,
+				domSource: "\\(\\text{&}\\)",
+				full: "$\\text{&amp;}$",
+				label: "HTML entity &amp;",
+			},
+			{
+				body: "\\text{&quot;}",
+				displayMode: false,
+				domSource: '\\(\\text{"}\\)',
+				full: "$\\text{&quot;}$",
+				label: "HTML entity &quot;",
+			},
+			{
+				body: "\\text{&#60;}",
+				displayMode: false,
+				domSource: "\\(\\text{<}\\)",
+				full: "$\\text{&#60;}$",
+				label: "decimal entity &#60;",
+			},
+			{
+				body: "\\text{&#x3c;}",
+				displayMode: false,
+				domSource: "\\(\\text{<}\\)",
+				full: "$\\text{&#x3c;}$",
+				label: "hex entity &#x3c;",
+			},
+			{
+				body: "\\text{&copy;}",
+				displayMode: false,
+				domSource: "\\(\\text{\u00a9}\\)",
+				full: "$\\text{&copy;}$",
+				label: "named entity &copy;",
+			},
+			{
+				body: "\\text{&alpha;}",
+				displayMode: false,
+				domSource: "\\(\\text{\u03b1}\\)",
+				full: "$\\text{&alpha;}$",
+				label: "named entity &alpha;",
+			},
+			{
+				body: "\\text{&notanentity;}",
+				displayMode: false,
+				domSource: "\\(\\text{&notanentity;}\\)",
+				full: "$\\text{&notanentity;}$",
+				label: "unknown entity &notanentity;",
+			},
+			{
+				body: "x + &amp;lt;",
+				displayMode: false,
+				domSource: "\\(x + &lt;\\)",
+				full: "$x + &amp;lt;$",
+				label: "double-entity &amp;lt;",
+			},
+			{
+				body: "&copy=1",
+				displayMode: false,
+				domSource: "\\(&copy=1\\)",
+				full: "$&copy=1$",
+				label: "non-terminated ampersand &copy=1",
+			},
+			{
+				body: 'a < b & c > d "e" \'f\'',
+				displayMode: false,
+				domSource: '\\(a < b & c > d "e" \'f\'\\)',
+				full: '$a < b & c > d "e" \'f\'$',
+				label: "raw comparison and quotes",
+			},
+			{
+				body: "\\text{&lt;&apos;}",
+				displayMode: false,
+				domSource: "\\(\\text{<&apos;}\\)",
+				full: "$\\text{&lt;&apos;}$",
+				label: "WP KSES mixed &lt; + &apos;",
+			},
+		];
+
+		for (const item of phpPreviewCases) {
+			const el = document.createElement(item.displayMode ? "div" : "span");
+			el.className = item.displayMode
+				? "easymde-math easymde-math-block"
+				: "easymde-math easymde-math-inline";
+			el.setAttribute("data-easymde-visual-markdown-source", item.domSource);
+			expect(
+				mathElementMatchesSource(el, {
+					body: item.body,
+					displayMode: item.displayMode,
+					full: item.full,
+				}),
+				item.label,
+			).toBe(true);
+			expect(
+				mathElementMatchesSource(el, {
+					body: "z",
+					displayMode: item.displayMode,
+					full: item.displayMode ? "$$z$$" : "$z$",
+				}),
+				`${item.label} negative mismatch`,
+			).toBe(false);
+		}
+
+		// Fallback decoder without ownerDocument handles standard + numeric entities and rejects mismatches.
+		expect(
+			mathDomSourceMatchesSpan("\\(\\text{<}\\)", "$\\text{&lt;}$", "\\text{&lt;}", false),
+		).toBe(true);
+		expect(
+			mathDomSourceMatchesSpan("\\(x + &lt;\\)", "$x + &amp;lt;$", "x + &amp;lt;", false),
+		).toBe(true);
+		expect(
+			mathDomSourceMatchesSpan("\\(\\text{<}\\)", "$\\text{&#x3c;}$", "\\text{&#x3c;}", false),
+		).toBe(true);
+		expect(mathDomSourceMatchesSpan("\\(y\\)", "$z$", "z", false)).toBe(false);
 	});
 });

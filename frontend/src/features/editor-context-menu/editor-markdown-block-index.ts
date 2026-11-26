@@ -1,4 +1,4 @@
-import { markdownLanguage } from "@codemirror/lang-markdown";
+import type { Tree } from "@lezer/common";
 
 import type {
 	EditorMarkdownBlockIndexData,
@@ -9,27 +9,76 @@ import type {
 	ReferenceLabelCaseFoldProfile,
 } from "../../contracts/ports/editor-block-index-port";
 import { markdownLineStarts } from "../../shared/markdown/markdown-line-model";
-import { lineIndexAtOffsets } from "./editor-markdown-lines";
 import {
-	linkCandidatesForBlocks,
-	projectedLinkNodes,
-	type MarkdownSyntaxNode,
-	type ParserLinkNode,
-} from "./editor-markdown-link-preparation";
-import {
-	mathRanges,
-	mathSpanFromRange,
-	normalizeMathRanges,
-	overlayMath,
-} from "./editor-markdown-math-preparation";
-import {
+	appendAll,
+	hasRangeOverlap,
 	mergeRanges,
+	type NewlineProjection,
 	originalOffsetAt,
 	originalRange,
 	projectNewlines,
-	type NewlineProjection,
 	type SourceRange,
-} from "./editor-markdown-source-projection";
+} from "../../shared/markdown/markdown-source-projection";
+import {
+	createLinearLeagueMarkdownParser,
+	MAX_LEAGUE_BLOCK_NESTING_DEPTH,
+} from "./editor-markdown-league-parser-factory";
+import { lineIndexAtOffsets } from "./editor-markdown-lines";
+import {
+	linkCandidatesForBlocks,
+	type MarkdownSyntaxNode,
+	type ParserLinkNode,
+	projectedLinkNodes,
+} from "./editor-markdown-link-preparation";
+import {
+	type MathRange,
+	mapSubstitutedEndToOriginal,
+	mapSubstitutedStartToOriginal,
+	mathRanges,
+	mathSpanFromRange,
+	normalizeMathRanges,
+	type PhpMathSubstitution,
+	phpScansCodeBlocks,
+	scanRawMarkdownInlineCodeRanges,
+	substitutePhpMathRanges,
+} from "./editor-markdown-math-preparation";
+
+const blockIndexMarkdownParser = createLinearLeagueMarkdownParser({
+	blockNesting: { maxDepth: MAX_LEAGUE_BLOCK_NESTING_DEPTH, mode: "cap" },
+	htmlTagDialect: "league",
+	rejectUnescapedOpenParenInTitle: true,
+});
+
+const EMPTY_SUBSTITUTIONS: ReadonlyArray<PhpMathSubstitution> = [];
+
+/**
+ * Nodes stripped from rendered HTML by League CommonMark (`html_input => 'strip'`)
+ * or omitted from block output (`LinkReference`), so any extracted math token
+ * landing inside them never survives into rendered HTML.
+ */
+const SUB_MATH_EXCLUDED_NODES: ReadonlySet<string> = new Set([
+	"Comment",
+	"CommentBlock",
+	"HTMLBlock",
+	"HTMLTag",
+	"LinkReference",
+	"ProcessingInstruction",
+	"ProcessingInstructionBlock",
+]);
+
+/** Only syntax nodes consulted by `projectedLinkNodes()`. */
+const LINK_PROJECTION_SYNTAX_NODES: ReadonlySet<string> = new Set([
+	"Autolink",
+	"CodeBlock",
+	"FencedCode",
+	"Image",
+	"InlineCode",
+	"Link",
+	"LinkLabel",
+	"LinkReference",
+	"LinkTitle",
+	"URL",
+]);
 
 export type {
 	EditorMarkdownBlockKind,
@@ -43,26 +92,10 @@ export type EditorMarkdownBlockIndex = EditorMarkdownBlockIndexData &
 		source: string;
 	}>;
 
-type BacktickRun = Readonly<{
-	escaped: boolean;
-	from: number;
-	length: number;
-	segment: number;
-	to: number;
-}>;
-
 type ParserImageNode = Readonly<{
 	available: boolean;
 	from: number;
 	to: number;
-}>;
-
-type ParserSnapshot = Readonly<{
-	blocks: ReadonlyArray<EditorMarkdownSourceBlock>;
-	codeRanges: ReadonlyArray<SourceRange>;
-	imageNodes: ReadonlyArray<ParserImageNode>;
-	linkNodes: ReadonlyArray<ParserLinkNode>;
-	unavailableRanges: ReadonlyArray<SourceRange>;
 }>;
 
 function nodeKind(name: string): EditorMarkdownBlockKind {
@@ -102,243 +135,55 @@ function imageNodeIsInline(source: string, from: number, to: number): boolean {
 	return false;
 }
 
-function lineContentEndAt(source: string, position: number): number {
-	const bounded = Math.max(0, Math.min(source.length, position));
-	for (let index = bounded; index < source.length; index += 1) {
-		if ("\n" === source[index] || "\r" === source[index]) return index;
-	}
-	return source.length;
-}
-
-function sourceBlock(
+/** O(1) line content end offset (before LF, CRLF, or bare CR) from `starts`. */
+function lineContentEnd(
 	source: string,
 	starts: ReadonlyArray<number>,
-	from: number,
-	to: number,
-	kind: EditorMarkdownBlockKind,
-): EditorMarkdownSourceBlock {
-	const lineStart = lineIndexAtOffsets(starts, from);
-	const start = starts[lineStart] ?? 0;
-	const end = lineContentEndAt(source, Math.max(from, to - 1));
-	return {
-		editable: "unavailable" !== kind,
-		from: start,
-		kind,
-		lineEnd: lineIndexAtOffsets(starts, Math.max(start, end)),
-		lineStart,
-		to: Math.max(start, end),
-	};
+	lineIndex: number,
+): number {
+	const nextStart = starts[lineIndex + 1];
+	if (undefined === nextStart) return source.length;
+	const start = starts[lineIndex] ?? 0;
+	let end = nextStart;
+	if (end > start && 10 /* \n */ === source.charCodeAt(end - 1)) end -= 1;
+	if (end > start && 13 /* \r */ === source.charCodeAt(end - 1)) end -= 1;
+	return end;
 }
 
-function backtickRuns(
-	source: string,
-	protectedRanges: ReadonlyArray<SourceRange>,
-): BacktickRun[] {
-	const runs: BacktickRun[] = [];
-	let index = 0;
-	let protectedIndex = 0;
-	let backslashRun = 0;
-	let segment = 0;
-
-	while (index < source.length) {
-		while (
-			protectedIndex < protectedRanges.length &&
-			(protectedRanges[protectedIndex]?.to ?? 0) <= index
-		) {
-			protectedIndex += 1;
-		}
-		const protectedRange = protectedRanges[protectedIndex];
-		if (protectedRange && index >= protectedRange.from) {
-			index = protectedRange.to;
-			protectedIndex += 1;
-			backslashRun = 0;
-			segment += 1;
-			continue;
-		}
-
-		if ("`" !== source[index]) {
-			backslashRun = "\\" === source[index] ? backslashRun + 1 : 0;
-			index += 1;
-			continue;
-		}
-
-		const from = index;
-		const escaped = backslashRun % 2 === 1;
-		const boundary = protectedRanges[protectedIndex]?.from ?? source.length;
-		while (index < boundary && "`" === source[index]) index += 1;
-		runs.push({
-			escaped,
-			from,
-			length: index - from,
-			segment,
-			to: index,
-		});
-		backslashRun = 0;
-	}
-
-	return runs;
-}
-
-function firstRunAfter(
-	runs: ReadonlyArray<number>,
-	currentRun: number,
-): number | null {
-	let low = 0;
-	let high = runs.length - 1;
-	let result: number | null = null;
-	while (low <= high) {
-		const middle = Math.floor((low + high) / 2);
-		const candidate = runs[middle];
-		if (undefined === candidate || candidate <= currentRun) {
-			low = middle + 1;
-		} else {
-			result = candidate;
-			high = middle - 1;
-		}
-	}
-	return result;
-}
-
-function inlineCodeRanges(
-	source: string,
-	protectedRanges: ReadonlyArray<SourceRange>,
-): SourceRange[] {
-	const runs = backtickRuns(source, protectedRanges);
-	const bySegmentAndLength = new Map<number, Map<number, number[]>>();
-	runs.forEach((run, index) => {
-		const byLength =
-			bySegmentAndLength.get(run.segment) ?? new Map<number, number[]>();
-		const sameLength = byLength.get(run.length) ?? [];
-		sameLength.push(index);
-		byLength.set(run.length, sameLength);
-		bySegmentAndLength.set(run.segment, byLength);
-	});
-
-	const ranges: SourceRange[] = [];
-	let runIndex = 0;
-	while (runIndex < runs.length) {
-		const run = runs[runIndex];
-		if (!run) break;
-		const byLength = bySegmentAndLength.get(run.segment);
-		let closeIndex: number | null = null;
-		let opening = run.from;
-		const firstLength = run.escaped ? run.length - 1 : run.length;
-		const sameLength = byLength?.get(firstLength);
-		const candidate = sameLength ? firstRunAfter(sameLength, runIndex) : null;
-		if (null !== candidate) {
-			closeIndex = candidate;
-			opening = run.escaped ? run.to - firstLength : run.from;
-		}
-		if (null === closeIndex) {
-			runIndex += 1;
-			continue;
-		}
-		const close = runs[closeIndex];
-		if (!close) break;
-		ranges.push({ from: opening, to: close.to });
-		runIndex = closeIndex + 1;
-	}
-
-	return ranges;
-}
-
-function parserSnapshot(
-	source: string,
-	projection: NewlineProjection,
-	profile: ReferenceLabelCaseFoldProfile,
-): ParserSnapshot {
-	const starts = markdownLineStarts(source);
-	const tree = markdownLanguage.parser.parse(projection.text);
-	const projectedStarts = markdownLineStarts(projection.text);
-	const syntaxNodes: MarkdownSyntaxNode[] = [];
-	tree.iterate({
-		enter: (node) => {
-			syntaxNodes.push({ from: node.from, name: node.name, to: node.to });
-		},
-	});
-	const topLevel = tree.cursor();
-	const blocks: EditorMarkdownSourceBlock[] = [];
-	const projectedBlocks: Array<
-		Readonly<{
-			from: number;
-			kind: EditorMarkdownBlockKind;
-			to: number;
-		}>
-	> = [];
-	const unavailableRanges: SourceRange[] = [];
-	if (topLevel.firstChild()) {
-		do {
-			const kind = nodeKind(topLevel.name);
-			if ("unavailable" === kind) {
-				unavailableRanges.push({ from: topLevel.from, to: topLevel.to });
-			}
-			projectedBlocks.push({ from: topLevel.from, kind, to: topLevel.to });
-			blocks.push(
-				sourceBlock(
-					source,
-					starts,
-					originalOffsetAt(projection, topLevel.from),
-					originalOffsetAt(projection, topLevel.to),
-					kind,
-				),
-			);
-		} while (topLevel.nextSibling());
-	}
-
+function stageOneCodeRanges(
+	projectedText: string,
+	tree: Tree,
+): ReadonlyArray<SourceRange> {
 	const blockCodeRanges: SourceRange[] = [];
-	tree.cursor().iterate((node) => {
-		if (["FencedCode", "CodeBlock"].includes(node.name)) {
-			const endLine = lineIndexAtOffsets(
-				projectedStarts,
-				Math.max(node.from, node.to - 1),
-			);
-			blockCodeRanges.push({
-				from:
-					projectedStarts[lineIndexAtOffsets(projectedStarts, node.from)] ?? 0,
-				to: projectedStarts[endLine + 1] ?? projection.text.length,
-			});
-		}
-	});
-	const codeRanges = mergeRanges(blockCodeRanges);
-	const imageNodes: Array<{
-		available: boolean;
-		from: number;
-		to: number;
-	}> = [];
-	let imageBlockIndex = 0;
-	tree.cursor().iterate((node) => {
-		if ("Image" !== node.name) return;
-		while (
-			imageBlockIndex < projectedBlocks.length &&
-			node.from >=
-				(projectedBlocks[imageBlockIndex]?.to ?? projection.text.length + 1)
-		)
-			imageBlockIndex += 1;
-		const block = projectedBlocks[imageBlockIndex];
-		if (
-			!block ||
-			node.from < block.from ||
-			node.to > block.to ||
-			"code" === block.kind ||
-			"unavailable" === block.kind
-		)
-			return;
-		imageNodes.push({
-			available: imageNodeIsInline(projection.text, node.from, node.to),
-			from: originalOffsetAt(projection, node.from),
-			to: originalOffsetAt(projection, node.to),
+	if (phpScansCodeBlocks(projectedText)) {
+		const projectedStarts = markdownLineStarts(projectedText);
+		tree.iterate({
+			enter: (node) => {
+				if ("FencedCode" === node.name || "CodeBlock" === node.name) {
+					const endLine = lineIndexAtOffsets(
+						projectedStarts,
+						Math.max(node.from, node.to - 1),
+					);
+					blockCodeRanges.push({
+						from:
+							projectedStarts[lineIndexAtOffsets(projectedStarts, node.from)] ??
+							0,
+						to: projectedStarts[endLine + 1] ?? projectedText.length,
+					});
+					return false;
+				}
+				return undefined;
+			},
 		});
-	});
-	return {
-		blocks,
-		codeRanges: mergeRanges([
-			...codeRanges,
-			...inlineCodeRanges(projection.text, codeRanges),
-		]),
-		imageNodes,
-		linkNodes: projectedLinkNodes(projection.text, syntaxNodes, profile),
-		unavailableRanges: mergeRanges(unavailableRanges),
-	};
+	}
+	const mergedBlockCode = mergeRanges(blockCodeRanges);
+	const inlineCodeRanges = scanRawMarkdownInlineCodeRanges(
+		projectedText,
+		mergedBlockCode,
+	);
+	return inlineCodeRanges.length > 0
+		? mergeRanges([...mergedBlockCode, ...inlineCodeRanges])
+		: mergedBlockCode;
 }
 
 function imageIndexForBlocks(
@@ -412,38 +257,232 @@ function imageIndexForBlocks(
 			firstImageIndex: imageRanges.length,
 			status: "ready",
 		});
-		imageRanges.push(...accepted);
+		appendAll(imageRanges, accepted);
 	}
 	return { imageBlocks, imageRanges };
 }
 
-export function createEditorMarkdownBlockIndex(
+function isMathHostBlock(
+	block: EditorMarkdownSourceBlock | undefined,
+): block is EditorMarkdownSourceBlock {
+	return Boolean(
+		block?.editable &&
+			"code" !== block.kind &&
+			"unavailable" !== block.kind,
+	);
+}
+
+/**
+ * Keeps only math ranges strictly contained in a single editable non-code,
+ * non-unavailable block of `blocks` (matching `validatePackedMathSpans`).
+ */
+function filterMathRangesInsideBlocks(
+	blocks: ReadonlyArray<EditorMarkdownSourceBlock>,
+	ranges: ReadonlyArray<MathRange>,
+): MathRange[] {
+	const accepted: MathRange[] = [];
+	let blockIndex = 0;
+	for (const range of ranges) {
+		while (
+			blockIndex < blocks.length &&
+			(blocks[blockIndex]?.to ?? 0) <= range.from
+		) {
+			blockIndex += 1;
+		}
+		const block = blocks[blockIndex];
+		if (
+			isMathHostBlock(block) &&
+			range.from >= block.from &&
+			range.to <= block.to
+		) {
+			accepted.push(range);
+		}
+	}
+	return accepted;
+}
+
+/**
+ * Unified tree-to-index pipeline shared by zero-math documents and PHP
+ * two-stage `extract_math()` -> CommonMark substituted trees.
+ */
+function buildIndexFromTree(
 	source: string,
-	options: Readonly<{ referenceLabelCaseFoldProfile: ReferenceLabelCaseFoldProfile }>,
+	starts: ReadonlyArray<number>,
+	projection: NewlineProjection,
+	tree: Tree,
+	treeText: string,
+	substitutions: ReadonlyArray<PhpMathSubstitution>,
+	profile: ReferenceLabelCaseFoldProfile,
 ): EditorMarkdownBlockIndex {
-	const starts = markdownLineStarts(source);
-	const projection = projectNewlines(source);
-	const parsed = parserSnapshot(source, projection, options.referenceLabelCaseFoldProfile);
-	const projectedRanges = mathRanges(
-		projection.text,
-		mergeRanges([...parsed.codeRanges, ...parsed.unavailableRanges]),
-	);
-	const normalized = normalizeMathRanges(projectedRanges);
-	const ranges = normalized.ranges.map((range) => ({
-		...originalRange(projection, range),
-		block: range.block,
-	}));
-	const unavailableRanges = normalized.conflicts.map((range) =>
-		originalRange(projection, range),
-	);
-	const blocks = overlayMath(
-		source,
-		parsed.blocks,
-		ranges,
-		starts,
-		unavailableRanges,
-	);
-	const images = imageIndexForBlocks(blocks, parsed.imageNodes, ranges);
+	const hasSubs = substitutions.length > 0;
+	const blockMathByTokenStart = hasSubs
+		? new Map<number, PhpMathSubstitution>()
+		: null;
+	if (blockMathByTokenStart) {
+		for (const sub of substitutions) {
+			if (sub.block) blockMathByTokenStart.set(sub.tokenFrom, sub);
+		}
+	}
+	const syntaxNodes: MarkdownSyntaxNode[] = [];
+	const rawImageNodes: SourceRange[] = [];
+	const subExcludedRaw: SourceRange[] = [];
+	tree.iterate({
+		enter: (node) => {
+			if (LINK_PROJECTION_SYNTAX_NODES.has(node.name)) {
+				syntaxNodes.push({ from: node.from, name: node.name, to: node.to });
+			}
+			if ("Image" === node.name) {
+				rawImageNodes.push({ from: node.from, to: node.to });
+			}
+			if (hasSubs && SUB_MATH_EXCLUDED_NODES.has(node.name)) {
+				subExcludedRaw.push({ from: node.from, to: node.to });
+			}
+		},
+	});
+	const topLevel = tree.cursor();
+	const rawBlocks: Array<
+		Readonly<{
+			kind: EditorMarkdownBlockKind;
+			rawFrom: number;
+			rawTo: number;
+			subFrom: number;
+			subTo: number;
+		}>
+	> = [];
+	if (topLevel.firstChild()) {
+		do {
+			const blockSub =
+				null !== blockMathByTokenStart && "Paragraph" === topLevel.name
+					? blockMathByTokenStart.get(topLevel.from)
+					: undefined;
+			const kind: EditorMarkdownBlockKind =
+				undefined !== blockSub && blockSub.tokenTo === topLevel.to
+					? "math"
+					: nodeKind(topLevel.name);
+			const projFrom = hasSubs
+				? mapSubstitutedStartToOriginal(topLevel.from, substitutions)
+				: topLevel.from;
+			const projTo = hasSubs
+				? mapSubstitutedEndToOriginal(topLevel.to, substitutions)
+				: topLevel.to;
+			if (projFrom >= projTo) continue;
+			rawBlocks.push({
+				kind,
+				rawFrom: originalOffsetAt(projection, projFrom),
+				rawTo: originalOffsetAt(projection, projTo),
+				subFrom: topLevel.from,
+				subTo: topLevel.to,
+			});
+		} while (topLevel.nextSibling());
+	}
+
+	const blocks: EditorMarkdownSourceBlock[] = [];
+	for (let i = 0; i < rawBlocks.length; i += 1) {
+		const entry = rawBlocks[i];
+		if (!entry) continue;
+		const prevTo = blocks[blocks.length - 1]?.to ?? 0;
+		const nextRawFrom = rawBlocks[i + 1]?.rawFrom ?? source.length;
+		const lineStart = lineIndexAtOffsets(starts, entry.rawFrom);
+		const lineStartOffset = starts[lineStart] ?? 0;
+		const from =
+			"math" === entry.kind || prevTo > lineStartOffset
+				? Math.max(prevTo, entry.rawFrom)
+				: lineStartOffset;
+		let to: number;
+		if ("math" === entry.kind) {
+			to = Math.max(from, entry.rawTo);
+		} else {
+			const endLine = lineIndexAtOffsets(starts, Math.max(from, entry.rawTo - 1));
+			const fullLineEnd = lineContentEnd(source, starts, endLine);
+			to =
+				nextRawFrom < fullLineEnd
+					? Math.max(from, entry.rawTo)
+					: Math.max(from, fullLineEnd);
+		}
+		if (from >= to) continue;
+		blocks.push({
+			editable: "unavailable" !== entry.kind,
+			from,
+			kind: entry.kind,
+			lineEnd: lineIndexAtOffsets(starts, Math.max(from, to - 1)),
+			lineStart: from === lineStartOffset ? lineStart : lineIndexAtOffsets(starts, from),
+			to,
+		});
+	}
+
+	let validRanges: MathRange[] = [];
+	if (hasSubs) {
+		const subExcludedRanges = mergeRanges(subExcludedRaw);
+		const survivingMath: MathRange[] = [];
+		for (const sub of substitutions) {
+			if (hasRangeOverlap(subExcludedRanges, sub.tokenFrom, sub.tokenTo)) {
+				continue;
+			}
+			const range = originalRange(projection, {
+				from: sub.origFrom,
+				to: sub.origTo,
+			});
+			survivingMath.push({
+				block: sub.block,
+				from: range.from,
+				to: range.to,
+			});
+		}
+		validRanges = filterMathRangesInsideBlocks(blocks, survivingMath);
+	}
+
+	const imageNodes: ParserImageNode[] = [];
+	let imageBlockIndex = 0;
+	for (const node of rawImageNodes) {
+		while (
+			imageBlockIndex < rawBlocks.length &&
+			node.from >= (rawBlocks[imageBlockIndex]?.subTo ?? treeText.length + 1)
+		) {
+			imageBlockIndex += 1;
+		}
+		const block = rawBlocks[imageBlockIndex];
+		if (
+			!block ||
+			node.from < block.subFrom ||
+			node.to > block.subTo ||
+			"code" === block.kind ||
+			"unavailable" === block.kind
+		) {
+			continue;
+		}
+		const projFrom = hasSubs
+			? mapSubstitutedStartToOriginal(node.from, substitutions)
+			: node.from;
+		const projTo = hasSubs
+			? mapSubstitutedEndToOriginal(node.to, substitutions)
+			: node.to;
+		if (projFrom >= projTo) continue;
+		imageNodes.push({
+			available: imageNodeIsInline(projection.text, projFrom, projTo),
+			from: originalOffsetAt(projection, projFrom),
+			to: originalOffsetAt(projection, projTo),
+		});
+	}
+
+	const projectedLinks = projectedLinkNodes(treeText, syntaxNodes, profile);
+	let mappedLinks: ReadonlyArray<ParserLinkNode> = projectedLinks;
+	if (hasSubs) {
+		const remapped: ParserLinkNode[] = [];
+		for (const link of projectedLinks) {
+			const projFrom = mapSubstitutedStartToOriginal(link.from, substitutions);
+			const projTo = mapSubstitutedEndToOriginal(link.to, substitutions);
+			if (projFrom >= projTo) continue;
+			remapped.push({
+				from: projFrom,
+				kind: link.kind,
+				reference: link.reference,
+				to: projTo,
+			});
+		}
+		mappedLinks = remapped;
+	}
+
+	const images = imageIndexForBlocks(blocks, imageNodes, validRanges);
 	return {
 		blocks,
 		imageBlocks: images.imageBlocks,
@@ -452,13 +491,65 @@ export function createEditorMarkdownBlockIndex(
 		linkCandidates: linkCandidatesForBlocks(
 			projection,
 			blocks,
-			parsed.linkNodes,
-			ranges,
+			mappedLinks,
+			validRanges,
 			images.imageRanges,
 		),
-		mathSpans: ranges.map((range) => mathSpanFromRange(source, range)),
+		mathSpans: validRanges.map((range) => mathSpanFromRange(source, range)),
 		source,
 	};
+}
+
+export function createEditorMarkdownBlockIndex(
+	source: string,
+	options: Readonly<{ referenceLabelCaseFoldProfile: ReferenceLabelCaseFoldProfile }>,
+): EditorMarkdownBlockIndex {
+	const starts = markdownLineStarts(source);
+	const projection = projectNewlines(source);
+	const tree = blockIndexMarkdownParser.parse(projection.text);
+	if (
+		!projection.text.includes("$") &&
+		!projection.text.includes("\\(") &&
+		!projection.text.includes("\\[")
+	) {
+		return buildIndexFromTree(
+			source,
+			starts,
+			projection,
+			tree,
+			projection.text,
+			EMPTY_SUBSTITUTIONS,
+			options.referenceLabelCaseFoldProfile,
+		);
+	}
+	const codeRanges = stageOneCodeRanges(projection.text, tree);
+	const candidateMath = mathRanges(projection.text, codeRanges);
+	if (0 === candidateMath.length) {
+		return buildIndexFromTree(
+			source,
+			starts,
+			projection,
+			tree,
+			projection.text,
+			EMPTY_SUBSTITUTIONS,
+			options.referenceLabelCaseFoldProfile,
+		);
+	}
+	const normalized = normalizeMathRanges(candidateMath);
+	const { substituted, substitutions } = substitutePhpMathRanges(
+		projection.text,
+		normalized.ranges,
+	);
+	const subTree = blockIndexMarkdownParser.parse(substituted);
+	return buildIndexFromTree(
+		source,
+		starts,
+		projection,
+		subTree,
+		substituted,
+		substitutions,
+		options.referenceLabelCaseFoldProfile,
+	);
 }
 
 export function findEditorMarkdownBlock(

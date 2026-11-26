@@ -1,3 +1,4 @@
+import { hasOddPrecedingBackslashes } from "../../shared/markdown/markdown-source-projection";
 import type { EditorMarkdownBlockIndex } from "./editor-markdown-block-index";
 import type { MarkdownLine } from "./editor-markdown-lines";
 import type { EditorSelection } from "./editor-context-menu-rules";
@@ -36,18 +37,6 @@ function horizontalPadding(character: string | undefined): boolean {
 	return " " === character || "\t" === character;
 }
 
-function hasOddBackslashRun(value: string, position: number): boolean {
-	let count = 0;
-	for (
-		let index = position - 1;
-		index >= 0 && "\\" === value[index];
-		index -= 1
-	) {
-		count += 1;
-	}
-	return 1 === count % 2;
-}
-
 function cellCoreRange(raw: string): CellCoreRange {
 	let start = 0;
 	while (start < raw.length && horizontalPadding(raw[start])) start += 1;
@@ -56,7 +45,7 @@ function cellCoreRange(raw: string): CellCoreRange {
 	while (end > start && horizontalPadding(raw[end - 1])) end -= 1;
 	const trailingLength = raw.length - end;
 	const preserveTrailingWhitespace =
-		trailingLength > 0 && hasOddBackslashRun(raw, end);
+		trailingLength > 0 && hasOddPrecedingBackslashes(raw, end);
 	if (preserveTrailingWhitespace) end = raw.length;
 
 	return { end, preserveTrailingWhitespace, start };

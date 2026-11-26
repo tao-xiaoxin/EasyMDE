@@ -1,17 +1,28 @@
 import { describe, expect, it } from "vitest";
 import { markdownLanguage } from "@codemirror/lang-markdown";
+import type { MarkdownParser } from "@lezer/markdown";
 
 import {
 	createEditorMarkdownBlockIndex as createProfiledMarkdownBlockIndex,
 	type EditorMarkdownBlockKind,
 	findEditorMarkdownBlock,
 } from "./editor-markdown-block-index";
+import { installLinearInlineResolver } from "./editor-markdown-inline-markers";
+import {
+	createLinearLinkEndParser,
+	parseLinearImage,
+	parseLinearLink,
+} from "./editor-markdown-linear-link-parser";
+import { runGeneratedContextMenuAction } from "./editor-context-menu-generated-actions";
+import type { EditorContextMenuActionSession } from "./editor-context-menu-action-coordinator";
 import {
 	type EditorCodeBodyMap,
 	findEditorCodeContentTarget,
 	readEditorCodeContent,
 } from "./editor-code-content-target";
+import { associateGeneratedContentTarget } from "../generated-content-export/generated-content-target";
 import { markdownReferenceLabels, type MarkdownSyntaxNode } from "./editor-markdown-link-preparation";
+import { mathRanges } from "./editor-markdown-math-preparation";
 
 function editorCodeBodyMap(
 	source: string,
@@ -641,6 +652,60 @@ describe("createEditorMarkdownBlockIndex", () => {
 		);
 		expect(block?.kind).toBe("unavailable");
 	});
+
+	it("scans all four math delimiter forms linearly with exact masking and escape parity", () => {
+		expect(mathRanges("$$a$$ \\[b\\] \\(c\\) $d$", [])).toEqual([
+			{ block: true, from: 0, to: 5 },
+			{ block: true, from: 6, to: 11 },
+			{ block: false, from: 12, to: 17 },
+			{ block: false, from: 18, to: 21 },
+		]);
+
+		// Empty bodies are rejected while 5-dollar `$$$$$` matches `[0, 5)` like `/\$\$[\s\S]+?\$\$/gu`.
+		expect(mathRanges("$$$$ \\[\\] \\(\\)", [])).toEqual([]);
+		expect(mathRanges("$$$$$", [])).toEqual([{ block: true, from: 0, to: 5 }]);
+
+		// Block math masks its span with a leading newline so outer `$...$` cannot pair across it.
+		expect(mathRanges("$a $$b$$ c$", [])).toEqual([
+			{ block: true, from: 3, to: 8 },
+		]);
+		expect(mathRanges("\\[ $inner$ \\] \\( $inner2$ \\)", [])).toEqual([
+			{ block: true, from: 0, to: 13 },
+			{ block: false, from: 14, to: 28 },
+		]);
+
+		// Escaped dollar signs and adjacent `$$a$` follow exact inline `$...$` semantics.
+		expect(mathRanges("$$a$", [])).toEqual([{ block: false, from: 1, to: 4 }]);
+		expect(mathRanges("$a\\$b$c$", [])).toEqual([
+			{ block: false, from: 5, to: 8 },
+		]);
+		expect(mathRanges("\\$not-math\n$ok$\n$also\\$", [])).toEqual([
+			{ block: false, from: 11, to: 15 },
+		]);
+		expect(mathRanges("\\$a$ $b$", [])).toEqual([
+			{ block: false, from: 3, to: 6 },
+		]);
+		expect(mathRanges("$$😀$$", [])).toEqual([
+			{ block: true, from: 0, to: 6 },
+		]);
+
+		// Linear scaling on 20k unmatched delimiters (no O(N^2) backtracking).
+		const unmatchedBrackets = `${"\\[ ".repeat(20_000)}word`;
+		const unmatchedDollars = `${"$\\$ ".repeat(20_000)}$x$`;
+		const startedAt = performance.now();
+		expect(mathRanges(unmatchedBrackets, [])).toEqual([]);
+		const dollarMatches = mathRanges(unmatchedDollars, []);
+		const elapsedMs = performance.now() - startedAt;
+
+		expect(dollarMatches).toEqual([
+			{
+				block: false,
+				from: unmatchedDollars.length - 3,
+				to: unmatchedDollars.length,
+			},
+		]);
+		expect(elapsedMs).toBeLessThan(100);
+	});
 });
 
 describe("readEditorCodeContent", () => {
@@ -1256,6 +1321,1342 @@ describe("readEditorCodeContent", () => {
 	});
 });
 
+describe("createEditorMarkdownBlockIndex canonical raw-backtick protection", () => {
+	// Parser-free PHP `inline_code_ranges()` parity (verified against PHP 8.3.37).
+	const mathTexts = (source: string): string[] =>
+		createEditorMarkdownBlockIndex(source).mathSpans.map((span) => source.slice(span.from, span.to));
+
+	it("pairs raw backticks across blank lines before extracting math", () => {
+		expect(mathTexts("Para 1 `\n\nPara 2 $x$\n\nPara 3 `")).toEqual([]);
+		expect(mathTexts("``a` $x$ ``")).toEqual([]);
+	});
+
+	it("skips escaped openers and never pairs across fenced code", () => {
+		expect(mathTexts("\\`$x$`")).toEqual(["$x$"]);
+		expect(mathTexts("` $x$\n\n```\n`\n```")).toEqual(["$x$"]);
+	});
+
+	it("aligns cross-paragraph inline math and quoted indented math with live PHP two-stage parsing (R23-2a, R23-2b, R24A #1, R30B #1)", () => {
+		for (const crossParagraph of ["\\(a\n\n**word!** \\)", "\\(a\n\nword \\)"]) {
+			const index = createEditorMarkdownBlockIndex(crossParagraph);
+			expect(index.mathSpans).toEqual([
+				{
+					bodyFrom: 2,
+					bodyTo: crossParagraph.length - 2,
+					displayMode: false,
+					from: 0,
+					to: crossParagraph.length,
+				},
+			]);
+			expect(index.blocks).toEqual([
+				{
+					editable: true,
+					from: 0,
+					kind: "paragraph",
+					lineEnd: 2,
+					lineStart: 0,
+					to: crossParagraph.length,
+				},
+			]);
+		}
+
+		const quotedIndented = ">     $$x\n**word**$$";
+		const quotedIndex = createEditorMarkdownBlockIndex(quotedIndented);
+		expect(quotedIndex.mathSpans.map((span) => quotedIndented.slice(span.from, span.to))).toEqual([
+			"$$x\n**word**$$",
+		]);
+		expect(quotedIndex.blocks.some((block) => "math" === block.kind)).toBe(true);
+	});
+
+	it("aligns empty ListItem blank-line termination and League 2.8.2 single-char-remainder padding with PHP (R25A #1, R26B #1, R26A #2)", () => {
+		for (const source of [
+			"-\n\n    **word** $x$",
+			"-\r\n\r\n    **word** $x$",
+			"1.\n\n    **word** $x$",
+			"- a\n-\n\n    **word** $x$",
+			"-\n\n\t**word** $x$",
+			"-\n\n  para\n\n    **word** $x$",
+		]) {
+			const index = createEditorMarkdownBlockIndex(source);
+			expect(index.mathSpans, `expected zero mathSpans for ${JSON.stringify(source)}`).toEqual([]);
+			const block = findEditorMarkdownBlock(index, source.indexOf("word"));
+			expect(block?.kind, `expected code block for ${JSON.stringify(source)}`).toBe("code");
+		}
+		for (const source of [
+			"- -\n\n      **word** $x$",
+			"-  -\n\n      **word** $x$",
+			"-  -\r\n\r\n      **word** $x$",
+		]) {
+			const index = createEditorMarkdownBlockIndex(source);
+			expect(index.mathSpans, `expected zero mathSpans for ${JSON.stringify(source)}`).toEqual([]);
+			expect(findEditorMarkdownBlock(index, source.indexOf("word"))?.kind).toBe("list");
+		}
+		// Without a backtick/tilde/top-level 4-space line, PHP skips code-block
+		// scanning so `$$` opens block math spanning `hello **word** $$`.
+		const quotedMath = "> -\n>\n>     $$\n\nhello **word** $$";
+		const quotedMathIndex = createEditorMarkdownBlockIndex(quotedMath);
+		expect(quotedMathIndex.mathSpans.map((span) => quotedMath.slice(span.from, span.to))).toEqual([
+			"$$\n\nhello **word** $$",
+		]);
+		expect(findEditorMarkdownBlock(quotedMathIndex, quotedMath.indexOf("word"))?.kind).toBe("math");
+
+		// Quoted inline math without top-level 4-space/tab line matches live PHP 8.3.37.
+		const quotedInline = "> -\n> \n>     **word** $x$";
+		const quotedInlineIndex = createEditorMarkdownBlockIndex(quotedInline);
+		expect(quotedInlineIndex.mathSpans.map((span) => quotedInline.slice(span.from, span.to))).toEqual([
+			"$x$",
+		]);
+		expect(findEditorMarkdownBlock(quotedInlineIndex, quotedInline.indexOf("word"))?.kind).toBe("quote");
+
+		// Non-code variants keep their PHP-accurate host block and inline math span.
+		const trailingPara = "-\n\n  **word** $x$";
+		const trailingParaIndex = createEditorMarkdownBlockIndex(trailingPara);
+		expect(trailingParaIndex.mathSpans.map((span) => trailingPara.slice(span.from, span.to))).toEqual(["$x$"]);
+		expect(findEditorMarkdownBlock(trailingParaIndex, trailingPara.indexOf("word"))?.kind).toBe("paragraph");
+		for (const source of [
+			"-\n    **word** $x$",
+			"- -\n\n    **word** $x$",
+		]) {
+			const index = createEditorMarkdownBlockIndex(source);
+			expect(index.mathSpans.map((span) => source.slice(span.from, span.to))).toEqual(["$x$"]);
+			expect(findEditorMarkdownBlock(index, source.indexOf("word"))?.kind).toBe("list");
+		}
+	});
+});
+
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {
   return createProfiledMarkdownBlockIndex(source, options);
 }
+
+describe("editor-markdown-block-index Stage 4 Round 27 unified League block rules (PHP 8.3.37 / League 2.8.2)", () => {
+	it("never lets same-container nested list markers interrupt a paragraph (R27B #2a)", () => {
+		for (const source of [
+			"1. ab\n   2. c\n\n       **word** $x$",
+			"1. ab\r\n   2. c\r\n\r\n       **word** $x$",
+			"1. ab\n   2) c\n\n       **word** $x$",
+			"+ a\n  +\n\n      **word** $x$",
+		]) {
+			const index = createEditorMarkdownBlockIndex(source);
+			expect(index.mathSpans, `expected zero mathSpans for ${JSON.stringify(source)}`).toEqual([]);
+		}
+		for (const source of [
+			"1. ab\n2. c\n\n   **word** $x$",
+			"> para\n2. c\n\n   **word** $x$",
+			"1. ab\n   1. c\n\n      **word** $x$",
+			"- a\n  - b\n\n    **word** $x$",
+		]) {
+			const index = createEditorMarkdownBlockIndex(source);
+			expect(index.mathSpans.map((span) => source.slice(span.from, span.to)), JSON.stringify(source)).toEqual(["$x$"]);
+		}
+	});
+
+	it("applies League HTML block Types 1-7 in the block-index parser (R27B #2b)", () => {
+		for (const source of [
+			"para\n<textarea>\n$x$\n</textarea>",
+			"para\r\n<textarea>\r\n$x$\r\n</textarea>",
+			"<!doctype html\n$x$\n>",
+			"<![cdata[\n$x$\n]]>",
+			"<pre/>\n$x$",
+		]) {
+			const index = createEditorMarkdownBlockIndex(source);
+			expect(index.mathSpans, `expected zero mathSpans for ${JSON.stringify(source)}`).toEqual([]);
+		}
+		const imageSource = "<pre>\n</textarea>\n![alt](https://example.com/a.png)\n</pre>";
+		const imageIndex = createEditorMarkdownBlockIndex(imageSource);
+		expect(imageIndex.imageRanges.map((range) => imageSource.slice(range.from, range.to))).toEqual([
+			"![alt](https://example.com/a.png)",
+		]);
+		// Shared `markdownLanguage.parser` stays on upstream rules.
+		expect(markdownLanguage.parser.parse("<pre/>\n$x$").topNode.firstChild?.name).not.toBe("HTMLBlock");
+	});
+});
+
+describe("editor-markdown-block-index Stage 4 Round 28 HTML block math visibility (PHP 8.3.37 / League 2.8.2)", () => {
+	it("lets block math terminate blank-line HTML blocks (Types 6/7) while inline math stays shielded (R28A #3)", () => {
+		const cases: ReadonlyArray<readonly [string, ReadonlyArray<string>]> = [
+			["<pre/>\n$$x$$", ["$$x$$"]],
+			["<pre/>\n$x$", []],
+			["<div>\n$$x$$", ["$$x$$"]],
+			["<div>\n$x$", []],
+			["<textarea>\n$$x$$\n</textarea>", []],
+			["<!doctype html\n$$x$$\n>", []],
+			["<![cdata[\n$$x$$\n]]>", []],
+			["<!--\n$$x$$\n-->", []],
+			["<pre/>$$x$$", ["$$x$$"]],
+			['<div class="$$x$$">', ["$$x$$"]],
+			["<pre/>\n$$x$$\n**word**", ["$$x$$"]],
+		];
+		for (const [lfSource, expected] of cases) {
+			for (const source of [lfSource, lfSource.replace(/\n/g, "\r\n")]) {
+				const index = createEditorMarkdownBlockIndex(source);
+				expect(index.mathSpans.map((span) => source.slice(span.from, span.to)), JSON.stringify(source)).toEqual(expected);
+				for (const span of index.mathSpans) {
+					expect(index.blocks.some((block) => "math" === block.kind && block.editable && block.from === span.from && block.to === span.to)).toBe(true);
+				}
+			}
+		}
+		expect(createEditorMarkdownBlockIndex("<pre/>\n$$x$$").mathSpans.map((span) => [span.from, span.to])).toEqual([[7, 12]]);
+		expect(createEditorMarkdownBlockIndex("<div>\n$$x$$").mathSpans.map((span) => [span.from, span.to])).toEqual([[6, 11]]);
+		// Remaining HTML pieces stay non-editable.
+		expect(createEditorMarkdownBlockIndex("<pre/>\n$$x$$").blocks.map((block) => [block.kind, block.from, block.to, block.editable])).toEqual([
+			["unavailable", 0, 6, false],
+			["math", 7, 12, true],
+		]);
+	});
+});
+
+describe("editor-markdown-block-index Stage 4 Round 29 blockquote indent & PHP two-stage HTML+math parity (PHP 8.3.37 / League 2.8.2)", () => {
+	it("closes blockquotes on >=4-column indented `>` lines so code-block math/backticks never drift ordinals (R29B #1)", () => {
+		for (const lfSource of [
+			"> a\n>\n    > $x$\n\n$z$",
+			"> a\n>\n\t> $x$\n\n$z$",
+			"> a\n>\n    > `code\n\n$z$\n\n`",
+			"> a\n>\n    > $$\n\n$z$\n\n$$",
+		]) {
+			for (const source of [lfSource, lfSource.replace(/\n/g, "\r\n")]) {
+				const index = createEditorMarkdownBlockIndex(source);
+				expect(
+					index.mathSpans.map((span) => [source.slice(span.from, span.to), span.displayMode]),
+					JSON.stringify(source),
+				).toEqual([["$z$", false]]);
+			}
+		}
+	});
+
+	it("mirrors PHP extract_math() -> parse order when math overlaps HTML/comment/PI blocks (R29A #1, R29A #2, R29B #3)", () => {
+		const cases: ReadonlyArray<readonly [string, ReadonlyArray<readonly [string, boolean]>]> = [
+			["<div>\n$$x$$\n<!-- $$y$$ -->", [["$$x$$", true]]],
+			["<pre/>\n$$x$$\n$y$", [["$$x$$", true], ["$y$", false]]],
+			["<div>\n$$x$$\n$y$\n\n$z$", [["$$x$$", true], ["$y$", false], ["$z$", false]]],
+			["<pre/>\n$$x$$\n$y$\n\n$z$", [["$$x$$", true], ["$y$", false], ["$z$", false]]],
+			["<div> $$x$$ $y$", [["$$x$$", true], ["$y$", false]]],
+			["<div>\n$$x$$\nhello", [["$$x$$", true]]],
+			["<pre>foo</pre> $$x$$\n\n$z$", [["$$x$$", true], ["$z$", false]]],
+			["<!-- c --> $$x$$\n\n$z$", [["$$x$$", true], ["$z$", false]]],
+			["<!DOCTYPE html> $$x$$\n\n$z$", [["$$x$$", true], ["$z$", false]]],
+			["<?php ?> $$x$$\n\n$z$", [["$$x$$", true], ["$z$", false]]],
+			["<![CDATA[x]]> $$x$$\n\n$z$", [["$$x$$", true], ["$z$", false]]],
+			["<pre>foo</pre> $x$", []],
+			["<!--\n$$x\n-->\n$$\n\n$z$", []],
+			["<div>\n$x$\n</div>", []],
+			["<pre/>\n$$x$$", [["$$x$$", true]]],
+			["<pre/>\n$x$", []],
+			["<textarea>\n$$x$$\n</textarea>", []],
+			["<!doctype html\n$$x$$\n>", []],
+			["<![cdata[\n$$x$$\n]]>", []],
+			["<!--\n$$x$$\n-->", []],
+			["> <div>\n> $$x$$\n> $y$", [["$$x$$", true], ["$y$", false]]],
+			["> <!--\n> $x$\n> -->", []],
+		];
+		for (const [lfSource, expected] of cases) {
+			for (const source of [lfSource, lfSource.replace(/\n/g, "\r\n")]) {
+				const index = createEditorMarkdownBlockIndex(source);
+				expect(
+					index.mathSpans.map((span) => [source.slice(span.from, span.to), span.displayMode]),
+					JSON.stringify(source),
+				).toEqual(expected);
+			}
+		}
+
+		// Exact span & block invariants called out by R29A #1, R29A #2, R29B #3.
+		const commentAfterBlock = createEditorMarkdownBlockIndex("<div>\n$$x$$\n<!-- $$y$$ -->");
+		expect(commentAfterBlock.mathSpans.map((span) => [span.from, span.to])).toEqual([[6, 11]]);
+		expect(commentAfterBlock.blocks.map((block) => [block.kind, block.from, block.to, block.editable])).toEqual([
+			["unavailable", 0, 5, false],
+			["math", 6, 11, true],
+			["unavailable", 12, 26, false],
+		]);
+
+		const preBlockInline = createEditorMarkdownBlockIndex("<pre/>\n$$x$$\n$y$");
+		expect(preBlockInline.mathSpans.map((span) => [span.from, span.to])).toEqual([[7, 12], [13, 16]]);
+
+		const divProse = createEditorMarkdownBlockIndex("<div>\n$$x$$\nhello");
+		expect(findEditorMarkdownBlock(divProse, "<div>\n$$x$$\nhello".indexOf("hello"))).toMatchObject({
+			editable: true,
+			kind: "paragraph",
+		});
+
+		const unfragmentedDiv = createEditorMarkdownBlockIndex("<div>\n$x$\n</div>");
+		expect(unfragmentedDiv.mathSpans).toEqual([]);
+		expect(unfragmentedDiv.blocks).toEqual([
+			{ editable: false, from: 0, kind: "unavailable", lineEnd: 2, lineStart: 0, to: 16 },
+		]);
+
+		const unfragmentedDivCrlf = createEditorMarkdownBlockIndex("<div>\r\n$x$\r\n</div>");
+		expect(unfragmentedDivCrlf.mathSpans).toEqual([]);
+		expect(unfragmentedDivCrlf.blocks).toEqual([
+			{ editable: false, from: 0, kind: "unavailable", lineEnd: 2, lineStart: 0, to: 18 },
+		]);
+
+		// Images and links after a block-math-terminated HTML block stay indexed cleanly.
+		const imgDoc = "<div>\n$$x$$\n![alt](https://example.com/a.png)";
+		const imgIndex = createEditorMarkdownBlockIndex(imgDoc);
+		expect(imgIndex.imageRanges.map((range) => imgDoc.slice(range.from, range.to))).toEqual([
+			"![alt](https://example.com/a.png)",
+		]);
+		const linkDoc = "<div>\n$$x$$\n[label](https://example.com)";
+		const linkIndex = createEditorMarkdownBlockIndex(linkDoc);
+		expect(linkIndex.linkCandidates?.map((candidate) => linkDoc.slice(candidate.from, candidate.to))).toEqual([
+			"[label](https://example.com)",
+		]);
+	});
+});
+
+describe("editor-markdown-block-index Stage 4 Round 30 unified PHP two-stage pipeline, inline HTML stripping, and O(1) line end (PHP 8.3.37 / League 2.8.2)", () => {
+	it("mirrors live PHP for math-created HTML blocks, reference definitions, and post-block-math Markdown blocks (R30B #1)", () => {
+		const mathCases: ReadonlyArray<
+			Readonly<{
+				blockKinds?: ReadonlyArray<EditorMarkdownBlockKind>;
+				expectedLinks?: ReadonlyArray<string>;
+				expectedMath: ReadonlyArray<readonly [string, boolean]>;
+				source: string;
+			}>
+		> = [
+			{
+				blockKinds: ["paragraph", "math", "unavailable"],
+				expectedMath: [["$$x$$", true]],
+				source: "para\n$$x$$\n<custom>\n$y$\n</custom>",
+			},
+			{
+				blockKinds: ["paragraph", "math", "unavailable"],
+				expectedMath: [["$$x$$", true]],
+				source: "para $$x$$ <div>\n$y$",
+			},
+			{
+				blockKinds: ["paragraph", "math", "unavailable"],
+				expectedMath: [["$$x$$", true]],
+				source: "para $$x$$ <!--\n$y$\n-->",
+			},
+			{
+				blockKinds: ["paragraph", "math", "unavailable"],
+				expectedMath: [["$$x$$", true]],
+				source: "para $$x$$ <pre>\n$y$\n</pre>",
+			},
+			{
+				expectedLinks: [],
+				expectedMath: [["$$x$$", true]],
+				source: '[a]: /url "$$x$$"\n\n[a]',
+			},
+			{
+				expectedLinks: ["[a]"],
+				expectedMath: [["$$x$$", true]],
+				source: "[a]: /$$x$$\n\n[a]",
+			},
+			{
+				expectedLinks: [],
+				expectedMath: [
+					["$$x$$", true],
+					["$$x$$", true],
+				],
+				source: "[$$x$$]: /url\n\n[$$x$$]",
+			},
+			{
+				expectedLinks: ["[ref]"],
+				expectedMath: [["$$x$$", true]],
+				source: "para $$x$$ [ref]: /url\n\n[ref]",
+			},
+			{
+				blockKinds: ["paragraph", "math", "heading"],
+				expectedMath: [["$$x$$", true]],
+				source: "para $$x$$ # heading",
+			},
+			{
+				blockKinds: ["paragraph", "math", "quote"],
+				expectedMath: [["$$x$$", true]],
+				source: "para $$x$$ > quote",
+			},
+			{
+				blockKinds: ["paragraph", "math", "thematic-break"],
+				expectedMath: [["$$x$$", true]],
+				source: "para $$x$$ ---",
+			},
+			{
+				blockKinds: ["heading", "math", "paragraph"],
+				expectedMath: [["$$b$$", true]],
+				source: "# h $$b$$ t",
+			},
+			{
+				blockKinds: ["quote", "math"],
+				expectedMath: [["$$x$$", true]],
+				source: "> $$x$$",
+			},
+			{
+				blockKinds: ["list", "math"],
+				expectedMath: [["$$x$$", true]],
+				source: "- $$x$$",
+			},
+		];
+
+		for (const testCase of mathCases) {
+			for (const source of [testCase.source, testCase.source.replace(/\n/g, "\r\n")]) {
+				const index = createEditorMarkdownBlockIndex(source);
+				expect(
+					index.mathSpans.map((span) => [source.slice(span.from, span.to), span.displayMode]),
+					JSON.stringify(source),
+				).toEqual(testCase.expectedMath);
+				if (testCase.blockKinds) {
+					expect(
+						index.blocks.map((block) => block.kind),
+						JSON.stringify(source),
+					).toEqual(testCase.blockKinds);
+				}
+				if (testCase.expectedLinks) {
+					expect(
+						(index.linkCandidates ?? []).map((candidate) =>
+							source.slice(candidate.from, candidate.to),
+						),
+						JSON.stringify(source),
+					).toEqual(testCase.expectedLinks);
+				}
+			}
+		}
+	});
+
+	it("preserves non-local invariance when prepending an unrelated HTML+math prefix (R30B #1)", () => {
+		const fixtures = [
+			"para\n$$x$$\n<custom>\n$y$\n</custom>",
+			"para $$x$$ <div>\n$y$",
+			'[a]: /url "$$x$$"\n\n[a]',
+			"[a]: /$$x$$\n\n[a]",
+			"para $$x$$ [ref]: /url\n\n[ref]",
+			"para $$x$$ # heading",
+			"para $$x$$ > quote",
+			"para $$x$$ ---",
+			"# h $$b$$ t",
+			'<span title="$y$">hi</span>',
+			"<span>$y$</span>",
+		];
+		for (const lfBody of fixtures) {
+			for (const newline of ["\n", "\r\n"] as const) {
+				const body = lfBody.replace(/\n/g, newline);
+				const prefix = `<div>${newline}$$a$$${newline}${newline}`;
+				const combined = prefix + body;
+				const standalone = createEditorMarkdownBlockIndex(body);
+				const prefixed = createEditorMarkdownBlockIndex(combined);
+				const offset = prefix.length;
+
+				const downstreamBlocks = prefixed.blocks
+					.filter((block) => block.from >= offset)
+					.map((block) => ({
+						editable: block.editable,
+						from: block.from - offset,
+						kind: block.kind,
+						to: block.to - offset,
+					}));
+				const standaloneBlocks = standalone.blocks.map((block) => ({
+					editable: block.editable,
+					from: block.from,
+					kind: block.kind,
+					to: block.to,
+				}));
+				expect(downstreamBlocks, JSON.stringify(body)).toEqual(standaloneBlocks);
+
+				const downstreamMath = prefixed.mathSpans
+					.filter((span) => span.from >= offset)
+					.map((span) => [combined.slice(span.from, span.to), span.displayMode]);
+				const standaloneMath = standalone.mathSpans.map((span) => [
+					body.slice(span.from, span.to),
+					span.displayMode,
+				]);
+				expect(downstreamMath, JSON.stringify(body)).toEqual(standaloneMath);
+			}
+		}
+	});
+
+	it("excludes stripped inline HTML tags, comments, and processing instructions from math survival while keeping content between tags (R30A #1, R30B #2)", () => {
+		const cases: ReadonlyArray<readonly [string, ReadonlyArray<readonly [string, boolean]>]> = [
+			['<div>\n$$x$$\nA <i title="$y$">word</i> $z$', [["$$x$$", true], ["$z$", false]]],
+			['<div>\n$$x$$\n<span title="$y$">hi</span>', [["$$x$$", true]]],
+			["<div>\n$$x$$\na <!-- $y$ --> b", [["$$x$$", true]]],
+			['<span title="$y$">hi</span>', []],
+			["<span>$y$</span>", [["$y$", false]]],
+			["a <!-- $y$ --> b", []],
+			["a <?php $y$ ?> b", []],
+		];
+		for (const [lfSource, expected] of cases) {
+			for (const source of [lfSource, lfSource.replace(/\n/g, "\r\n")]) {
+				const index = createEditorMarkdownBlockIndex(source);
+				expect(
+					index.mathSpans.map((span) => [source.slice(span.from, span.to), span.displayMode]),
+					JSON.stringify(source),
+				).toEqual(expected);
+			}
+		}
+	});
+
+	it("targets and deletes rendered $z$ without mutating stripped <i title=\"$y$\"> across LF and CRLF (R30A #1, R30B #2)", async () => {
+		for (const newline of ["\n", "\r\n"] as const) {
+			const source = `<div>${newline}$$x$$${newline}A <i title="$y$">word</i> $z$`;
+			const index = createEditorMarkdownBlockIndex(source);
+			const paragraphBlock = index.blocks.find((block) => "paragraph" === block.kind);
+			expect(paragraphBlock).toBeDefined();
+			if (!paragraphBlock) continue;
+
+			const blockMathSpans = index.mathSpans.filter(
+				(span) => span.from >= paragraphBlock.from && span.to <= paragraphBlock.to,
+			);
+			expect(blockMathSpans.map((span) => source.slice(span.from, span.to))).toEqual(["$z$"]);
+
+			const associated = associateGeneratedContentTarget({
+				acceptedPreview: { revision: 1, signature: "r30-inline-html-strip" },
+				blockId: "visual-block-1",
+				kind: "math",
+				mathSpans: blockMathSpans,
+				ordinal: 0,
+				source,
+				sourceRevision: 1,
+			});
+			expect(associated.status).toBe("associated");
+			if ("associated" !== associated.status) continue;
+			expect(associated.target.original.full).toBe("$z$");
+			expect(associated.target.original.body).toBe("z");
+
+			let currentValue = source;
+			const reported: string[] = [];
+			const session = {
+				actionContext: {
+					generated: {
+						canCopyImage: false,
+						canCopyMathMl: false,
+						canUseSource: true,
+						identity: () => null,
+						kind: "math" as const,
+						lease: {
+							isCurrent: () => true,
+							release: () => {},
+							root: {} as Element,
+							target: associated.target,
+						},
+						mode: "split" as const,
+						validateLease: () => true,
+					},
+				},
+				applyEdit(edit: Readonly<{ value: string }>) {
+					currentValue = edit.value;
+				},
+				capabilities: {
+					contextMenuStrings: {},
+					generated: {
+						exportSession: null,
+						prepareSourceNavigation: () => false,
+					},
+				},
+				captured: {
+					direction: "ltr" as const,
+					position: { x: 0, y: 0 },
+					revision: 1,
+					selection: {
+						direction: "none" as const,
+						end: associated.target.original.fullRange.to,
+						start: associated.target.original.fullRange.from,
+					},
+					surface: "preview" as const,
+					value: source,
+				},
+				clipboard: {
+					read: async () => ({ code: "unavailable", status: "unavailable" as const }),
+					write: async () => ({ code: "unavailable", status: "unavailable" as const }),
+				},
+				currentBlockIndex: () => index,
+				document: { revealPosition: () => {} },
+				ensureCurrent: () => true,
+				ensureSelectionFitsTarget: () => true,
+				readValue: () => currentValue,
+				report: (code: string) => {
+					reported.push(code);
+				},
+			} as unknown as EditorContextMenuActionSession;
+
+			await runGeneratedContextMenuAction("delete-generated-content", session);
+			expect(reported).toEqual([]);
+			expect(currentValue).toBe(`<div>${newline}$$x$$${newline}A <i title="$y$">word</i> `);
+			expect(currentValue).toContain('title="$y$"');
+			expect(currentValue).not.toContain("$z$");
+		}
+	});
+
+	it("scales linearly on a 220 KB single-line HTML+math document with O(1) line-end lookups (R30A #2)", () => {
+		const source = `<div> ${"$$x$$ word ".repeat(20_000).trimEnd()}`;
+		expect(source.length).toBe(220_005);
+		const startedAt = performance.now();
+		const index = createEditorMarkdownBlockIndex(source);
+		const elapsedMs = performance.now() - startedAt;
+
+		expect(index.mathSpans).toHaveLength(20_000);
+		expect(index.blocks).toHaveLength(40_001);
+		expect(elapsedMs).toBeLessThan(1_500);
+	});
+
+	it("matches League CommonMark 2.8.2 on all 9 inline-HTML divergence classes and edge cases across LF and CRLF (R31A #1, R31B #1)", () => {
+		const cases: ReadonlyArray<
+			readonly [string, ReadonlyArray<readonly [string, boolean]>]
+		> = [
+			["A < x $y$ > and $z$", [["$y$", false], ["$z$", false]]],
+			['a <SPAN title="$x$">hi</SPAN> b', [["$x$", false]]],
+			['a <span TITLE="$x$">hi</span> b', [["$x$", false]]],
+			["a <!---> $x$ --> b", [["$x$", false]]],
+			["a <!--> $x$ --> b", [["$x$", false]]],
+			["a <!-- -- $x$ --> b", []],
+			["a <!-- $x$ ---> b", []],
+			["a <!doctype $x$> b", []],
+			["a <!DOCTYPE $x$> b", []],
+			['a <br title="$x$"/ > b', [["$x$", false]]],
+			['a <br title="$x$"/> b', []],
+			['a <a_b title="$x$">hi</a_b>', [["$x$", false]]],
+			["a <![CDATA[$x$]]> b", []],
+			["a <? $x$ ?> b", []],
+			["a <??> $x$ ?> b", [["$x$", false]]],
+			["a <?> $x$ ?> b", []],
+			["a <https://example.com/$x$> b", [["$x$", false]]],
+			['a <a href="$x$">hi</a> b', []],
+			['a <span\u00a0title="$x$">hi</span> b', []],
+			['a <span\ufefftitle="$x$">hi</span> b', [["$x$", false]]],
+			["a\n< x $y$ >\nand $z$", [["$y$", false], ["$z$", false]]],
+			['a\n<SPAN title="$x$">\nhi</SPAN>', [["$x$", false]]],
+		];
+		for (const [lfSource, expected] of cases) {
+			for (const source of [lfSource, lfSource.replace(/\n/g, "\r\n")]) {
+				const index = createEditorMarkdownBlockIndex(source);
+				expect(
+					index.mathSpans.map((span) => [
+						source.slice(span.from, span.to),
+						span.displayMode,
+					]),
+					JSON.stringify(source),
+				).toEqual(expected);
+			}
+		}
+	});
+
+	it("stays strictly O(N) on 30 KB and 100 KB space runs (with and without math) and repeated `<` tokens (R31B #2)", () => {
+		const inputs = [
+			{ expectedMath: 0, label: "30KB spaces", source: `a${" ".repeat(30_000)}b` },
+			{ expectedMath: 1, label: "30KB spaces + math", source: `$x$ ${" ".repeat(30_000)}b` },
+			{ expectedMath: 0, label: "100KB spaces", source: `a${" ".repeat(100_000)}b` },
+			{ expectedMath: 1, label: "100KB spaces + math", source: `$x$ ${" ".repeat(100_000)}b` },
+			{ expectedMath: 1, label: "50K angle brackets + math", source: `${"<".repeat(50_000)} $x$ >` },
+		];
+		for (const entry of inputs) {
+			const startedAt = performance.now();
+			const index = createEditorMarkdownBlockIndex(entry.source);
+			const elapsedMs = performance.now() - startedAt;
+			expect(index.mathSpans, entry.label).toHaveLength(entry.expectedMath);
+			expect(elapsedMs, `${entry.label}: ${elapsedMs.toFixed(1)}ms`).toBeLessThan(200);
+		}
+	});
+
+	it("matches upstream @lezer/markdown AST 1:1 across linear Link, Image, and LinkEnd edge cases (R32A #2)", () => {
+		const upstreamParser = markdownLanguage.parser as MarkdownParser;
+		const linearLinkParser = installLinearInlineResolver(
+			upstreamParser.configure({
+				parseInline: [
+					{ name: "Link", parse: parseLinearLink },
+					{ name: "Image", parse: parseLinearImage },
+					{ name: "LinkEnd", parse: createLinearLinkEndParser() },
+				],
+			}),
+		);
+		const dumpTree = (tree: ReturnType<MarkdownParser["parse"]>): string[] => {
+			const out: string[] = [];
+			tree.iterate({
+				enter(node) {
+					out.push(`${node.name}:${node.from}-${node.to}`);
+				},
+			});
+			return out;
+		};
+		const samples: ReadonlyArray<string> = [
+			"[![alt](/img.png)](/link)",
+			"![alt [inner](/a) text](/img.png)",
+			"[outer [inner](/a) tail](/outer)",
+			"[outer [ ]](/outer) [empty]() [ ] []",
+			"[outer ![img [nested](/b)](/img)](/outer)",
+			"[shortcut] [collapsed][] [full][ref]\n\n[shortcut]: /1\n[collapsed]: /2\n[ref]: /3",
+			"[nested parens](/u(a(b))\\)c) [escaped](/u\\(x\\))",
+			"[angled](<https://example.com/a b>) [unclosed](<https://example.com)",
+			"[sq](/u 't\\'1') [dq](/u \"t\\\"2\") [pq](/u (t\\)3)) [unclosed](/u 't)",
+			"unmatched ]]] and [[[ and [a] ] [b](/u) [",
+			"[*em* **strong** ~~strike~~](/u \"title\")",
+			`${"[a](x\\)".repeat(16)}`,
+			`${"[a](x\\)".repeat(16)} ! )`,
+			`${"[a](x()".repeat(16)} ! )`,
+			`${"[a](x(a)(b\\))".repeat(12)} ! )`,
+			`${"[a](x\\\\)".repeat(12)} [b](y())`,
+		];
+		for (const sample of samples) {
+			expect(
+				dumpTree(linearLinkParser.parse(sample)),
+				JSON.stringify(sample),
+			).toEqual(dumpTree(upstreamParser.parse(sample)));
+		}
+	});
+
+	it("stays strictly O(N) on escaped-paren and balanced-paren bare-URL runs (R33A #2, R33B #1)", () => {
+		const runs: ReadonlyArray<
+			Readonly<{ label: string; maxMs: number; source: string }>
+		> = [
+			{
+				label: "32k [a](x\\) (224 KB)",
+				maxMs: 600,
+				source: "[a](x\\)".repeat(32_000),
+			},
+			{
+				label: "32k [a](x\\) + trailing close paren (224 KB)",
+				maxMs: 600,
+				source: `${"[a](x\\)".repeat(32_000)} ! )`,
+			},
+			{
+				label: "16k [a](x() + trailing close paren (112 KB)",
+				maxMs: 400,
+				source: `${"[a](x()".repeat(16_000)} ! )`,
+			},
+		];
+		for (const run of runs) {
+			const startedAt = performance.now();
+			const index = createEditorMarkdownBlockIndex(run.source);
+			const elapsedMs = performance.now() - startedAt;
+			expect(index.length, run.label).toBe(run.source.length);
+			expect(elapsedMs, `${run.label}: ${elapsedMs.toFixed(1)}ms`).toBeLessThan(
+				run.maxMs,
+			);
+		}
+	});
+
+	it("blocks leaf interruption at max container depth 99 while allowing exit-to-98 interruption (R34B #2)", () => {
+		const depth99Blockquote =
+			`${"> ".repeat(99)}a\n${"> ".repeat(99)}<div>\n${"> ".repeat(99)}$x$\n${"> ".repeat(99)}</div>`;
+		const list49PlusBlockquote =
+			`${"- ".repeat(49)}> a\n${"  ".repeat(49)}> <div>\n${"  ".repeat(49)}> $x$\n${"  ".repeat(49)}> </div>`;
+		const exitTo98Control =
+			`${"> ".repeat(99)}a\n${"> ".repeat(98)}<div>\n${"> ".repeat(98)}$x$\n${"> ".repeat(98)}</div>`;
+
+		for (const [label, lfSource, expectedMath] of [
+			["depth-99 blockquote", depth99Blockquote, 1],
+			["49-list + 1-blockquote", list49PlusBlockquote, 1],
+			["exit-to-98 control", exitTo98Control, 0],
+		] as const) {
+			for (const source of [lfSource, lfSource.replace(/\n/g, "\r\n")]) {
+				const index = createEditorMarkdownBlockIndex(source);
+				expect(index.mathSpans, `${label} (${source.includes("\r\n") ? "CRLF" : "LF"})`).toHaveLength(
+					expectedMath,
+				);
+			}
+		}
+	});
+
+	it("matches League 2.8.2 depth-99 leafBlockParsers for Setext, GFM Table, and LinkReference + HTML block on both LF and CRLF (R35B #3)", () => {
+		const p99 = "> ".repeat(99);
+		const p98 = "> ".repeat(98);
+		const cases: ReadonlyArray<
+			Readonly<{
+				expectedLinks: number;
+				expectedMath: number;
+				label: string;
+				lfSource: string;
+			}>
+		> = [
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "depth-99 Setext === followed by <div>$x$</div>",
+				lfSource: `${p99}a\n${p99}===\n${p99}<div>\n${p99}$x$\n${p99}</div>`,
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "depth-99 Setext --- followed by <div>$x$</div>",
+				lfSource: `${p99}a\n${p99}---\n${p99}<div>\n${p99}$x$\n${p99}</div>`,
+			},
+			{
+				expectedLinks: 1,
+				expectedMath: 0,
+				label: "depth-99 GFM table suppressed so [a | b](/u) stays a link",
+				lfSource: `${p99}| a | b |\n${p99}| --- | --- |\n${p99}| [a | b](/u) |`,
+			},
+			{
+				expectedLinks: 2,
+				expectedMath: 1,
+				label: "depth-99 consecutive LinkReference + <div>$x$</div>",
+				lfSource: `${p99}[a]: /1\n${p99}[b]: /2\n${p99}<div>\n${p99}$x$\n${p99}</div>\n${p99}\n${p99}[a] [b]`,
+			},
+			{
+				expectedLinks: 1,
+				expectedMath: 1,
+				label: "depth-99 single-line titled LinkReference + <div>$x$</div>",
+				lfSource: `${p99}[a]: /1 "t"\n${p99}<div>\n${p99}$x$\n${p99}</div>\n${p99}\n${p99}[a]`,
+			},
+			{
+				expectedLinks: 1,
+				expectedMath: 1,
+				label: "depth-99 multi-line titled LinkReference + <div>$x$</div>",
+				lfSource: `${p99}[a]: /1\n${p99}"t"\n${p99}<div>\n${p99}$x$\n${p99}</div>\n${p99}\n${p99}[a]`,
+			},
+			{
+				expectedLinks: 1,
+				expectedMath: 0,
+				label: "depth-99 blank-line exit control [a]: /1\\n\\n<div>$x$</div>",
+				lfSource: `${p99}[a]: /1\n${p99}\n${p99}<div>\n${p99}$x$\n${p99}</div>\n${p99}\n${p99}[a]`,
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 0,
+				label: "depth-98 positive control: GFM table still active",
+				lfSource: `${p98}| a | b |\n${p98}| --- | --- |\n${p98}| [a | b](/u) |`,
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 0,
+				label: "depth-98 positive control: Setext === closes leaf so <div> starts HTMLBlock",
+				lfSource: `${p98}a\n${p98}===\n${p98}<div>\n${p98}$x$\n${p98}</div>`,
+			},
+		];
+
+		for (const item of cases) {
+			for (const source of [
+				item.lfSource,
+				item.lfSource.replace(/\n/g, "\r\n"),
+			]) {
+				const eol = source.includes("\r\n") ? "CRLF" : "LF";
+				const index = createEditorMarkdownBlockIndex(source);
+				expect(index.mathSpans, `${item.label} [${eol}] math`).toHaveLength(
+					item.expectedMath,
+				);
+				expect(index.linkCandidates ?? [], `${item.label} [${eol}] links`).toHaveLength(
+					item.expectedLinks,
+				);
+			}
+		}
+	});
+
+	it("matches League 2.8.2 depth-99/98/97 list continuation and post-paragraph close on both LF and CRLF (R36A #2)", () => {
+		const p99 = "> ".repeat(99);
+		const p98 = "> ".repeat(98);
+		const p97 = "> ".repeat(97);
+		const wrap = (prefix: string, lines: ReadonlyArray<string>): string =>
+			lines.map((line) => `${prefix}${line}`).join("\n");
+
+		const cases: ReadonlyArray<
+			Readonly<{
+				expectedLinks: number;
+				expectedMath: number;
+				label: string;
+				lfSource: string;
+			}>
+		> = [
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "depth-99 empty bullet list + <div>$x$</div>",
+				lfSource: wrap(p99, ["-", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "depth-99 empty bullet list + blank + <div>$x$</div>",
+				lfSource: wrap(p99, ["-", "", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "depth-99 empty bullet list + <div>$x$</div> + blank + <div>$y$</div>",
+				lfSource: wrap(p99, [
+					"-",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"<div>",
+					"$y$",
+					"</div>",
+				]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "depth-99 empty bullet list + blank + <div>$x$</div> + blank + <div>$y$</div>",
+				lfSource: wrap(p99, [
+					"-",
+					"",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"<div>",
+					"$y$",
+					"</div>",
+				]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "depth-99 empty ordered list + <div>$x$</div>",
+				lfSource: wrap(p99, ["1.", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "depth-99 empty ordered list + blank + <div>$x$</div>",
+				lfSource: wrap(p99, ["1.", "", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "depth-99 empty ordered list + <div>$x$</div> + blank + <div>$y$</div>",
+				lfSource: wrap(p99, [
+					"1.",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"<div>",
+					"$y$",
+					"</div>",
+				]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "depth-99 empty bullet list + second item + <div>$x$</div>",
+				lfSource: wrap(p99, ["-", "- b", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 0,
+				label: "depth-99 empty bullet list + second item + blank + <div>$x$</div>",
+				lfSource: wrap(p99, ["-", "- b", "", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 0,
+				label: "depth-99 empty bullet list exiting to depth-98 <div>$x$</div>",
+				lfSource: `${p99}-\n${wrap(p98, ["<div>", "$x$", "</div>"])}`,
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 0,
+				label: "depth-99 empty bullet list + blank exiting to depth-98 <div>$x$</div>",
+				lfSource: `${p99}-\n${p99}\n${wrap(p98, ["<div>", "$x$", "</div>"])}`,
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 0,
+				label: "depth-98 control: empty bullet list + <div>$x$</div>",
+				lfSource: wrap(p98, ["-", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 0,
+				label: "depth-98 control: empty bullet list + blank + <div>$x$</div>",
+				lfSource: wrap(p98, ["-", "", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 0,
+				label: "depth-98 control: empty ordered list + <div>$x$</div>",
+				lfSource: wrap(p98, ["1.", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 2,
+				label: "depth-99 non-empty bullet lazy div + blank + div + blank + html-block div",
+				lfSource: wrap(p99, [
+					"- a",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"<div>",
+					"$y$",
+					"</div>",
+					"",
+					"<div>",
+					"$z$",
+					"</div>",
+				]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "depth-97 nested list + <div>$x$</div> + blank + <div>$y$</div>",
+				lfSource: wrap(p97, [
+					"- -",
+					"  <div>",
+					"  $x$",
+					"  </div>",
+					"  ",
+					"  <div>",
+					"  $y$",
+					"  </div>",
+				]),
+			},
+			{
+				expectedLinks: 1,
+				expectedMath: 1,
+				label: "depth-99 empty bullet + LinkReference + <div>$x$</div>",
+				lfSource: wrap(p99, ["-", "[a]: /1", "<div>", "$x$", "</div>", "", "[a]"]),
+			},
+			{
+				expectedLinks: 1,
+				expectedMath: 0,
+				label: "depth-99 empty bullet + LinkReference + blank + <div>$x$</div>",
+				lfSource: wrap(p99, [
+					"-",
+					"[a]: /1",
+					"",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a]",
+				]),
+			},
+			{
+				expectedLinks: 3,
+				expectedMath: 1,
+				label: "depth-99 empty bullet + 3 consecutive LinkReferences + <div>$x$</div>",
+				lfSource: wrap(p99, [
+					"-",
+					"[a]: /1",
+					"[b]: /2",
+					"[c]: /3",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a] [b] [c]",
+				]),
+			},
+		];
+
+		for (const item of cases) {
+			for (const source of [
+				item.lfSource,
+				item.lfSource.replace(/\n/g, "\r\n"),
+			]) {
+				const eol = source.includes("\r\n") ? "CRLF" : "LF";
+				const index = createEditorMarkdownBlockIndex(source);
+				expect(index.mathSpans, `${item.label} [${eol}] math`).toHaveLength(
+					item.expectedMath,
+				);
+				expect(
+					index.linkCandidates ?? [],
+					`${item.label} [${eol}] links`,
+				).toHaveLength(item.expectedLinks);
+			}
+		}
+	});
+
+	it("matches League 2.8.2 depth-100 -> depth-99 container-exit leaf interruption for Paragraph and LinkReference on LF and CRLF (R37A #2)", () => {
+		const p99 = "> ".repeat(99);
+		const p100 = "> ".repeat(100);
+		const wrap = (prefix: string, lines: ReadonlyArray<string>): string =>
+			lines.map((line) => `${prefix}${line}`).join("\n");
+
+		const cases: ReadonlyArray<
+			Readonly<{
+				expectedLinks: number;
+				expectedMath: number;
+				label: string;
+				lfSource: string;
+			}>
+		> = [
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "Paragraph depth-100 -> depth-99 exit allows <div> HTMLBlock; only final $x$ survives",
+				lfSource: wrap(p99, ["> a", "<div>", "$x$", "</div>", "", "$x$"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 0,
+				label: "Paragraph depth-100 -> depth-99 exit allows <div> HTMLBlock without trailing math",
+				lfSource: wrap(p99, ["> a", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "Paragraph depth-101 -> depth-100 stays capped (matched BQ(100) >= 100)",
+				lfSource: wrap(p100, ["> a", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "Paragraph staying at depth-99 suppresses <div> (matched Paragraph depth = 100)",
+				lfSource: wrap(p99, ["a", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 0,
+				label: "Paragraph depth-100 -> depth-99 exit allows --- thematic break before <div>",
+				lfSource: wrap(p99, ["> a", "---", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "LinkReference depth-100 -> depth-99 exit allows <div> HTMLBlock; only final $x$ survives",
+				lfSource: wrap(p99, ["> [a]: /1", "<div>", "$x$", "</div>", "", "$x$"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 0,
+				label: "LinkReference depth-100 -> depth-99 exit without trailing math",
+				lfSource: wrap(p99, ["> [a]: /1", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "LinkReference with same-line title depth-100 -> depth-99 exit allows <div>",
+				lfSource: wrap(p99, ['> [a]: /1 "t"', "<div>", "$x$", "</div>", "", "$x$"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "LinkReference with multiline title depth-100 -> depth-99 exit allows <div>",
+				lfSource: wrap(p99, [
+					"> [a]: /1",
+					'> "t"',
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"$x$",
+				]),
+			},
+			{
+				expectedLinks: 1,
+				expectedMath: 0,
+				label: "LinkReference depth-100 -> depth-99 lazy title closes cleanly before <div> and preserves ref",
+				lfSource: wrap(p99, [
+					"> [a]: /1",
+					'"t"',
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a]",
+				]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 0,
+				label: "LinkReference unclosed title depth-100 -> depth-99 exit allows <div>",
+				lfSource: wrap(p99, ["> [a]: /1", '> "t', "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "LinkReference depth-101 -> depth-100 stays capped",
+				lfSource: wrap(p100, ["> [a]: /1", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "LinkReference staying at depth-99 suppresses <div>",
+				lfSource: wrap(p99, ["[a]: /1", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 1,
+				expectedMath: 0,
+				label: "LinkReference depth-100 -> depth-99 lazy plain continuation before <div> (R38B #3)",
+				lfSource: wrap(p99, [
+					"> [a]: /1",
+					"plain",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a]",
+				]),
+			},
+			{
+				expectedLinks: 1,
+				expectedMath: 0,
+				label: "LinkReference with same-line title depth-100 -> depth-99 lazy plain continuation before <div> (R38B #3)",
+				lfSource: wrap(p99, [
+					'> [a]: /1 "t"',
+					"plain",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a]",
+				]),
+			},
+			{
+				expectedLinks: 1,
+				expectedMath: 0,
+				label: "LinkReference with lazy title depth-100 -> depth-99 lazy plain continuation before <div> (R38B #3)",
+				lfSource: wrap(p99, [
+					"> [a]: /1",
+					'"t"',
+					"plain",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a]",
+				]),
+			},
+			{
+				expectedLinks: 2,
+				expectedMath: 0,
+				label: "LinkReference depth-100 -> depth-99 lazy second ref before <div> (R39B #4)",
+				lfSource: wrap(p99, [
+					"> [a]: /1",
+					"[b]: /2",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a] [b]",
+				]),
+			},
+			{
+				expectedLinks: 2,
+				expectedMath: 0,
+				label: "LinkReference with same-line title depth-100 -> depth-99 lazy second ref before <div> (R39B #4)",
+				lfSource: wrap(p99, [
+					'> [a]: /1 "t"',
+					"[b]: /2",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a] [b]",
+				]),
+			},
+			{
+				expectedLinks: 3,
+				expectedMath: 0,
+				label: "LinkReference depth-100 -> depth-99 3 chained lazy refs before <div> (R39B #4)",
+				lfSource: wrap(p99, [
+					"> [a]: /1",
+					"[b]: /2",
+					"[c]: /3",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a] [b] [c]",
+				]),
+			},
+			{
+				expectedLinks: 3,
+				expectedMath: 0,
+				label: "LinkReference depth-100 -> depth-99 chained lazy refs with title on middle ref (R39B #4)",
+				lfSource: wrap(p99, [
+					"> [a]: /1",
+					'[b]: /2 "t2"',
+					"[c]: /3",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a] [b] [c]",
+				]),
+			},
+			{
+				expectedLinks: 2,
+				expectedMath: 0,
+				label: "LinkReference depth-100 -> depth-99 lazy second ref with next-line title before <div> (R39B #4)",
+				lfSource: wrap(p99, [
+					"> [a]: /1",
+					"[b]: /2",
+					'"title"',
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a] [b]",
+				]),
+			},
+			{
+				expectedLinks: 1,
+				expectedMath: 0,
+				label: "LinkReference depth-100 -> depth-99 lazy [not-a-ref] before <div> (R39B #4)",
+				lfSource: wrap(p99, [
+					"> [a]: /1",
+					"[not-a-ref]",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a]",
+				]),
+			},
+			{
+				expectedLinks: 1,
+				expectedMath: 0,
+				label: "LinkReference with title depth-100 -> depth-99 lazy [not-a-ref] before <div> (R39B #4)",
+				lfSource: wrap(p99, [
+					'> [a]: /1 "t"',
+					"[not-a-ref]",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a]",
+				]),
+			},
+			{
+				expectedLinks: 2,
+				expectedMath: 0,
+				label: "ListItem depth-98 lazy second ref before <div> (R40B #4)",
+				lfSource: wrap("> ".repeat(98), [
+					"- [a]: /1",
+					"[b]: /2",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a] [b]",
+				]),
+			},
+			{
+				expectedLinks: 1,
+				expectedMath: 0,
+				label: "ListItem depth-98 lazy plain continuation before <div> (R40B #4)",
+				lfSource: wrap("> ".repeat(98), [
+					"- [a]: /1",
+					"plain",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a]",
+				]),
+			},
+			{
+				expectedLinks: 2,
+				expectedMath: 1,
+				label: "ListItem depth-99 lazy second ref stays capped before <div> (R40B #4)",
+				lfSource: wrap(p99, [
+					"- [a]: /1",
+					"[b]: /2",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a] [b]",
+				]),
+			},
+		];
+
+		for (const item of cases) {
+			for (const source of [
+				item.lfSource,
+				item.lfSource.replace(/\n/g, "\r\n"),
+			]) {
+				const eol = source.includes("\r\n") ? "CRLF" : "LF";
+				const index = createEditorMarkdownBlockIndex(source);
+				expect(index.mathSpans, `${item.label} [${eol}] math`).toHaveLength(
+					item.expectedMath,
+				);
+				expect(
+					index.linkCandidates ?? [],
+					`${item.label} [${eol}] links`,
+				).toHaveLength(item.expectedLinks);
+			}
+		}
+	});
+});

@@ -177,35 +177,46 @@ function rowIndentationIsCode(text: string): boolean {
 	return indentation.includes("\t") || indentation.length > 3;
 }
 
-function parseTableRow(
-	line: MarkdownLine,
-	lineIndex: number,
-): ParsedTableRow | null {
-	const positions = pipePositions(line.text);
+export function parseTableRowCells(
+	text: string,
+): ReadonlyArray<ParsedTableCell> | null {
+	const positions = pipePositions(text);
 	if (0 === positions.length) return null;
-	const leading = null !== leadingPipePrefix(line.text, positions[0] ?? 0);
+	const leading = null !== leadingPipePrefix(text, positions[0] ?? 0);
 	const lastPipe = positions[positions.length - 1];
 	const trailing =
-		undefined !== lastPipe && /^[ \t]*$/u.test(line.text.slice(lastPipe + 1));
+		undefined !== lastPipe && /^[ \t]*$/u.test(text.slice(lastPipe + 1));
 	const cellCount = positions.length - (leading ? 1 : 0) + (trailing ? 0 : 1);
 	if (cellCount < 1) return null;
 
 	const cells: ParsedTableCell[] = [];
 	for (let index = 0; index < cellCount; index += 1) {
 		const start = leading
-			? (positions[index] ?? line.text.length - 1) + 1
+			? (positions[index] ?? text.length - 1) + 1
 			: 0 === index
 				? 0
-				: (positions[index - 1] ?? line.text.length) + 1;
-		const end = positions[leading ? index + 1 : index] ?? line.text.length;
-		cells.push({ end, raw: line.text.slice(start, end), start });
+				: (positions[index - 1] ?? text.length) + 1;
+		const end = positions[leading ? index + 1 : index] ?? text.length;
+		cells.push({ end, raw: text.slice(start, end), start });
 	}
+	return cells;
+}
 
-	return { cells, lineIndex, parsed: true };
+function parseTableRow(
+	line: MarkdownLine,
+	lineIndex: number,
+): ParsedTableRow | null {
+	const cells = parseTableRowCells(line.text);
+	return cells ? { cells, lineIndex, parsed: true } : null;
 }
 
 function isTableDelimiter(cell: ParsedTableCell): boolean {
 	return /^\s*:?-{1,}:?\s*$/u.test(cell.raw);
+}
+
+export function isTableDelimiterLine(text: string): boolean {
+	const cells = parseTableRowCells(text);
+	return null !== cells && cells.length > 0 && cells.every(isTableDelimiter);
 }
 
 function tableAtLine(

@@ -33,7 +33,7 @@ export type PaddingCascadeIndex = Readonly<{
 	unreadableStyleSheet: boolean;
 }>;
 
-const PORTABLE_PADDING_TOKENS: Readonly<
+export const PORTABLE_PADDING_TOKENS: Readonly<
 	Record<SemanticPaddingProperty, string>
 > = {
 	"padding-left": "--easymde-portable-padding-left",
@@ -117,20 +117,10 @@ function selectorSpecificity(
 				}
 				const arg = withoutStrings.slice(argStart, argIndex - 1);
 				if (fnName && fnName !== "where") {
-					const subSelectors: string[] = [];
-					let subStart = 0;
-					let subDepth = 0;
-					for (let k = 0; k < arg.length; k += 1) {
-						if (arg[k] === "(") subDepth += 1;
-						else if (arg[k] === ")") subDepth -= 1;
-						else if (arg[k] === "," && subDepth === 0) {
-							subSelectors.push(arg.slice(subStart, k).trim());
-							subStart = k + 1;
-						}
-					}
-					subSelectors.push(arg.slice(subStart).trim());
+					const subSelectors = splitSelectorList(arg) ?? arg.split(",");
 					let maxArgSpecificity: readonly [number, number, number] = [0, 0, 0];
-					for (const sub of subSelectors) {
+					for (const rawSub of subSelectors) {
+						const sub = rawSub.trim();
 						if (!sub) continue;
 						const subSpec = selectorSpecificity(sub);
 						if (compareSpecificity(subSpec, maxArgSpecificity) > 0) {
@@ -436,7 +426,7 @@ function getPaddingCascadeIndex(
 	property: SemanticPaddingProperty,
 	dimensionSemantics: WechatDimensionSemanticsContext | null,
 ): PaddingCascadeIndex {
-	if (!dimensionSemantics?.getRefreshGeneration) {
+	if (!dimensionSemantics) {
 		return buildPaddingCascadeIndex(document, property);
 	}
 	const generation = dimensionSemantics.getRefreshGeneration();
@@ -474,9 +464,11 @@ export function evaluatePortablePaddingTransportDecision(
 	source: Element,
 	property: SemanticPaddingProperty,
 	semanticStyle: CSSStyleDeclaration | null,
-	token: string,
 	dimensionSemantics: WechatDimensionSemanticsContext | null,
 ): PortablePaddingTransportDecision {
+	const token =
+		semanticStyle?.getPropertyValue(PORTABLE_PADDING_TOKENS[property]).trim() ??
+		"";
 	const effective = semanticStyle?.getPropertyValue(property).trim() ?? "";
 	const nestedQuote = isNestedBlockquoteElement(source);
 	if (!token || "initial" === token) {

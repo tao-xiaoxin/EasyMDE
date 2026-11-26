@@ -5,7 +5,7 @@ export type WechatDimensionSemanticsContext = Readonly<{
   cleanup: () => void;
   getComputedStyle: (source: Element, pseudoElement?: string) => CSSStyleDeclaration | null;
   getFormattingOwnerDisplay: (source: Element) => string | null;
-  getRefreshGeneration?: () => number;
+  getRefreshGeneration: () => number;
   getRootComputedStyle: (source: Element, pseudoElement?: string) => CSSStyleDeclaration | null;
   getSourceComputedStyle: (source: Element) => CSSStyleDeclaration;
   rasterizesVisualRoots: boolean;

@@ -44,6 +44,7 @@ function dimensionSemantics(
 		cleanup: vi.fn(),
 		getComputedStyle: () => computed,
 		getFormattingOwnerDisplay: () => null,
+		getRefreshGeneration: () => 1,
 		getRootComputedStyle: () => computed,
 		getSourceComputedStyle: () => computed,
 		rasterizesVisualRoots: false,
@@ -216,6 +217,7 @@ describe("responsive portable padding semantics", () => {
 			cleanup: vi.fn(),
 			getComputedStyle: () => raw,
 			getFormattingOwnerDisplay: () => null,
+			getRefreshGeneration: () => 1,
 			getRootComputedStyle: () => raw,
 			getSourceComputedStyle: () => raw,
 			rasterizesVisualRoots: false,
@@ -1432,11 +1434,11 @@ describe("zero line-height normalization for inline script elements and task che
 
 	it("does not omit zero line-height on <sup> when omitDefaultValues is false", () => {
 		const sup = document.createElement("sup");
-		expect(keepStyle("line-height", "0px", sup, false, false, "0px", true)).toBe(
-			false,
-		);
 		expect(
-			keepStyle("line-height", "0px", sup, false, false, "0px", false),
+			keepStyle("line-height", "0px", sup, { omitDefaultValues: true }),
+		).toBe(false);
+		expect(
+			keepStyle("line-height", "0px", sup, { omitDefaultValues: false }),
 		).toBe(true);
 	});
 });

@@ -79,33 +79,19 @@ describe("WeChat portable style pruning", () => {
 				display: "block",
 			});
 			expect(
-				keepStyle(
-					"background",
-					noopBackground,
-					paragraph,
-					false,
-					false,
-					noopBackground,
-					true,
-					"",
-					false,
+				keepStyle("background", noopBackground, paragraph, {
 					computed,
-				),
+					omitDefaultValues: true,
+					svgElement: false,
+				}),
 				noopBackground,
 			).toBe(false);
 			expect(
-				keepStyle(
-					"background",
-					noopBackground,
-					paragraph,
-					false,
-					false,
-					noopBackground,
-					false,
-					"",
-					false,
+				keepStyle("background", noopBackground, paragraph, {
 					computed,
-				),
+					omitDefaultValues: false,
+					svgElement: false,
+				}),
 				`omitDefaultValues=false ${noopBackground}`,
 			).toBe(true);
 
@@ -145,18 +131,25 @@ describe("WeChat portable style pruning", () => {
 			"background-position": "0px 0px",
 		});
 		expect(
-			keepStyle(
-				"background-position",
-				"0px 0px",
-				paragraph,
-				false,
-				false,
-				"0px 0px",
-				true,
-				"",
-				false,
-				zeroPxComputed,
-			),
+			keepStyle("background-position", "0px 0px", paragraph, {
+				computed: zeroPxComputed,
+				omitDefaultValues: true,
+				svgElement: false,
+			}),
+		).toBe(false);
+
+		// Non-standard `foo-gradient(...)` is not treated as a painted CSS gradient.
+		const bogusGradientComputed = declaration({
+			background: "foo-gradient(red, blue)",
+			"background-image": "none",
+			"background-position": "0% 0%",
+		});
+		expect(
+			keepStyle("background-position", "0% 0%", paragraph, {
+				computed: bogusGradientComputed,
+				omitDefaultValues: true,
+				svgElement: false,
+			}),
 		).toBe(false);
 
 		// Real background color and gradient/image keep background and sub-properties.
@@ -174,28 +167,19 @@ describe("WeChat portable style pruning", () => {
 				"background",
 				paintedColor.getPropertyValue("background"),
 				paragraph,
-				false,
-				false,
-				paintedColor.getPropertyValue("background"),
-				true,
-				"",
-				false,
-				paintedColor,
+				{
+					computed: paintedColor,
+					omitDefaultValues: true,
+					svgElement: false,
+				},
 			),
 		).toBe(true);
 		expect(
-			keepStyle(
-				"background-color",
-				"rgb(255, 240, 245)",
-				paragraph,
-				false,
-				false,
-				"rgb(255, 240, 245)",
-				true,
-				"",
-				false,
-				paintedColor,
-			),
+			keepStyle("background-color", "rgb(255, 240, 245)", paragraph, {
+				computed: paintedColor,
+				omitDefaultValues: true,
+				svgElement: false,
+			}),
 		).toBe(true);
 
 		const gradientComputed = declaration({
@@ -216,18 +200,11 @@ describe("WeChat portable style pruning", () => {
 			["background-size", "auto"],
 		] as const) {
 			expect(
-				keepStyle(
-					property,
-					value,
-					paragraph,
-					false,
-					false,
-					value,
-					true,
-					"",
-					false,
-					gradientComputed,
-				),
+				keepStyle(property, value, paragraph, {
+					computed: gradientComputed,
+					omitDefaultValues: true,
+					svgElement: false,
+				}),
 				`gradient preserves ${property}`,
 			).toBe(true);
 		}
@@ -257,77 +234,92 @@ describe("WeChat portable style pruning", () => {
 		for (const el of [p, span, svgPath]) {
 			const svg = el === svgPath;
 			expect(
-				keepStyle("border-top-width", "0px", el, false, false, "0px", true, "", svg, borderless),
+				keepStyle("border-top-width", "0px", el, {
+					computed: borderless,
+					omitDefaultValues: true,
+					svgElement: svg,
+				}),
 			).toBe(false);
 			expect(
-				keepStyle("border-top-style", "none", el, false, false, "none", true, "", svg, borderless),
+				keepStyle("border-top-style", "none", el, {
+					computed: borderless,
+					omitDefaultValues: true,
+					svgElement: svg,
+				}),
 			).toBe(false);
 			expect(
-				keepStyle(
-					"border-top-color",
-					"rgb(34, 34, 34)",
-					el,
-					false,
-					false,
-					"rgb(34, 34, 34)",
-					true,
-					"",
-					svg,
-					borderless,
-				),
+				keepStyle("border-top-color", "rgb(34, 34, 34)", el, {
+					computed: borderless,
+					omitDefaultValues: true,
+					svgElement: svg,
+				}),
 			).toBe(false);
 			expect(
-				keepStyle(
-					"border-right-color",
-					"rgba(0, 0, 0, 0)",
-					el,
-					false,
-					false,
-					"rgba(0, 0, 0, 0)",
-					true,
-					"",
-					svg,
-					borderless,
-				),
+				keepStyle("border-right-color", "rgba(0, 0, 0, 0)", el, {
+					computed: borderless,
+					omitDefaultValues: true,
+					svgElement: svg,
+				}),
 			).toBe(false);
 			expect(
-				keepStyle("border-radius", "0px", el, false, false, "0px", true, "", svg, borderless),
+				keepStyle("border-radius", "0px", el, {
+					computed: borderless,
+					omitDefaultValues: true,
+					svgElement: svg,
+				}),
 			).toBe(false);
 
 			// Visible border edge (`solid`) and `hidden` edge stay preserved.
 			expect(
-				keepStyle("border-bottom-width", "2px", el, false, false, "2px", true, "", svg, borderless),
+				keepStyle("border-bottom-width", "2px", el, {
+					computed: borderless,
+					omitDefaultValues: true,
+					svgElement: svg,
+				}),
 			).toBe(true);
 			expect(
-				keepStyle("border-bottom-style", "solid", el, false, false, "solid", true, "", svg, borderless),
+				keepStyle("border-bottom-style", "solid", el, {
+					computed: borderless,
+					omitDefaultValues: true,
+					svgElement: svg,
+				}),
 			).toBe(true);
 			expect(
-				keepStyle(
-					"border-bottom-color",
-					"rgb(200, 10, 20)",
-					el,
-					false,
-					false,
-					"rgb(200, 10, 20)",
-					true,
-					"",
-					svg,
-					borderless,
-				),
+				keepStyle("border-bottom-color", "rgb(200, 10, 20)", el, {
+					computed: borderless,
+					omitDefaultValues: true,
+					svgElement: svg,
+				}),
 			).toBe(true);
 			expect(
-				keepStyle("border-left-style", "hidden", el, false, false, "hidden", true, "", svg, borderless),
+				keepStyle("border-left-style", "hidden", el, {
+					computed: borderless,
+					omitDefaultValues: true,
+					svgElement: svg,
+				}),
 			).toBe(true);
 			// Non-zero border-radius stays preserved.
 			expect(
-				keepStyle("border-radius", "4px", el, false, false, "4px", true, "", svg, borderless),
+				keepStyle("border-radius", "4px", el, {
+					computed: borderless,
+					omitDefaultValues: true,
+					svgElement: svg,
+				}),
 			).toBe(true);
 			// Native PNG capture (`omitDefaultValues = false`) preserves everything.
 			expect(
-				keepStyle("border-top-width", "0px", el, false, false, "0px", false, "", svg, borderless),
+				keepStyle("border-top-width", "0px", el, {
+					computed: borderless,
+					omitDefaultValues: false,
+					svgElement: svg,
+				}),
 			).toBe(true);
 			expect(
-				keepStyle("border-radius", "0px", el, false, false, "0px", false, "", svg, borderless),
+				keepStyle("border-radius", "0px", el, {
+					computed: borderless,
+					omitDefaultValues: false,
+					svgElement: svg,
+				}),
 			).toBe(true);
 		}
 
@@ -353,30 +345,62 @@ describe("WeChat portable style pruning", () => {
 		];
 		for (const el of protectedElements) {
 			expect(
-				keepStyle("border-top-width", "0px", el, false, false, "0px", true, "", false, borderless),
+				keepStyle("border-top-width", "0px", el, {
+					computed: borderless,
+					omitDefaultValues: true,
+					svgElement: false,
+				}),
 				`${el.tagName} border-top-width`,
 			).toBe(true);
 			expect(
-				keepStyle("border-top-style", "none", el, false, false, "none", true, "", false, borderless),
+				keepStyle("border-top-style", "none", el, {
+					computed: borderless,
+					omitDefaultValues: true,
+					svgElement: false,
+				}),
 				`${el.tagName} border-top-style`,
 			).toBe(true);
 			expect(
-				keepStyle("border-radius", "0px", el, false, false, "0px", true, "", false, borderless),
+				keepStyle("border-radius", "0px", el, {
+					computed: borderless,
+					omitDefaultValues: true,
+					svgElement: false,
+				}),
 				`${el.tagName} border-radius`,
 			).toBe(true);
 		}
 		// Root and pseudo-elements are also protected.
 		expect(
-			keepStyle("border-top-width", "0px", p, false, true, "0px", true, "", false, borderless),
+			keepStyle("border-top-width", "0px", p, {
+				computed: borderless,
+				omitDefaultValues: true,
+				root: true,
+				svgElement: false,
+			}),
 		).toBe(true);
 		expect(
-			keepStyle("border-radius", "0px", p, false, true, "0px", true, "", false, borderless),
+			keepStyle("border-radius", "0px", p, {
+				computed: borderless,
+				omitDefaultValues: true,
+				root: true,
+				svgElement: false,
+			}),
 		).toBe(true);
 		expect(
-			keepStyle("border-top-width", "0px", p, true, false, "0px", true, "", false, borderless),
+			keepStyle("border-top-width", "0px", p, {
+				computed: borderless,
+				omitDefaultValues: true,
+				pseudoElement: true,
+				svgElement: false,
+			}),
 		).toBe(true);
 		expect(
-			keepStyle("border-radius", "0px", p, true, false, "0px", true, "", false, borderless),
+			keepStyle("border-radius", "0px", p, {
+				computed: borderless,
+				omitDefaultValues: true,
+				pseudoElement: true,
+				svgElement: false,
+			}),
 		).toBe(true);
 	});
 
@@ -400,19 +424,34 @@ describe("WeChat portable style pruning", () => {
 		);
 
 		expect(
-			keepStyle("stop-color", "rgb(0, 0, 0)", path, false, false, "rgb(0, 0, 0)", true, "", true),
+			keepStyle("stop-color", "rgb(0, 0, 0)", path, {
+				omitDefaultValues: true,
+				svgElement: true,
+			}),
 		).toBe(false);
 		expect(
-			keepStyle("stop-opacity", "1", path, false, false, "1", true, "", true),
+			keepStyle("stop-opacity", "1", path, {
+				omitDefaultValues: true,
+				svgElement: true,
+			}),
 		).toBe(false);
 		expect(
-			keepStyle("stop-color", "rgb(0, 0, 0)", stop, false, false, "rgb(0, 0, 0)", true, "", true),
+			keepStyle("stop-color", "rgb(0, 0, 0)", stop, {
+				omitDefaultValues: true,
+				svgElement: true,
+			}),
 		).toBe(true);
 		expect(
-			keepStyle("stop-opacity", "1", stop, false, false, "1", true, "", true),
+			keepStyle("stop-opacity", "1", stop, {
+				omitDefaultValues: true,
+				svgElement: true,
+			}),
 		).toBe(true);
 		expect(
-			keepStyle("stop-color", "rgb(0, 0, 0)", path, false, false, "rgb(0, 0, 0)", false, "", true),
+			keepStyle("stop-color", "rgb(0, 0, 0)", path, {
+				omitDefaultValues: false,
+				svgElement: true,
+			}),
 		).toBe(true);
 	});
 
@@ -440,82 +479,47 @@ describe("WeChat portable style pruning", () => {
 			[svgPath, true],
 		] as const) {
 			expect(
-				keepStyle(
-					"border-collapse",
-					"separate",
-					el,
-					false,
-					false,
-					"separate",
-					true,
-					"",
-					isSvg,
-					blockStyle,
+				keepStyle("border-collapse", "separate", el, {
+					computed: blockStyle,
+					omitDefaultValues: true,
 					predicates,
-				),
+					svgElement: isSvg,
+				}),
 			).toBe(false);
 			expect(
-				keepStyle(
-					"border-spacing",
-					"0px",
-					el,
-					false,
-					false,
-					"0px",
-					true,
-					"",
-					isSvg,
-					blockStyle,
+				keepStyle("border-spacing", "0px", el, {
+					computed: blockStyle,
+					omitDefaultValues: true,
 					predicates,
-				),
+					svgElement: isSvg,
+				}),
 			).toBe(false);
 			expect(
-				keepStyle(
-					"border-spacing",
-					"0px 0px",
-					el,
-					false,
-					false,
-					"0px 0px",
-					true,
-					"",
-					isSvg,
-					blockStyle,
+				keepStyle("border-spacing", "0px 0px", el, {
+					computed: blockStyle,
+					omitDefaultValues: true,
 					predicates,
-				),
+					svgElement: isSvg,
+				}),
 			).toBe(false);
 		}
 
 		// Non-default values outside table stay preserved, and native capture stays preserved.
 		expect(
-			keepStyle(
-				"border-collapse",
-				"collapse",
-				outsideP,
-				false,
-				false,
-				"collapse",
-				true,
-				"",
-				false,
-				blockStyle,
+			keepStyle("border-collapse", "collapse", outsideP, {
+				computed: blockStyle,
+				omitDefaultValues: true,
 				predicates,
-			),
+				svgElement: false,
+			}),
 		).toBe(true);
 		expect(
-			keepStyle(
-				"border-collapse",
-				"separate",
-				outsideP,
-				false,
-				false,
-				"separate",
-				false,
-				"",
-				false,
-				blockStyle,
+			keepStyle("border-collapse", "separate", outsideP, {
+				computed: blockStyle,
+				omitDefaultValues: false,
 				predicates,
-			),
+				svgElement: false,
+			}),
 		).toBe(true);
 
 		// Table, td, descendant inside table, and display:table element stay preserved.
@@ -526,39 +530,25 @@ describe("WeChat portable style pruning", () => {
 			[cssTableDiv, tableDisplayStyle],
 		] as const) {
 			expect(
-				keepStyle(
-					"border-collapse",
-					"separate",
-					el,
-					false,
-					false,
-					"separate",
-					true,
-					"",
-					false,
+				keepStyle("border-collapse", "separate", el, {
 					computed,
+					omitDefaultValues: true,
 					predicates,
-				),
+					svgElement: false,
+				}),
 			).toBe(true);
 			expect(
-				keepStyle(
-					"border-spacing",
-					"0px",
-					el,
-					false,
-					false,
-					"0px",
-					true,
-					"",
-					false,
+				keepStyle("border-spacing", "0px", el, {
 					computed,
+					omitDefaultValues: true,
 					predicates,
-				),
+					svgElement: false,
+				}),
 			).toBe(true);
 		}
 	});
 
-	it("preserves all 10 inherited default style properties, safety-critical properties, and SVG presentation attribute overrides", () => {
+	it("preserves all 14 inherited default style properties, safety-critical properties, and SVG presentation attribute overrides", () => {
 		const p = document.createElement("p");
 		const inheritedSamples: ReadonlyArray<readonly [string, string]> = [
 			["font-style", "normal"],
@@ -571,6 +561,10 @@ describe("WeChat portable style pruning", () => {
 			["text-shadow", "none"],
 			["tab-size", "8"],
 			["list-style-position", "outside"],
+			["marker-start", "none"],
+			["marker-mid", "none"],
+			["marker-end", "none"],
+			["paint-order", "normal"],
 		];
 		expect(inheritedSamples).toHaveLength(
 			PRESERVE_INHERITED_DEFAULT_STYLE_PROPERTIES.size,
@@ -580,7 +574,7 @@ describe("WeChat portable style pruning", () => {
 				true,
 			);
 			expect(
-				keepStyle(property, value, p, false, false, value, true),
+				keepStyle(property, value, p, { omitDefaultValues: true }),
 				`inherited ${property}`,
 			).toBe(true);
 		}
@@ -594,7 +588,7 @@ describe("WeChat portable style pruning", () => {
 			["transform-origin", "50% 50%"],
 		] as const) {
 			expect(
-				keepStyle(property, value, p, false, false, value, true),
+				keepStyle(property, value, p, { omitDefaultValues: true }),
 				`kept ${property}:${value}`,
 			).toBe(true);
 		}
@@ -617,11 +611,11 @@ describe("WeChat portable style pruning", () => {
 			["transform", "none"],
 		] as const) {
 			expect(
-				keepStyle(property, value, p, false, false, value, true),
+				keepStyle(property, value, p, { omitDefaultValues: true }),
 				`pruned ${property}:${value}`,
 			).toBe(false);
 			expect(
-				keepStyle(property, value, p, false, false, value, false),
+				keepStyle(property, value, p, { omitDefaultValues: false }),
 				`native kept ${property}:${value}`,
 			).toBe(true);
 		}
@@ -631,20 +625,25 @@ describe("WeChat portable style pruning", () => {
 		const img = document.createElement("img");
 		for (const property of ["overflow", "overflow-x", "overflow-y"] as const) {
 			expect(
-				keepStyle(property, "visible", svg, false, false, "visible", true, "", true),
+				keepStyle(property, "visible", svg, {
+					omitDefaultValues: true,
+					svgElement: true,
+				}),
 			).toBe(true);
 			expect(
-				keepStyle(property, "visible", img, false, false, "visible", true, "", false),
+				keepStyle(property, "visible", img, {
+					omitDefaultValues: true,
+					svgElement: false,
+				}),
 			).toBe(true);
 		}
 
-		// SVG defaults are omitted when no presentation attribute is being overridden,
+		// Non-inherited SVG defaults are omitted when no presentation attribute is being overridden,
 		// and preserved when overriding a presentation attribute.
 		const plainPath = document.createElementNS(SVG_NS, "path");
 		const attrPath = document.createElementNS(SVG_NS, "path");
 		attrPath.setAttribute("filter", "url(#old)");
 		attrPath.setAttribute("transform", "scale(2)");
-		attrPath.setAttribute("marker-end", "url(#arrow)");
 		for (const [property, value] of [
 			["clip-path", "none"],
 			["mask", "none"],
@@ -652,26 +651,86 @@ describe("WeChat portable style pruning", () => {
 			["mix-blend-mode", "normal"],
 			["transform-box", "view-box"],
 			["vector-effect", "none"],
-			["marker-start", "none"],
-			["marker-mid", "none"],
-			["marker-end", "none"],
-			["paint-order", "normal"],
 			["transform", "none"],
 		] as const) {
 			expect(
-				keepStyle(property, value, plainPath, false, false, value, true, "", true),
+				keepStyle(property, value, plainPath, {
+					omitDefaultValues: true,
+					svgElement: true,
+				}),
 				`plain svg pruned ${property}`,
 			).toBe(false);
 		}
 		expect(
-			keepStyle("filter", "none", attrPath, false, false, "none", true, "", true),
+			keepStyle("filter", "none", attrPath, {
+				omitDefaultValues: true,
+				svgElement: true,
+			}),
 		).toBe(true);
 		expect(
-			keepStyle("transform", "none", attrPath, false, false, "none", true, "", true),
+			keepStyle("transform", "none", attrPath, {
+				omitDefaultValues: true,
+				svgElement: true,
+			}),
 		).toBe(true);
-		expect(
-			keepStyle("marker-end", "none", attrPath, false, false, "none", true, "", true),
-		).toBe(true);
+	});
+
+	it("preserves explicit child resets of CSS-inherited SVG properties marker-* and paint-order without presentation attributes", async () => {
+		const svg = document.createElementNS(SVG_NS, "svg");
+		const group = document.createElementNS(SVG_NS, "g");
+		group.setAttribute("style", "marker-end:url(#arrow);paint-order:stroke");
+		const childPath = document.createElementNS(SVG_NS, "path");
+		childPath.setAttribute(
+			"style",
+			"marker-start:none;marker-mid:none;marker-end:none;paint-order:normal",
+		);
+		group.append(childPath);
+		svg.append(group);
+
+		const childComputed = declaration({
+			"marker-start": "none",
+			"marker-mid": "none",
+			"marker-end": "none",
+			"paint-order": "normal",
+		});
+
+		for (const [property, value] of [
+			["marker-start", "none"],
+			["marker-mid", "none"],
+			["marker-end", "none"],
+			["paint-order", "normal"],
+		] as const) {
+			expect(childPath.hasAttribute(property)).toBe(false);
+			expect(
+				keepStyle(property, value, childPath, {
+					computed: childComputed,
+					omitDefaultValues: true,
+					svgElement: true,
+				}),
+				`inherited SVG reset ${property}:${value}`,
+			).toBe(true);
+		}
+
+		const modern = await styleDeclarations(
+			childPath,
+			childComputed,
+			false,
+			false,
+			mockRuntime(() => childComputed),
+			new Map(),
+		);
+		const legacy = styleDeclarationsSynchronously(
+			childPath,
+			childComputed,
+			false,
+			false,
+			mockRuntime(() => childComputed),
+		);
+		expect(legacy).toEqual(modern);
+		expect(modern).toContain("marker-start:none");
+		expect(modern).toContain("marker-mid:none");
+		expect(modern).toContain("marker-end:none");
+		expect(modern).toContain("paint-order:normal");
 	});
 });
 
@@ -786,7 +845,7 @@ describe("WeChat hot-path micro-allocation and yield optimizations", () => {
 			mockRuntime((element) => window.getComputedStyle(element)),
 		);
 		try {
-			expect(context.getRefreshGeneration?.()).toBe(1);
+			expect(context.getRefreshGeneration()).toBe(1);
 			const mirrorHost = document.querySelector(
 				".easymde-wechat-raw-dimension-context",
 			);
@@ -808,7 +867,7 @@ describe("WeChat hot-path micro-allocation and yield optimizations", () => {
 			wrapper.classList.add("dark-mode");
 			preview.querySelector("p")?.setAttribute("class", "lead highlighted");
 			context.refresh();
-			expect(context.getRefreshGeneration?.()).toBe(2);
+			expect(context.getRefreshGeneration()).toBe(2);
 			expect(
 				mirrorHost?.querySelector(".easymde-preview-shell")?.className,
 			).toContain("dark-mode");
@@ -927,32 +986,20 @@ describe("WeChat hot-path micro-allocation and yield optimizations", () => {
 		});
 
 		expect(
-			keepStyle(
-				"background",
-				blinkTransparentBackground,
-				checkbox,
-				false,
-				false,
-				blinkTransparentBackground,
-				true,
-				"",
-				false,
+			keepStyle("background", blinkTransparentBackground, checkbox, {
 				computed,
-			),
+				omitDefaultValues: true,
+				svgElement: false,
+			}),
 		).toBe(true);
 		expect(
-			keepStyle(
-				"background",
-				blinkTransparentBackground,
-				checkbox,
-				true,
-				false,
-				blinkTransparentBackground,
-				true,
-				'""',
-				false,
+			keepStyle("background", blinkTransparentBackground, checkbox, {
 				computed,
-			),
+				omitDefaultValues: true,
+				pseudoElement: true,
+				pseudoElementContent: '""',
+				svgElement: false,
+			}),
 		).toBe(true);
 	});
 

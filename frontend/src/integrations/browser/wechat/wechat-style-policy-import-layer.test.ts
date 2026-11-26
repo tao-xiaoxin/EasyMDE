@@ -23,6 +23,7 @@ function paddingSemantics(
 		cleanup: vi.fn(),
 		getComputedStyle: () => raw,
 		getFormattingOwnerDisplay: () => null,
+		getRefreshGeneration: () => 1,
 		getRootComputedStyle: () => raw,
 		getSourceComputedStyle: () => raw,
 		rasterizesVisualRoots: false,

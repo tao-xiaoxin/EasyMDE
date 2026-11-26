@@ -65,14 +65,18 @@ function mockPaddingSemantics(
 		"padding-right": "20px",
 		position: "static",
 	});
+	let generation = 1;
 	return {
 		cleanup: vi.fn(),
 		getComputedStyle: () => raw,
 		getFormattingOwnerDisplay: () => null,
+		getRefreshGeneration: () => generation,
 		getRootComputedStyle: () => raw,
 		getSourceComputedStyle: () => raw,
 		rasterizesVisualRoots: false,
-		refresh: vi.fn(),
+		refresh: vi.fn(() => {
+			generation += 1;
+		}),
 	};
 }
 
@@ -178,11 +182,12 @@ describe("compiled and cached padding cascade index", () => {
 				),
 			).toBe("9%");
 
-			// Flip matchMedia so the @media override matches
+			// Flip matchMedia so the @media override matches and refresh semantics context
 			window.matchMedia = vi.fn(() => ({
 				matches: true,
 				media: "",
 			})) as unknown as typeof window.matchMedia;
+			semantics.refresh();
 			expect(
 				semanticPaddingValue(
 					"padding-left",
@@ -374,6 +379,28 @@ describe("compiled and cached padding cascade index", () => {
 		} finally {
 			delete (sheet as { cssRules?: CSSRuleList }).cssRules;
 			dimensionSemantics.cleanup();
+			fixture.cleanup();
+		}
+	});
+
+	it("splits :is() arguments safely when attribute selectors contain commas", () => {
+		const fixture = createNestedQuoteFixture();
+		const attrOverride = document.createElement("style");
+		attrOverride.textContent = `
+			.easymde-rendered-content:is([data-tags=a,b], .extra) blockquote blockquote {
+				padding-left: 18px;
+			}
+		`;
+		document.head.append(attrOverride);
+		try {
+			const index = buildPaddingCascadeIndex(document, "padding-left");
+			expect(index.unreadableStyleSheet).toBe(false);
+			const overrideEntry = index.entries.find((entry) => !entry.isPortable);
+			expect(overrideEntry).toBeDefined();
+			// .easymde-rendered-content (0,1,0) + max([data-tags=a,b] -> 0,1,0, .extra -> 0,1,0) + blockquote blockquote (0,0,2) = [0, 2, 2]
+			expect(overrideEntry?.selectors[0]?.specificity).toEqual([0, 2, 2]);
+		} finally {
+			attrOverride.remove();
 			fixture.cleanup();
 		}
 	});
@@ -606,6 +633,7 @@ describe("semanticCandidate guard and styleDeclarations flag reuse", () => {
 			cleanup: vi.fn(),
 			getComputedStyle: () => semanticComputed,
 			getFormattingOwnerDisplay: () => null,
+			getRefreshGeneration: () => 1,
 			getRootComputedStyle: () => semanticComputed,
 			getSourceComputedStyle: () => measured,
 			rasterizesVisualRoots: false,
@@ -737,6 +765,7 @@ describe("semanticCandidate guard and styleDeclarations flag reuse", () => {
 				cleanup: vi.fn(),
 				getComputedStyle: () => raw,
 				getFormattingOwnerDisplay: () => "block",
+				getRefreshGeneration: () => 1,
 				getRootComputedStyle: () => raw,
 				getSourceComputedStyle: () => measured,
 				rasterizesVisualRoots: false,
@@ -772,9 +801,17 @@ describe("semanticCandidate guard and styleDeclarations flag reuse", () => {
 				"none",
 				declarations,
 			);
+			appendPortableStyleDeclaration(
+				context,
+				"max-height",
+				"none",
+				"none",
+				declarations,
+			);
 			expect(declarations).toContain("box-sizing:content-box!important");
 			expect(declarations).toContain("width:50%");
 			expect(declarations).toContain("max-width:80%!important");
+			expect(declarations).toContain("max-height:none");
 		} finally {
 			article.remove();
 		}

@@ -360,6 +360,7 @@ describe('createBrowserWechatClipboard', () => {
       cleanup: vi.fn(),
       getComputedStyle: runtime.getComputedStyle,
       getFormattingOwnerDisplay: () => 'block',
+      getRefreshGeneration: () => 1,
       getRootComputedStyle: runtime.getComputedStyle,
       getSourceComputedStyle: runtime.getComputedStyle,
       rasterizesVisualRoots: false,
@@ -545,6 +546,7 @@ describe('createBrowserWechatClipboard', () => {
     const dimensionSemantics = {
       getComputedStyle: () => declaration(sourceStyle),
       getFormattingOwnerDisplay: () => formattingOwnerDisplay,
+      getRefreshGeneration: () => 1,
       getRootComputedStyle: () => declaration(sourceStyle),
       getSourceComputedStyle: () => declaration(sourceStyle),
       rasterizesVisualRoots: false,
@@ -591,6 +593,7 @@ describe('createBrowserWechatClipboard', () => {
     const dimensionSemantics = {
       getComputedStyle: () => usedStyle,
       getFormattingOwnerDisplay: () => 'block',
+      getRefreshGeneration: () => 1,
       getRootComputedStyle: () => usedStyle,
       refresh: vi.fn(),
       cleanup: vi.fn()
@@ -806,6 +809,7 @@ describe('createBrowserWechatClipboard', () => {
     const dimensionSemantics = {
       getComputedStyle: () => declaration({}),
       getFormattingOwnerDisplay: () => 'block',
+      getRefreshGeneration: () => 1,
       getRootComputedStyle: () => declaration({}),
       getSourceComputedStyle: liveStyle,
       rasterizesVisualRoots: false,

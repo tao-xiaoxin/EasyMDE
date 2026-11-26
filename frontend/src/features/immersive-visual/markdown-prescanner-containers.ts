@@ -122,17 +122,32 @@ function blockquoteDepth(prefix: string): number {
 	return (prefix.match(/>/g) ?? []).length;
 }
 
+/**
+ * Strips up to `depth` blockquote markers from `line` on one column cursor,
+ * returning the remainder, the CommonMark §2.2 / §5.1 virtual column at which
+ * it starts (a tab after `>` expands to its tab stop, one column of which is
+ * the marker's optional space; leftover columns stay in `rest` as virtual
+ * spaces), and the number of markers actually `matched` (`< depth` means a
+ * lazy continuation line).
+ */
+export function stripBlockquoteDepthWithColumn(
+	line: string,
+	depth: number,
+): Readonly<{ column: number; matched: number; rest: string }> {
+	const cursor = createLineCursor(line);
+	let matched = 0;
+	while (matched < depth && consumeBlockquoteMarker(cursor)) {
+		matched += 1;
+	}
+	return { column: cursor.column, matched, rest: cursorRemainder(cursor) };
+}
+
 export function stripBlockquoteDepth(
 	line: string,
 	depth: number,
 ): string | null {
-	const cursor = createLineCursor(line);
-	for (let d = 0; d < depth; d += 1) {
-		if (!consumeBlockquoteMarker(cursor)) {
-			return null;
-		}
-	}
-	return cursorRemainder(cursor);
+	const stripped = stripBlockquoteDepthWithColumn(line, depth);
+	return stripped.matched < depth ? null : stripped.rest;
 }
 
 export function hasListBeforeQuote(

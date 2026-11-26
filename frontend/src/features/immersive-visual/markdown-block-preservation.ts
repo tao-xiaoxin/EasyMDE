@@ -7,6 +7,7 @@ import {
 	alignContainerChildren,
 	checkRawPreservationRisks,
 	createTightSharedGroupChecker,
+	emitWithMathSentinelAtDepth,
 	isListSwallowingFollowingBlock,
 	leadingIndentAtDepth,
 	prefixAtDepth,
@@ -115,21 +116,14 @@ function serializeChildAtDepth(
 	depth: number,
 	serializeBlock: BlockSerializer,
 ): RenderedChild {
-	if (depth <= 0) {
-		const emitted = serializeBlock(child);
-		return { emitted, inner: emitted };
-	}
-	const token = createMathNewlineSentinelForNode(child);
-	const innerMasked = serializeBlock(child, token ?? undefined);
-	const prefixed = prefixAtDepth(innerMasked, depth);
-	return {
-		emitted:
-			token !== null ? restoreMathNewlineSentinel(prefixed, token) : prefixed,
-		inner:
-			token !== null
-				? restoreMathNewlineSentinel(innerMasked, token)
-				: innerMasked,
-	};
+	let inner = "";
+	const emitted = emitWithMathSentinelAtDepth(child, depth, (token) => {
+		const masked = serializeBlock(child, token);
+		inner =
+			token !== undefined ? restoreMathNewlineSentinel(masked, token) : masked;
+		return masked;
+	});
+	return { emitted, inner };
 }
 
 function dedentLineZeroAtDepth(
@@ -211,39 +205,29 @@ function tryPreserveListAtDepth(
 					!(ctx.hasInvalidatedRefDefs && ctx.nodeHasInvalidatedRef(origItem))
 			: null;
 	const cachedPrepared = ctx.plan.lists.get(listNode);
-	if (depth <= 0) {
-		return serializeListPreservingItems(
+	const innerRaw =
+		depth <= 0
+			? undefined
+			: (cachedPrepared?.innerRaw ??
+				tryStripAllLinesAtDepth(origBlock.raw, depth));
+	if (innerRaw === null) return null;
+	let failed = false;
+	const emitted = emitWithMathSentinelAtDepth(listNode, depth, (token) => {
+		const innerSerialized = serializeListPreservingItems(
 			listNode,
 			origBlock,
 			ctx.activeSerializeBlock,
 			ctx.parsed.envReferences,
 			ctx.resolveReferences?.isPartialTitleRefDef ?? null,
 			canReuseItem,
-			undefined,
-			undefined,
+			innerRaw,
+			token,
 			cachedPrepared,
 		);
-	}
-	const innerRaw =
-		cachedPrepared?.innerRaw ?? tryStripAllLinesAtDepth(origBlock.raw, depth);
-	if (innerRaw === null) return null;
-	const token = createMathNewlineSentinelForNode(listNode);
-	const innerSerialized = serializeListPreservingItems(
-		listNode,
-		origBlock,
-		ctx.activeSerializeBlock,
-		ctx.parsed.envReferences,
-		ctx.resolveReferences?.isPartialTitleRefDef ?? null,
-		canReuseItem,
-		innerRaw,
-		token ?? undefined,
-		cachedPrepared,
-	);
-	if (innerSerialized === null) return null;
-	const prefixed = prefixAtDepth(innerSerialized, depth);
-	return token !== null
-		? restoreMathNewlineSentinel(prefixed, token)
-		: prefixed;
+		if (innerSerialized === null) failed = true;
+		return innerSerialized ?? "";
+	});
+	return failed ? null : emitted;
 }
 
 // ---------------------------------------------------------------------------

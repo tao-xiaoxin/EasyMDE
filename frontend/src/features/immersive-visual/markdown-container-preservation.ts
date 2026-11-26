@@ -1,8 +1,11 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
+import { scanPhpMarkdownMathRanges } from "../../shared/markdown/php-markdown-math-mask";
 import {
+	createMathNewlineSentinelForNode,
 	isNestedList,
 	nodePreventsFollowingIndentedCode,
 	PARAGRAPH_INTERRUPTING_LIST_FIRST_LINE,
+	restoreMathNewlineSentinel,
 } from "./markdown-list-serialization";
 import {
 	alignNodes,
@@ -16,12 +19,12 @@ import type {
 	ParsedVisualSharedGroup,
 } from "./markdown-parser";
 import {
-	type ContainerStep,
 	firstLine,
+	isCommonMarkBlankLine,
 	matchListMarker,
 	measureIndentColumns,
 	stripBlockquoteDepth,
-	stripContainersWithColumn,
+	stripBlockquoteDepthWithColumn,
 } from "./markdown-prescanner-containers";
 import { wouldRawHtmlInterruptParagraph } from "./markdown-prescanner-inline";
 import { sanitizeBulletMarker } from "./visual-schema";
@@ -129,22 +132,25 @@ export function tryStripAllLinesAtDepth(
 	return stripped.join("\n");
 }
 
-const BLOCKQUOTE_STEP: ContainerStep = { kind: "blockquote" };
-
 /**
- * Strips exactly `depth` blockquote markers from `line`, returning the
- * remainder and the CommonMark §2.2 / §5.1 virtual column at which it starts.
- * A tab following `>` is expanded to its 4-column stop, one column of which is
- * the marker's optional space (its leftover columns stay in `rest` as virtual
- * spaces), and every later tab expands from the tracked absolute column.
- * `null` when `line` carries fewer than `depth` markers (lazy continuation).
+ * Single authoritative emission of `node` at blockquote `depth` shared by the
+ * serializer (`serializeChildAtDepth`, `tryPreserveListAtDepth`) and refdef
+ * liveness (canonical slots and preserved list tails): every line gets
+ * `depth` quote markers except physical newlines inside multiline math /
+ * protected inline spans, which `renderWithToken` masks with a
+ * collision-free sentinel and stay unprefixed.
  */
-function stripBlockquoteDepthWithColumn(
-	line: string,
+export function emitWithMathSentinelAtDepth(
+	node: ProseMirrorNode,
 	depth: number,
-): Readonly<{ column: number; rest: string }> | null {
-	const steps = new Array<ContainerStep>(depth).fill(BLOCKQUOTE_STEP);
-	return stripContainersWithColumn(line, steps);
+	renderWithToken: (mathNewlineToken: string | undefined) => string,
+): string {
+	if (depth <= 0) return renderWithToken(undefined);
+	const token = createMathNewlineSentinelForNode(node);
+	const prefixed = prefixAtDepth(renderWithToken(token ?? undefined), depth);
+	return token !== null
+		? restoreMathNewlineSentinel(prefixed, token)
+		: prefixed;
 }
 
 /**
@@ -159,28 +165,59 @@ export function leadingIndentAtDepth(
 	const head = firstLine(emittedText);
 	if (depth <= 0) return measureIndentColumns(head);
 	const stripped = stripBlockquoteDepthWithColumn(head, depth);
-	return stripped !== null
+	return stripped.matched === depth
 		? measureIndentColumns(stripped.rest, stripped.column)
 		: measureIndentColumns(head);
+}
+
+const PHP_INLINE_MATH_PLACEHOLDER = "EASYMDEMATHINLINE";
+const PHP_BLOCK_MATH_PLACEHOLDER = "\n\nEASYMDEMATHBLOCK\n\n";
+
+/**
+ * Mirrors PHP `MarkdownRenderer::extract_math()` before CommonMark block
+ * parsing: every math span found by the authoritative
+ * `scanPhpMarkdownMathRanges` collapses to a single-line token, and display
+ * math (`$$...$$`, `\[...\]`) is additionally surrounded by blank lines, so
+ * list-marker-like lines inside multiline math never open list items and a
+ * list right after display math starts on its own line.
+ */
+function extractPhpMathForBlockScan(text: string): string {
+	if (!text.includes("$") && !text.includes("\\")) return text;
+	const ranges = scanPhpMarkdownMathRanges(text);
+	if (ranges.length === 0) return text;
+	let out = "";
+	let cursor = 0;
+	for (const range of ranges) {
+		if (range.from < cursor) continue;
+		out += text.slice(cursor, range.from);
+		out += range.block
+			? PHP_BLOCK_MATH_PLACEHOLDER
+			: PHP_INLINE_MATH_PLACEHOLDER;
+		cursor = range.to;
+	}
+	return out + text.slice(cursor);
 }
 
 /**
  * Computes the CommonMark §5.2 content indentation (relative to the content
  * column at `depth`) of the trailing top-level item in `listEmitted`, the
- * exact emitted text of `listNode` including its `depth` blockquote markers.
- * Every candidate line strips exactly `depth` markers and measures its
- * indent and list marker from the real CommonMark column at which its
- * remainder starts, so tabs before and after the marker expand to their true
- * tab stops. Lazy continuation lines (fewer than `depth` markers) can never
- * open a top-level item at `depth` and are skipped.
+ * exact emitted text of `listNode` (possibly preceded by the other members of
+ * its shared group) including its `depth` blockquote markers, after the PHP
+ * `extract_math()` preprocessing. Every line strips `depth` markers and
+ * measures its indent and list marker from the real CommonMark column, so
+ * tabs before and after the marker expand to their true tab stops. A line
+ * lacking the markers is a lazy continuation unless it is blank or follows
+ * a blank line (the container closed); a non-item line below the current
+ * content indent after a blank line closes the list. A single-code-point
+ * first line uses `league/commonmark@2.8.2`'s blank-item padding
+ * (`$cursor->peek() === null`): `markerOffset + markerLength + 1`.
  */
 function trailingListItemContentIndent(
 	listEmitted: string,
 	listNode: ProseMirrorNode,
 	depth: number,
 ): number {
-	const lines = listEmitted.split("\n");
-	if (lines.length === 0) return 0;
+	const lines = extractPhpMathForBlockScan(listEmitted).split("\n");
 	const isOrdered = listNode.type.name === "ordered_list";
 	const expectedDelimiter =
 		isOrdered && listNode.attrs.delimiter === ")" ? ")" : ".";
@@ -190,36 +227,50 @@ function trailingListItemContentIndent(
 	const matchTopItem = (rest: string, column: number): number | null => {
 		const marker = matchListMarker(rest, column);
 		if (!marker || marker.leadCols > 3) return null;
+		let markerLength = 1;
 		if (isOrdered) {
 			if (marker.orderedDigits === null) return null;
 			const digitIdx = marker.markerPrefix.indexOf(marker.orderedDigits);
 			const delimChar =
 				marker.markerPrefix[digitIdx + marker.orderedDigits.length];
 			if (delimChar !== expectedDelimiter) return null;
+			markerLength = marker.orderedDigits.length + 1;
 		} else {
 			if (marker.orderedDigits !== null) return null;
 			if (marker.markerPrefix.trimStart()[0] !== expectedBullet) {
 				return null;
 			}
 		}
-		return marker.contentIndent;
+		return Array.from(marker.afterContent).length === 1
+			? Math.min(marker.contentIndent, marker.leadCols + markerLength + 1)
+			: marker.contentIndent;
 	};
-	if (listNode.childCount <= 1) {
-		const head = stripBlockquoteDepthWithColumn(lines[0] ?? "", depth);
-		return head === null ? 0 : (matchTopItem(head.rest, head.column) ?? 0);
-	}
 	let currentIndent = -1;
+	let afterBlank = false;
 	for (let i = 0; i < lines.length; i += 1) {
-		const stripped = stripBlockquoteDepthWithColumn(lines[i] ?? "", depth);
-		if (stripped === null) continue;
-		const leadCols = measureIndentColumns(stripped.rest, stripped.column);
-		if (leadCols > 3 || (currentIndent >= 0 && leadCols >= currentIndent)) {
+		const line = lines[i] ?? "";
+		const stripped = stripBlockquoteDepthWithColumn(line, depth);
+		if (stripped.matched < depth) {
+			const blank = isCommonMarkBlankLine(line);
+			if (blank || afterBlank) currentIndent = -1;
+			afterBlank = blank;
 			continue;
 		}
-		const matchedIndent = matchTopItem(stripped.rest, stripped.column);
-		if (matchedIndent !== null) {
-			currentIndent = matchedIndent;
+		if (isCommonMarkBlankLine(stripped.rest)) {
+			afterBlank = true;
+			continue;
 		}
+		const leadCols = measureIndentColumns(stripped.rest, stripped.column);
+		if (currentIndent < 0 || leadCols < currentIndent) {
+			const matchedIndent =
+				leadCols <= 3 ? matchTopItem(stripped.rest, stripped.column) : null;
+			if (matchedIndent !== null) {
+				currentIndent = matchedIndent;
+			} else if (afterBlank) {
+				currentIndent = -1;
+			}
+		}
+		afterBlank = false;
 	}
 	return currentIndent > 0 ? currentIndent : 0;
 }

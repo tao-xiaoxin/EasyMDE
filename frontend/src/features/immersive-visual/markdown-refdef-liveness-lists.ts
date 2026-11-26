@@ -1,4 +1,5 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
+import { emitWithMathSentinelAtDepth } from "./markdown-container-preservation";
 import {
 	type PreparedListPreservation,
 	prepareListPreservation,
@@ -41,9 +42,11 @@ import {
  */
 
 /**
- * Lazily computed text a preserved nested container emits (its tail decides
- * the following container slot's join); `onChange` is bound by the parent
- * slot and fires when that tail flips from preserved to canonical.
+ * Lazily computed exact text a preserved nested container emits at its parent
+ * container's depth (all quote markers included, multiline math newlines
+ * unprefixed; its tail decides the following container slot's join);
+ * `onChange` is bound by the parent slot and fires when that tail flips from
+ * preserved to canonical.
  */
 export type TailSource = {
 	onChange: (() => void) | null;
@@ -83,6 +86,7 @@ function resolveListReuse(
 	prepared: PreparedListPreservation,
 	buildOutput: boolean,
 	isDowngraded: (itemIdx: number) => boolean,
+	mathNewlineToken?: string,
 ): ReturnType<typeof resolveAuthoritativeListPreservation> {
 	return resolveAuthoritativeListPreservation(
 		listNode,
@@ -95,7 +99,7 @@ function resolveListReuse(
 			!isDowngraded(itemIdx) &&
 			!nodeHasCurrentInvalidatedRef(st, prepared.orig.child(origIdx)),
 		(node) => st.partialTitleRefNodes.has(node),
-		undefined,
+		mathNewlineToken,
 		buildOutput,
 	);
 }
@@ -419,14 +423,22 @@ export function openList(
 	}
 	const tail: TailSource = {
 		onChange: null,
+		// Same `emitWithMathSentinelAtDepth` emission as the serializer's
+		// `tryPreserveListAtDepth`, so `emittedAt` equals `prevEmittedText`.
 		read: () =>
-			resolveListReuse(
-				st,
+			emitWithMathSentinelAtDepth(
 				listNode,
-				prepared,
-				true,
-				(idx) => check.itemReusable[idx] !== true,
-			).output ?? "",
+				depth,
+				(token) =>
+					resolveListReuse(
+						st,
+						listNode,
+						prepared,
+						true,
+						(idx) => check.itemReusable[idx] !== true,
+						token,
+					).output ?? "",
+			),
 	};
 	const itemUpstream = new Array<ReadonlyArray<string>>(itemCount);
 	const check: PendingListCheck = {

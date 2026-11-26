@@ -1,10 +1,9 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { evaluateMatchedContainerHeadRisk } from "./markdown-container-head-line";
-import { prefixAtDepth, stripAtDepth } from "./markdown-container-preservation";
 import {
-	createMathNewlineSentinelForNode,
-	restoreMathNewlineSentinel,
-} from "./markdown-list-serialization";
+	emitWithMathSentinelAtDepth,
+	stripAtDepth,
+} from "./markdown-container-preservation";
 import type {
 	BuiltVisualBlockSources,
 	ParsedVisualSharedGroup,
@@ -78,23 +77,16 @@ export type ContainerState = {
 
 /**
  * Mirrors the serializer's canonical `serializeChildAtDepth` emission of
- * `node` at `depth`: every line gets `depth` quote markers except the
- * newlines inside display math, which stay unprefixed.
+ * `node` at `depth` through the shared `emitWithMathSentinelAtDepth`.
  */
-function canonicalEmittedAtDepth(
+export function canonicalEmittedAtDepth(
 	st: LivenessState,
 	node: ProseMirrorNode,
 	depth: number,
 ): string {
-	if (depth <= 0) return st.serializeBlock(node);
-	const token = createMathNewlineSentinelForNode(node);
-	const prefixed = prefixAtDepth(
-		st.serializeBlock(node, token ?? undefined),
-		depth,
+	return emitWithMathSentinelAtDepth(node, depth, (token) =>
+		st.serializeBlock(node, token),
 	);
-	return token !== null
-		? restoreMathNewlineSentinel(prefixed, token)
-		: prefixed;
 }
 
 /**
@@ -134,17 +126,6 @@ export function evaluateSlotJoin(
 	const prevEmittedSource = idx > 0 ? (cs.emittedAt[idx - 1] ?? null) : null;
 	let prevInner: string | null = null;
 	let prevEmitted: string | null = null;
-	const readPrevInner = (): string => {
-		if (prevInner === null) {
-			prevInner =
-				prevEmittedSource !== null
-					? stripAtDepth(prevEmittedSource(), cs.depth)
-					: prevNode !== null
-						? st.serializeBlock(prevNode)
-						: "";
-		}
-		return prevInner;
-	};
 	const readPrevEmitted = (): string => {
 		if (prevEmitted === null) {
 			prevEmitted =
@@ -155,6 +136,19 @@ export function evaluateSlotJoin(
 						: "";
 		}
 		return prevEmitted;
+	};
+	// Derived from the one memoized `readPrevEmitted()`, so a preserved slot's
+	// `prevEmittedSource()` (e.g. a list tail resolution) runs at most once.
+	const readPrevInner = (): string => {
+		if (prevInner === null) {
+			prevInner =
+				prevEmittedSource !== null
+					? stripAtDepth(readPrevEmitted(), cs.depth)
+					: prevNode !== null
+						? st.serializeBlock(prevNode)
+						: "";
+		}
+		return prevInner;
 	};
 	return evaluateMatchedContainerHeadRisk({
 		baselineBlocks: cs.source.blocks,

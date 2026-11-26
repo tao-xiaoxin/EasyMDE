@@ -4,9 +4,7 @@ import {
 	alignContainerChildren,
 	canPreserveContainerHeadStructurally,
 	createTightSharedGroupChecker,
-	prefixAtDepth,
 	sharedGroupHasInvalidatedRef,
-	stripAtDepth,
 } from "./markdown-container-preservation";
 import { blankSeparatorAtDepth } from "./markdown-container-slot-separator";
 import { isNestedList } from "./markdown-list-serialization";
@@ -22,6 +20,7 @@ import {
 	type TailSource,
 } from "./markdown-refdef-liveness-lists";
 import {
+	canonicalEmittedAtDepth,
 	type ContainerState,
 	evaluateSlotJoin,
 	headLineHasRisk,
@@ -198,14 +197,18 @@ function onSlotInnerChanged(
 	}
 }
 
-/** Records a nested container's preserved tail for slot `idx`. */
+/**
+ * Records a nested container's preserved tail for slot `idx`; the tail already
+ * reads the exact text emitted at `cs.depth` (all quote markers included, math
+ * newlines unprefixed), so it is used verbatim, never re-prefixed.
+ */
 function bindNestedTail(
 	st: LivenessState,
 	cs: ContainerState,
 	idx: number,
 	tail: TailSource | null,
 ): void {
-	cs.emittedAt[idx] = tail ? () => prefixAtDepth(tail.read(), cs.depth) : null;
+	cs.emittedAt[idx] = tail ? tail.read : null;
 	cs.tailAt[idx] = tail;
 	if (tail) tail.onChange = () => onSlotInnerChanged(st, cs, idx);
 }
@@ -712,21 +715,18 @@ export function openContainer(
 		source,
 		tail: {
 			onChange: null,
-			// Parent-depth view of this blockquote's emitted tail: a kept
-			// trailing suffix (e.g. a blank `>` line) or its last slot.
+			// Exact emitted tail of this blockquote (its `depth` quote markers
+			// included), as the serializer's nested output ends: a kept
+			// trailing suffix (e.g. a blank `>` line) or its last slot, already
+			// emitted at `depth`.
 			read: () => {
-				if (keepsTrailingSuffix) {
-					return stripAtDepth(source.trailingSuffix, depth - 1);
-				}
+				if (keepsTrailingSuffix) return source.trailingSuffix;
 				const last = newLen - 1;
 				if (last < 0) return "";
 				const lastEmitted = emittedAt[last];
-				return prefixAtDepth(
-					lastEmitted
-						? stripAtDepth(lastEmitted(), depth)
-						: st.serializeBlock(container.child(last)),
-					1,
-				);
+				return lastEmitted
+					? lastEmitted()
+					: canonicalEmittedAtDepth(st, container.child(last), depth);
 			},
 		},
 		tailAt,

@@ -1,4 +1,9 @@
 import {
+	advancePhpCommonMarkBlockLine,
+	createPhpCommonMarkBlockState,
+	scanLinesIntoPhpCommonMarkBlockState,
+} from "../../shared/markdown/php-commonmark-block-engine";
+import {
 	htmlBlockLineCloses,
 	matchHtmlBlockOpen,
 } from "../../shared/markdown/php-commonmark-block-helpers";
@@ -12,13 +17,16 @@ import {
 	analyzeLine,
 	type ContainerStep,
 	classifyParagraphLine,
+	hasListBeforeQuote,
 	isCommonMarkBlankLine,
 	measureIndentColumns,
 	peelContainerStepsForLine,
 	stripContainers,
+	sumListContainerIndent,
 } from "./markdown-prescanner-blocks";
 import type { ProtectedInlineEntry } from "./markdown-prescanner-inline";
 import {
+	createPhpDocumentMathIndex,
 	findFirstDisplayMathInOffsetSlice,
 	findLineIndexForOffset,
 	findLogicalLineEnd,
@@ -678,4 +686,119 @@ export function emitUnclosedIntermediateHtmlBlock(
 	const htmlEndOffset = mathIndex.lineEnds[lastLine] ?? curEndOffset;
 	emitRawBlock(htmlEndOffset);
 	return { afterStartOffset: htmlEndOffset, kind: "done", spanEndLine: lastLine };
+}
+
+/**
+ * Mirrors, for one `prescanMarkdown` pass, the PHP `MarkdownRenderer` state
+ * the prescanner consults: the document-wide authoritative math index (PHP
+ * `extract_math()` after code-region masking) and the CommonMark block
+ * container state, advanced over raw, masked, closed-block, and
+ * display-math-replaced lines.
+ */
+export function createPrescanPhpTracker(
+	normalized: string,
+	lines: ReadonlyArray<string>,
+) {
+	const state = createPhpCommonMarkBlockState(false, false);
+	const mathIndex = createPhpDocumentMathIndex(normalized, lines);
+	const advanceRange = (from: number, toInclusive: number): void => {
+		for (let k = from; k <= toInclusive; k += 1) {
+			advancePhpCommonMarkBlockLine(state, lines[k] ?? "");
+		}
+	};
+	const advanceMaskedLines = (fromLine: number, toLine: number): void => {
+		const masked = maskedSliceForLines(mathIndex, lines, fromLine, toLine);
+		if (masked.includes("\n")) scanLinesIntoPhpCommonMarkBlockState(state, masked);
+		else advancePhpCommonMarkBlockLine(state, masked);
+	};
+	const advanceAfterDisplayMath = (
+		afterStartOffset: number,
+		toLineInclusive: number,
+	): void => {
+		const endOffset = mathIndex.lineEnds[toLineInclusive] ?? afterStartOffset;
+		const postMathMasked =
+			endOffset > afterStartOffset
+				? mathIndex.maskedDoc.slice(afterStartOffset, endOffset)
+				: "";
+		if (
+			postMathMasked.length === 0 &&
+			state.containers.length === 0 &&
+			state.leaf === null
+		) {
+			return;
+		}
+		scanLinesIntoPhpCommonMarkBlockState(state, `\n\nM\n\n${postMathMasked}`);
+	};
+	const advanceClosedBlock = (prefix: string, indent: number): void => {
+		advancePhpCommonMarkBlockLine(
+			state,
+			`${prefix}${" ".repeat(Math.max(0, indent))}<!-- -->`,
+		);
+	};
+	/** The authoritative display-math span starting exactly at `content`. */
+	const displayMathAt = (
+		content: string,
+		lineIdx: number,
+	): PhpMarkdownMathRange | null => {
+		if (
+			mathIndex.ranges.length === 0 ||
+			!(content.startsWith("$$") || content.startsWith("\\["))
+		) {
+			return null;
+		}
+		const lineEnd = mathIndex.lineEnds[lineIdx] ?? 0;
+		const range = findFirstDisplayMathInOffsetSlice(
+			mathIndex,
+			mathIndex.lineStarts[lineIdx] ?? 0,
+			lineEnd,
+		);
+		return range?.from === lineEnd - content.length ? range : null;
+	};
+	/**
+	 * Last line of the standalone display math (nothing but blanks after its
+	 * closing delimiter) starting at `content`, as found by the authoritative
+	 * math index; `-1` when PHP does not see display math there.
+	 */
+	const standaloneDisplayMathEnd = (content: string, lineIdx: number): number => {
+		const range = displayMathAt(content, lineIdx);
+		if (range === null) return -1;
+		const end = findLineIndexForOffset(mathIndex, range.to - 1);
+		const tail = normalized.slice(range.to, mathIndex.lineEnds[end] ?? range.to);
+		return isCommonMarkBlankLine(tail) ? end : -1;
+	};
+	/**
+	 * PHP `extract_math()` replaces standalone display math with
+	 * `"\n\nTOKEN\n\n"`: the token sits at column 0 behind a blank line,
+	 * closing every enclosing list item and blockquote.
+	 */
+	const closeContainersForDisplayMath = (linePrefix: string): void => {
+		scanLinesIntoPhpCommonMarkBlockState(state, `${linePrefix}\n\nM\n\n`);
+	};
+	/**
+	 * The list content indent after a blank line, synchronized from the PHP
+	 * container state (CommonMark §5.2: an empty item closes there).
+	 */
+	const listIndentAfterBlank = (
+		listContentIndent: number | null,
+	): number | null => {
+		if (listContentIndent === null || hasListBeforeQuote(state.containers)) {
+			return listContentIndent;
+		}
+		const phpIndent = sumListContainerIndent(state.containers);
+		if (phpIndent >= listContentIndent) return listContentIndent;
+		return phpIndent > 0 ? phpIndent : null;
+	};
+	return {
+		advanceAfterDisplayMath,
+		advanceClosedBlock,
+		advanceMaskedLines,
+		advanceRange,
+		closeContainersForDisplayMath,
+		listIndentAfterBlank,
+		mathIndex,
+		standaloneDisplayMathEnd,
+		startsDisplayMath: (content: string, lineIdx: number): boolean =>
+			displayMathAt(content, lineIdx) !== null,
+		state,
+	};
 }

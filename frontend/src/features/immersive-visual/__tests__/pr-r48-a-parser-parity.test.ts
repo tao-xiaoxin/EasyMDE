@@ -208,7 +208,7 @@ describe("PR-R48-A column-aware list swallowing at every depth and multi-definit
 				'> -\titem\n>\n> drop\n>\n>   > [p]: /u\n>   > "t\n>   > ===\n\n[link][p]';
 			const { serialized } = roundTrip(md, deleteParagraph("drop"));
 			expect(serialized).toBe(
-				'> -\titem\n>\n> > [p]: /u\n> >\n> > # "t\n\n[link](/u "t&#10;")',
+				'> -\titem\n>\n> > [p]: /u\n> > "t\n> > ===\n\n[link][p]',
 			);
 			expect(collectLinkTitles(serialized)).toEqual(collectLinkTitles(md));
 			expect(collectLinkTitles(serialized)).toEqual([["/u", "t\n"]]);

@@ -2,6 +2,7 @@ import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { scanPhpMarkdownMathRanges } from "../../shared/markdown/php-markdown-math-mask";
 import {
 	listAttrsCompatible,
+	prefixAtDepth,
 	tryStripAllLinesAtDepth,
 } from "./markdown-container-preservation";
 import {
@@ -28,7 +29,7 @@ import {
 	firstLine,
 	matchListMarker,
 	measureIndentColumns,
-	phpListMarkerContentIndent,
+	stripUpToIndentColumns,
 } from "./markdown-prescanner-containers";
 
 /**
@@ -97,14 +98,45 @@ function splitListItemSlices(raw: string): ListItemSlices | null {
 	return { items, separators, tail };
 }
 
+/**
+ * The single list of `markdown` once re-parsed at blockquote `depth`: the
+ * text is re-prefixed with `depth` clean quote markers (physical newlines
+ * masked by `mathNewlineToken` stay unprefixed, like
+ * `emitWithMathSentinelAtDepth`) and exactly `depth` single-child
+ * blockquotes must wrap one list, so tabs after the marker expand from the
+ * real emitted column.
+ */
+function parseListAtDepth(
+	markdown: string,
+	depth: number,
+	envReferences?: ParsedEnvReferences,
+	mathNewlineToken?: string,
+): ProseMirrorNode | null {
+	const prefixed = prefixAtDepth(markdown, depth);
+	const text =
+		mathNewlineToken !== undefined
+			? restoreMathNewlineSentinel(prefixed, mathNewlineToken)
+			: prefixed;
+	let node: ProseMirrorNode | null = parseMarkdownWithBlockSources(
+		text,
+		envReferences,
+	).doc;
+	for (let level = 0; level <= depth; level += 1) {
+		if (node?.childCount !== 1) return null;
+		node = node.firstChild;
+		if (level < depth && node?.type.name !== "blockquote") return null;
+	}
+	return node;
+}
+
 function sliceParsesToItem(
 	slice: string,
 	listNode: ProseMirrorNode,
 	index: number,
+	depth: number,
 	envReferences?: ParsedEnvReferences,
 ): boolean {
-	const doc = parseMarkdownWithBlockSources(slice, envReferences).doc;
-	const list = doc.childCount === 1 ? doc.firstChild : null;
+	const list = parseListAtDepth(slice, depth, envReferences);
 	return (
 		list !== null &&
 		list.type === listNode.type &&
@@ -121,6 +153,7 @@ const verifiedSliceCache = new WeakMap<
 /** Item slices proven to re-parse to exactly the baseline item nodes. */
 function verifiedListItemSlices(
 	block: ParsedVisualBlockSource,
+	depth: number,
 	envReferences?: ParsedEnvReferences,
 	rawOverride?: string,
 ): ListItemSlices | null {
@@ -134,7 +167,7 @@ function verifiedListItemSlices(
 			slices &&
 			slices.items.length === block.node.childCount &&
 			slices.items.every((slice, i) =>
-				sliceParsesToItem(slice, block.node, i, envReferences),
+				sliceParsesToItem(slice, block.node, i, depth, envReferences),
 			)
 		) {
 			result = slices;
@@ -144,25 +177,21 @@ function verifiedListItemSlices(
 	return result;
 }
 
-/** Column reached after `text`, expanding tabs to 4-column stops. */
-function advanceColumns(text: string, startColumn: number): number {
-	let column = startColumn;
-	for (const ch of text) {
-		column = ch === "\t" ? column + 4 - (column % 4) : column + 1;
-	}
-	return column;
-}
-
 /**
  * A reused raw item that becomes the first item of an ordered list defines
  * the CommonMark start number. When its digits differ from the projected
  * `order`, return candidate rewrites (keeping indent, delimiter, and body
  * bytes as far as possible) in preference order. Each candidate must still be
  * validated in list context; an empty result means "serialize the item".
+ * Content indents come from the PHP `matchListMarker()` primitive measured at
+ * the real emitted `itemStartColumn` (`2 * depth`), so continuation lines
+ * shift by exactly the content-indent delta even when a tab after the marker
+ * crosses a different tab stop.
  */
 function alignFirstOrderedMarker(
 	listNode: ProseMirrorNode,
 	raw: string,
+	itemStartColumn: number,
 ): ReadonlyArray<string> {
 	if (listNode.type.name !== "ordered_list") return [raw];
 	const order: unknown = listNode.attrs.order;
@@ -179,32 +208,25 @@ function alignFirstOrderedMarker(
 	const spacing = match[4] ?? "";
 	const content = match[5] ?? "";
 	const digits = String(expected);
-	const delta = digits.length - match[2].length;
 	const head = `${indent}${digits}${delimiter}`;
 	const rewrittenHead = `${head}${spacing}${content}`;
+	const oldContentIndent = listItemContentIndent(lines[0] ?? "", itemStartColumn);
+	const delta =
+		listItemContentIndent(rewrittenHead, itemStartColumn) - oldContentIndent;
 	if (delta === 0) return [[rewrittenHead, ...lines.slice(1)].join("\n")];
-
-	const markerEnd = advanceColumns(
-		`${match[2]}${delimiter}`,
-		advanceColumns(indent, 0),
-	);
-	const spacingWidth = advanceColumns(spacing, markerEnd) - markerEnd;
-	const oldContentColumn =
-		content.length > 0 && spacingWidth >= 1 && spacingWidth <= 4
-			? markerEnd + spacingWidth
-			: markerEnd + 1;
 	const candidates: string[] = [];
 
 	const shifted = lines.slice(1).map((line) => {
 		if (line.trim().length === 0) return line;
-		const leading = /^[ \t]*/.exec(line)?.[0] ?? "";
-		const width = advanceColumns(leading, 0);
-		if (width < oldContentColumn) return line;
-		return `${" ".repeat(Math.max(0, width + delta))}${line.slice(leading.length)}`;
+		const width = measureIndentColumns(line, itemStartColumn);
+		if (width < oldContentIndent) return line;
+		const body = stripUpToIndentColumns(line, width, itemStartColumn);
+		return `${" ".repeat(Math.max(0, width + delta))}${body}`;
 	});
 	candidates.push([rewrittenHead, ...shifted].join("\n"));
 
-	const paddedWidth = spacingWidth - delta;
+	const spacingWidth = spacing.length;
+	const paddedWidth = spacingWidth - (digits.length - match[2].length);
 	if (
 		content.length > 0 &&
 		!spacing.includes("\t") &&
@@ -221,18 +243,20 @@ function alignFirstOrderedMarker(
 	return candidates;
 }
 
-/** Whether `markdown` re-parses to semantically the single edited list node. */
+/**
+ * Whether `markdown` (with physical math newlines possibly masked by
+ * `mathNewlineToken`) re-parses at blockquote `depth` to semantically the
+ * single edited list node.
+ */
 function listMarkdownParsesTo(
 	markdown: string,
 	listNode: ProseMirrorNode,
+	depth: number,
 	envReferences?: ParsedEnvReferences,
+	mathNewlineToken?: string,
 ): boolean {
-	const doc = parseMarkdownWithBlockSources(markdown, envReferences).doc;
-	return (
-		doc.childCount === 1 &&
-		doc.firstChild !== null &&
-		nodesSemanticallyEqual(doc.firstChild, listNode)
-	);
+	const list = parseListAtDepth(markdown, depth, envReferences, mathNewlineToken);
+	return list !== null && nodesSemanticallyEqual(list, listNode);
 }
 
 export type PreparedListPreservation = Readonly<{
@@ -273,7 +297,7 @@ type AuthoritativeListResolution = Readonly<{
  */
 function listItemContentIndent(itemText: string, startColumn: number): number {
 	const marker = matchListMarker(firstLine(itemText), startColumn);
-	return marker !== null ? phpListMarkerContentIndent(marker) : 0;
+	return marker !== null ? marker.contentIndent : 0;
 }
 
 function hasMultilineMathInSlice(rawSlice: string): boolean {
@@ -335,7 +359,13 @@ function tryLeftShiftReusableItem(
 		return null;
 	}
 	const shifted = shiftedLines.join("\n");
-	return sliceParsesToItem(shifted, listNode, itemIdx, envReferences)
+	return sliceParsesToItem(
+		shifted,
+		listNode,
+		itemIdx,
+		startColumn / 2,
+		envReferences,
+	)
 		? shifted
 		: null;
 }
@@ -360,7 +390,12 @@ export function prepareListPreservation(
 				? tryStripAllLinesAtDepth(origBlock.raw, depth)
 				: null;
 	if (innerRaw === null) return null;
-	const slices = verifiedListItemSlices(origBlock, envReferences, innerRaw);
+	const slices = verifiedListItemSlices(
+		origBlock,
+		depth,
+		envReferences,
+		innerRaw,
+	);
 	if (!slices) return null;
 	const matched = alignNodes(
 		childrenOf(listNode),
@@ -550,10 +585,14 @@ export function resolveAuthoritativeListPreservation(
 		};
 	};
 
-	const unmask = (text: string): string =>
-		mathNewlineToken !== undefined
-			? restoreMathNewlineSentinel(text, mathNewlineToken)
-			: text;
+	const parsesTo = (markdown: string): boolean =>
+		listMarkdownParsesTo(
+			markdown,
+			listNode,
+			itemStartColumn / 2,
+			envReferences,
+			mathNewlineToken,
+		);
 
 	const finalizeDirect = (
 		firstRaw: string | null,
@@ -575,7 +614,7 @@ export function resolveAuthoritativeListPreservation(
 			// Shift results and canonical items are memoized, so building the
 			// full text after a mask-only pass re-parses nothing.
 			const full = buildOutput ? assembled : assemble(firstRaw, true, true);
-			if (!listMarkdownParsesTo(unmask(full.output), listNode, envReferences)) {
+			if (!parsesTo(full.output)) {
 				assembled = assemble(firstRaw, buildOutput, false);
 			}
 		}
@@ -596,7 +635,11 @@ export function resolveAuthoritativeListPreservation(
 	if (firstReused === undefined) {
 		return finalizeDirect(null);
 	}
-	const candidates = alignFirstOrderedMarker(listNode, firstReused);
+	const candidates = alignFirstOrderedMarker(
+		listNode,
+		firstReused,
+		itemStartColumn,
+	);
 	if (candidates.length === 1 && candidates[0] === firstReused) {
 		return finalizeDirect(firstReused);
 	}
@@ -610,9 +653,7 @@ export function resolveAuthoritativeListPreservation(
 	for (const candidate of candidates) {
 		let assembled = assemble(candidate, true, true);
 		const intrinsicItemReusable = assembled.effectiveReusable;
-		if (
-			listMarkdownParsesTo(unmask(assembled.output), listNode, envReferences)
-		) {
+		if (parsesTo(assembled.output)) {
 			return {
 				firstEmittedSlice: candidate,
 				intrinsicItemReusable,
@@ -623,9 +664,7 @@ export function resolveAuthoritativeListPreservation(
 		}
 		if (assembled.hasShiftedItem) {
 			assembled = assemble(candidate, true, false);
-			if (
-				listMarkdownParsesTo(unmask(assembled.output), listNode, envReferences)
-			) {
+			if (parsesTo(assembled.output)) {
 				return {
 					firstEmittedSlice: candidate,
 					intrinsicItemReusable,
@@ -637,7 +676,13 @@ export function resolveAuthoritativeListPreservation(
 		}
 		if (
 			locallyValid === null &&
-			sliceParsesToItem(candidate, listNode, 0, envReferences)
+			sliceParsesToItem(
+				candidate,
+				listNode,
+				0,
+				itemStartColumn / 2,
+				envReferences,
+			)
 		) {
 			locallyValid = {
 				fallback: assembled.effectiveReusable,

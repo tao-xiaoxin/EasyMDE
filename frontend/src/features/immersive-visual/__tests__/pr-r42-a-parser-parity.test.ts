@@ -225,7 +225,7 @@ describe("PR-R42-A liveness tail/verbatim parity, list discovery order, prioriti
 				withChild(guard.initialDoc, 0, withChild(list, 2, null)),
 			);
 			expect(serialized).toBe(
-				'10. # a\n1. # b\n\n$$x$$\n\n[p]: /u\n\n"t\n===\n\n[link](/u "t&#10;")',
+				'10. # a\n1. # b\n\n$$x$$ [p]: /u\n"t\n===\n\n[link][p]',
 			);
 			expect(collectLinkTitles(serialized)).toEqual(["t\n"]);
 		});

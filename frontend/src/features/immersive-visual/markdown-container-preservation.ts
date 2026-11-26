@@ -21,11 +21,12 @@ import type {
 import {
 	firstLine,
 	isCommonMarkBlankLine,
+	type ListMarkerMatch,
 	matchListMarker,
 	measureIndentColumns,
-	phpListMarkerContentIndent,
 	stripBlockquoteDepth,
 	stripBlockquoteDepthWithColumn,
+	stripUpToIndentColumns,
 } from "./markdown-prescanner-containers";
 import { wouldRawHtmlInterruptParagraph } from "./markdown-prescanner-inline";
 import { sanitizeBulletMarker } from "./visual-schema";
@@ -184,60 +185,191 @@ export function leadingIndentAtDepth(
 }
 
 /**
- * Single authoritative swallow-risk fallback for a clean, matched,
- * non-shared-group `paragraph` whose raw source would otherwise be swallowed
- * into a preceding list, shared by the serializer and refdef liveness.
- * Instead of canonical re-serialization (whose inline escaping, e.g. ``a ``
- * -> `a \`\``, can unbalance PHP code-span / math scanning across blocks), the
- * baseline raw is kept byte-for-byte except line 0's 1-3 column leading
- * indent, which is removed and re-prefixed with exactly `depth` clean quote
- * markers. A paragraph already recognized at 1-3 columns stays a paragraph at
- * column 0, and its continuation lines are untouched. Returns `null` when
- * line 0 does not carry all `depth` markers or its indent is outside 1-3.
+ * Single node-type-agnostic swallow-risk fallback, shared by the serializer
+ * and refdef liveness, for a clean untouched block or intact shared group
+ * whose raw source fails verbatim reuse ONLY because a preceding list would
+ * swallow it (never for 4-column indented-code risk, a broken tight join, or
+ * an invalidated reference). Instead of canonical re-serialization (whose
+ * inline escaping, e.g. ``a `` -> `a \`\``, can unbalance PHP code-span /
+ * math scanning across blocks), the baseline raw keeps its inline bytes:
+ * line 0's 1-3 column leading indent after `depth` quote markers is removed
+ * and re-prefixed with exactly `depth` clean markers. A `paragraph` (or a
+ * shared group led by a paragraph / protected block, or `nodeTypeName ===
+ * null`) keeps every continuation line byte-for-byte, so math continuation
+ * bytes never change. Every other block (headings, blockquotes, tables,
+ * lists, fenced code, ...) strips up to the same columns from each
+ * continuation line carrying all `depth` markers, keeping its internal
+ * column structure; blank and lazy lines stay untouched. Returns `null`
+ * when line 0 lacks a marker or its indent is outside 1-3.
  */
-export function dedentParagraphFirstLineAtDepth(
+export function dedentSwallowedBlockAtDepth(
 	rawEmitted: string,
 	depth: number,
+	nodeTypeName: string | null,
 ): string | null {
+	const quoteDepth = Math.max(depth, 0);
 	const nl = rawEmitted.indexOf("\n");
 	const line0 = nl === -1 ? rawEmitted : rawEmitted.slice(0, nl);
-	const stripped =
-		depth > 0
-			? stripBlockquoteDepthWithColumn(line0, depth)
-			: { column: 0, matched: 0, rest: line0 };
-	if (stripped.matched !== Math.max(depth, 0)) return null;
-	const lead = measureIndentColumns(stripped.rest, stripped.column);
-	if (lead < 1 || lead > 3) return null;
-	const trimmed = stripped.rest.replace(/^[ \t]+/, "");
-	if (trimmed.length === 0) return null;
-	const tail = nl === -1 ? "" : rawEmitted.slice(nl);
-	return `${"> ".repeat(Math.max(depth, 0))}${trimmed}${tail}`;
+	const head = stripBlockquoteDepthWithColumn(line0, quoteDepth);
+	if (head.matched !== quoteDepth || isCommonMarkBlankLine(head.rest)) {
+		return null;
+	}
+	const leadCols = measureIndentColumns(head.rest, head.column);
+	if (leadCols < 1 || leadCols > 3) return null;
+	const quotePrefix = "> ".repeat(quoteDepth);
+	const out = `${quotePrefix}${head.rest.replace(/^[ \t]+/, "")}`;
+	if (nl === -1) return out;
+	if (
+		nodeTypeName === null ||
+		nodeTypeName === "paragraph" ||
+		nodeTypeName === "protected_block"
+	) {
+		return `${out}${rawEmitted.slice(nl)}`;
+	}
+	const lines = rawEmitted.slice(nl + 1).split("\n");
+	for (let i = 0; i < lines.length; i += 1) {
+		const line = lines[i] ?? "";
+		const stripped = stripBlockquoteDepthWithColumn(line, quoteDepth);
+		if (stripped.matched === quoteDepth && !isCommonMarkBlankLine(stripped.rest)) {
+			lines[i] = `${quotePrefix}${stripUpToIndentColumns(
+				stripped.rest,
+				leadCols,
+				stripped.column,
+			)}`;
+		}
+	}
+	return `${out}\n${lines.join("\n")}`;
+}
+
+function listMergeKey(node: ProseMirrorNode): string | null {
+	if (node.type.name === "ordered_list") {
+		return node.attrs.delimiter === ")" ? "ordered)" : "ordered.";
+	}
+	return isNestedList(node)
+		? `bullet${sanitizeBulletMarker(node.attrs.marker)}`
+		: null;
+}
+
+/**
+ * Whether `child`, dedented to column 0 right after the list `prevNode`
+ * (across a blank line), would continue that list instead of starting a new
+ * one (same bullet character / ordered delimiter): the swallow-risk dedent
+ * must then fall back to canonical text.
+ */
+export function wouldMergeWithPreviousList(
+	prevNode: ProseMirrorNode | null,
+	child: ProseMirrorNode,
+): boolean {
+	if (prevNode === null) return false;
+	const key = listMergeKey(child);
+	return key !== null && key === listMergeKey(prevNode);
 }
 
 const PHP_INLINE_MATH_PLACEHOLDER = "EASYMDEMATHINLINE";
-const PHP_BLOCK_MATH_PLACEHOLDER = "\n\nEASYMDEMATHBLOCK\n\n";
+const QUOTE_CONTINUATION_PREFIX = /^(?:[ \t]{0,3}>[ \t]?)*/;
+
+type TopItemMatcher = (rest: string, column: number) => ListMarkerMatch | null;
+
+/** Matches a top-level item marker of `listNode`'s kind (bullet / delimiter). */
+function createTopItemMatcher(listNode: ProseMirrorNode): TopItemMatcher {
+	const isOrdered = listNode.type.name === "ordered_list";
+	const expectedDelimiter =
+		isOrdered && listNode.attrs.delimiter === ")" ? ")" : ".";
+	const expectedBullet = isOrdered
+		? null
+		: sanitizeBulletMarker(listNode.attrs.marker);
+	return (rest, column) => {
+		const marker = matchListMarker(rest, column);
+		if (!marker || marker.leadCols > 3) return null;
+		if (isOrdered) {
+			if (marker.orderedDigits === null) return null;
+			const digitIdx = marker.markerPrefix.indexOf(marker.orderedDigits);
+			const delimChar =
+				marker.markerPrefix[digitIdx + marker.orderedDigits.length];
+			return delimChar === expectedDelimiter ? marker : null;
+		}
+		if (marker.orderedDigits !== null) return null;
+		return marker.markerPrefix.trimStart()[0] === expectedBullet
+			? marker
+			: null;
+	};
+}
 
 /**
- * Mirrors PHP `MarkdownRenderer::extract_math()` before CommonMark block
- * parsing: every math span found by the authoritative
- * `scanPhpMarkdownMathRanges` collapses to a single-line token, and display
- * math (`$$...$$`, `\[...\]`) is additionally surrounded by blank lines, so
- * list-marker-like lines inside multiline math never open list items and a
- * list right after display math starts on its own line.
+ * PHP `extract_math()` turns any unshielded display math into
+ * `"\n\nTOKEN\n\n"`, which closes an open list, so display math never sits
+ * inside `listNode`'s body. It can only precede the list on the shared-group
+ * line that opens it (`$$a$$- item`, `foo\\[a\\]- item`, `$$\na\n$$- item`):
+ * when line 0 is not already an item of `listNode`, the text up to the
+ * closing delimiter immediately before the first item marker is dropped.
  */
-function extractPhpMathForBlockScan(text: string): string {
-	if (!text.includes("$") && !text.includes("\\")) return text;
-	const ranges = scanPhpMarkdownMathRanges(text);
-	if (ranges.length === 0) return text;
+function stripLeadingDisplayMathPrefix(
+	text: string,
+	depth: number,
+	matchTopItem: TopItemMatcher,
+): string {
+	const head = stripBlockquoteDepthWithColumn(firstLine(text), depth);
+	if (head.matched === depth && matchTopItem(head.rest, head.column)) {
+		return text;
+	}
+	if (!text.includes("$$") && !text.includes("\\[")) return text;
+	for (const range of scanPhpMarkdownMathRanges(text)) {
+		if (!range.block) continue;
+		if (matchTopItem(firstLine(text.slice(range.to)), 0)) {
+			return `${"> ".repeat(Math.max(depth, 0))}${text.slice(range.to)}`;
+		}
+	}
+	return text;
+}
+
+/** Raw Markdown of every multiline inline math span parsed inside `listNode`. */
+function collectMultilineInlineMath(
+	listNode: ProseMirrorNode,
+): ReadonlyArray<string> {
+	const spans: string[] = [];
+	listNode.descendants((node) => {
+		if (
+			node.type.name === "protected_inline" &&
+			node.attrs.kind === "math-inline" &&
+			typeof node.attrs.rawMarkdown === "string" &&
+			node.attrs.rawMarkdown.includes("\n")
+		) {
+			spans.push(node.attrs.rawMarkdown);
+		}
+		return !node.isInline;
+	});
+	return spans;
+}
+
+/**
+ * Folds, in order, exactly the multiline inline math spans parsed inside the
+ * list into a single-line placeholder, so list-marker-like continuation
+ * lines inside them never open items. Continuation lines may carry quote
+ * markers in verbatim raw but not in canonically emitted text, so every
+ * physical newline matches any run of quote markers.
+ */
+function foldMultilineInlineMath(
+	text: string,
+	spans: ReadonlyArray<string>,
+): string {
 	let out = "";
 	let cursor = 0;
-	for (const range of ranges) {
-		if (range.from < cursor) continue;
-		out += text.slice(cursor, range.from);
-		out += range.block
-			? PHP_BLOCK_MATH_PLACEHOLDER
-			: PHP_INLINE_MATH_PLACEHOLDER;
-		cursor = range.to;
+	for (const span of spans) {
+		const pattern = span
+			.split("\n")
+			.map((part, k) =>
+				(k === 0 ? part : part.replace(QUOTE_CONTINUATION_PREFIX, "")).replace(
+					/[.*+?^${}()|[\]\\]/g,
+					"\\$&",
+				),
+			)
+			.join("\\n(?:[ \\t]{0,3}>[ \\t]?)*");
+		const re = new RegExp(pattern, "g");
+		re.lastIndex = cursor;
+		const match = re.exec(text);
+		if (match === null) continue;
+		out += text.slice(cursor, match.index) + PHP_INLINE_MATH_PLACEHOLDER;
+		cursor = match.index + match[0].length;
 	}
 	return out + text.slice(cursor);
 }
@@ -258,34 +390,11 @@ type TrailingItemScan = Readonly<{
  */
 function scanTrailingListItem(
 	text: string,
-	listNode: ProseMirrorNode,
+	matchTopItem: TopItemMatcher,
 	depth: number,
 	blankLineFollows: boolean,
 ): TrailingItemScan {
 	const lines = text.split("\n");
-	const isOrdered = listNode.type.name === "ordered_list";
-	const expectedDelimiter =
-		isOrdered && listNode.attrs.delimiter === ")" ? ")" : ".";
-	const expectedBullet = isOrdered
-		? null
-		: sanitizeBulletMarker(listNode.attrs.marker);
-	const matchTopItem = (rest: string, column: number) => {
-		const marker = matchListMarker(rest, column);
-		if (!marker || marker.leadCols > 3) return null;
-		if (isOrdered) {
-			if (marker.orderedDigits === null) return null;
-			const digitIdx = marker.markerPrefix.indexOf(marker.orderedDigits);
-			const delimChar =
-				marker.markerPrefix[digitIdx + marker.orderedDigits.length];
-			if (delimChar !== expectedDelimiter) return null;
-		} else {
-			if (marker.orderedDigits !== null) return null;
-			if (marker.markerPrefix.trimStart()[0] !== expectedBullet) {
-				return null;
-			}
-		}
-		return marker;
-	};
 	let currentIndent = -1;
 	let itemHasContent = false;
 	let items = 0;
@@ -309,7 +418,7 @@ function scanTrailingListItem(
 			const marker =
 				leadCols <= 3 ? matchTopItem(stripped.rest, stripped.column) : null;
 			if (marker !== null) {
-				currentIndent = phpListMarkerContentIndent(marker);
+				currentIndent = marker.contentIndent;
 				itemHasContent = !marker.isBlank;
 				items += 1;
 				afterBlank = false;
@@ -328,22 +437,23 @@ function scanTrailingListItem(
  * Computes the CommonMark §5.2 content indentation (relative to the content
  * column at `depth`) of the trailing top-level item in `listEmitted`, the
  * exact emitted text of `listNode` (possibly preceded by the other members of
- * its shared group) including its `depth` blockquote markers, after the PHP
- * `extract_math()` preprocessing. Every line strips `depth` markers and
- * measures its indent and list marker from the real CommonMark column, so
- * tabs before and after the marker expand to their true tab stops. A line
- * lacking the markers is a lazy continuation unless it is blank or follows
- * a blank line (the container closed); a non-item line below the current
- * content indent after a blank line closes the list. Item padding comes from
- * the single `phpListMarkerContentIndent` primitive.
+ * its shared group) including its `depth` blockquote markers. Every line
+ * strips `depth` markers and measures its indent and list marker from the
+ * real CommonMark column, so tabs before and after the marker expand to their
+ * true tab stops. A line lacking the markers is a lazy continuation unless it
+ * is blank or follows a blank line (the container closed); a non-item line
+ * below the current content indent after a blank line closes the list. Item
+ * padding comes from the single `computePhpListMarkerContentIndent`
+ * primitive (via `matchListMarker().contentIndent`).
  *
- * PHP masks math spans across the whole document, so a backtick code span
- * opened or closed OUTSIDE `listEmitted` can shield a `\(...\)` / `$$...$$`
- * that an isolated scan would fold. The parsed `listNode` is the ground
- * truth: when the math-folded scan opens fewer top-level items than
- * `listNode` has, folding swallowed a real item, so the unfolded scan
- * decides (exactly when it reproduces the item count, otherwise the
- * smaller, more conservative positive indent of the two scans wins).
+ * PHP masks math across the whole document (a backtick code span opened or
+ * closed OUTSIDE `listEmitted`, or the document-wide `block_ranges()`
+ * trigger, can shield a span), so no isolated math scan of the list body is
+ * trusted. The parsed `listNode` is the ground truth: display math only ever
+ * precedes the list (`stripLeadingDisplayMathPrefix`), and only the
+ * multiline inline math spans actually parsed inside `listNode` are folded.
+ * When the folded scan does not reproduce `listNode`'s item count, the
+ * unfolded scan decides (or, when neither does, the smaller positive indent).
  */
 function trailingListItemContentIndent(
 	listEmitted: string,
@@ -351,25 +461,23 @@ function trailingListItemContentIndent(
 	depth: number,
 	blankLineFollows: boolean,
 ): number {
-	const folded = extractPhpMathForBlockScan(listEmitted);
-	const masked = scanTrailingListItem(
-		folded,
-		listNode,
-		depth,
-		blankLineFollows,
-	);
-	let indent = masked.indent;
-	if (folded !== listEmitted && masked.items < listNode.childCount) {
-		const raw = scanTrailingListItem(
-			listEmitted,
-			listNode,
+	const matchTopItem = createTopItemMatcher(listNode);
+	const text = stripLeadingDisplayMathPrefix(listEmitted, depth, matchTopItem);
+	const raw = scanTrailingListItem(text, matchTopItem, depth, blankLineFollows);
+	let indent = raw.indent;
+	const spans = collectMultilineInlineMath(listNode);
+	const folded = spans.length > 0 ? foldMultilineInlineMath(text, spans) : text;
+	if (folded !== text) {
+		const scan = scanTrailingListItem(
+			folded,
+			matchTopItem,
 			depth,
 			blankLineFollows,
 		);
-		if (raw.items === listNode.childCount || indent <= 0) {
-			indent = raw.indent;
-		} else if (raw.indent > 0) {
-			indent = Math.min(indent, raw.indent);
+		if (scan.items === listNode.childCount) {
+			indent = scan.indent;
+		} else if (raw.items !== listNode.childCount && scan.indent > 0) {
+			indent = indent > 0 ? Math.min(indent, scan.indent) : scan.indent;
 		}
 	}
 	return indent > 0 ? indent : 0;
@@ -471,12 +579,18 @@ export function checkRawPreservationRisks(
 ): Readonly<{ indentedRisk: boolean; swallowRisk: boolean }> {
 	const leadIndent = leadingIndentAtDepth(rawEmitted, depth);
 	const indentedRisk =
-		child.type.name !== "code_block" &&
-		leadIndent >= 4 &&
-		(sep !== "\n" ||
-			!prevNode ||
-			!nodePreventsFollowingIndentedCode(prevNode) ||
-			endsWithBlankBlockquoteLine(prevInner));
+		(child.type.name !== "code_block" &&
+			leadIndent >= 4 &&
+			(sep !== "\n" ||
+				!prevNode ||
+				!nodePreventsFollowingIndentedCode(prevNode) ||
+				endsWithBlankBlockquoteLine(prevInner))) ||
+		hasDetachedContainerMathRisk(
+			child,
+			rawEmitted,
+			depth,
+			prevWasVerbatimAdjacent,
+		);
 	const swallowRisk =
 		leadIndent > 0 &&
 		isListSwallowingFollowingBlock(
@@ -488,6 +602,30 @@ export function checkRawPreservationRisks(
 			sep !== "\n",
 		);
 	return { indentedRisk, swallowRisk };
+}
+
+/**
+ * Display math whose raw source line still carries the blockquote marker of
+ * the container it closed (PHP `extract_math()` moves its token to column 0,
+ * see `wouldBeLazilyAbsorbedByPrevious`) only re-parses right after that
+ * container emitted verbatim; anywhere else the stale marker opens a stray
+ * empty blockquote, so the raw is unusable (reported as `indentedRisk`).
+ */
+export function hasDetachedContainerMathRisk(
+	child: ProseMirrorNode,
+	rawEmitted: string,
+	depth: number,
+	prevWasVerbatimAdjacent: boolean,
+): boolean {
+	if (
+		prevWasVerbatimAdjacent ||
+		child.type.name !== "protected_block" ||
+		child.attrs.kind !== "math"
+	) {
+		return false;
+	}
+	const head = stripBlockquoteDepthWithColumn(firstLine(rawEmitted), depth);
+	return head.matched === Math.max(depth, 0) && /^[ \t]*>/.test(head.rest);
 }
 
 type TightSharedGroupChecker = Readonly<{

@@ -4,6 +4,7 @@ import {
 	COMMONMARK_FENCED_CODE_CLOSE,
 	COMMONMARK_SETEXT_UNDERLINE,
 	COMMONMARK_THEMATIC_BREAK_LINE,
+	computePhpListMarkerContentIndent,
 	consumeBlockquoteMarker,
 	consumeWhitespaceColumns,
 	countTableRowCells,
@@ -16,6 +17,7 @@ import {
 	measureLeadingColumns,
 	nextNonSpaceIndex,
 	parseGfmTableSeparatorColumns,
+	shortCursorTail,
 } from "./php-commonmark-block-helpers";
 import {
 	advanceParagraphReferenceParser,
@@ -435,7 +437,12 @@ export function advancePhpCommonMarkBlockLine(
 				consumeWhitespaceColumns(cursor, Math.min(padding, spacingCols));
 				containers.push({
 					hasContent: false,
-					indent: leadCols + markerLength + padding,
+					indent: computePhpListMarkerContentIndent(
+						leadCols,
+						markerLength,
+						leadCols + markerLength + padding,
+						shortCursorTail(cursor),
+					),
 					kind: "list",
 				});
 				startedNewBlock = true;

@@ -69,7 +69,7 @@ describe("PR-R43-A container risk transitions, lazy separator, list sibling swal
 			const edited = replaceText(guard.initialDoc, "alpha", "beta");
 			const serialized = guard.serialize(edited);
 			expect(serialized).toBe(
-				'1. beta\n\n> [p]: /u\n>\n> # "t\n\n[link](/u "t&#10;")',
+				'1. beta\n\n> [p]: /u\n> "t\n> ===\n\n[link][p]',
 			);
 			expect(collectLinkTitles(serialized)).toEqual(["t\n"]);
 		});
@@ -81,7 +81,7 @@ describe("PR-R43-A container risk transitions, lazy separator, list sibling swal
 			const edited = withChild(guard.initialDoc, 0, null);
 			const serialized = guard.serialize(edited);
 			expect(serialized).toBe(
-				'1. [dead](/d)\n\n> [p]: /u\n>\n> # "t\n\n[link](/u "t&#10;")',
+				'1. [dead](/d)\n\n> [p]: /u\n> "t\n> ===\n\n[link][p]',
 			);
 			expect(collectLinkTitles(serialized)).toEqual([null, "t\n"]);
 		});
@@ -92,7 +92,7 @@ describe("PR-R43-A container risk transitions, lazy separator, list sibling swal
 			const edited = replaceText(guard.initialDoc, "alpha", "beta");
 			const serialized = guard.serialize(edited);
 			expect(serialized).toBe(
-				'1. beta\n\n- [p]: /u\n  # "t\n\n[link](/u "t&#10;")',
+				'1. beta\n\n- [p]: /u\n  "t\n  ===\n\n[link][p]',
 			);
 			expect(collectLinkTitles(serialized)).toEqual(["t\n"]);
 		});
@@ -182,7 +182,7 @@ describe("PR-R43-A container risk transitions, lazy separator, list sibling swal
 			const guard = createMarkdownRoundTripGuard(md);
 			const edited = replaceText(guard.initialDoc, "alpha", "beta");
 			const serialized = guard.serialize(edited);
-			expect(serialized).toBe("1. beta\n\n> p\n\nparagraph");
+			expect(serialized).toBe("1. beta\n\n> p\n>\nparagraph");
 			const reparsed = parseMarkdownToVisualDoc(serialized);
 			expect(reparsed.childCount).toBe(3);
 			expect(reparsed.child(1).type.name).toBe("blockquote");
@@ -195,7 +195,7 @@ describe("PR-R43-A container risk transitions, lazy separator, list sibling swal
 			const guard = createMarkdownRoundTripGuard(md);
 			const serialized = guard.serialize(withChild(guard.initialDoc, 0, null));
 			expect(serialized).toBe(
-				'1. [dead](/d)\n\n> p\n\n[p]: /u\n"t\n===\n\n[link][p]',
+				'1. [dead](/d)\n\n> p\n>\n[p]: /u\n"t\n===\n\n[link][p]',
 			);
 			expect(collectLinkTitles(serialized)).toEqual([null, "t\n"]);
 			const reparsed = parseMarkdownToVisualDoc(serialized);

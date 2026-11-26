@@ -2,6 +2,7 @@ import type { Node as ProseMirrorNode } from "prosemirror-model";
 import {
 	alignContainerChildren,
 	checkRawPreservationRisks,
+	hasDetachedContainerMathRisk,
 	leadingIndentAtDepth,
 	needsPrevInnerForRiskCheck,
 	prefixAtDepth,
@@ -94,7 +95,16 @@ export function evaluateMatchedContainerHeadRisk(
 	});
 	const leadIndent = leadingIndentAtDepth(headLine, depth);
 	if (leadIndent <= 0) {
-		return { indentedRisk: false, separator, swallowRisk: false };
+		return {
+			indentedRisk: hasDetachedContainerMathRisk(
+				child,
+				headLine,
+				depth,
+				prevWasVerbatimAdjacent,
+			),
+			separator,
+			swallowRisk: false,
+		};
 	}
 	const prevInnerForRisk = needsPrevInnerForRiskCheck(
 		child,

@@ -13,6 +13,7 @@ import {
 	scanPhpCommonMarkReferenceLabels,
 	scanPhpTablePrefixThroughOffset,
 } from "./php-commonmark-block-scan";
+import { scanPhpCommonMarkBlockCodeRanges } from "./php-commonmark-block-engine";
 import {
 	maskDisplayMathLength,
 	maskInlineMathLength,
@@ -820,5 +821,40 @@ describe("MarkdownCodeRegionScanner::block_ranges() fast path (PR-R50-A Track A 
 		expect(ranges(source, 5)).toEqual([]);
 		const quoted = "> - aa\n>\n>       $$x$$\n\npara $y$";
 		expect(ranges(quoted, 20)).toEqual(ranges(quoted).slice(0, 1));
+	});
+});
+
+describe("league/commonmark@2.8.2 list-marker padding in the PHP block engine (PR-R51-A Fix 1)", () => {
+	// A single code point after the marker spaces makes PHP treat the item
+	// as blank (`$cursor->peek() === null`), so its content indent is
+	// `leadCols + markerLength + 1` and a 4-column-deeper line is indented
+	// code inside the item, never display math.
+	it.each([
+		["-   x\n\n      $$y$$", "      $$y$$"],
+		["1.   x\n\n       $$y$$", "       $$y$$"],
+		["  -   x\n\n        $$y$$", "        $$y$$"],
+		["-    x\n\n      $$x$$", "      $$x$$"],
+		["-   \u{1F600}\n\n      $$y$$", "      $$y$$"],
+	])("keeps %j as indented code inside the item", (source, codeLine) => {
+		const start = source.indexOf(codeLine);
+		const codeRanges = scanPhpCommonMarkBlockCodeRanges(source);
+		expect(
+			codeRanges.some(
+				(range) => range.start <= start && range.end >= start + codeLine.length,
+			),
+		).toBe(true);
+		expect(scanPhpMarkdownMathRanges(source)).toEqual([]);
+	});
+
+	it("keeps inline math in an indented code line inside the item unmasked", () => {
+		expect(scanPhpMarkdownMathRanges("-   x\n\n      $a$\n\nzz")).toEqual([]);
+	});
+
+	it("still extracts math when the item content is two or more code points", () => {
+		const source = "-   xy\n\n      $$y$$";
+		const mathRanges = scanPhpMarkdownMathRanges(source);
+		expect(mathRanges.map((range) => [range.block, range.from])).toEqual([
+			[true, source.indexOf("$$")],
+		]);
 	});
 });

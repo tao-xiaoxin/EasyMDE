@@ -2,13 +2,12 @@ import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { EditorState } from "prosemirror-state";
 import { describe, expect, it } from "vitest";
 import {
-	dedentParagraphFirstLineAtDepth,
+	dedentSwallowedBlockAtDepth,
 	isListSwallowingFollowingBlock,
 } from "../markdown-container-preservation";
 import * as parser from "../markdown-parser";
 import {
 	matchListMarker,
-	phpListMarkerContentIndent,
 	stripBlockContainerPrefix,
 } from "../markdown-prescanner-containers";
 import { computeIntactRefDefLabels } from "../markdown-refdef-liveness";
@@ -300,7 +299,7 @@ describe("PR-R50-A PHP list content indent primitive, cross-block code spans, em
 			const indent = (line: string, column = 0): number => {
 				const marker = matchListMarker(line, column);
 				expect(marker).not.toBeNull();
-				return marker ? phpListMarkerContentIndent(marker) : -1;
+				return marker ? marker.contentIndent : -1;
 			};
 			expect(indent("-   x")).toBe(2);
 			expect(indent("-   中")).toBe(2);
@@ -393,8 +392,8 @@ describe("PR-R50-A PHP list content indent primitive, cross-block code spans, em
 				"F2 11 del",
 				'intro `\n\n-    first \\(x\n- fake\ny\\)\n\ndrop\n\n  > [p]: /u\n  > "t\n  > ===\n\n[link][p] `',
 				deleteParagraph("drop"),
-				'intro `\n\n-    first \\(x\n- fake\ny\\)\n\n> [p]: /u\n>\n> # "t\n\n[link](/u "t&#10;") \\`',
-				[],
+				'intro `\n\n-    first \\(x\n- fake\ny\\)\n\n> [p]: /u\n> "t\n> ===\n\n[link][p] `',
+				["P"],
 			],
 		];
 		runCases(cases);
@@ -587,7 +586,7 @@ describe("PR-R50-A PHP list content indent primitive, cross-block code spans, em
 				"F5 5 rep",
 				"> - aa\n>\n>       $$x$$",
 				replaceText("aa", "ab"),
-				"> - ab\n>\n>       $$x$$",
+				"> - ab\n>\n$$x$$",
 				[],
 			],
 		];
@@ -635,7 +634,7 @@ describe("PR-R50-A PHP list content indent primitive, cross-block code spans, em
 				"F6 6 rep",
 				"> - aa\n>   $$x$$\n>\n>     para",
 				replaceText("aa", "ab"),
-				"> - ab\n>   $$x$$\n>\n>     para",
+				"> - ab\n$$x$$\n>\n>     para",
 				[],
 			],
 			[
@@ -785,22 +784,22 @@ describe("PR-R50-A PHP list content indent primitive, cross-block code spans, em
 		});
 
 		it("dedents only a 1-3 column line 0 carrying every quote marker", () => {
-			expect(dedentParagraphFirstLineAtDepth("  para ``\n  more", 0)).toBe(
+			expect(dedentSwallowedBlockAtDepth("  para ``\n  more", 0, "paragraph")).toBe(
 				"para ``\n  more",
 			);
-			expect(dedentParagraphFirstLineAtDepth("   >   para ``", 1)).toBe(
+			expect(dedentSwallowedBlockAtDepth("   >   para ``", 1, "paragraph")).toBe(
 				"> para ``",
 			);
-			expect(dedentParagraphFirstLineAtDepth("> \tpara ``\n> y", 1)).toBe(
+			expect(dedentSwallowedBlockAtDepth("> \tpara ``\n> y", 1, "paragraph")).toBe(
 				"> para ``\n> y",
 			);
-			expect(dedentParagraphFirstLineAtDepth(">\tpara", 1)).toBe("> para");
-			expect(dedentParagraphFirstLineAtDepth("> >   para", 2)).toBe("> > para");
-			expect(dedentParagraphFirstLineAtDepth("para", 0)).toBeNull();
-			expect(dedentParagraphFirstLineAtDepth("    para", 0)).toBeNull();
-			expect(dedentParagraphFirstLineAtDepth(">     para", 1)).toBeNull();
-			expect(dedentParagraphFirstLineAtDepth("  para", 1)).toBeNull();
-			expect(dedentParagraphFirstLineAtDepth(">   para", 2)).toBeNull();
+			expect(dedentSwallowedBlockAtDepth(">\tpara", 1, "paragraph")).toBe("> para");
+			expect(dedentSwallowedBlockAtDepth("> >   para", 2, "paragraph")).toBe("> > para");
+			expect(dedentSwallowedBlockAtDepth("para", 0, "paragraph")).toBeNull();
+			expect(dedentSwallowedBlockAtDepth("    para", 0, "paragraph")).toBeNull();
+			expect(dedentSwallowedBlockAtDepth(">     para", 1, "paragraph")).toBeNull();
+			expect(dedentSwallowedBlockAtDepth("  para", 1, "paragraph")).toBeNull();
+			expect(dedentSwallowedBlockAtDepth(">   para", 2, "paragraph")).toBeNull();
 		});
 	});
 });

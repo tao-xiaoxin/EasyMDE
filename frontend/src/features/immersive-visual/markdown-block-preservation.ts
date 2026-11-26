@@ -7,14 +7,16 @@ import {
 	alignContainerChildren,
 	checkRawPreservationRisks,
 	createTightSharedGroupChecker,
-	dedentParagraphFirstLineAtDepth,
+	dedentSwallowedBlockAtDepth,
 	emitWithMathSentinelAtDepth,
+	hasDetachedContainerMathRisk,
 	isListSwallowingFollowingBlock,
 	leadingIndentAtDepth,
 	prefixAtDepth,
 	sharedGroupHasInvalidatedRef,
 	stripAtDepth,
 	tryStripAllLinesAtDepth,
+	wouldMergeWithPreviousList,
 } from "./markdown-container-preservation";
 import {
 	blankSeparatorAtDepth,
@@ -43,6 +45,7 @@ import {
 	createInvalidatedRefChecker,
 	type ReferencePreserveResolver,
 } from "./markdown-refdef-liveness";
+import { stripBlockquoteDepthWithColumn } from "./markdown-prescanner-containers";
 import type { PreservationPlan } from "./markdown-refdef-liveness-state";
 import { dedentBlockToLineZero } from "./markdown-reference-preservation";
 
@@ -169,6 +172,22 @@ function dedentAllToLineZeroAtDepth(
 				? restoreMathNewlineSentinel(dedentedMasked, token)
 				: dedentedMasked,
 	};
+}
+
+/**
+ * Display math detached from the container it closed (see
+ * `hasDetachedContainerMathRisk`): line 0 drops the stale container prefix
+ * (indent and blockquote markers beyond `depth`) and continuation lines stay
+ * byte-for-byte, exactly the math source PHP `extract_math()` captured.
+ */
+function detachContainerMathAtDepth(emitted: string, depth: number): string {
+	const nl = emitted.indexOf("\n");
+	const head = stripBlockquoteDepthWithColumn(
+		nl === -1 ? emitted : emitted.slice(0, nl),
+		depth,
+	);
+	const line0 = `${"> ".repeat(Math.max(depth, 0))}${head.rest.replace(/^[ \t>]+/, "")}`;
+	return nl === -1 ? line0 : `${line0}${emitted.slice(nl)}`;
 }
 
 function indentFirstLineAtDepth(
@@ -470,7 +489,22 @@ function serializeContainerPreservingChildren(
 			intactGroup.separatorBefore === "\n" &&
 			(separator !== "\n" ||
 				(effectiveOrigIndex[idx - 1] ?? -1) !== intactGroup.startIndex - 1);
-		if (intactGroup && (brokenTightLeft || indentedRisk || swallowRisk)) {
+		// An intact shared group at risk ONLY of being swallowed into a
+		// preceding list keeps its raw bytes, dedented (see
+		// `dedentSwallowedBlockAtDepth`).
+		const dedentedGroup =
+			intactGroup &&
+			swallowRisk &&
+			!indentedRisk &&
+			!brokenTightLeft &&
+			!wouldMergeWithPreviousList(prevNode, child)
+				? dedentSwallowedBlockAtDepth(intactGroup.raw, depth, child.type.name)
+				: null;
+		if (
+			intactGroup &&
+			dedentedGroup === null &&
+			(brokenTightLeft || indentedRisk || swallowRisk)
+		) {
 			// A shared group whose tight left neighbor changed, whose 4-column
 			// indent would now form indented code, or whose indent would be
 			// swallowed into a preceding list falls back to canonical blocks.
@@ -502,9 +536,26 @@ function serializeContainerPreservingChildren(
 
 		let blockEmitted = candidateEmitted;
 		let blockInner = candidateInner;
-		if (!intactGroup && serialized !== null && (swallowRisk || indentedRisk)) {
+		if (dedentedGroup !== null) {
+			blockEmitted = dedentedGroup;
+			blockInner = stripAtDepth(dedentedGroup, depth);
+		} else if (
+			!intactGroup &&
+			serialized !== null &&
+			(swallowRisk || indentedRisk)
+		) {
 			if (child.type.name === "protected_block") {
-				if (swallowRisk && child.attrs.kind !== "math") {
+				if (
+					hasDetachedContainerMathRisk(
+						child,
+						candidateEmitted,
+						depth,
+						prevWasVerbatimAdjacent,
+					)
+				) {
+					blockEmitted = detachContainerMathAtDepth(candidateEmitted, depth);
+					blockInner = stripAtDepth(blockEmitted, depth);
+				} else if (swallowRisk && child.attrs.kind !== "math") {
 					const canonical = ensureGenerated();
 					if (isSwallowRisk(canonical.emitted)) {
 						({ emitted: blockEmitted, inner: blockInner } =
@@ -530,17 +581,17 @@ function serializeContainerPreservingChildren(
 					));
 				}
 			} else {
-				// A clean matched paragraph at risk ONLY of being swallowed
-				// into a preceding list keeps its raw inline bytes (line 0
-				// dedented, see `dedentParagraphFirstLineAtDepth`); the
-				// separator and `effectiveOrigIndex` stay as for canonical.
+				// A clean matched block at risk ONLY of being swallowed into a
+				// preceding list keeps its raw inline bytes (dedented, see
+				// `dedentSwallowedBlockAtDepth`); the separator and
+				// `effectiveOrigIndex` stay as for canonical.
 				const dedented =
-					child.type.name === "paragraph" &&
 					swallowRisk &&
 					!indentedRisk &&
 					serializedFromRaw &&
-					!sharedGroup
-						? dedentParagraphFirstLineAtDepth(serialized, depth)
+					!sharedGroup &&
+					!wouldMergeWithPreviousList(prevNode, child)
+						? dedentSwallowedBlockAtDepth(serialized, depth, child.type.name)
 						: null;
 				if (dedented !== null) {
 					blockEmitted = dedented;

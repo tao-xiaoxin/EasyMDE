@@ -425,10 +425,49 @@ export function matchListMarkerLength(
 	return inParagraph && rest >= nonSpaceRest.length ? 0 : markerLength;
 }
 
+/** Whether `s` is exactly one Unicode code point (no allocation). */
+function isSingleUnicodeCodePoint(s: string): boolean {
+	return (
+		s.length === 1 || (s.length === 2 && (s.codePointAt(0) ?? 0) > 0xffff)
+	);
+}
+
+/**
+ * Single canonical CommonMark §5.2 list-item content indent assigned by
+ * pinned PHP `league/commonmark@2.8.2`
+ * (`ListBlockStartParser::calculateListMarkerPadding()`): after the spaces
+ * following the marker, `$cursor->peek() === null` (exactly one code point
+ * remains) marks the item blank, so the padding falls back to `1` and the
+ * content indent becomes `leadCols + markerLength + 1`. `afterContent` is
+ * the untrimmed remainder after the consumed padding (callers may pass `""`
+ * whenever more than two UTF-16 units remain).
+ */
+export function computePhpListMarkerContentIndent(
+	leadCols: number,
+	markerLength: number,
+	standardContentIndent: number,
+	afterContent: string,
+): number {
+	return isSingleUnicodeCodePoint(afterContent)
+		? Math.min(standardContentIndent, leadCols + markerLength + 1)
+		: standardContentIndent;
+}
+
+/**
+ * The cursor remainder when it may be a single code point (at most two
+ * UTF-16 units and no pending virtual tab spaces), otherwise `""`, so list
+ * padding checks never allocate a long remainder.
+ */
+export function shortCursorTail(cursor: LineColumnCursor): string {
+	return cursor.virtualSpaces === 0 && cursor.line.length - cursor.index <= 2
+		? cursor.line.slice(cursor.index)
+		: "";
+}
+
 const PHP_ESCAPABLE_RE = /^[!"#$%&'()*+,./:;<=>?@[\\\]^_`{|}~-]$/;
 
 /** A position `p` inside inline-block segment `s`. */
-export type PhpInlinePos = Readonly<{ p: number; s: number }>;
+type PhpInlinePos = Readonly<{ p: number; s: number }>;
 
 type PhpInlineSegment = Readonly<{ contentOffset: number; lineEnd: number }>;
 
@@ -461,10 +500,10 @@ export function createPhpInlineStream(text: string, lines: ReadonlyArray<PhpInli
 	return { advance, charAt, isEscape, lineEnd, skipSpaces };
 }
 
-export type PhpInlineStream = ReturnType<typeof createPhpInlineStream>;
+type PhpInlineStream = ReturnType<typeof createPhpInlineStream>;
 
 /** League `LinkParserHelper::parseLinkDestination()`; returns the end position. */
-export function parsePhpLinkDestination(text: string, stream: PhpInlineStream, start: PhpInlinePos): PhpInlinePos | null {
+function parsePhpLinkDestination(text: string, stream: PhpInlineStream, start: PhpInlinePos): PhpInlinePos | null {
 	const end = stream.lineEnd(start);
 	if ("<" === stream.charAt(start)) {
 		for (let p = start.p + 1; p < end; p += 1) {
@@ -497,7 +536,7 @@ export function parsePhpLinkDestination(text: string, stream: PhpInlineStream, s
 }
 
 /** League `LinkParserHelper::parseLinkTitle()` (possessive, may span lines). */
-export function parsePhpLinkTitle(stream: PhpInlineStream, start: PhpInlinePos): PhpInlinePos | null {
+function parsePhpLinkTitle(stream: PhpInlineStream, start: PhpInlinePos): PhpInlinePos | null {
 	const open = stream.charAt(start);
 	if ('"' !== open && "'" !== open && "(" !== open) return null;
 	const close = "(" === open ? ")" : open;

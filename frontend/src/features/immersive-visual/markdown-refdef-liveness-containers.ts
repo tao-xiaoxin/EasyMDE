@@ -4,8 +4,9 @@ import {
 	alignContainerChildren,
 	canPreserveContainerHeadStructurally,
 	createTightSharedGroupChecker,
-	dedentParagraphFirstLineAtDepth,
+	dedentSwallowedBlockAtDepth,
 	sharedGroupHasInvalidatedRef,
+	wouldMergeWithPreviousList,
 } from "./markdown-container-preservation";
 import { blankSeparatorAtDepth } from "./markdown-container-slot-separator";
 import { isNestedList } from "./markdown-list-serialization";
@@ -169,12 +170,15 @@ function recheckFollowingIndentRisks(
 		nextGroup?.separatorBefore,
 	);
 	if (nextGroup) {
-		if (
-			isBrokenTightLeft(cs, nextIdx, nextGroup, separator) ||
-			indentedRisk ||
-			swallowRisk
-		) {
+		const broken = isBrokenTightLeft(cs, nextIdx, nextGroup, separator);
+		const dedented =
+			swallowRisk && !indentedRisk && !broken
+				? dedentSwallowedGroup(cs, nextIdx, nextGroup)
+				: null;
+		if (dedented === null && (broken || indentedRisk || swallowRisk)) {
 			fireTask(cs.groupTasks.get(nextIdx));
+		} else if (!cs.groupTasks.get(nextIdx)?.fired) {
+			bindGroupEmission(st, cs, nextIdx, nextGroup, dedented);
 		}
 		return;
 	}
@@ -220,46 +224,138 @@ function verbatimEmitted(raw: string): () => string {
 
 /**
  * Mirrors the serializer's swallow-only fallback for a clean matched
- * non-shared-group `paragraph` (`dedentParagraphFirstLineAtDepth`): the exact
- * dedented raw it emits instead of canonical text, or `null`.
+ * non-shared-group block (`dedentSwallowedBlockAtDepth`): the exact dedented
+ * raw it emits instead of canonical text, or `null`.
  */
-function swallowOnlyDedentedParagraph(
+function swallowOnlyDedentedSlot(
 	cs: ContainerState,
 	idx: number,
 	origBlock: ParsedVisualBlockSource,
 	risks: Readonly<{ indentedRisk: boolean; swallowRisk: boolean }>,
 ): string | null {
+	const child = cs.container.child(idx);
 	if (
 		!risks.swallowRisk ||
 		risks.indentedRisk ||
 		origBlock.raw === null ||
 		origBlock.sharedGroup !== undefined ||
-		cs.container.child(idx).type.name !== "paragraph"
+		wouldMergeWithPreviousList(idx > 0 ? cs.container.child(idx - 1) : null, child)
 	) {
 		return null;
 	}
-	return dedentParagraphFirstLineAtDepth(origBlock.raw, cs.depth);
+	return dedentSwallowedBlockAtDepth(origBlock.raw, cs.depth, child.type.name);
+}
+
+/** Mirrors the serializer's swallow-only dedent of an intact shared group. */
+function dedentSwallowedGroup(
+	cs: ContainerState,
+	groupStart: number,
+	group: ParsedVisualSharedGroup,
+): string | null {
+	const child = cs.container.child(groupStart);
+	return wouldMergeWithPreviousList(
+		groupStart > 0 ? cs.container.child(groupStart - 1) : null,
+		child,
+	)
+		? null
+		: dedentSwallowedBlockAtDepth(group.raw, cs.depth, child.type.name);
+}
+
+/**
+ * Re-binds the emission of an intact shared group (raw, or its swallow-only
+ * dedented raw); a changed emission re-evaluates the following slot.
+ */
+function bindGroupEmission(
+	st: LivenessState,
+	cs: ContainerState,
+	groupStart: number,
+	group: ParsedVisualSharedGroup,
+	dedented: string | null,
+): void {
+	const lastSlot = groupStart + group.endIndex - group.startIndex - 1;
+	if (cs.dedentedAt[lastSlot] === (dedented !== null)) return;
+	cs.dedentedAt[lastSlot] = dedented !== null;
+	cs.emittedAt[lastSlot] = verbatimEmitted(dedented ?? group.raw);
+	onSlotInnerChanged(st, cs, lastSlot);
+}
+
+/**
+ * A matched container slot leaving its raw emission: re-preserved as a nested
+ * container only when one of its references is invalidated and its immutable
+ * matched head line carries no risk (monotonic, like the serializer);
+ * otherwise its subtree is re-walked canonically.
+ */
+function downgradeMatchedContainer(
+	st: LivenessState,
+	cs: ContainerState,
+	idx: number,
+	origBlock: ParsedVisualBlockSource,
+	origIdx: number,
+): void {
+	const child = cs.container.child(idx);
+	if (child.childCount === 0 || !isBlockContainerForRefDefs(child)) return;
+	const headLine = resolveMatchedContainerHeadLine(
+		child,
+		origBlock,
+		cs.depth,
+		st.plan,
+		st.parsed,
+	);
+	if (
+		nodeHasCurrentInvalidatedRef(st, origBlock.node) &&
+		!headLineHasRisk(st, cs, idx, headLine, origIdx)
+	) {
+		const result = descendNonVerbatimChild(
+			st,
+			child,
+			origBlock,
+			cs.depth,
+			false,
+			false,
+		);
+		if (result.preserved) {
+			installPreservedContainerSlot(st, cs, idx, origIdx, result, headLine);
+		}
+	} else if (st.subtreeHasCandidates.has(child)) {
+		walkSubtree(st, child, "canonical", false, false);
+	}
 }
 
 /**
  * Records a canonical-state slot whose serializer emission is the dedented
- * raw paragraph; a later invalidation of any reference it uses makes the
- * serializer re-emit it canonically.
+ * raw block (its subtree keeps raw, i.e. verbatim, reference semantics); a
+ * later invalidation of any reference it uses makes the serializer emit it
+ * canonically (or re-preserve it as a nested container).
  */
-function bindDedentedParagraphSlot(
+function bindDedentedSlot(
 	st: LivenessState,
 	cs: ContainerState,
 	idx: number,
 	origBlock: ParsedVisualBlockSource,
 	dedented: string,
+	walk: boolean,
 ): void {
+	const child = cs.container.child(idx);
 	cs.slotState[idx] = "canonical";
+	cs.dedentedAt[idx] = true;
 	cs.emittedAt[idx] = verbatimEmitted(dedented);
+	if (
+		walk &&
+		child.childCount > 0 &&
+		isBlockContainerForRefDefs(child) &&
+		walkSubtree(st, child, "verbatim", cs.discover, cs.deferInvalidation)
+	) {
+		cs.hasAny = true;
+	}
+	const origIdx = cs.matchedOrigIndex[idx] ?? -1;
 	const toCanonicalTask: InvalidationTask = {
 		fired: false,
 		run: () => {
 			if (cs.emittedAt[idx] === null) return;
 			cs.emittedAt[idx] = null;
+			cs.dedentedAt[idx] = false;
+			downgradeMatchedContainer(st, cs, idx, origBlock, origIdx);
+			reevaluateAttachedCandidates(st, cs, idx);
 			onSlotInnerChanged(st, cs, idx);
 		},
 	};
@@ -384,6 +480,7 @@ function processIntactGroup(
 	cs: ContainerState,
 	groupStart: number,
 	group: ParsedVisualSharedGroup,
+	dedented: string | null,
 ): number {
 	const groupLen = group.endIndex - group.startIndex;
 	for (let offset = 0; offset < groupLen; offset += 1) {
@@ -394,7 +491,8 @@ function processIntactGroup(
 		discoverVerbatimChild(st, cs, slot, cs.container.child(slot));
 	}
 	const lastSlot = groupStart + groupLen - 1;
-	cs.emittedAt[lastSlot] = verbatimEmitted(group.raw);
+	cs.emittedAt[lastSlot] = verbatimEmitted(dedented ?? group.raw);
+	cs.dedentedAt[lastSlot] = dedented !== null;
 
 	const breakGroupTask: InvalidationTask = {
 		fired: false,
@@ -404,6 +502,7 @@ function processIntactGroup(
 				cs.slotState[slot] = "canonical";
 				cs.effectiveOrigIndex[slot] = -1;
 				cs.emittedAt[slot] = null;
+				cs.dedentedAt[slot] = false;
 				const memberChild = cs.container.child(slot);
 				if (
 					memberChild.childCount > 0 &&
@@ -446,7 +545,7 @@ function processMatchedSlot(
 		cs.slotState[idx] = "canonical";
 		cs.emittedAt[idx] = null;
 		if (dedented !== null) {
-			bindDedentedParagraphSlot(st, cs, idx, origBlock, dedented);
+			bindDedentedSlot(st, cs, idx, origBlock, dedented, cs.discover);
 			return;
 		}
 		if (
@@ -475,54 +574,22 @@ function processMatchedSlot(
 		run: () => {
 			cs.slotState[idx] = "canonical";
 			cs.emittedAt[idx] = null;
-			// An invalidated match is re-preserved as a nested container by the
-			// serializer unless its immutable matched head line is risky; a
-			// risk break ALWAYS emits canonically (monotonic).
-			if (child.childCount > 0 && isBlockContainerForRefDefs(child)) {
-				const headLine = resolveMatchedContainerHeadLine(
-					child,
-					origBlock,
-					cs.depth,
-					st.plan,
-					st.parsed,
-				);
-				if (
-					nodeHasCurrentInvalidatedRef(st, origBlock.node) &&
-					!headLineHasRisk(st, cs, idx, headLine, origIdx)
-				) {
-					const result = descendNonVerbatimChild(
-						st,
-						child,
+			// A risk (not invalidation) break may keep the dedented raw,
+			// exactly as the serializer decides; an invalidated match is
+			// re-preserved as a nested container unless its immutable matched
+			// head line is risky (a risk break ALWAYS leaves raw, monotonic).
+			const dedented = nodeHasCurrentInvalidatedRef(st, origBlock.node)
+				? null
+				: swallowOnlyDedentedSlot(
+						cs,
+						idx,
 						origBlock,
-						cs.depth,
-						false,
-						false,
+						evaluateSlotJoin(st, cs, idx, origRaw, origIdx, undefined),
 					);
-					if (result.preserved) {
-						installPreservedContainerSlot(
-							st,
-							cs,
-							idx,
-							origIdx,
-							result,
-							headLine,
-						);
-					}
-				} else if (st.subtreeHasCandidates.has(child)) {
-					walkSubtree(st, child, "canonical", false, false);
-				}
-			} else if (!nodeHasCurrentInvalidatedRef(st, origBlock.node)) {
-				// A risk (not invalidation) break of a clean paragraph may keep
-				// its dedented raw, exactly as the serializer decides.
-				const dedented = swallowOnlyDedentedParagraph(
-					cs,
-					idx,
-					origBlock,
-					evaluateSlotJoin(st, cs, idx, origRaw, origIdx, undefined),
-				);
-				if (dedented !== null) {
-					bindDedentedParagraphSlot(st, cs, idx, origBlock, dedented);
-				}
+			if (dedented !== null) {
+				bindDedentedSlot(st, cs, idx, origBlock, dedented, false);
+			} else {
+				downgradeMatchedContainer(st, cs, idx, origBlock, origIdx);
 			}
 			reevaluateAttachedCandidates(st, cs, idx);
 			onSlotInnerChanged(st, cs, idx);
@@ -637,16 +704,21 @@ function processSlot(
 		);
 		verbatimRisk = join.indentedRisk || join.swallowRisk;
 		if (plainMatch) {
-			dedented = swallowOnlyDedentedParagraph(cs, idx, origBlock, join);
+			dedented = swallowOnlyDedentedSlot(cs, idx, origBlock, join);
 		}
-		if (
-			intactGroup &&
-			(verbatimRisk || isBrokenTightLeft(cs, idx, intactGroup, join.separator))
-		) {
-			intactGroup = undefined;
+		if (intactGroup) {
+			const broken = isBrokenTightLeft(cs, idx, intactGroup, join.separator);
+			if (join.swallowRisk && !join.indentedRisk && !broken) {
+				dedented = dedentSwallowedGroup(cs, idx, intactGroup);
+			}
+			if (dedented === null && (verbatimRisk || broken)) {
+				intactGroup = undefined;
+			}
 		}
 	}
-	if (intactGroup) return processIntactGroup(st, cs, idx, intactGroup);
+	if (intactGroup) {
+		return processIntactGroup(st, cs, idx, intactGroup, dedented);
+	}
 
 	if (cs.discover && isRawProtectedBlock(child)) {
 		if (registerRefDefNode(st, cs.container, idx, child)) cs.hasAny = true;
@@ -768,6 +840,7 @@ export function openContainer(
 			if (idx > 0) recheckFollowingIndentRisks(st, cs, idx - 1);
 		},
 		defaultBlankSep: blankSeparatorAtDepth(depth),
+		dedentedAt: new Array<boolean>(newLen).fill(false),
 		deferInvalidation,
 		depth,
 		discover,

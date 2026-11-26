@@ -1,8 +1,3 @@
-import {
-	advancePhpCommonMarkBlockLine,
-	createPhpCommonMarkBlockState,
-	scanLinesIntoPhpCommonMarkBlockState,
-} from "../../shared/markdown/php-commonmark-block-engine";
 import { matchHtmlBlockOpen } from "../../shared/markdown/php-commonmark-block-helpers";
 import {
 	advanceParagraphReferenceParser,
@@ -11,23 +6,19 @@ import {
 } from "../../shared/markdown/php-commonmark-reference-def";
 import {
 	analyzeLine,
-	type BlockMathScanState,
 	type ContainerStep,
 	classifyParagraphLine,
 	detectFence,
-	findBlockMathEnd,
 	findContainerBoundedFenceEnd,
 	findFootnoteDefinitionEnd,
 	hasListBeforeQuote,
 	isCommonMarkBlankLine,
-	type LineAnalysis,
 	matchListPrefixedHtmlBlock,
 	resolveLineContainerContext,
-	stripBlockContainerPrefix,
-	stripContainers,
 	sumListContainerIndent,
 } from "./markdown-prescanner-blocks";
 import {
+	createPrescanPhpTracker,
 	type HtmlBlockScanResult,
 	scanHtmlBlockWithDisplayMath,
 } from "./markdown-prescanner-display-math";
@@ -35,6 +26,12 @@ import {
 	extractInlineProtectedSyntax,
 	type ProtectedInlineEntry,
 } from "./markdown-prescanner-inline";
+import {
+	createCollisionFreeSentinel,
+	createPrescanOutput,
+	type PrescannedLineRange,
+	type ProtectedBlockEntry,
+} from "./markdown-prescanner-output";
 import {
 	type DisplayMathEmitEnv,
 	type DisplayMathSplitResult,
@@ -47,7 +44,6 @@ import {
 } from "./markdown-prescanner-table-emit";
 import {
 	collectRelativeInlineMathRanges,
-	createPhpDocumentMathIndex,
 	findFirstDisplayMathInLines,
 	findLogicalLineEnd,
 	type GfmTableMatch,
@@ -59,7 +55,6 @@ import {
 	TABLE_ALIGN_PREFIX,
 	TABLE_ALIGN_SUFFIX,
 } from "./table-alignment-codec";
-import type { ProtectedBlockKind } from "./visual-schema";
 
 export {
 	ATX_HEADING,
@@ -74,18 +69,9 @@ export {
 	stripBlockquoteDepth,
 	THEMATIC_BREAK,
 } from "./markdown-prescanner-blocks";
+export { restoreProtectedInlineSentinels } from "./markdown-prescanner-output";
 export type { ProtectedInlineEntry };
 export { TABLE_ALIGN_PREFIX, TABLE_ALIGN_SUFFIX };
-
-type ProtectedBlockEntry = Readonly<{
-	kind: ProtectedBlockKind;
-	rawMarkdown: string;
-}>;
-
-type PrescannedLineRange = Readonly<{
-	end: number;
-	start: number;
-}>;
 
 export type PreScanResult = Readonly<{
 	lineEnding: "\n" | "\r\n";
@@ -100,41 +86,7 @@ export type PreScanResult = Readonly<{
 	tableAlignMarkers: ReadonlyMap<string, string>;
 }>;
 
-const INTERNAL_TOKEN_PATTERN = /EASYMDEPH[A-Z]*(?:INL|BLK|TBLALIGN|BR)\d*END/g;
 const EMPTY_CONTAINERS: ReadonlyArray<ContainerStep> = [];
-
-function createCollisionFreeSentinel(source: string): string {
-	let sentinel = "EASYMDEPH";
-	while (source.includes(sentinel)) {
-		sentinel = `${sentinel}X`;
-	}
-	return sentinel;
-}
-
-/**
- * Undo every accidental internal sentinel that could otherwise reach a
- * ProseMirror node attribute or code block text.
- */
-export function restoreProtectedInlineSentinels(
-	text: string,
-	preScan: Pick<
-		PreScanResult,
-		"protectedBlocks" | "protectedInlines" | "tableAlignMarkers"
-	>,
-): string {
-	if (text.length === 0 || !text.includes("EASYMDEPH")) {
-		return text;
-	}
-	return text.replace(INTERNAL_TOKEN_PATTERN, (token) => {
-		const inline = preScan.protectedInlines.get(token);
-		if (inline) return inline.rawMarkdown;
-		const block = preScan.protectedBlocks.get(token);
-		if (block) return block.rawMarkdown;
-		const marker = preScan.tableAlignMarkers.get(token);
-		if (marker !== undefined) return marker;
-		return token.endsWith("BREND") ? "<br>" : token;
-	});
-}
 
 export const FOOTNOTE_DEF_LINE = /^ {0,3}\[\^([^\s\]]+)\]:(?:[ \t]|$)/;
 
@@ -145,155 +97,25 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 	const normalized = rawMarkdown.replace(/\r\n?/g, "\n");
 	const sentinel = createCollisionFreeSentinel(normalized);
 	const lines = normalized.split("\n");
-	const outputLines: string[] = [];
-	const outputLineRanges: Array<PrescannedLineRange | null> = [];
-	const outputLineSharedRanges: Array<PrescannedLineRange | null> = [];
-	const protectedBlocks = new Map<string, ProtectedBlockEntry>();
 	const protectedInlines = new Map<string, ProtectedInlineEntry>();
-	const tableAlignMarkers = new Map<string, string>();
-
-	const pushOutputLine = (
-		text: string,
-		range: PrescannedLineRange | null,
-	): void => {
-		outputLines.push(text);
-		outputLineRanges.push(range);
-		outputLineSharedRanges.push(null);
-	};
-
-	const markSharedOutputSpan = (
-		outStart: number,
-		rawStart: number,
-		rawEnd: number,
-	): void => {
-		if (rawEnd <= rawStart) return;
-		const span: PrescannedLineRange = { end: rawEnd, start: rawStart };
-		for (let idx = outStart; idx < outputLines.length; idx += 1) {
-			if (
-				outputLineRanges[idx] === null &&
-				!isCommonMarkBlankLine(outputLines[idx] ?? "")
-			) {
-				outputLineSharedRanges[idx] = span;
-			}
-		}
-	};
-
-	const addProtectedBlock = (
-		kind: ProtectedBlockKind,
-		rawBlock: string,
-	): string => {
-		const token = `${sentinel}BLK${protectedBlocks.size}END`;
-		protectedBlocks.set(token, { kind, rawMarkdown: rawBlock });
-		return token;
-	};
-
-	const addTableAlignMarker = (markerText: string): string => {
-		const markerToken = `${sentinel}TBLALIGN${tableAlignMarkers.size}END`;
-		tableAlignMarkers.set(markerToken, markerText);
-		return markerToken;
-	};
-
-	const pushProtectedBlock = (
-		kind: ProtectedBlockKind,
-		{ indent, prefix }: Pick<LineAnalysis, "indent" | "prefix">,
-		origStart: number,
-		lastLine: number,
-		sentinelIndent = indent,
-		sentinelPrefix = prefix,
-	): void => {
-		const origEnd = lastLine + 1;
-		const rawBlock = lines
-			.slice(origStart, origEnd)
-			.map((blockLine) => stripBlockContainerPrefix(blockLine, prefix, indent))
-			.join("\n");
-		const token = addProtectedBlock(kind, rawBlock);
-		pushOutputLine(`${sentinelPrefix}${" ".repeat(sentinelIndent)}${token}`, {
-			end: origEnd,
-			start: origStart,
-		});
-	};
-
-	const pushListPrefixedProtectedBlock = (
-		kind: ProtectedBlockKind,
-		linePrefix: string,
-		firstLineContent: string,
-		containers: ReadonlyArray<ContainerStep>,
-		origStart: number,
-		lastLine: number,
-	): void => {
-		const origEnd = lastLine + 1;
-		const rawBlockLines: string[] = [firstLineContent];
-		for (let k = origStart + 1; k <= lastLine; k += 1) {
-			rawBlockLines.push(stripContainers(lines[k] ?? "", containers) ?? "");
-		}
-		pushOutputLine(
-			`${linePrefix}${addProtectedBlock(kind, rawBlockLines.join("\n"))}`,
-			{ end: origEnd, start: origStart },
-		);
-	};
-
-	const phpBlockState = createPhpCommonMarkBlockState(false, false);
-	const mathIndex = createPhpDocumentMathIndex(normalized, lines);
+	const output = createPrescanOutput(lines, sentinel);
+	const {
+		addProtectedBlock,
+		addTableAlignMarker,
+		markSharedOutputSpan,
+		outputLineRanges,
+		outputLineSharedRanges,
+		outputLines,
+		pushOutputLine,
+		pushProtectedBlock,
+	} = output;
+	const php = createPrescanPhpTracker(normalized, lines);
+	const { mathIndex, state: phpBlockState } = php;
 	const getMaskedLine = (lineIdx: number): string =>
 		maskedSliceForLines(mathIndex, lines, lineIdx, lineIdx);
-	const blockMathScanState: BlockMathScanState = {
-		noBracketCloseBefore: -1,
-		noBracketCloseContainer: -1,
-		noDollarCloseBefore: -1,
-		noDollarCloseContainer: -1,
-	};
-	const advancePhpStateRange = (from: number, toInclusive: number): void => {
-		for (let k = from; k <= toInclusive; k += 1) {
-			advancePhpCommonMarkBlockLine(phpBlockState, lines[k] ?? "");
-		}
-	};
-	const advancePhpStateMaskedLines = (fromLine: number, toLine: number): void => {
-		const masked = maskedSliceForLines(mathIndex, lines, fromLine, toLine);
-		if (masked.includes("\n")) scanLinesIntoPhpCommonMarkBlockState(phpBlockState, masked);
-		else advancePhpCommonMarkBlockLine(phpBlockState, masked);
-	};
-	const advancePhpStateAfterDisplayMath = (
-		afterStartOffset: number,
-		toLineInclusive: number,
-	): void => {
-		const endOffset = mathIndex.lineEnds[toLineInclusive] ?? afterStartOffset;
-		const postMathMasked =
-			endOffset > afterStartOffset
-				? mathIndex.maskedDoc.slice(afterStartOffset, endOffset)
-				: "";
-		if (
-			postMathMasked.length === 0 &&
-			phpBlockState.containers.length === 0 &&
-			phpBlockState.leaf === null
-		) {
-			return;
-		}
-		scanLinesIntoPhpCommonMarkBlockState(
-			phpBlockState,
-			`\n\nM\n\n${postMathMasked}`,
-		);
-	};
-	const startsPhpDisplayMath = (content: string, lineIdx: number): boolean => {
-		if (
-			mathIndex.ranges.length === 0 ||
-			!(content.startsWith("$$") || content.startsWith("\\["))
-		) {
-			return false;
-		}
-		const lineText = lines[lineIdx] ?? "";
-		const contentOffset =
-			(mathIndex.lineStarts[lineIdx] ?? 0) + lineText.length - content.length;
-		return (
-			findFirstDisplayMathInLines(mathIndex, lineIdx, lineIdx)?.from ===
-			contentOffset
-		);
-	};
-	const advancePhpStateClosedBlock = (prefix: string, indent: number): void => {
-		advancePhpCommonMarkBlockLine(
-			phpBlockState,
-			`${prefix}${" ".repeat(Math.max(0, indent))}<!-- -->`,
-		);
-	};
+	const advancePhpStateRange = php.advanceRange;
+	const advancePhpStateMaskedLines = php.advanceMaskedLines;
+	const advancePhpStateClosedBlock = php.advanceClosedBlock;
 
 	let i = 0;
 	let inIndentedCode = false;
@@ -370,10 +192,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			}
 			inRestoredDisplayMathContainer = listContentIndent !== null;
 		}
-		advancePhpStateAfterDisplayMath(
-			result.afterStartOffset,
-			result.spanEndLine,
-		);
+		php.advanceAfterDisplayMath(result.afterStartOffset, result.spanEndLine);
 		i = result.spanEndLine + 1;
 	};
 
@@ -482,8 +301,9 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			pushOutputLine(line, { end: i + 1, start: i });
 			closeParagraph();
 			inIndentedCode = false;
-			if (listContentIndent === null) inRestoredDisplayMathContainer = false;
 			advancePhpStateRange(i, i);
+			listContentIndent = php.listIndentAfterBlank(listContentIndent);
+			if (listContentIndent === null) inRestoredDisplayMathContainer = false;
 			i += 1;
 			continue;
 		}
@@ -529,7 +349,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		if (
 			!paragraphOpen &&
 			relativeIndent >= 4 &&
-			!startsPhpDisplayMath(analysis.content, i)
+			!php.startsDisplayMath(analysis.content, i)
 		) {
 			inIndentedCode = true;
 			indentedCodeContainer = effectiveContainer;
@@ -703,35 +523,30 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			}
 		}
 
-		// 4. Standalone block math: $$...$$ and \[...\].
-		const blockMathEnd = findBlockMathEnd(
-			lines,
-			i,
-			analysis.content,
-			effectiveContainer,
-			blockMathScanState,
-		);
+		// 4. Standalone block math ($$...$$ and \[...\]) exactly where the
+		//    authoritative PHP math index sees it. PHP `extract_math()`
+		//    replaces it with `"\n\nTOKEN\n\n"`: inside any list item or
+		//    `list -> blockquote` container the token sits at column 0 behind
+		//    a blank line, closing every enclosing container.
+		const blockMathEnd = php.standaloneDisplayMathEnd(analysis.content, i);
 		if (blockMathEnd >= i) {
-			if (activeInterleavedContainers !== null) {
-				pushListPrefixedProtectedBlock(
-					"math",
-					analysis.prefix,
-					analysis.content,
-					activeInterleavedContainers,
-					i,
-					blockMathEnd,
-				);
-				advancePhpStateClosedBlock(analysis.prefix, 0);
-			} else if (effectiveContainer > 0) {
-				// PHP `extract_math()` replaces standalone display math with
-				// `"\n\nTOKEN\n\n"`: the token sits at column 0 behind a blank
-				// line, closing every enclosing list item (and blockquote).
+			if (activeInterleavedContainers !== null || effectiveContainer > 0) {
 				if (displayMathEnv.hasPrecedingContent()) pushOutputLine("", null);
-				pushProtectedBlock("math", analysis, i, blockMathEnd, 0, "");
+				if (activeInterleavedContainers !== null) {
+					output.pushContainerStrippedProtectedBlock(
+						"math",
+						"",
+						analysis.content,
+						activeInterleavedContainers,
+						i,
+						blockMathEnd,
+					);
+				} else {
+					pushProtectedBlock("math", analysis, i, blockMathEnd, 0, "");
+				}
 				pushOutputLine("", null);
-				scanLinesIntoPhpCommonMarkBlockState(
-					phpBlockState,
-					`${line.slice(0, line.length - analysis.content.length)}\n\nM\n\n`,
+				php.closeContainersForDisplayMath(
+					line.slice(0, line.length - analysis.content.length),
 				);
 				listContentIndent = null;
 				inRestoredDisplayMathContainer = false;
@@ -972,10 +787,10 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		outputLineRanges,
 		outputLineSharedRanges,
 		outputLines,
-		protectedBlocks,
+		protectedBlocks: output.protectedBlocks,
 		protectedInlines,
 		rawLines: lines,
 		sentinel,
-		tableAlignMarkers,
+		tableAlignMarkers: output.tableAlignMarkers,
 	};
 }

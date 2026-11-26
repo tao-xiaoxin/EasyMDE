@@ -42,6 +42,11 @@ export type ContainerState = {
 	/** Re-checks slot `idx`'s join / raw risks against the current state. */
 	readonly recheckSlot: (idx: number) => void;
 	readonly defaultBlankSep: string;
+	/**
+	 * Slots emitting a swallow-risk dedented raw
+	 * (`dedentSwallowedBlockAtDepth`): never verbatim-adjacent to the next.
+	 */
+	readonly dedentedAt: boolean[];
 	readonly deferInvalidation: boolean;
 	readonly depth: number;
 	readonly discover: boolean;
@@ -110,6 +115,7 @@ export function evaluateSlotJoin(
 	const prevWasVerbatimAdjacent =
 		idx > 0 &&
 		cs.slotState[idx - 1] === "verbatim" &&
+		cs.dedentedAt[idx - 1] !== true &&
 		prevMatched >= 0 &&
 		origIdx >= 0 &&
 		origIdx === prevMatched + 1;

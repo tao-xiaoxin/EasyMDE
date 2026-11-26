@@ -1265,6 +1265,130 @@ final class MarkdownRendererTest extends WP_UnitTestCase
 		}
 	}
 
+	public function test_image_scale_numeric_entity_parity_across_wp67_and_wp71_kses_behaviors()
+	{
+		$valid_cases = array(
+			'hex entity 50%'             => '![Alt](https://example.test/image.png "Caption &amp;#x7b;width=50%&amp;#x7d;")',
+			'padded hex entity 50%'      => '![Alt](https://example.test/image.png "Caption &#x0000007b;width=50%&#x0000007d;")',
+			'trailing single zero dec'   => '![Alt](https://example.test/image.png "Caption {width=50%}&amp;#0;")',
+			'trailing single zero hex'   => '![Alt](https://example.test/image.png "Caption {width=50%}&amp;#x0;")',
+			'trailing single zero upper' => '![Alt](https://example.test/image.png "Caption {width=50%}&amp;#X0;")',
+		);
+
+		foreach ( $valid_cases as $case => $markdown ) {
+			$rendered = MarkdownRenderer::render( $markdown );
+			$preview  = MarkdownRenderer::render_preview( $markdown );
+			foreach ( array( 'render' => $rendered, 'render_preview' => $preview['html'] ) as $mode => $html ) {
+				$document              = new DOMDocument( '1.0', 'UTF-8' );
+				$previous_libxml_state = libxml_use_internal_errors( true );
+				try {
+					$loaded = $document->loadHTML(
+						'<?xml encoding="UTF-8"><div id="image-scale-parity-root">' . $html . '</div>',
+						LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD
+					);
+				} finally {
+					libxml_clear_errors();
+					libxml_use_internal_errors( $previous_libxml_state );
+				}
+
+				$this->assertTrue( $loaded, $case . ':' . $mode );
+				$image = $document->getElementsByTagName( 'img' )->item( 0 );
+				$this->assertInstanceOf( DOMElement::class, $image, $case . ':' . $mode );
+				$this->assertSame( 'Caption', $image->getAttribute( 'title' ), $case . ':' . $mode );
+				$this->assertSame( '50%', $image->getAttribute( 'width' ), $case . ':' . $mode );
+				$this->assertSame( '50', $image->getAttribute( 'data-easymde-image-scale' ), $case . ':' . $mode );
+			}
+		}
+
+		$unscaled_cases = array(
+			'double escaped amp'   => '![Alt](https://example.test/image.png "Caption &amp;amp;#123;width=50%&amp;amp;#125;")',
+			'nested numeric amp'   => '![Alt](https://example.test/image.png "Caption &amp;#38;#123;width=50%&amp;#38;#125;")',
+			'multi-zero decimal'   => '![Alt](https://example.test/image.png "Caption {width=50%}&amp;#00;")',
+			'multi-zero hex'       => '![Alt](https://example.test/image.png "Caption {width=50%}&amp;#x00;")',
+			'disallowed control 1' => '![Alt](https://example.test/image.png "Caption {width=50%}&amp;#1;")',
+		);
+
+		foreach ( $unscaled_cases as $case => $markdown ) {
+			$rendered = MarkdownRenderer::render( $markdown );
+			$preview  = MarkdownRenderer::render_preview( $markdown );
+			foreach ( array( 'render' => $rendered, 'render_preview' => $preview['html'] ) as $mode => $html ) {
+				$document              = new DOMDocument( '1.0', 'UTF-8' );
+				$previous_libxml_state = libxml_use_internal_errors( true );
+				try {
+					$loaded = $document->loadHTML(
+						'<?xml encoding="UTF-8"><div id="image-scale-unscaled-root">' . $html . '</div>',
+						LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD
+					);
+				} finally {
+					libxml_clear_errors();
+					libxml_use_internal_errors( $previous_libxml_state );
+				}
+
+				$this->assertTrue( $loaded, $case . ':' . $mode );
+				$image = $document->getElementsByTagName( 'img' )->item( 0 );
+				$this->assertInstanceOf( DOMElement::class, $image, $case . ':' . $mode );
+				$this->assertFalse( $image->hasAttribute( 'width' ), $case . ':' . $mode );
+				$this->assertFalse( $image->hasAttribute( 'data-easymde-image-scale' ), $case . ':' . $mode );
+			}
+		}
+
+		// Entity-encoded space after a first marker must still trigger invalid repeated-marker rejection.
+		try {
+			MarkdownRenderer::render( '![Alt](https://example.test/image.png "Caption {width=33%}&amp;#32; {width=50%}")' );
+			$this->fail( 'Expected repeated marker separated by entity space to throw.' );
+		} catch ( RuntimeException $exception ) {
+			$this->assertSame( 'easymde_image_scale_syntax_invalid', $exception->getMessage() );
+		}
+
+		// XSS safety: entity-decoded angle brackets or quotes in the remaining caption stay safely escaped inside `title`.
+		$xss_html = MarkdownRenderer::render(
+			'![Alt](https://example.test/image.png "Caption &amp;#60;script&amp;#62; &amp;#34; onerror=&amp;#34;alert(1) &amp;#123;width=50%&amp;#125;")'
+		);
+		$this->assertStringNotContainsString( '<script', $xss_html );
+		$xss_doc               = new DOMDocument( '1.0', 'UTF-8' );
+		$previous_libxml_state = libxml_use_internal_errors( true );
+		try {
+			$loaded = $xss_doc->loadHTML(
+				'<?xml encoding="UTF-8"><div id="image-scale-xss-root">' . $xss_html . '</div>',
+				LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD
+			);
+		} finally {
+			libxml_clear_errors();
+			libxml_use_internal_errors( $previous_libxml_state );
+		}
+		$this->assertTrue( $loaded );
+		$xss_image = $xss_doc->getElementsByTagName( 'img' )->item( 0 );
+		$this->assertInstanceOf( DOMElement::class, $xss_image );
+		$this->assertFalse( $xss_image->hasAttribute( 'onerror' ) );
+		$this->assertSame( '50%', $xss_image->getAttribute( 'width' ) );
+		$this->assertSame( '50', $xss_image->getAttribute( 'data-easymde-image-scale' ) );
+		$this->assertSame( 'Caption <script> " onerror="alert(1)', $xss_image->getAttribute( 'title' ) );
+
+		// Direct unit coverage of both WordPress 6.7 (KSES already decoded) and WordPress 7.1.5+ (KSES preserves `&amp;#...;`) normalization branches.
+		$normalize = new ReflectionMethod( MarkdownRenderer::class, 'normalize_image_scale_title' );
+		$normalize->setAccessible( true );
+
+		// WP 6.7 mode: no extra pass so already-decoded nested entities (e.g. `&#038;#123;` -> `&#123;`) are never double-decoded.
+		$this->assertSame( 'Caption &#123;width=50%&#125;', $normalize->invoke( null, 'Caption &#123;width=50%&#125;', false, false ) );
+		$this->assertSame( 'Caption {width=50%}&#0;', $normalize->invoke( null, 'Caption {width=50%}&#0;', false, false ) );
+
+		// WP 7.1.5+ mode: single pass matching `decodeWpKsesRenderedTitle()`.
+		$this->assertSame( 'Caption {width=50%}', $normalize->invoke( null, 'Caption &#123;width=50%&#125;', true, true ) );
+		$this->assertSame( 'Caption {width=50%}', $normalize->invoke( null, 'Caption &#00000123;width=50%&#00000125;', true, true ) );
+		$this->assertSame( 'Caption {width=50%}', $normalize->invoke( null, 'Caption &#x7b;width=50%&#x7d;', true, true ) );
+		$this->assertSame( 'Caption {width=50%}', $normalize->invoke( null, 'Caption &#x0000007b;width=50%&#x0000007d;', true, true ) );
+		$this->assertSame( 'Caption {width=50%}', $normalize->invoke( null, 'Caption {width=50%}&#0;', true, true ) );
+		$this->assertSame( 'Caption {width=50%}', $normalize->invoke( null, 'Caption {width=50%}&#x0;', true, true ) );
+		$this->assertSame( 'Caption {width=50%}', $normalize->invoke( null, 'Caption {width=50%}&#X0;', true, true ) );
+		$this->assertSame( 'Caption {width=50%}&#00;', $normalize->invoke( null, 'Caption {width=50%}&#00;', true, true ) );
+		$this->assertSame( 'Caption {width=50%}&#x00;', $normalize->invoke( null, 'Caption {width=50%}&#x00;', true, true ) );
+		$this->assertSame( 'Caption &#123;width=50%&#125;', $normalize->invoke( null, 'Caption &#38;#123;width=50%&#38;#125;', true, true ) );
+		$this->assertSame( 'Caption &amp;#123;width=50%&amp;#125;', $normalize->invoke( null, 'Caption &amp;#123;width=50%&amp;#125;', true, true ) );
+		$this->assertSame( '&#1; &#xD800; &#xFFFE; &#xFFFF; &#1114112;', $normalize->invoke( null, '&#1; &#xD800; &#xFFFE; &#xFFFF; &#1114112;', true, true ) );
+		$this->assertSame( "\xC2\x80", $normalize->invoke( null, '&#128;', true, true ) );
+		$this->assertSame( "\xF4\x8F\xBF\xBF", $normalize->invoke( null, '&#1114111;', true, true ) );
+	}
+
     public function test_nonterminal_image_scale_text_in_title_stays_literal_and_supports_terminal_scale()
     {
         $literal_markdown = '![Alt](https://example.test/image.png "Syntax {width=50%} example")';

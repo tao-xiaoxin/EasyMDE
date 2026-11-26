@@ -247,6 +247,9 @@ function combineItemRanges(
 ): ResolvedBlockRange | null {
 	let start = Number.POSITIVE_INFINITY;
 	let end = -1;
+	let outputStart = Number.POSITIVE_INFINITY;
+	let outputEnd = -1;
+	let hasOutputRange = true;
 	let shared = false;
 	for (const item of items) {
 		if (!item.range) {
@@ -257,8 +260,26 @@ function combineItemRanges(
 		}
 		start = Math.min(start, item.range.start);
 		end = Math.max(end, item.range.end);
+		if (
+			item.range.outputStart !== undefined &&
+			item.range.outputEnd !== undefined
+		) {
+			outputStart = Math.min(outputStart, item.range.outputStart);
+			outputEnd = Math.max(outputEnd, item.range.outputEnd);
+		} else {
+			hasOutputRange = false;
+		}
 	}
-	return Number.isFinite(start) && end > start ? { end, shared, start } : null;
+	return Number.isFinite(start) && end > start
+		? {
+				end,
+				...(hasOutputRange && Number.isFinite(outputStart) && outputEnd > outputStart
+					? { outputEnd, outputStart }
+					: {}),
+				shared,
+				start,
+			}
+		: null;
 }
 
 function mapBulletListTokens(
@@ -631,6 +652,7 @@ function mapBlockTokensWithRanges(
 						innerEntries,
 						preScan.rawLines,
 						nextDepth,
+						preScan.outputLines,
 					),
 				);
 			}
@@ -841,6 +863,8 @@ export function parseMarkdownWithBlockSources(
 	const { blocks, leadingPrefix, trailingSuffix } = buildVisualBlockSources(
 		mapped,
 		preScan.rawLines,
+		0,
+		preScan.outputLines,
 	);
 
 	const { referencedLabelsByNode, referenceImages, referenceLinks } =

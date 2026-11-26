@@ -12,9 +12,9 @@ import {
 	hasDetachedContainerMathRisk,
 	isListSwallowingFollowingBlock,
 	leadingIndentAtDepth,
-	precedingSharedGroupMathRaws,
 	prefixAtDepth,
 	sharedGroupHasInvalidatedRef,
+	sharedGroupPrescannedListText,
 	stripAtDepth,
 	tryStripAllLinesAtDepth,
 	wouldMergeWithPreviousList,
@@ -474,7 +474,7 @@ function serializeContainerPreservingChildren(
 			effectiveOrigIndex[idx] ?? -1,
 			intactGroup?.separatorBefore,
 		);
-		const prevPrecedingMathRaws = precedingSharedGroupMathRaws(
+		const prevSharedListText = sharedGroupPrescannedListText(
 			baselineBlocks,
 			idx > 0 ? (effectiveOrigIndex[idx - 1] ?? -1) : -1,
 		);
@@ -488,7 +488,7 @@ function serializeContainerPreservingChildren(
 				depth,
 				prevWasVerbatimAdjacent,
 				separator !== "\n",
-				prevPrecedingMathRaws,
+				prevSharedListText,
 			);
 		let { indentedRisk, swallowRisk } = checkRawPreservationRisks(
 			child,
@@ -499,7 +499,7 @@ function serializeContainerPreservingChildren(
 			prevInnerText,
 			() => prevEmittedText,
 			prevWasVerbatimAdjacent,
-			prevPrecedingMathRaws,
+			prevSharedListText,
 		);
 		const brokenTightLeft =
 			intactGroup !== undefined &&
@@ -553,7 +553,7 @@ function serializeContainerPreservingChildren(
 				prevInnerText,
 				() => prevEmittedText,
 				prevWasVerbatimAdjacent,
-				prevPrecedingMathRaws,
+				prevSharedListText,
 			));
 		}
 

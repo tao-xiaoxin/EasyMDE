@@ -1218,6 +1218,68 @@ describe("PR-R51-A list-marker padding, trailing-item scan, depth-aware list val
 			expect(serialized).not.toContain("\n\n  para");
 		});
 
+		it("detects swallow risk on shared-group lists combining multiline inline math with duplicate inline-code display math", () => {
+			for (const md of [
+				[
+					"$$b$$- first",
+					"- second ``$$b$$-   fake`` \\(x",
+					"-   phantom\\)",
+					"",
+					"drop",
+					"",
+					"  para",
+				].join("\n"),
+				[
+					"$$b$$- first \\(x",
+					"- fake",
+					"y\\) `$$b$$-   wide`",
+					"",
+					"drop",
+					"",
+					"  para",
+				].join("\n"),
+			]) {
+				const parsed = parser.parseMarkdownWithBlockSources(md);
+				const guard = createMarkdownRoundTripGuard(md, parsed);
+				const edited = deleteParagraph("drop")(guard.initialDoc);
+				const serialized = guard.serialize(edited);
+				expect(serialized).toContain("\n\npara");
+				expect(serialized).not.toContain("\n\n  para");
+			}
+		});
+
+		it("ignores leading backtick-shielded duplicate display math before empty or wide trailing shared-group items", () => {
+			for (const head of ["`$$b$$- x` $$b$$-", "`$$b$$- x` $$b$$-   wide"]) {
+				const md = [
+					head,
+					"",
+					"drop",
+					"",
+					"  * first ``",
+					"  *\tsecond",
+					"",
+					"$$y$$ ``",
+				].join("\n");
+				const parsed = parser.parseMarkdownWithBlockSources(md);
+				const guard = createMarkdownRoundTripGuard(md, parsed);
+				const edited = deleteParagraph("drop")(guard.initialDoc);
+				const serialized = guard.serialize(edited);
+				expect(serialized).toBe(
+					[head, "", "  * first ``", "  *\tsecond", "", "$$y$$ ``"].join("\n"),
+				);
+			}
+		});
+
+		it("rejects depth>=2 lower-depth blank quote lines in dedentSwallowedBlockAtDepth", () => {
+			expect(
+				dedentSwallowedBlockAtDepth(
+					"> >   > head\n>\n> >   > tail",
+					2,
+					"blockquote",
+				),
+			).toBeNull();
+		});
+
 		it("preserves depth>=1 blockquote lazy continuations during swallow-risk dedent", () => {
 			const md = [
 				"> - abc",

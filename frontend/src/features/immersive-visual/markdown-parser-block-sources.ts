@@ -24,6 +24,8 @@ function isBlankLineAtBlockquoteDepth(
 
 export type ResolvedBlockRange = Readonly<{
 	end: number;
+	outputEnd?: number;
+	outputStart?: number;
 	shared: boolean;
 	start: number;
 }>;
@@ -45,6 +47,12 @@ export type ParsedVisualBlockSource = Readonly<{
 	raw: string | null;
 	separatorBefore: string;
 	sharedGroup?: ParsedVisualSharedGroup;
+	/**
+	 * Exact prescanned lines (`preScan.outputLines`) of a shared-group list
+	 * with document-wide PHP display math already separated and multiline
+	 * inline math already folded.
+	 */
+	sharedListText?: string;
 }>;
 
 export type BuiltVisualBlockSources = Readonly<{
@@ -97,15 +105,30 @@ export function resolveOriginalRangeFromTokenMap(
 	) {
 		origEnd -= 1;
 	}
-	return origEnd > origStart
-		? { end: origEnd, shared, start: origStart }
-		: null;
+	if (origEnd <= origStart) return null;
+	let outputEnd = endLine;
+	while (
+		outputEnd > startLine &&
+		isBlankLineAtBlockquoteDepth(
+			preScan.outputLines[outputEnd - 1] ?? "",
+			blockquoteDepth,
+		)
+	) {
+		outputEnd -= 1;
+	}
+	return {
+		end: origEnd,
+		...(outputEnd > startLine ? { outputEnd, outputStart: startLine } : {}),
+		shared,
+		start: origStart,
+	};
 }
 
 export function buildVisualBlockSources(
 	mapped: ReadonlyArray<MappedBlockEntry>,
 	rawLines: ReadonlyArray<string>,
 	blockquoteDepth = 0,
+	outputLines?: ReadonlyArray<string>,
 ): BuiltVisualBlockSources {
 	let lastKnownEnd = 0;
 	let previousHadRange = false;
@@ -188,11 +211,25 @@ export function buildVisualBlockSources(
 			for (let k = idx; k < endIdx; k += 1) {
 				const member = mapped[k];
 				if (!member) continue;
+				const memberRange = member.origRange;
+				const sharedListText =
+					outputLines &&
+					(member.node.type.name === "bullet_list" ||
+						member.node.type.name === "ordered_list" ||
+						member.node.type.name === "task_list") &&
+					memberRange?.outputStart !== undefined &&
+					memberRange.outputEnd !== undefined &&
+					memberRange.outputEnd > memberRange.outputStart
+						? outputLines
+								.slice(memberRange.outputStart, memberRange.outputEnd)
+								.join("\n")
+						: undefined;
 				blocks.push({
 					node: member.node,
 					raw: null,
 					separatorBefore: blocks.length === 0 ? "" : "\n\n",
 					sharedGroup,
+					...(sharedListText !== undefined ? { sharedListText } : {}),
 				});
 			}
 			lastKnownEnd = groupRawEnd;
@@ -233,6 +270,7 @@ export function buildBlockquoteChildSources(
 	innerEntries: ReadonlyArray<MappedBlockEntry>,
 	rawLines: ReadonlyArray<string>,
 	innerDepth: number,
+	outputLines?: ReadonlyArray<string>,
 ): BuiltVisualBlockSources {
 	const shifted: MappedBlockEntry[] = innerEntries.map((entry) => {
 		const range = entry.origRange;
@@ -243,6 +281,9 @@ export function buildBlockquoteChildSources(
 			node: entry.node,
 			origRange: {
 				end: range.end - bqRange.start,
+				...(range.outputStart !== undefined && range.outputEnd !== undefined
+					? { outputEnd: range.outputEnd, outputStart: range.outputStart }
+					: {}),
 				shared: range.shared,
 				start: range.start - bqRange.start,
 			},
@@ -252,5 +293,6 @@ export function buildBlockquoteChildSources(
 		shifted,
 		rawLines.slice(bqRange.start, bqRange.end),
 		innerDepth,
+		outputLines,
 	);
 }

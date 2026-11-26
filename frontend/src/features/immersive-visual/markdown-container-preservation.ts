@@ -259,7 +259,7 @@ export function dedentSwallowedBlockAtDepth(
 			if (
 				stripped.matched < quoteDepth &&
 				!sawBlank &&
-				!isCommonMarkBlankLine(line) &&
+				!isCommonMarkBlankLine(stripped.rest) &&
 				(nodeTypeName === "blockquote" || nodeTypeName === "heading")
 			) {
 				continue;
@@ -363,42 +363,28 @@ function createTopItemMatcher(listNode: ProseMirrorNode): TopItemMatcher {
 }
 
 /**
- * Collects the parsed `protected_block(math)` raws that precede `prevEffIdx`
- * inside its baseline `sharedGroup` (empty when `prevEffIdx` is not preceded
- * by display math in a shared group).
+ * Returns the exact PHP-prescanned lines of `baselineBlocks[prevEffIdx]` when
+ * it is a shared-group list preceded by an earlier member (e.g. display math)
+ * inside its `sharedGroup`, or `null` otherwise (meaning no leading display
+ * math precedes the list in baseline alignment).
  */
-export function precedingSharedGroupMathRaws(
+export function sharedGroupPrescannedListText(
 	baselineBlocks: ReadonlyArray<ParsedVisualBlockSource>,
 	prevEffIdx: number,
-): ReadonlyArray<string> {
-	if (prevEffIdx < 0) return [];
-	const group = baselineBlocks[prevEffIdx]?.sharedGroup;
-	if (!group || prevEffIdx <= group.startIndex) return [];
-	const raws: string[] = [];
-	for (let k = group.startIndex; k < prevEffIdx; k += 1) {
-		const member = baselineBlocks[k]?.node;
-		if (
-			member?.type.name === "protected_block" &&
-			member.attrs.kind === "math" &&
-			typeof member.attrs.rawMarkdown === "string" &&
-			member.attrs.rawMarkdown.length > 0
-		) {
-			raws.push(member.attrs.rawMarkdown);
-		}
-	}
-	return raws;
+): string | null {
+	if (prevEffIdx < 0) return null;
+	const block = baselineBlocks[prevEffIdx];
+	const group = block?.sharedGroup;
+	if (!group || prevEffIdx <= group.startIndex) return null;
+	return block.sharedListText ?? null;
 }
 
 /**
- * PHP `extract_math()` turns any unshielded display math into
- * `"\n\nTOKEN\n\n"`, which closes an open list, so display math never sits
- * inside `listNode`'s body. It can only precede `listNode` inside its
- * enclosing shared group (`$$a$$- item`, `-   item1 $$b$$- item2`,
- * `$$a$$-   item1 $$b$$- item2`, `$$\na\n$$- item`). When `precedingMathRaws`
- * is provided by the caller's baseline alignment, only those parsed display
- * math spans are trusted (empty = never run an isolated math scan); otherwise
- * direct callers fall back to slicing after the last display-math range whose
- * tail opens a top-level item of `listNode`.
+ * Fallback display-math prefix stripping for direct callers of
+ * `isListSwallowingFollowingBlock` that do not supply baseline alignment
+ * (`prevSharedListText === undefined`). Folds parsed multiline inline math
+ * spans before matching `expectedItems` so multiline `\(...\)` continuations
+ * never inflate the item count.
  */
 function stripLeadingDisplayMathPrefix(
 	text: string,
@@ -406,60 +392,10 @@ function stripLeadingDisplayMathPrefix(
 	matchTopItem: TopItemMatcher,
 	expectedItems: number,
 	blankLineFollows: boolean,
-	precedingMathRaws?: ReadonlyArray<string>,
+	multilineInlineMathSpans: ReadonlyArray<string>,
 ): string {
-	const quotePrefix = "> ".repeat(Math.max(depth, 0));
-	if (precedingMathRaws !== undefined) {
-		if (precedingMathRaws.length === 0) return text;
-		const lastMath = precedingMathRaws[precedingMathRaws.length - 1] ?? "";
-		if (lastMath.length === 0) return text;
-		const best: {
-			exact: { candidate: string; indent: number } | null;
-			fallback: { candidate: string; indent: number } | null;
-		} = { exact: null, fallback: null };
-		const consider = (tail: string): void => {
-			if (!matchTopItem(firstLine(tail), 0)) return;
-			const candidate = `${quotePrefix}${tail}`;
-			const scan = scanTrailingListItem(
-				candidate,
-				matchTopItem,
-				depth,
-				blankLineFollows,
-			);
-			const indent = scan.indent > 0 ? scan.indent : Number.POSITIVE_INFINITY;
-			if (scan.items === expectedItems) {
-				if (best.exact === null || indent < best.exact.indent) {
-					best.exact = { candidate, indent };
-				}
-				return;
-			}
-			if (best.fallback === null || indent < best.fallback.indent) {
-				best.fallback = { candidate, indent };
-			}
-		};
-		// Anchor earlier display-math blocks left-to-right, then evaluate every
-		// `lastMath` occurrence directly rather than trusting an isolated
-		// `scanPhpMarkdownMathRanges(text)` (which cross-block backticks outside
-		// `text` can invert, shielding the real `lastMath` while unshielding a
-		// duplicate inside inline code). Keeping the smallest positive trailing
-		// item indent prevents a duplicate `lastMath` from hiding swallow risk.
-		let minPos = 0;
-		for (let m = 0; m < precedingMathRaws.length - 1; m += 1) {
-			const raw = precedingMathRaws[m] ?? "";
-			const pos = text.indexOf(raw, minPos);
-			if (pos < 0) break;
-			minPos = pos + raw.length;
-		}
-		let searchAt = minPos;
-		while (searchAt + lastMath.length <= text.length) {
-			const pos = text.indexOf(lastMath, searchAt);
-			if (pos < 0) break;
-			consider(text.slice(pos + lastMath.length));
-			searchAt = pos + 1;
-		}
-		return best.exact?.candidate ?? best.fallback?.candidate ?? text;
-	}
 	if (!text.includes("$$") && !text.includes("\\[")) return text;
+	const quotePrefix = "> ".repeat(Math.max(depth, 0));
 	let fallback: string | null = null;
 	const ranges = scanPhpMarkdownMathRanges(text);
 	for (let i = ranges.length - 1; i >= 0; i -= 1) {
@@ -468,8 +404,12 @@ function stripLeadingDisplayMathPrefix(
 		const tail = text.slice(range.to);
 		if (!matchTopItem(firstLine(tail), 0)) continue;
 		const candidate = `${quotePrefix}${tail}`;
+		const scanTarget =
+			multilineInlineMathSpans.length > 0
+				? foldMultilineInlineMath(candidate, multilineInlineMathSpans)
+				: candidate;
 		if (
-			scanTrailingListItem(candidate, matchTopItem, depth, blankLineFollows)
+			scanTrailingListItem(scanTarget, matchTopItem, depth, blankLineFollows)
 				.items === expectedItems
 		) {
 			return candidate;
@@ -636,20 +576,32 @@ function trailingListItemContentIndent(
 	listNode: ProseMirrorNode,
 	depth: number,
 	blankLineFollows: boolean,
-	precedingMathRaws?: ReadonlyArray<string>,
+	prevSharedListText?: string | null,
 ): number {
 	const matchTopItem = createTopItemMatcher(listNode);
-	const text = stripLeadingDisplayMathPrefix(
-		listEmitted,
-		depth,
-		matchTopItem,
-		listNode.childCount,
-		blankLineFollows,
-		precedingMathRaws,
-	);
+	if (typeof prevSharedListText === "string") {
+		const scan = scanTrailingListItem(
+			prevSharedListText,
+			matchTopItem,
+			depth,
+			blankLineFollows,
+		);
+		return scan.indent > 0 ? scan.indent : 0;
+	}
+	const spans = collectMultilineInlineMath(listNode);
+	const text =
+		prevSharedListText === null
+			? listEmitted
+			: stripLeadingDisplayMathPrefix(
+					listEmitted,
+					depth,
+					matchTopItem,
+					listNode.childCount,
+					blankLineFollows,
+					spans,
+				);
 	const raw = scanTrailingListItem(text, matchTopItem, depth, blankLineFollows);
 	let indent = raw.indent;
-	const spans = collectMultilineInlineMath(listNode);
 	const folded = spans.length > 0 ? foldMultilineInlineMath(text, spans) : text;
 	if (folded !== text) {
 		const scan = scanTrailingListItem(
@@ -686,7 +638,7 @@ export function isListSwallowingFollowingBlock(
 	depth: number,
 	prevWasVerbatimAdjacent: boolean,
 	blankLineBetween: boolean,
-	prevPrecedingMathRaws?: ReadonlyArray<string>,
+	prevSharedListText?: string | null,
 ): boolean {
 	if (!prevNode || prevWasVerbatimAdjacent || !isNestedList(prevNode)) {
 		return false;
@@ -700,7 +652,7 @@ export function isListSwallowingFollowingBlock(
 		prevNode,
 		depth,
 		blankLineBetween,
-		prevPrecedingMathRaws,
+		prevSharedListText,
 	);
 	return trailingIndent > 0 && childIndent >= trailingIndent;
 }
@@ -762,7 +714,7 @@ export function checkRawPreservationRisks(
 	prevInner: string,
 	prevEmitted: () => string,
 	prevWasVerbatimAdjacent: boolean,
-	prevPrecedingMathRaws?: ReadonlyArray<string>,
+	prevSharedListText?: string | null,
 ): Readonly<{ indentedRisk: boolean; swallowRisk: boolean }> {
 	const leadIndent = leadingIndentAtDepth(rawEmitted, depth);
 	const indentedRisk =
@@ -787,7 +739,7 @@ export function checkRawPreservationRisks(
 			depth,
 			prevWasVerbatimAdjacent,
 			sep !== "\n",
-			prevPrecedingMathRaws,
+			prevSharedListText,
 		);
 	return { indentedRisk, swallowRisk };
 }

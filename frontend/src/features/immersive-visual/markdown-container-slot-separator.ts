@@ -3,7 +3,7 @@ import {
 	endsWithBlankBlockquoteLine,
 	isListSwallowingFollowingBlock,
 	leadingIndentAtDepth,
-	precedingSharedGroupMathRaws,
+	sharedGroupPrescannedListText,
 	wouldBeLazilyAbsorbedByPrevious,
 } from "./markdown-container-preservation";
 import {
@@ -149,7 +149,7 @@ export function resolveContainerSlotJoin(
 			input.depth,
 			input.prevWasVerbatimAdjacent,
 			false,
-			precedingSharedGroupMathRaws(input.baselineBlocks, input.prevEffIdx),
+			sharedGroupPrescannedListText(input.baselineBlocks, input.prevEffIdx),
 		) ||
 		shouldEscalateLazyContinuation(input, prevNode);
 	return {

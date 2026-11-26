@@ -6,6 +6,7 @@ import {
   INLINE_TEXT_MARKER_CLONES,
   TASK_LIST_CHECKBOX_PSEUDO_CLONES,
   TASK_LIST_CHECKBOX_SVG_PAINT,
+  type WechatTreePredicateCache,
   isTaskListCheckbox
 } from './wechat-clone-metadata';
 import {
@@ -84,7 +85,8 @@ export {
 export function inlineTextMarkerEligibility(
   source: Element,
   sourceComputed: CSSStyleDeclaration,
-  pseudoComputed: CSSStyleDeclaration
+  pseudoComputed: CSSStyleDeclaration,
+  predicates?: WechatTreePredicateCache
 ): boolean {
   if ('LI' !== source.tagName || source.closest('.task-list, .task-list-item')) return false;
   const content = pseudoContent(pseudoComputed.getPropertyValue('content'));
@@ -121,7 +123,7 @@ export function inlineTextMarkerEligibility(
       'none' === sourceFloat &&
       'none' === sourceTransform &&
       'none' === pseudoTransform &&
-      !supportsSpecialLayout(source) &&
+      !(predicates ? predicates.supportsSpecialLayout(source) : supportsSpecialLayout(source)) &&
       !hasImageOrMask(pseudoComputed) &&
       !hasImageOrMask(sourceComputed) &&
       !hasCounter
@@ -298,17 +300,23 @@ export async function styleDeclarations(
   yieldToBrowser: SerializationYield | null = null,
   signal?: AbortSignal,
   dimensionSemantics?: WechatDimensionSemanticsContext | null,
-  pseudoElementName?: '::before' | '::after'
+  pseudoElementName?: '::before' | '::after',
+  predicates?: WechatTreePredicateCache
 ): Promise<string[]> {
-  const properties = portableStyleProperties(source, pseudoElement, root);
   const context = createStyleDeclarationContext(
     source,
     computed,
     pseudoElement,
     root,
     dimensionSemantics,
-    pseudoElementName
+    pseudoElementName,
+    predicates
   );
+  const properties = portableStyleProperties(source, pseudoElement, root, {
+    specialLayout: context.specialLayout,
+    svg: context.svg,
+    taskCheckbox: context.taskCheckbox
+  });
   const declarations: string[] = [];
   for (const property of properties) {
     throwIfBackgroundPreparationAborted(signal);
@@ -331,17 +339,23 @@ export function styleDeclarationsSynchronously(
   root: boolean,
   runtime: BrowserWechatClipboardRuntime,
   dimensionSemantics?: WechatDimensionSemanticsContext | null,
-  pseudoElementName?: '::before' | '::after'
+  pseudoElementName?: '::before' | '::after',
+  predicates?: WechatTreePredicateCache
 ): string[] | null {
-  const properties = portableStyleProperties(source, pseudoElement, root);
   const context = createStyleDeclarationContext(
     source,
     computed,
     pseudoElement,
     root,
     dimensionSemantics,
-    pseudoElementName
+    pseudoElementName,
+    predicates
   );
+  const properties = portableStyleProperties(source, pseudoElement, root, {
+    specialLayout: context.specialLayout,
+    svg: context.svg,
+    taskCheckbox: context.taskCheckbox
+  });
   const declarations: string[] = [];
   for (const property of properties) {
     const value = context.style.getPropertyValue(property);
@@ -433,7 +447,8 @@ export function createPseudoMarker(
   textContent: string,
   svgContent: SVGSVGElement | null,
   declarations: string[],
-  headingFlowCollector?: HeadingEmptyPseudoFlowCollector
+  headingFlowCollector?: HeadingEmptyPseudoFlowCollector,
+  predicates?: WechatTreePredicateCache
 ): Element | null {
   if (!textContent && !declarations.length && !svgContent) return null;
   const imageLayers = dataImageLayersFromDeclarations(declarations);
@@ -493,7 +508,7 @@ export function createPseudoMarker(
     appendDeclarations(svgContent, ['display:block', 'width:100%', 'height:100%'], true);
     marker.appendChild(svgContent);
   }
-  if ('::before' === pseudo && inlineTextMarkerEligibility(source, getComputedStyle(source), computed)) {
+  if ('::before' === pseudo && inlineTextMarkerEligibility(source, getComputedStyle(source), computed, predicates)) {
     INLINE_TEXT_MARKER_CLONES.add(marker);
   }
   if (isCodeFramePseudo(source, pseudo, computed, textContent)) {
@@ -561,7 +576,8 @@ export async function addPseudoElement(
   signal?: AbortSignal,
   dimensionSemantics?: WechatDimensionSemanticsContext | null,
   headingFlowCollector?: HeadingEmptyPseudoFlowCollector,
-  quoteFlowCollector?: QuotePseudoFlowCollector
+  quoteFlowCollector?: QuotePseudoFlowCollector,
+  predicates?: WechatTreePredicateCache
 ): Promise<void> {
   throwIfBackgroundPreparationAborted(signal);
   const candidate = readPseudoCandidate(source, clone, pseudo, getComputedStyle, root, dimensionSemantics);
@@ -589,7 +605,8 @@ export async function addPseudoElement(
     yieldToBrowser,
     signal,
     dimensionSemantics,
-    pseudo
+    pseudo,
+    predicates
   );
   throwIfBackgroundPreparationAborted(signal);
   const marker = createPseudoMarker(
@@ -602,7 +619,8 @@ export async function addPseudoElement(
     textContent,
     svgContent,
     declarations,
-    headingFlowCollector
+    headingFlowCollector,
+    predicates
   );
   if (!marker) return;
   throwIfBackgroundPreparationAborted(signal);
@@ -619,7 +637,8 @@ export function addPseudoElementSynchronously(
   runtime: BrowserWechatClipboardRuntime,
   dimensionSemantics?: WechatDimensionSemanticsContext | null,
   headingFlowCollector?: HeadingEmptyPseudoFlowCollector,
-  quoteFlowCollector?: QuotePseudoFlowCollector
+  quoteFlowCollector?: QuotePseudoFlowCollector,
+  predicates?: WechatTreePredicateCache
 ): boolean {
   const candidate = readPseudoCandidate(source, clone, pseudo, getComputedStyle, root, dimensionSemantics);
   if (candidate.skip || candidate.hiddenSvgPaint) return true;
@@ -638,7 +657,16 @@ export function addPseudoElementSynchronously(
     throw new Error('wechat-task-checkbox-svg-paint-unavailable');
   }
   registerPseudoPaintExpectation(source, clone, pseudo, computed, svgContent, textContent);
-  const declarations = styleDeclarationsSynchronously(source, computed, true, root, runtime, dimensionSemantics, pseudo);
+  const declarations = styleDeclarationsSynchronously(
+    source,
+    computed,
+    true,
+    root,
+    runtime,
+    dimensionSemantics,
+    pseudo,
+    predicates
+  );
   if (null === declarations) return false;
   const marker = createPseudoMarker(
     source,
@@ -650,7 +678,8 @@ export function addPseudoElementSynchronously(
     textContent,
     svgContent,
     declarations,
-    headingFlowCollector
+    headingFlowCollector,
+    predicates
   );
   if (!marker) return true;
   insertPseudoMarker(clone, marker, pseudo);

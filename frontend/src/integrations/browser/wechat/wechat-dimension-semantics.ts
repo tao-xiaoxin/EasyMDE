@@ -1,10 +1,11 @@
-import { ROOT_EXPORT_STYLE_PROPERTIES, WECHAT_EXPORT_STYLE_CONTEXT_ATTRIBUTE } from './wechat-style-policy';
+import { ROOT_EXPORT_STYLE_PROPERTIES, WECHAT_EXPORT_STYLE_CONTEXT_ATTRIBUTE } from './wechat-style-policy-catalog';
 import type { BrowserWechatClipboardRuntime } from './wechat-clipboard-runtime';
 
 export type WechatDimensionSemanticsContext = Readonly<{
   cleanup: () => void;
   getComputedStyle: (source: Element, pseudoElement?: string) => CSSStyleDeclaration | null;
   getFormattingOwnerDisplay: (source: Element) => string | null;
+  getRefreshGeneration?: () => number;
   getRootComputedStyle: (source: Element, pseudoElement?: string) => CSSStyleDeclaration | null;
   getSourceComputedStyle: (source: Element) => CSSStyleDeclaration;
   rasterizesVisualRoots: boolean;
@@ -133,7 +134,9 @@ export function createDimensionSemanticsContext(
   const rawElements = contextElements(rawRoot);
   const rawElementByLayout = new WeakMap<Element, Element>();
   let formattingOwnerDisplayCache = new WeakMap<Element, string>();
+  let refreshGeneration = 0;
   const refresh = (): void => {
+    refreshGeneration += 1;
     formattingOwnerDisplayCache = new WeakMap<Element, string>();
     if (!rawMirror) return;
     rawMirror.pairs.forEach(({ mirror, source }) => {
@@ -168,12 +171,16 @@ export function createDimensionSemanticsContext(
     return null;
   };
   return {
-    cleanup: () => rawMirror?.cleanup(),
+    cleanup: () => {
+      refreshGeneration += 1;
+      rawMirror?.cleanup();
+    },
     getComputedStyle: (source, pseudoElement) => {
       const rawElement = rawElementByLayout.get(source);
       return rawElement ? runtime.getComputedStyle(rawElement, pseudoElement) : null;
     },
     getFormattingOwnerDisplay,
+    getRefreshGeneration: () => refreshGeneration,
     getSourceComputedStyle: (source) => runtime.getComputedStyle(source),
     rasterizesVisualRoots,
     getRootComputedStyle: (source, pseudoElement) => {

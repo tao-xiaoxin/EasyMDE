@@ -1,17 +1,30 @@
 import type { WechatVisualRasterizationKind } from '../../../contracts/ports/wechat-visual-rasterization-port';
+import {
+  SVG_DEFINITION_TAGS,
+  type WechatTreePredicateCache,
+  createWechatTreePredicateCache,
+  hasVisualRasterizationAncestor,
+  isKaTeXVisualNode,
+  isMermaidForeignObject,
+  isMermaidSvgRoot,
+  isSvgDefinition,
+  isSvgElement,
+  visualRasterizationKind
+} from './wechat-tree-predicates';
 
 export { isTaskListCheckbox } from './wechat-copy-preconditions';
-
-export const SVG_DEFINITION_TAGS = new Set([
-  'clippath',
-  'filter',
-  'lineargradient',
-  'marker',
-  'mask',
-  'pattern',
-  'radialgradient',
-  'symbol'
-]);
+export {
+  SVG_DEFINITION_TAGS,
+  type WechatTreePredicateCache,
+  createWechatTreePredicateCache,
+  hasVisualRasterizationAncestor,
+  isKaTeXVisualNode,
+  isMermaidForeignObject,
+  isMermaidSvgRoot,
+  isSvgDefinition,
+  isSvgElement,
+  visualRasterizationKind
+};
 
 export const KATEX_VISUAL_ROOTS = new WeakSet<Element>();
 export const KATEX_VISUAL_NODES = new WeakSet<Element>();
@@ -166,10 +179,17 @@ function sourceAutoUnbounded(source: Element): boolean {
 function absoluteContainingBlockDependsOnSource(
   source: Element,
   getComputedStyle: (element: Element) => CSSStyleDeclaration,
-  skipRasterizedDescendants: boolean
+  skipRasterizedDescendants: boolean,
+  predicates?: WechatTreePredicateCache
 ): boolean {
   return Array.from(source.querySelectorAll('*')).some((descendant) => {
-    if (skipRasterizedDescendants && hasVisualRasterizationAncestor(descendant)) return false;
+    if (
+      skipRasterizedDescendants &&
+      (predicates
+        ? predicates.hasVisualRasterizationAncestor(descendant)
+        : hasVisualRasterizationAncestor(descendant))
+    )
+      return false;
     if (!['absolute', 'fixed'].includes(styleValue(getComputedStyle(descendant), 'position'))) return false;
     let ancestor = descendant.parentElement;
     while (ancestor && ancestor !== source) {
@@ -234,13 +254,15 @@ export function mathOuterAllocationDecision(
   computed: CSSStyleDeclaration,
   getComputedStyle: (element: Element) => CSSStyleDeclaration,
   formattingOwnerDisplay: string | null,
-  skipRasterizedDescendants = false
+  skipRasterizedDescendants = false,
+  predicates?: WechatTreePredicateCache
 ): WechatMathOuterAllocationDecision {
   const authoredOuterWidthNeutral = sourceAuthoredOuterWidthIsNeutral(source);
   const absoluteContainingBlockDependent = absoluteContainingBlockDependsOnSource(
     source,
     getComputedStyle,
-    skipRasterizedDescendants
+    skipRasterizedDescendants,
+    predicates
   );
   const typedDimensions = sourceTypedDimensions(source);
   const computedProperties = MATH_OUTER_ALLOCATION_COMPUTED_PROPERTIES.map(
@@ -263,7 +285,8 @@ export function registerMathCloneRole(
   clone: Element,
   computed: CSSStyleDeclaration,
   getComputedStyle: (element: Element) => CSSStyleDeclaration,
-  formattingOwnerDisplay: string | null = null
+  formattingOwnerDisplay: string | null = null,
+  predicates?: WechatTreePredicateCache
 ): void {
   // `computed` is the live source style used for admission. Its reader must
   // resolve nested descendants in the same source context; the raw mirror is a
@@ -272,7 +295,7 @@ export function registerMathCloneRole(
   if (!role) return;
   const outerAllocationDecision =
     'html' === role
-      ? mathOuterAllocationDecision(source, computed, getComputedStyle, formattingOwnerDisplay)
+      ? mathOuterAllocationDecision(source, computed, getComputedStyle, formattingOwnerDisplay, false, predicates)
       : null;
   const canReleaseOuterAllocation = Boolean(
     outerAllocationDecision?.authoredOuterWidthNeutral &&
@@ -359,60 +382,16 @@ export const CODE_FRAME_PSEUDO_CLONES = new WeakSet<Element>();
 export const CODE_FRAME_HEADER_CLONES = new WeakSet<Element>();
 export const INLINE_TEXT_MARKER_CLONES = new WeakSet<Element>();
 
-function hasAncestorWithClass(source: Element, className: string): boolean {
-  let current: Element | null = source;
-  while (current) {
-    if (current.hasAttribute('class') && current.classList.contains(className)) return true;
-    current = current.parentElement;
-  }
-  return false;
-}
-
-function hasAncestorWithLocalName(source: Element, localName: string): boolean {
-  let current: Element | null = source;
-  while (current) {
-    if (localName === current.localName.toLowerCase()) return true;
-    current = current.parentElement;
-  }
-  return false;
-}
-
-export function isKaTeXVisualNode(source: Element): boolean {
-  // KaTeX's MathML and visual trees share a `.katex` ancestor. Only the
-  // visual root and its descendants need the non-wrapping contract; applying
-  // it to `.katex-mathml` would preserve the hidden fallback we remove later.
-  return (source.hasAttribute('class') && source.classList.contains('katex')) || hasAncestorWithClass(source, 'katex-html');
-}
-
-export function visualRasterizationKind(source: Element): WechatVisualRasterizationKind | null {
-  if (!source.hasAttribute('class')) return null;
-  const classList = source.classList;
-  if (classList.contains('easymde-mermaid') && source.querySelector('svg')) {
-    return 'mermaid';
-  }
-  if (
-    (classList.contains('easymde-math') ||
-      classList.contains('easymde-math-block') ||
-      classList.contains('easymde-math-inline')) &&
-    (classList.contains('katex') || Boolean(source.querySelector('.katex')))
-  ) {
-    return 'math';
-  }
-  return null;
-}
-
-export function hasVisualRasterizationAncestor(source: Element): boolean {
-  let ancestor = source.parentElement;
-  while (ancestor) {
-    if (null !== visualRasterizationKind(ancestor)) return true;
-    ancestor = ancestor.parentElement;
-  }
-  return false;
-}
-
-export function markVisualRasterizationClone(source: Element, clone: Element): boolean {
-  const kind = visualRasterizationKind(source);
-  if (!kind || hasVisualRasterizationAncestor(source)) return false;
+export function markVisualRasterizationClone(
+  source: Element,
+  clone: Element,
+  predicates?: WechatTreePredicateCache
+): boolean {
+  const kind = predicates ? predicates.visualRasterizationKind(source) : visualRasterizationKind(source);
+  const hasAncestor = predicates
+    ? predicates.hasVisualRasterizationAncestor(source)
+    : hasVisualRasterizationAncestor(source);
+  if (!kind || hasAncestor) return false;
   WECHAT_PNG_VISUAL_CLONES.set(clone, { kind, source });
   return true;
 }
@@ -433,21 +412,4 @@ export function isBlockMathClone(element: Element): boolean {
     current = current.parentElement;
   }
   return false;
-}
-
-export function isSvgElement(source: Element): boolean {
-  return hasAncestorWithLocalName(source, 'svg');
-}
-
-export function isSvgDefinition(source: Element): boolean {
-  const localName = source.localName.toLowerCase();
-  return 'defs' === localName || SVG_DEFINITION_TAGS.has(localName) || hasAncestorWithLocalName(source, 'defs');
-}
-
-export function isMermaidSvgRoot(source: Element): boolean {
-  return 'svg' === source.localName.toLowerCase() && hasAncestorWithClass(source, 'easymde-mermaid');
-}
-
-export function isMermaidForeignObject(source: Element): boolean {
-  return 'foreignobject' === source.localName.toLowerCase() && hasAncestorWithClass(source, 'easymde-mermaid');
 }

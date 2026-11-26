@@ -18,42 +18,24 @@ import {
 	CONTENT_BOX_PIXEL_TOKEN,
 	CONTENT_BOX_REPLACED_ELEMENTS,
 } from "./wechat-style-policy-catalog";
+import {
+	hasSpecialLayoutAncestor,
+	isSpecialLayoutElement,
+	supportsSpecialLayout,
+	type WechatTreePredicateCache,
+} from "./wechat-tree-predicates";
+
+export {
+	hasSpecialLayoutAncestor,
+	isSpecialLayoutElement,
+	supportsSpecialLayout,
+};
 
 export function finitePixelValue(value: string): number | null {
 	const match = /^(-?\d+(?:\.\d+)?)px$/.exec(value.trim());
 	if (!match) return null;
 	const parsed = Number(match[1]);
 	return Number.isFinite(parsed) ? parsed : null;
-}
-
-export function isSpecialLayoutElement(element: Element): boolean {
-	const localName = element.localName.toLowerCase();
-	if ("svg" === localName || "math" === localName) return true;
-	if (!element.hasAttribute("class")) return false;
-	const classList = element.classList;
-	return (
-		classList.contains("katex") ||
-		classList.contains("easymde-math-block") ||
-		classList.contains("easymde-math-inline")
-	);
-}
-
-export function hasSpecialLayoutAncestor(source: Element): boolean {
-	let current = source.parentElement;
-	while (current) {
-		if (isSpecialLayoutElement(current)) return true;
-		current = current.parentElement;
-	}
-	return false;
-}
-
-export function supportsSpecialLayout(source: Element): boolean {
-	let current: Element | null = source;
-	while (current) {
-		if (isSpecialLayoutElement(current)) return true;
-		current = current.parentElement;
-	}
-	return false;
 }
 
 export function cssomProjectedDimensionValue(
@@ -126,6 +108,7 @@ export function isContentBoxPercentageProjectionCandidate(
 	dimensionSemantics: WechatDimensionSemanticsContext | null,
 	pseudoElement: boolean,
 	root: boolean,
+	predicates?: WechatTreePredicateCache,
 ): boolean {
 	if (root || pseudoElement || !semanticComputed) return false;
 	const documentNamespace = source.ownerDocument.documentElement?.namespaceURI;
@@ -195,9 +178,13 @@ export function isContentBoxPercentageProjectionCandidate(
 	if (!hasPositivePercentageEdge) return false;
 	if (
 		source.closest("svg, math, pre, code, table") ||
-		visualRasterizationKind(source) ||
-		hasVisualRasterizationAncestor(source) ||
-		isKaTeXVisualNode(source) ||
+		(predicates
+			? predicates.visualRasterizationKind(source)
+			: visualRasterizationKind(source)) ||
+		(predicates
+			? predicates.hasVisualRasterizationAncestor(source)
+			: hasVisualRasterizationAncestor(source)) ||
+		(predicates ? predicates.isKaTeXVisualNode(source) : isKaTeXVisualNode(source)) ||
 		hasExcludedContentBoxParent(source, dimensionSemantics)
 	)
 		return false;

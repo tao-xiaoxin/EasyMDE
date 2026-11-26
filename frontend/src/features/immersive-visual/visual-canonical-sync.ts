@@ -14,6 +14,7 @@ import type {
 	VisualToolbarCommandResult,
 } from "../../contracts/visual-editor";
 import type { EditorDocumentSession } from "../document-source/editor-document-session";
+import { nodesSemanticallyEqual } from "./markdown-node-alignment";
 import { parseMarkdownWithBlockSources } from "./markdown-parser";
 import {
 	createMarkdownRoundTripGuard,
@@ -34,15 +35,15 @@ import {
 } from "./visual-source-mapping";
 
 export const CANONICAL_SYNC_TRANSACTION_META = "easymdeCanonicalSync";
-export const VISUAL_SYNC_FAILED_CODE = "visual-editor-sync-failed";
+const VISUAL_SYNC_FAILED_CODE = "visual-editor-sync-failed";
 
-export type VisualCommitResult =
+type VisualCommitResult =
 	| Readonly<{ ok: true; revision: number }>
 	| Readonly<{ code: typeof VISUAL_SYNC_FAILED_CODE; ok: false }>;
 
-export type VisualHistoryDirection = "redo" | "undo";
+type VisualHistoryDirection = "redo" | "undo";
 
-export type VisualCanonicalSyncOptions = Readonly<{
+type VisualCanonicalSyncOptions = Readonly<{
 	documentSession: EditorDocumentSession;
 	isCompositionBusy: () => boolean;
 	onCanonicalChange: (markdown: string) => void;
@@ -316,16 +317,17 @@ export function createVisualCanonicalSync(
 			while (
 				prefix < oldCount &&
 				prefix < newCount &&
-				current.child(prefix).eq(nextDoc.child(prefix))
+				nodesSemanticallyEqual(current.child(prefix), nextDoc.child(prefix))
 			)
 				prefix += 1;
 			let suffix = 0;
 			while (
 				suffix < oldCount - prefix &&
 				suffix < newCount - prefix &&
-				current
-					.child(oldCount - 1 - suffix)
-					.eq(nextDoc.child(newCount - 1 - suffix))
+				nodesSemanticallyEqual(
+					current.child(oldCount - 1 - suffix),
+					nextDoc.child(newCount - 1 - suffix),
+				)
 			) {
 				suffix += 1;
 			}
@@ -466,7 +468,8 @@ export function createVisualCanonicalSync(
 	): VisualCommitResult => {
 		if (disposed) return { code: VISUAL_SYNC_FAILED_CODE, ok: false };
 		// Zero-write-on-read invariant: untouched documents never write back.
-		if (nextState.doc === acceptedDoc || nextState.doc.eq(acceptedDoc)) {
+		// Non-semantic link `boundaryKey` shifts are not edits.
+		if (nodesSemanticallyEqual(nextState.doc, acceptedDoc)) {
 			return { ok: true, revision: acceptedRevision };
 		}
 		try {

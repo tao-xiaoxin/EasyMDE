@@ -3,50 +3,45 @@ import {
 	alignContainerChildren,
 	checkRawPreservationRisks,
 	createTightSharedGroupChecker,
-	endsWithBlankBlockquoteLine,
 	isListSwallowingFollowingBlock,
 	serializeListPreservingItems,
 	sharedGroupHasInvalidatedRef,
 	stripAtDepth,
 	tryStripAllLinesAtDepth,
-	wouldBeLazilyAbsorbedByPrevious,
 } from "./markdown-container-preservation";
+import {
+	blankSeparatorAtDepth,
+	resolveContainerSlotJoin,
+} from "./markdown-container-slot-separator";
 import {
 	type BlockSerializer,
 	createMathNewlineSentinelForNode,
 	isNestedList,
-	isTightPartialTitleFollower,
 	joinSerializedBlocks,
 	LEADING_FOUR_COLUMN_INDENT,
-	nodeCanLazilyContinue,
-	refDefContinuationMode,
 	restoreMathNewlineSentinel,
 } from "./markdown-list-serialization";
 import { nodesSemanticallyEqual } from "./markdown-node-alignment";
 import {
 	type BuiltVisualBlockSources,
-	inspectReferenceDefinitionBlock,
 	type ParsedVisualBlockSource,
 	type ParsedVisualDocument,
 	parseMarkdownWithBlockSources,
 	type ReferenceImageOrigin,
 	type ReferenceLinkOrigin,
-	wouldReferenceDefinitionAbsorbFollowingBlock,
 } from "./markdown-parser";
 import {
 	buildReferencePreserveResolver,
 	computeIntactRefDefLabels,
 	createInvalidatedRefChecker,
-	type PreservationPlan,
 	type ReferencePreserveResolver,
 } from "./markdown-refdef-liveness";
+import type { PreservationPlan } from "./markdown-refdef-liveness-state";
 import { dedentBlockToLineZero } from "./markdown-reference-preservation";
 
 export {
-	type BlockSerializer,
 	createMathNewlineSentinelForNode,
 	joinSerializedBlocks,
-	refDefContinuationMode,
 	restoreMathNewlineSentinel,
 	serializeList,
 } from "./markdown-list-serialization";
@@ -268,8 +263,7 @@ function serializeContainerPreservingChildren(
 		ctx.plan.containers.get(container) ??
 		alignContainerChildren(container, baselineBlocks);
 	const effectiveOrigIndex = new Array<number>(newLen).fill(-1);
-	const defaultBlankSep =
-		depth <= 0 ? "\n\n" : `\n${"> ".repeat(depth - 1)}>\n`;
+	const defaultBlankSep = blankSeparatorAtDepth(depth);
 
 	const parts: string[] = [];
 	if (matchedOrigIndex[0] === 0 && source.leadingPrefix.length > 0) {
@@ -382,68 +376,23 @@ function serializeContainerPreservingChildren(
 			innerText: string,
 			effIdx: number,
 			groupSep?: string,
-		): Readonly<{
-			refDefMode: ReturnType<typeof refDefContinuationMode>;
-			separator: string;
-		}> => {
-			const mode = prevNode
-				? refDefContinuationMode(prevNode, child, innerText)
-				: "none";
-			if (!prevNode) return { refDefMode: mode, separator: "" };
-			const tightPartialTitle =
-				mode === "none" &&
-				isTightPartialTitleFollower(
-					prevNode,
-					child,
-					innerText,
+		): ReturnType<typeof resolveContainerSlotJoin> =>
+			resolveContainerSlotJoin({
+				baselineBlocks,
+				child,
+				defaultBlankSep,
+				effIdx,
+				groupSep,
+				innerText,
+				isPartialTitleRefDef:
 					ctx.resolveReferences?.isPartialTitleRefDef ?? null,
-				);
-			const prevEffIdx = effectiveOrigIndex[idx - 1] ?? -1;
-			const inheritedSep =
-				effIdx >= 0 && prevEffIdx >= 0 && effIdx === prevEffIdx + 1
-					? (groupSep ?? baselineBlocks[effIdx]?.separatorBefore)
-					: undefined;
-			let sep =
-				mode !== "none" || tightPartialTitle
-					? "\n"
-					: (inheritedSep ?? defaultBlankSep);
-			if (mode === "none" && !tightPartialTitle && sep === "\n") {
-				const refDefAbsorbRisk =
-					serialized === null &&
-					prevNode.type.name === "protected_block" &&
-					prevNode.attrs.kind === "raw" &&
-					typeof prevNode.attrs.rawMarkdown === "string" &&
-					(() => {
-						const info = inspectReferenceDefinitionBlock(
-							prevNode.attrs.rawMarkdown,
-						);
-						return (
-							info.isRefDef &&
-							!info.lastHasTitle &&
-							wouldReferenceDefinitionAbsorbFollowingBlock(
-								info.lastRaw,
-								innerText,
-							)
-						);
-					})();
-				if (
-					refDefAbsorbRisk ||
-					isListSwallowingFollowingBlock(
-						prevNode,
-						prevInnerText,
-						innerText,
-						prevWasMatchedAdjacent,
-					) ||
-					((matchedOrigIndex[idx - 1] ?? -1) < 0 &&
-						nodeCanLazilyContinue(prevNode) &&
-						!endsWithBlankBlockquoteLine(prevInnerText) &&
-						wouldBeLazilyAbsorbedByPrevious(child, innerText))
-				) {
-					sep = defaultBlankSep;
-				}
-			}
-			return { refDefMode: mode, separator: sep };
-		};
+				prevEffIdx: idx > 0 ? (effectiveOrigIndex[idx - 1] ?? -1) : -1,
+				prevInnerText: () => prevInnerText,
+				prevMatchedIdx: prevMatched,
+				prevNode,
+				prevWasMatchedAdjacent,
+				serializedIsNull: serialized === null,
+			});
 
 		let candidateEmitted =
 			serialized !== null ? serialized : ensureGenerated().emitted;

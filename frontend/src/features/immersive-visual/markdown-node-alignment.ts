@@ -7,10 +7,7 @@ import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
  * positional pairing of equal-length unmatched gaps (in-place edits).
  */
 
-export type NodeMatcher = (
-	next: ProseMirrorNode,
-	orig: ProseMirrorNode,
-) => boolean;
+type NodeMatcher = (next: ProseMirrorNode, orig: ProseMirrorNode) => boolean;
 
 /** Exact LCS is used for gaps up to this many DP cells. */
 const DP_CELL_BUDGET = 40000;

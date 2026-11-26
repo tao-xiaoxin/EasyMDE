@@ -557,7 +557,7 @@ function verifiedListItemSlices(
 	return result;
 }
 
-export function listAttrsCompatible(
+function listAttrsCompatible(
 	next: ProseMirrorNode,
 	orig: ProseMirrorNode,
 ): boolean {
@@ -667,7 +667,7 @@ export type PreparedListPreservation = Readonly<{
 	slices: ListItemSlices;
 }>;
 
-export type AuthoritativeListResolution = Readonly<{
+type AuthoritativeListResolution = Readonly<{
 	itemReusable: boolean[];
 	needsFirstOrderedValidation: boolean;
 	output: string | null;

@@ -162,7 +162,7 @@ function topLevelElements(document: Document): ReadonlyArray<Element> {
 function anchorsIn(root: Element): ReadonlyArray<HTMLAnchorElement> {
 	const anchors: HTMLAnchorElement[] = [];
 	if (root instanceof HTMLAnchorElement) anchors.push(root);
-	anchors.push(...Array.from(root.querySelectorAll<HTMLAnchorElement>("a")));
+	for (const anchor of root.querySelectorAll<HTMLAnchorElement>("a")) anchors.push(anchor);
 	return anchors;
 }
 

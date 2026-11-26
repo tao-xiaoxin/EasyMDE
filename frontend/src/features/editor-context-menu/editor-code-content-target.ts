@@ -14,7 +14,7 @@ import {
 	originalOffsetAt,
 	projectNewlines,
 	type NewlineProjection,
-} from "./editor-markdown-source-projection";
+} from "../../shared/markdown/markdown-source-projection";
 
 export type EditorCodeContentSelection = Readonly<{
 	end: number;

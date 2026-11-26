@@ -4,6 +4,7 @@ import type { EditorClipboardPort } from "../../contracts/ports/editor-clipboard
 import type { EditorImagePixelsPort } from "../../contracts/ports/editor-image-pixels-port";
 import type { RemoteImageUploadMode } from "../../contracts/bootstrap/image-upload-bootstrap";
 import type { PreviewResponse } from "../../contracts/ports/preview-request";
+import type { ReferenceLabelCaseFoldProfile } from "../../contracts/ports/editor-block-index-port";
 import type { RemoteImageImportPort } from "../../contracts/ports/remote-image-import-port";
 import type { GeneratedContentExportSession } from "../generated-content-export/generated-content-export-session";
 import type {
@@ -27,7 +28,10 @@ import {
   type EditorTextEdit
 } from "./editor-context-menu-text-edit";
 import { isEditorContextCurrent } from "./editor-context-menu-rules";
-import type { VisualCanonicalChangeRequest } from "../../contracts/visual-editor";
+import type {
+  VisualCanonicalChangeRequest,
+  VisualInsertParagraphRequest
+} from "../../contracts/visual-editor";
 import { runCodeContextMenuAction } from "./editor-context-menu-code-actions";
 import { runGeneratedContextMenuAction } from "./editor-context-menu-generated-actions";
 import { runImageContextMenuAction } from "./editor-context-menu-image-actions";
@@ -73,6 +77,10 @@ export type EditorContextMenuActionVisual = Readonly<{
   executeCommand: (
     command: ToolbarCommand,
     options: Readonly<{ requestPreviewTransfer: boolean }>
+  ) => "failed" | "handled" | "unavailable";
+  insertParagraphRelative: (
+    captured: EditorContextSnapshot,
+    request: Omit<VisualInsertParagraphRequest, "expected">
   ) => "failed" | "handled" | "unavailable";
   isEditable: () => boolean;
 }>;
@@ -127,6 +135,7 @@ export type EditorContextMenuActionCapabilities = Readonly<{
       signal: AbortSignal
     ) => Promise<EditorContextMenuCodeCandidatePreview>;
   }>;
+  referenceLabelCaseFoldProfile?: ReferenceLabelCaseFoldProfile;
   report: (code: string, fallback?: string) => void;
   simplifiedFormattingParser?: SimplifiedFormattingDomParser;
   toolbar: Readonly<{

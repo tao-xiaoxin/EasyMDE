@@ -1,3 +1,5 @@
+import { markdownLanguage } from "@codemirror/lang-markdown";
+import MarkdownIt from "markdown-it";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -445,7 +447,7 @@ describe("editor context menu rules", () => {
 
 		expect(edit).not.toBeNull();
 		expect(edit?.value).toBe(
-			"before\r\n\r\n```js\r\ncode\r\n```\r\n\r\n\r\nafter",
+			"before\r\n\r\n```js\r\ncode\r\n```\r\n\r\n\r\n\r\nafter",
 		);
 		expect(edit?.value).not.toContain("code\r\n\r\n```");
 	});
@@ -460,7 +462,7 @@ describe("editor context menu rules", () => {
 		{
 			kind: "list",
 			source: ["- ```js", "  code", "  ```", "- tail"].join("\n"),
-			before: ["- ", "- ```js", "  code", "  ```", "- tail"].join("\n"),
+			before: ["- ", "  ```js", "  code", "  ```", "- tail"].join("\n"),
 			after: ["- ```js", "  code", "  ```", "  ", "- tail"].join("\n"),
 		},
 	] as const)(
@@ -503,6 +505,428 @@ describe("editor context menu rules", () => {
 		},
 	);
 
+	it("uses parsed container structure and dual empty+typed verification for nested indented code and list-wrapped quote fences", () => {
+		const commonMark = new MarkdownIt("commonmark");
+		const assertIndentedNestedCodePreserved = (
+			markdown: string,
+			expectedCode: string,
+			expectedAncestors: ReadonlyArray<"blockquote" | "list_item">,
+			expectedProbeText?: string,
+		) => {
+			// 1. CommonMark verification via markdown-it (strict §4.4 & §5.2).
+			const tokens = commonMark.parse(markdown, {});
+			const containerStack: Array<"blockquote" | "list_item"> = [];
+			const foundCodes: Array<{
+				ancestors: ReadonlyArray<"blockquote" | "list_item">;
+				content: string;
+			}> = [];
+			const foundProbes: Array<ReadonlyArray<"blockquote" | "list_item">> = [];
+			let insideParagraph = false;
+			for (const token of tokens) {
+				if (token.type === "blockquote_open") {
+					containerStack.push("blockquote");
+				} else if (token.type === "blockquote_close") {
+					containerStack.pop();
+				} else if (token.type === "list_item_open") {
+					containerStack.push("list_item");
+				} else if (token.type === "list_item_close") {
+					containerStack.pop();
+				} else if (token.type === "paragraph_open") {
+					insideParagraph = true;
+				} else if (token.type === "paragraph_close") {
+					insideParagraph = false;
+				} else if (token.type === "code_block") {
+					foundCodes.push({
+						ancestors: [...containerStack],
+						content: token.content.replace(/\n$/u, ""),
+					});
+				} else if (
+					expectedProbeText &&
+					insideParagraph &&
+					token.type === "inline" &&
+					token.content.includes(expectedProbeText)
+				) {
+					foundProbes.push([...containerStack]);
+				}
+			}
+			expect(foundCodes).toEqual([
+				{ ancestors: expectedAncestors, content: expectedCode },
+			]);
+			if (expectedProbeText) {
+				expect(foundProbes).toEqual([expectedAncestors]);
+			}
+
+			// 2. Lezer parser verification.
+			const tree = markdownLanguage.parser.parse(markdown);
+			const lezerCodes: string[] = [];
+			tree.iterate({
+				enter(node) {
+					if (node.name === "CodeText") {
+						lezerCodes.push(markdown.slice(node.from, node.to));
+					}
+				},
+			});
+			expect(lezerCodes).toEqual([expectedCode]);
+		};
+
+		// 1. Quoted indented code containing literal `~~~`.
+		const quotedIndented = ">     literally ~~~";
+		const quotedPos = quotedIndented.indexOf("literally");
+		const quotedIndex = createEditorMarkdownBlockIndex(quotedIndented);
+		const quotedTarget = findEditorCodeContentTarget(
+			quotedIndented,
+			{ end: quotedPos, start: quotedPos },
+			quotedIndex,
+		);
+		if ("unavailable" === quotedTarget.status) {
+			throw new Error(quotedTarget.code);
+		}
+		const quotedBefore = insertParagraphRelative(
+			quotedIndented,
+			{ direction: "none", end: quotedPos, start: quotedPos },
+			"before",
+			quotedIndex,
+			quotedTarget.target,
+		);
+		expect(quotedBefore?.value).toBe("> \n>\n>     literally ~~~");
+		expect(quotedBefore?.selection).toEqual({
+			direction: "none",
+			end: 2,
+			start: 2,
+		});
+		if (!quotedBefore) throw new Error("expected-quoted-before");
+		assertIndentedNestedCodePreserved(
+			quotedBefore.value,
+			"literally ~~~",
+			["blockquote"],
+		);
+		const quotedBeforeTyped =
+			quotedBefore.value.slice(0, quotedBefore.selection.start) +
+			"NEWPARA" +
+			quotedBefore.value.slice(quotedBefore.selection.start);
+		expect(quotedBeforeTyped).toBe("> NEWPARA\n>\n>     literally ~~~");
+		assertIndentedNestedCodePreserved(
+			quotedBeforeTyped,
+			"literally ~~~",
+			["blockquote"],
+			"NEWPARA",
+		);
+
+		const quotedAfter = insertParagraphRelative(
+			quotedIndented,
+			{ direction: "none", end: quotedPos, start: quotedPos },
+			"after",
+			quotedIndex,
+			quotedTarget.target,
+		);
+		expect(quotedAfter?.value).toBe(">     literally ~~~\n>\n> ");
+		if (!quotedAfter) throw new Error("expected-quoted-after");
+		assertIndentedNestedCodePreserved(
+			quotedAfter.value,
+			"literally ~~~",
+			["blockquote"],
+		);
+		const quotedAfterTyped =
+			quotedAfter.value.slice(0, quotedAfter.selection.start) +
+			"NEWPARA" +
+			quotedAfter.value.slice(quotedAfter.selection.start);
+		expect(quotedAfterTyped).toBe(">     literally ~~~\n>\n> NEWPARA");
+		assertIndentedNestedCodePreserved(
+			quotedAfterTyped,
+			"literally ~~~",
+			["blockquote"],
+			"NEWPARA",
+		);
+
+		// 2. List item with leading paragraph followed by indented code (`- intro\n\n      code`).
+		const listIntroIndented = "- intro\n\n      code";
+		const listIntroPos = listIntroIndented.indexOf("code");
+		const listIntroIndex = createEditorMarkdownBlockIndex(listIntroIndented);
+		const listIntroTarget = findEditorCodeContentTarget(
+			listIntroIndented,
+			{ end: listIntroPos, start: listIntroPos },
+			listIntroIndex,
+		);
+		if ("unavailable" === listIntroTarget.status) {
+			throw new Error(listIntroTarget.code);
+		}
+		const listIntroBefore = insertParagraphRelative(
+			listIntroIndented,
+			{ direction: "none", end: listIntroPos, start: listIntroPos },
+			"before",
+			listIntroIndex,
+			listIntroTarget.target,
+		);
+		expect(listIntroBefore?.value).toBe("- intro\n\n  \n\n      code");
+		if (!listIntroBefore) throw new Error("expected-list-intro-before");
+		assertIndentedNestedCodePreserved(
+			listIntroBefore.value,
+			"code",
+			["list_item"],
+		);
+		const listIntroBeforeTyped =
+			listIntroBefore.value.slice(0, listIntroBefore.selection.start) +
+			"NEWPARA" +
+			listIntroBefore.value.slice(listIntroBefore.selection.start);
+		expect(listIntroBeforeTyped).toBe("- intro\n\n  NEWPARA\n\n      code");
+		assertIndentedNestedCodePreserved(
+			listIntroBeforeTyped,
+			"code",
+			["list_item"],
+			"NEWPARA",
+		);
+
+		const listIntroAfter = insertParagraphRelative(
+			listIntroIndented,
+			{ direction: "none", end: listIntroPos, start: listIntroPos },
+			"after",
+			listIntroIndex,
+			listIntroTarget.target,
+		);
+		expect(listIntroAfter?.value).toBe("- intro\n\n      code\n\n  ");
+		if (!listIntroAfter) throw new Error("expected-list-intro-after");
+		assertIndentedNestedCodePreserved(
+			listIntroAfter.value,
+			"code",
+			["list_item"],
+		);
+		const listIntroAfterTyped =
+			listIntroAfter.value.slice(0, listIntroAfter.selection.start) +
+			"NEWPARA" +
+			listIntroAfter.value.slice(listIntroAfter.selection.start);
+		expect(listIntroAfterTyped).toBe("- intro\n\n      code\n\n  NEWPARA");
+		assertIndentedNestedCodePreserved(
+			listIntroAfterTyped,
+			"code",
+			["list_item"],
+			"NEWPARA",
+		);
+
+		// 3. List-wrapped quote indented code (`- >     literally ~~~`).
+		const listQuoteIndented = "- >     literally ~~~";
+		const listQuoteIndentedPos = listQuoteIndented.indexOf("literally");
+		const listQuoteIndentedIndex =
+			createEditorMarkdownBlockIndex(listQuoteIndented);
+		const listQuoteIndentedTarget = findEditorCodeContentTarget(
+			listQuoteIndented,
+			{ end: listQuoteIndentedPos, start: listQuoteIndentedPos },
+			listQuoteIndentedIndex,
+		);
+		if ("unavailable" === listQuoteIndentedTarget.status) {
+			throw new Error(listQuoteIndentedTarget.code);
+		}
+		const listQuoteIndentedBefore = insertParagraphRelative(
+			listQuoteIndented,
+			{
+				direction: "none",
+				end: listQuoteIndentedPos,
+				start: listQuoteIndentedPos,
+			},
+			"before",
+			listQuoteIndentedIndex,
+			listQuoteIndentedTarget.target,
+		);
+		expect(listQuoteIndentedBefore?.value).toBe(
+			"- > \n  >\n  >     literally ~~~",
+		);
+		expect(listQuoteIndentedBefore?.selection).toEqual({
+			direction: "none",
+			end: 4,
+			start: 4,
+		});
+		if (!listQuoteIndentedBefore) {
+			throw new Error("expected-list-quote-indented-before");
+		}
+		assertIndentedNestedCodePreserved(
+			listQuoteIndentedBefore.value,
+			"literally ~~~",
+			["list_item", "blockquote"],
+		);
+		const listQuoteIndentedBeforeTyped =
+			listQuoteIndentedBefore.value.slice(
+				0,
+				listQuoteIndentedBefore.selection.start,
+			) +
+			"NEWPARA" +
+			listQuoteIndentedBefore.value.slice(
+				listQuoteIndentedBefore.selection.start,
+			);
+		expect(listQuoteIndentedBeforeTyped).toBe(
+			"- > NEWPARA\n  >\n  >     literally ~~~",
+		);
+		assertIndentedNestedCodePreserved(
+			listQuoteIndentedBeforeTyped,
+			"literally ~~~",
+			["list_item", "blockquote"],
+			"NEWPARA",
+		);
+
+		const listQuoteIndentedAfter = insertParagraphRelative(
+			listQuoteIndented,
+			{
+				direction: "none",
+				end: listQuoteIndentedPos,
+				start: listQuoteIndentedPos,
+			},
+			"after",
+			listQuoteIndentedIndex,
+			listQuoteIndentedTarget.target,
+		);
+		expect(listQuoteIndentedAfter?.value).toBe(
+			"- >     literally ~~~\n  >\n  > ",
+		);
+		if (!listQuoteIndentedAfter) {
+			throw new Error("expected-list-quote-indented-after");
+		}
+		assertIndentedNestedCodePreserved(
+			listQuoteIndentedAfter.value,
+			"literally ~~~",
+			["list_item", "blockquote"],
+		);
+		const listQuoteIndentedAfterTyped =
+			listQuoteIndentedAfter.value.slice(
+				0,
+				listQuoteIndentedAfter.selection.start,
+			) +
+			"NEWPARA" +
+			listQuoteIndentedAfter.value.slice(
+				listQuoteIndentedAfter.selection.start,
+			);
+		expect(listQuoteIndentedAfterTyped).toBe(
+			"- >     literally ~~~\n  >\n  > NEWPARA",
+		);
+		assertIndentedNestedCodePreserved(
+			listQuoteIndentedAfterTyped,
+			"literally ~~~",
+			["list_item", "blockquote"],
+			"NEWPARA",
+		);
+
+		// 4. List-wrapped quote fence (`- > ~~~`).
+		const listQuoteFence = ["- > ~~~", "  > x", "  > ~~~"].join("\n");
+		const listQuotePos = listQuoteFence.indexOf("x");
+		const listQuoteIndex = createEditorMarkdownBlockIndex(listQuoteFence);
+		const listQuoteTarget = findEditorCodeContentTarget(
+			listQuoteFence,
+			{ end: listQuotePos, start: listQuotePos },
+			listQuoteIndex,
+		);
+		if ("unavailable" === listQuoteTarget.status) {
+			throw new Error(listQuoteTarget.code);
+		}
+		const listQuoteBefore = insertParagraphRelative(
+			listQuoteFence,
+			{ direction: "none", end: listQuotePos, start: listQuotePos },
+			"before",
+			listQuoteIndex,
+			listQuoteTarget.target,
+		);
+		expect(listQuoteBefore?.value).toBe(
+			["- > ", "  > ~~~", "  > x", "  > ~~~"].join("\n"),
+		);
+		expect(listQuoteBefore?.value).not.toContain("- > \n- > ");
+		expect(listQuoteBefore?.selection).toEqual({
+			direction: "none",
+			end: 4,
+			start: 4,
+		});
+		const listQuoteAfter = insertParagraphRelative(
+			listQuoteFence,
+			{ direction: "none", end: listQuotePos, start: listQuotePos },
+			"after",
+			listQuoteIndex,
+			listQuoteTarget.target,
+		);
+		expect(listQuoteAfter?.value).toBe(
+			["- > ~~~", "  > x", "  > ~~~", "  > "].join("\n"),
+		);
+
+		// 5. List-marker indented code (`-     code` and `1.     code`):
+		// CommonMark §5.2 forbids a list item starting with two blank lines and
+		// §4.4 forbids indented code interrupting a paragraph, so `before` must
+		// return null while `after` succeeds with empty + typed preservation.
+		for (const listIndented of [
+			{
+				after: "-     code\n\n  ",
+				afterTyped: "-     code\n\n  NEWPARA",
+				source: "-     code",
+			},
+			{
+				after: "1.     code\n\n   ",
+				afterTyped: "1.     code\n\n   NEWPARA",
+				source: "1.     code",
+			},
+		]) {
+			const pos = listIndented.source.indexOf("code");
+			const idx = createEditorMarkdownBlockIndex(listIndented.source);
+			const target = findEditorCodeContentTarget(
+				listIndented.source,
+				{ end: pos, start: pos },
+				idx,
+			);
+			if ("unavailable" === target.status) {
+				throw new Error(target.code);
+			}
+			expect(
+				insertParagraphRelative(
+					listIndented.source,
+					{ direction: "none", end: pos, start: pos },
+					"before",
+					idx,
+					target.target,
+				),
+			).toBeNull();
+			const afterEdit = insertParagraphRelative(
+				listIndented.source,
+				{ direction: "none", end: pos, start: pos },
+				"after",
+				idx,
+				target.target,
+			);
+			expect(afterEdit?.value).toBe(listIndented.after);
+			if (!afterEdit) throw new Error("expected-list-indented-after");
+			assertIndentedNestedCodePreserved(
+				afterEdit.value,
+				"code",
+				["list_item"],
+			);
+			const typed =
+				afterEdit.value.slice(0, afterEdit.selection.start) +
+				"NEWPARA" +
+				afterEdit.value.slice(afterEdit.selection.start);
+			expect(typed).toBe(listIndented.afterTyped);
+			assertIndentedNestedCodePreserved(
+				typed,
+				"code",
+				["list_item"],
+				"NEWPARA",
+			);
+		}
+
+		// Unclosed quoted fence cannot insert a paragraph below without absorbing
+		// the new line into the code body; verification must reject with null.
+		const unclosedQuoteFence = ["> ```js", "> code"].join("\n");
+		const unclosedPos = unclosedQuoteFence.indexOf("code");
+		const unclosedIndex = createEditorMarkdownBlockIndex(unclosedQuoteFence);
+		const unclosedTarget = findEditorCodeContentTarget(
+			unclosedQuoteFence,
+			{ end: unclosedPos, start: unclosedPos },
+			unclosedIndex,
+		);
+		if ("unavailable" === unclosedTarget.status) {
+			throw new Error(unclosedTarget.code);
+		}
+		expect(
+			insertParagraphRelative(
+				unclosedQuoteFence,
+				{ direction: "none", end: unclosedPos, start: unclosedPos },
+				"after",
+				unclosedIndex,
+				unclosedTarget.target,
+			),
+		).toBeNull();
+	});
+
 	it("rejects a code-relative insertion with a target outside its verified container", () => {
 		const source = ["> ```js", "> code", "> ```", "> tail"].join("\n");
 		const position = source.indexOf("code");
@@ -530,11 +954,12 @@ describe("editor context menu rules", () => {
 	});
 
 	it.each(["---", "***", "___"])(
-		"inserts two %s newlines before a thematic break and preserves the exact source boundary",
+		"inserts blank-line separated paragraph before a %s thematic break and preserves the exact source boundary",
 		(marker) => {
 			for (const newline of ["\n", "\r\n", "\r"]) {
 				const source = `# prefix${newline}  ${marker}  ${newline}suffix`;
 				const blockStart = source.indexOf(`  ${marker}`);
+				const caret = blockStart + newline.length;
 				const index = createEditorMarkdownBlockIndex(source);
 				const edit = insertParagraphRelative(
 					source,
@@ -550,21 +975,19 @@ describe("editor context menu rules", () => {
 				expect(edit).toEqual({
 					changes: {
 						from: blockStart,
-						insert: `${newline}${newline}`,
+						insert: `${newline}${newline}${newline}`,
 						to: blockStart,
 					},
 					selection: {
 						direction: "none",
-						end: blockStart,
-						start: blockStart,
+						end: caret,
+						start: caret,
 					},
-					value: `# prefix${newline}${newline}${newline}  ${marker}  ${newline}suffix`,
+					value: `# prefix${newline}${newline}${newline}${newline}  ${marker}  ${newline}suffix`,
 				});
 
-				const typed = `${edit?.value.slice(0, blockStart)}text${edit?.value.slice(blockStart)}`;
-				expect(findMarkdownBlock(typed, blockStart + 2)?.kind).toBe(
-					"paragraph",
-				);
+				const typed = `${edit?.value.slice(0, caret)}text${edit?.value.slice(caret)}`;
+				expect(findMarkdownBlock(typed, caret + 2)?.kind).toBe("paragraph");
 				expect(findMarkdownBlock(typed, typed.indexOf(marker))?.kind).toBe(
 					"thematic-break",
 				);
@@ -572,7 +995,7 @@ describe("editor context menu rules", () => {
 		},
 	);
 
-	it("keeps thematic-break insertion below on the existing one-newline path", () => {
+	it("inserts a blank-line separated paragraph below a thematic break", () => {
 		const source = "# prefix\n  ---  \nsuffix";
 		const blockStart = source.indexOf("  ---");
 		const blockEnd = source.indexOf("\n", blockStart);
@@ -593,12 +1016,17 @@ describe("editor context menu rules", () => {
 
 		expect(edit?.changes).toEqual({
 			from: blockEnd,
-			insert: "\n",
+			insert: "\n\n\n",
 			to: blockEnd,
 		});
-		expect(edit?.value).toBe("# prefix\n  ---  \n\nsuffix");
+		expect(edit?.selection).toEqual({
+			direction: "none",
+			end: blockEnd + 2,
+			start: blockEnd + 2,
+		});
+		expect(edit?.value).toBe("# prefix\n  ---  \n\n\n\nsuffix");
 		expect(edit?.value.slice(0, blockEnd)).toBe(source.slice(0, blockEnd));
-		expect(edit?.value.slice(blockEnd + 1)).toBe(source.slice(blockEnd));
+		expect(edit?.value.slice(blockEnd + 3)).toBe(source.slice(blockEnd));
 	});
 
 	it.each(["\n", "\r\n", "\r"])(
@@ -678,6 +1106,8 @@ describe("editor context menu rules", () => {
 			[
 				"prefix",
 				"",
+				"",
+				"",
 				"| H | V |",
 				"| --- | --- |",
 				"| a | b |",
@@ -704,10 +1134,10 @@ describe("editor context menu rules", () => {
 			"after",
 		);
 
-		expect(edit?.value).toBe(`${source}\n`);
+		expect(edit?.value).toBe(`${source}\n\n`);
 		expect(edit?.changes).toEqual({
 			from: source.length,
-			insert: "\n",
+			insert: "\n\n",
 			to: source.length,
 		});
 		expect(
@@ -720,7 +1150,7 @@ describe("editor context menu rules", () => {
 				},
 				"after",
 			)?.value,
-		).toBe(`${source}\n`);
+		).toBe(`${source}\n\n`);
 	});
 
 	it("inserts an empty paragraph boundary without copying the source line", () => {
@@ -729,8 +1159,8 @@ describe("editor context menu rules", () => {
 		const above = insertParagraphRelative(source, selection, "before");
 		const below = insertParagraphRelative(source, selection, "after");
 
-		expect(above?.value).toBe("\na\nb");
-		expect(below?.value).toBe("a\nb\n");
+		expect(above?.value).toBe("\n\na\nb");
+		expect(below?.value).toBe("a\nb\n\n");
 		expect(above?.value.match(/a/gu)).toHaveLength(1);
 		expect(below?.value.match(/a/gu)).toHaveLength(1);
 	});
@@ -747,7 +1177,7 @@ describe("editor context menu rules", () => {
 				},
 				"after",
 			)?.value,
-		).toBe("# H\n\nbody");
+		).toBe("# H\n\n\n\nbody");
 
 		const list = "- a\n  - b\n- c\n\nbody";
 		expect(
@@ -760,7 +1190,7 @@ describe("editor context menu rules", () => {
 				},
 				"after",
 			)?.value,
-		).toBe("- a\n  - b\n- c\n\n\nbody");
+		).toBe("- a\n  - b\n- c\n\n\n\nbody");
 
 		const indented = "    code\n\nbody";
 		expect(
@@ -773,7 +1203,7 @@ describe("editor context menu rules", () => {
 				},
 				"after",
 			)?.value,
-		).toBe("    code\n\n\nbody");
+		).toBe("    code\n\n\n\nbody");
 	});
 
 	it("inserts and deletes table rows and columns while preserving escaped/code pipes", () => {
@@ -1700,10 +2130,10 @@ describe("editor context menu rules", () => {
 				"after",
 			);
 			expect(before?.value).toBe(
-				`before${newline}${newline}<!-- easymde-table-align:v1 [[1,"center"]] -->${newline}| A |${newline}| --- |${newline}| 1 |${newline}after`,
+				`before${newline}${newline}${newline}${newline}<!-- easymde-table-align:v1 [[1,"center"]] -->${newline}| A |${newline}| --- |${newline}| 1 |${newline}after`,
 			);
 			expect(after?.value).toBe(
-				`before${newline}<!-- easymde-table-align:v1 [[1,"center"]] -->${newline}| A |${newline}| --- |${newline}| 1 |${newline}${newline}after`,
+				`before${newline}<!-- easymde-table-align:v1 [[1,"center"]] -->${newline}| A |${newline}| --- |${newline}| 1 |${newline}${newline}${newline}${newline}after`,
 			);
 		}
 	});
@@ -2080,6 +2510,110 @@ describe("editor context menu rules", () => {
 				start: 0,
 			}),
 		).toBe(null);
+	});
+	it("keeps immediately typed NEWPARA as a standalone paragraph above and below all 9 block kinds and at document boundaries", () => {
+		const blocks = [
+			{ kind: "paragraph", markdown: "普通段落，包含 **加粗** 结束。", token: "普通段落" },
+			{ kind: "heading", markdown: "## 二级标题", token: "二级标题" },
+			{ kind: "list", markdown: "- item 1\n- item 2", token: "item 2" },
+			{ kind: "quote", markdown: "> quote line", token: "quote line" },
+			{ kind: "code", markdown: "```js\nconst a = 1;\n```", token: "const a = 1;" },
+			{ kind: "table", markdown: "| c1 | c2 |\n| --- | --- |\n| c3 | c4 |", token: "c3" },
+			{ kind: "paragraph", markdown: "$$\nE = mc^2\n$$", token: "E = mc^2" },
+			{ kind: "code", markdown: "```mermaid\ngraph TD;\n  A-->B;\n```", token: "A-->B;" },
+			{ kind: "thematic-break", markdown: "---", token: "---" },
+		] as const;
+
+		const fullDoc = [
+			"Lead paragraph",
+			...blocks.map((entry) => entry.markdown),
+			"Tail paragraph",
+		].join("\n\n");
+		const fullIndex = createEditorMarkdownBlockIndex(fullDoc);
+
+		for (const entry of blocks) {
+			const tokenPos =
+				entry.kind === "thematic-break"
+					? fullDoc.lastIndexOf(entry.token)
+					: fullDoc.indexOf(entry.token);
+			expect(tokenPos).toBeGreaterThan(0);
+			for (const relative of ["before", "after"] as const) {
+				const edit = insertParagraphRelative(
+					fullDoc,
+					{ direction: "none", end: tokenPos, start: tokenPos },
+					relative,
+					fullIndex,
+				);
+				expect(edit).not.toBeNull();
+				if (!edit?.changes) throw new Error("expected-insert-edit");
+
+				const caret = edit.selection.start;
+				const typed = `${edit.value.slice(0, caret)}NEWPARA${edit.value.slice(caret)}`;
+				expect(typed).toContain("\n\nNEWPARA\n\n");
+
+				const typedIndex = createEditorMarkdownBlockIndex(typed);
+				const newParaPos = typed.indexOf("NEWPARA");
+				const newParaBlock = findMarkdownBlock(typed, newParaPos, typedIndex);
+				expect(newParaBlock?.kind).toBe("paragraph");
+				expect(typed.slice(newParaBlock?.start, newParaBlock?.end)).toBe(
+					"NEWPARA",
+				);
+
+				// Applying the inverse of the single range edit restores exact bytes.
+				const restored =
+					edit.value.slice(0, edit.changes.from) +
+					fullDoc.slice(edit.changes.from, edit.changes.to) +
+					edit.value.slice(edit.changes.from + edit.changes.insert.length);
+				expect(restored).toBe(fullDoc);
+			}
+		}
+
+		// Document start (before first block) and document end (after last block).
+		for (const entry of blocks) {
+			const single = entry.markdown;
+			const singleIndex = createEditorMarkdownBlockIndex(single);
+			const pos = single.indexOf(entry.token);
+
+			const beforeEdit = insertParagraphRelative(
+				single,
+				{ direction: "none", end: pos, start: pos },
+				"before",
+				singleIndex,
+			);
+			expect(beforeEdit).not.toBeNull();
+			if (!beforeEdit) throw new Error("expected-before-edit");
+			const typedBefore = `${beforeEdit.value.slice(0, beforeEdit.selection.start)}NEWPARA${beforeEdit.value.slice(beforeEdit.selection.start)}`;
+			expect(typedBefore).toBe(`NEWPARA\n\n${single}`);
+			const beforeBlock = findMarkdownBlock(
+				typedBefore,
+				0,
+				createEditorMarkdownBlockIndex(typedBefore),
+			);
+			expect(beforeBlock?.kind).toBe("paragraph");
+			expect(typedBefore.slice(beforeBlock?.start, beforeBlock?.end)).toBe(
+				"NEWPARA",
+			);
+
+			const afterEdit = insertParagraphRelative(
+				single,
+				{ direction: "none", end: pos, start: pos },
+				"after",
+				singleIndex,
+			);
+			expect(afterEdit).not.toBeNull();
+			if (!afterEdit) throw new Error("expected-after-edit");
+			const typedAfter = `${afterEdit.value.slice(0, afterEdit.selection.start)}NEWPARA${afterEdit.value.slice(afterEdit.selection.start)}`;
+			expect(typedAfter).toBe(`${single}\n\nNEWPARA`);
+			const afterBlock = findMarkdownBlock(
+				typedAfter,
+				typedAfter.lastIndexOf("NEWPARA"),
+				createEditorMarkdownBlockIndex(typedAfter),
+			);
+			expect(afterBlock?.kind).toBe("paragraph");
+			expect(typedAfter.slice(afterBlock?.start, afterBlock?.end)).toBe(
+				"NEWPARA",
+			);
+		}
 	});
 });
 

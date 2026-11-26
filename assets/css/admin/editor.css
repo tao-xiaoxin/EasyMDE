@@ -2555,7 +2555,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
     background: #fff;
 }
 
-.easymde-editor:not(.is-immersive) .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
+#easymde-editor-root .easymde-editor:not(.is-immersive) .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
     width: 100%;
     max-width: none;
     min-height: 100%;
@@ -2576,7 +2576,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
     background: #fff;
 }
 
-.easymde-editor[data-easymde-preview-presentation="split"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
+#easymde-editor-root .easymde-editor[data-easymde-preview-presentation="split"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
     width: 100%;
     max-width: none;
     min-height: 100%;
@@ -2597,7 +2597,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
     background: #f6f6f8;
 }
 
-.easymde-editor[data-easymde-preview-presentation="preview"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
+#easymde-editor-root .easymde-editor[data-easymde-preview-presentation="preview"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
     display: block;
     box-sizing: border-box;
     flex: 0 0 auto;

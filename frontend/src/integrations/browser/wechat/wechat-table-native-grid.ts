@@ -252,6 +252,120 @@ function matchingPseudoSelector(source: Element, selectorText: string): boolean 
   return matched;
 }
 
+function selectorHasPseudoBefore(selector: string): boolean {
+  return /::?before(?![a-z0-9_-])/iu.test(selector);
+}
+
+function selectorListHasPseudoBefore(selectorText: string): boolean | null {
+  const selectors = splitSelectorList(selectorText);
+  if (!selectors) return null;
+  return selectors.some(selectorHasPseudoBefore);
+}
+
+function styleDeclaresWidthOrAll(style: CSSStyleDeclaration): boolean {
+  if (style.getPropertyValue('all').trim()) return true;
+  for (const property of WIDTH_PROPERTIES) {
+    if (style.getPropertyValue(property).trim()) return true;
+  }
+  return false;
+}
+
+function isRuleInstance(
+  rule: CSSRule,
+  defaultView: (Window & typeof globalThis) | null | undefined,
+  constructorName: string,
+  tagName: string
+): boolean {
+  const ctor =
+    defaultView && constructorName in defaultView
+      ? (defaultView as unknown as Record<string, unknown>)[constructorName]
+      : undefined;
+  return (
+    ('function' === typeof ctor && rule instanceof (ctor as new () => CSSRule)) ||
+    tagName === Object.prototype.toString.call(rule)
+  );
+}
+
+function isSkippableNonSelectorRule(
+  rule: CSSRule,
+  defaultView: (Window & typeof globalThis) | null | undefined
+): boolean {
+  if (
+    (defaultView?.CSSFontFaceRule && rule instanceof defaultView.CSSFontFaceRule) ||
+    (defaultView?.CSSRule && defaultView.CSSRule.FONT_FACE_RULE === rule.type)
+  ) {
+    return true;
+  }
+  if (
+    (defaultView?.CSSKeyframesRule && rule instanceof defaultView.CSSKeyframesRule) ||
+    (defaultView?.CSSRule && defaultView.CSSRule.KEYFRAMES_RULE === rule.type)
+  ) {
+    return true;
+  }
+  if (isRuleInstance(rule, defaultView, 'CSSViewTransitionRule', '[object CSSViewTransitionRule]')) {
+    return true;
+  }
+  return isRuleInstance(rule, defaultView, 'CSSLayerStatementRule', '[object CSSLayerStatementRule]');
+}
+
+function isGroupingRuleForNestedScan(
+  rule: CSSRule,
+  defaultView: (Window & typeof globalThis) | null | undefined
+): rule is CSSGroupingRule {
+  if (defaultView?.CSSMediaRule && rule instanceof defaultView.CSSMediaRule) return true;
+  if (defaultView?.CSSSupportsRule && rule instanceof defaultView.CSSSupportsRule) return true;
+  return isRuleInstance(rule, defaultView, 'CSSLayerBlockRule', '[object CSSLayerBlockRule]');
+}
+
+/**
+ * Conservatively checks whether any rule nested inside a CSSStyleRule can
+ * declare a width/inline-size/`all` rule on a `::before` pseudo-element.
+ * Unrecognized rule types, unreadable selectors, or thrown CSSOM reads fail closed.
+ */
+function nestedSubtreeCouldAffectPseudoBeforeWidth(
+  rules: CSSRuleList,
+  ancestorHasPseudoBefore: boolean,
+  defaultView: (Window & typeof globalThis) | null | undefined
+): boolean {
+  try {
+    for (const rule of Array.from(rules)) {
+      if (defaultView?.CSSStyleRule && rule instanceof defaultView.CSSStyleRule) {
+        const styleRule = rule as CSSStyleRule;
+        const selfHasPseudoBefore = selectorListHasPseudoBefore(styleRule.selectorText);
+        if (null === selfHasPseudoBefore) return true;
+        const hasPseudoBefore = ancestorHasPseudoBefore || selfHasPseudoBefore;
+        if (hasPseudoBefore && styleDeclaresWidthOrAll(styleRule.style)) return true;
+        const nested = nestedRuleContainer(styleRule);
+        if (nested && nestedSubtreeCouldAffectPseudoBeforeWidth(nested, hasPseudoBefore, defaultView)) {
+          return true;
+        }
+        continue;
+      }
+
+      if (isRuleInstance(rule, defaultView, 'CSSNestedDeclarations', '[object CSSNestedDeclarations]')) {
+        const style = (rule as CSSRule & { style?: CSSStyleDeclaration }).style;
+        if (!style || 'function' !== typeof style.getPropertyValue) return true;
+        if (ancestorHasPseudoBefore && styleDeclaresWidthOrAll(style)) return true;
+        continue;
+      }
+
+      if (isGroupingRuleForNestedScan(rule, defaultView)) {
+        if (nestedSubtreeCouldAffectPseudoBeforeWidth(rule.cssRules, ancestorHasPseudoBefore, defaultView)) {
+          return true;
+        }
+        continue;
+      }
+
+      if (isSkippableNonSelectorRule(rule, defaultView)) continue;
+
+      return true;
+    }
+  } catch {
+    return true;
+  }
+  return false;
+}
+
 function nestedRuleContainer(rule: CSSRule): CSSRuleList | null {
   if ('object' === typeof rule && rule && 'cssRules' in rule) {
     const nested = (rule as CSSRule & { cssRules?: CSSRuleList }).cssRules;
@@ -331,7 +445,16 @@ function readAuthorPseudoWidths(source: Element, runtime: BrowserWechatClipboard
       const defaultView = runtime.document.defaultView;
       if (defaultView?.CSSStyleRule && rule instanceof defaultView.CSSStyleRule) {
         const styleRule = rule as CSSStyleRule;
-        if (nestedRuleContainer(styleRule)) throw tableGridError('nested-rule-unreadable');
+        const nested = nestedRuleContainer(styleRule);
+        if (nested) {
+          const parentHasPseudoBefore = selectorListHasPseudoBefore(styleRule.selectorText);
+          if (
+            null === parentHasPseudoBefore ||
+            nestedSubtreeCouldAffectPseudoBeforeWidth(nested, parentHasPseudoBefore, defaultView)
+          ) {
+            throw tableGridError('nested-rule-unreadable');
+          }
+        }
         const widthRule = styleRulePseudoWidths(source, styleRule);
         if (widthRule) record(widthRule, active);
         continue;
@@ -347,28 +470,12 @@ function readAuthorPseudoWidths(source: Element, runtime: BrowserWechatClipboard
         continue;
       }
 
-      if (
-        (defaultView?.CSSFontFaceRule && rule instanceof defaultView.CSSFontFaceRule) ||
-        (defaultView?.CSSRule && defaultView.CSSRule.FONT_FACE_RULE === rule.type)
-      ) {
+      if (isRuleInstance(rule, defaultView, 'CSSLayerBlockRule', '[object CSSLayerBlockRule]')) {
+        visitRules((rule as CSSGroupingRule).cssRules, active);
         continue;
       }
 
-      if (
-        (defaultView?.CSSKeyframesRule && rule instanceof defaultView.CSSKeyframesRule) ||
-        (defaultView?.CSSRule && defaultView.CSSRule.KEYFRAMES_RULE === rule.type)
-      ) {
-        continue;
-      }
-
-      const viewTransitionCtor =
-        defaultView && 'CSSViewTransitionRule' in defaultView
-          ? (defaultView as unknown as { CSSViewTransitionRule?: unknown }).CSSViewTransitionRule
-          : undefined;
-      if (
-        ('function' === typeof viewTransitionCtor && rule instanceof (viewTransitionCtor as new () => CSSRule)) ||
-        '[object CSSViewTransitionRule]' === Object.prototype.toString.call(rule)
-      ) {
+      if (isSkippableNonSelectorRule(rule, defaultView)) {
         continue;
       }
 

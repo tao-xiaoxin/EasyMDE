@@ -356,6 +356,66 @@ describe('collectWechatTableNativeGridEvidence', () => {
     expect(collect(table, { rules: [viewTransitionRule, cssRule('width:100cqi;')] })).not.toBeNull();
   });
 
+  it('handles @layer statements, @layer block rules, and unrelated WP 7.1+ nested rules while failing closed on nested ::before width rules', () => {
+    const table = tableFixture();
+    class FakeLayerStatementRule {
+      readonly type = 0;
+      readonly cssText = '@layer utilities, components, compositions, overrides;';
+      get [Symbol.toStringTag](): string {
+        return 'CSSLayerStatementRule';
+      }
+    }
+    class FakeLayerBlockRule {
+      readonly type = 0;
+      readonly cssRules: CSSRule[];
+      constructor(rules: CSSRule[]) {
+        this.cssRules = rules;
+      }
+      get [Symbol.toStringTag](): string {
+        return 'CSSLayerBlockRule';
+      }
+    }
+    class FakeNestedDeclarations {
+      readonly type = 0;
+      readonly style: CSSStyleDeclaration;
+      constructor(values: StyleValues) {
+        this.style = style(values);
+      }
+      get [Symbol.toStringTag](): string {
+        return 'CSSNestedDeclarations';
+      }
+    }
+
+    // 1. Unrelated nested rules (e.g. WP UI box-sizing ::before without width, trigger width without ::before,
+    //    and CSSNestedDeclarations on non-::before parent) are safely skipped alongside @layer statements/blocks.
+    const boxSizingParent = cssSheet('._wp_box_sizing{}').cssRules.item(0) as CSSStyleRule;
+    const boxSizingNested = cssRule('box-sizing:inherit;', '& *, & ::after, & ::before');
+    Object.defineProperty(boxSizingParent, 'cssRules', { configurable: true, value: [boxSizingNested] });
+
+    const triggerParent = cssSheet('._wp_trigger{}').cssRules.item(0) as CSSStyleRule;
+    const triggerNested = cssRule('width:fit-content;', '&.is-minimal');
+    const triggerDecls = new FakeNestedDeclarations({ opacity: '1' }) as unknown as CSSRule;
+    Object.defineProperty(triggerParent, 'cssRules', { configurable: true, value: [triggerNested, triggerDecls] });
+
+    const layerStatement = new FakeLayerStatementRule() as unknown as CSSRule;
+    const layerBlock = new FakeLayerBlockRule([boxSizingParent, triggerParent]) as unknown as CSSRule;
+    expect(collect(table, { rules: [layerStatement, layerBlock, cssRule('width:100cqi;')] })).not.toBeNull();
+
+    // 2. A matching width rule inside @layer is still walked and evaluated (not silently skipped).
+    const layeredCompeting = new FakeLayerBlockRule([cssRule('width:335px;')]) as unknown as CSSRule;
+    expect(() => collect(table, { rules: [layeredCompeting, cssRule('width:100cqi;')] })).toThrow(
+      'wechat-table-native-grid-width-rule-unsupported'
+    );
+
+    // 3. A nested CSSNestedDeclarations width rule under a ::before parent still fails closed.
+    const pseudoParent = cssSheet('.theme table::before{}').cssRules.item(0) as CSSStyleRule;
+    const nestedWidthDecls = new FakeNestedDeclarations({ width: '335px' }) as unknown as CSSRule;
+    Object.defineProperty(pseudoParent, 'cssRules', { configurable: true, value: [nestedWidthDecls] });
+    expect(() => collect(table, { rules: [pseudoParent, cssRule('width:100cqi;')] })).toThrow(
+      'wechat-table-native-grid-nested-rule-unreadable'
+    );
+  });
+
   it('rejects fixed 335px even when the used width is identical', () => {
     const table = tableFixture();
     expect(() => collect(table, { rules: [cssRule('width:335px;')] })).toThrow(

@@ -126,18 +126,15 @@ export async function assertReadonlyMathProjection(
   if (editable) {
     await expect(surface).toHaveAttribute('contenteditable', 'true');
     await expect(surface.locator('.katex')).toHaveCount(3);
-    const inlineMath = surface.locator(
-      '[data-easymde-protected-inline][data-easymde-protected-kind="math-inline"]'
+    await expect(surface.locator('.katex-error')).toHaveCount(0);
+    // Single-line display math embedded inside a paragraph (`Display math: \[...\].`)
+    // remains a protected inline atom in ProseMirror so the surrounding prose stays
+    // editable on one line without write-back drift; formal Preview keeps 2 inline + 1 block.
+    const protectedMath = surface.locator(
+      '[data-easymde-protected-inline][data-easymde-protected-kind="math-inline"], [data-easymde-protected-block][data-easymde-protected-kind="math"]'
     );
-    const blockMath = surface.locator(
-      '[data-easymde-protected-block][data-easymde-protected-kind="math"]'
-    );
-    await expect(inlineMath).toHaveCount(2);
-    await expect(blockMath).toHaveCount(1);
-    for (const root of await inlineMath.all()) {
-      await expect(root).toHaveAttribute('contenteditable', 'false');
-    }
-    for (const root of await blockMath.all()) {
+    await expect(protectedMath).toHaveCount(3);
+    for (const root of await protectedMath.all()) {
       await expect(root).toHaveAttribute('contenteditable', 'false');
     }
     const ordinaryParagraph = surface.locator('p').filter({

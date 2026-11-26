@@ -1399,6 +1399,7 @@ describe("PreviewSurfaceOwner", () => {
 			initialHtml: fixture.html.replace("b1", "wrong"),
 			initialSignature: "invalid-map",
 			onDiagnostic: (code) => diagnostics.push(code),
+			stagingScheduler: { now: () => 0, yield: () => Promise.resolve() },
 		});
 
 		await act(async () => {

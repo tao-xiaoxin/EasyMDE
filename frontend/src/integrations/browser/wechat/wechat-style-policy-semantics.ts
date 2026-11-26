@@ -159,12 +159,203 @@ function styleAffectsPadding(
 	});
 }
 
+function replaceNestingAmpersand(
+	selector: string,
+	replacement: string,
+): string | null {
+	let result = "";
+	let replaced = false;
+	let quote: '"' | "'" | null = null;
+	let bracketDepth = 0;
+	let escaped = false;
+	for (let index = 0; index < selector.length; index += 1) {
+		const ch = selector[index] ?? "";
+		if (escaped) {
+			result += ch;
+			escaped = false;
+			continue;
+		}
+		if ("\\" === ch) {
+			result += ch;
+			escaped = true;
+			continue;
+		}
+		if (quote) {
+			if (quote === ch) quote = null;
+			result += ch;
+			continue;
+		}
+		if ('"' === ch || "'" === ch) {
+			quote = ch;
+			result += ch;
+			continue;
+		}
+		if ("[" === ch) {
+			bracketDepth += 1;
+			result += ch;
+			continue;
+		}
+		if ("]" === ch) {
+			bracketDepth = Math.max(0, bracketDepth - 1);
+			result += ch;
+			continue;
+		}
+		if (0 === bracketDepth && "&" === ch) {
+			result += replacement;
+			replaced = true;
+			continue;
+		}
+		result += ch;
+	}
+	return replaced ? result : null;
+}
+
+function expandNestedSelectorList(
+	parentSelectorText: string,
+	childSelectorText: string,
+): string | null {
+	const parentSelectors = splitSelectorList(parentSelectorText);
+	const childSelectors = splitSelectorList(childSelectorText);
+	if (!parentSelectors?.length || !childSelectors?.length) return null;
+	const parentGroup = `:is(${parentSelectors.join(", ")})`;
+	const expanded: string[] = [];
+	for (const child of childSelectors) {
+		const substituted = replaceNestingAmpersand(child, parentGroup);
+		expanded.push(substituted ?? `${parentGroup} ${child}`);
+	}
+	return expanded.join(", ");
+}
+
+function selectorMatchesSourceConservatively(
+	source: Element,
+	selectorText: string,
+): boolean {
+	try {
+		return source.matches(selectorText);
+	} catch {
+		return true;
+	}
+}
+
+function selectorUsesSiblingOrNegatedNesting(selector: string): boolean {
+	let quote: '"' | "'" | null = null;
+	let bracketDepth = 0;
+	let parenDepth = 0;
+	let escaped = false;
+	for (let index = 0; index < selector.length; index += 1) {
+		const ch = selector[index] ?? "";
+		if (escaped) {
+			escaped = false;
+			continue;
+		}
+		if ("\\" === ch) {
+			escaped = true;
+			continue;
+		}
+		if (quote) {
+			if (quote === ch) quote = null;
+			continue;
+		}
+		if ('"' === ch || "'" === ch) {
+			quote = ch;
+			continue;
+		}
+		if ("[" === ch) {
+			bracketDepth += 1;
+			continue;
+		}
+		if ("]" === ch) {
+			bracketDepth = Math.max(0, bracketDepth - 1);
+			continue;
+		}
+		if (bracketDepth > 0) continue;
+		if ("(" === ch) {
+			parenDepth += 1;
+			continue;
+		}
+		if (")" === ch) {
+			parenDepth = Math.max(0, parenDepth - 1);
+			continue;
+		}
+		if (0 === parenDepth && ("+" === ch || "~" === ch)) {
+			return true;
+		}
+	}
+	return /:not\s*\([^)]*&/iu.test(selector) || /:has\s*\(/iu.test(selector);
+}
+
+function sourceOrAncestorMatchesConservatively(
+	source: Element,
+	selectorText: string,
+): boolean {
+	try {
+		return null !== source.closest(selectorText);
+	} catch {
+		return true;
+	}
+}
+
 function subtreeAffectsPadding(
 	rules: CSSRuleList,
 	property: string,
+	source: Element,
+	parentSelectorText: string,
+	parentOrAncestorMatched: boolean,
 ): boolean {
 	try {
+		const defaultView = source.ownerDocument.defaultView;
 		for (const rule of Array.from(rules)) {
+			const isStyleRule =
+				(defaultView?.CSSStyleRule &&
+					rule instanceof defaultView.CSSStyleRule) ||
+				("undefined" !== typeof CSSStyleRule && rule instanceof CSSStyleRule);
+			if (isStyleRule) {
+				const styleRule = rule as CSSStyleRule;
+				const expanded = expandNestedSelectorList(
+					parentSelectorText,
+					styleRule.selectorText,
+				);
+				if (!expanded) return true;
+				const childNeedsConservativeCheck =
+					parentOrAncestorMatched ||
+					selectorUsesSiblingOrNegatedNesting(styleRule.selectorText) ||
+					selectorMatchesSourceConservatively(source, expanded);
+				if (
+					styleAffectsPadding(styleRule.style, property) &&
+					childNeedsConservativeCheck
+				) {
+					return true;
+				}
+				if (
+					styleRule.cssRules &&
+					styleRule.cssRules.length > 0 &&
+					subtreeAffectsPadding(
+						styleRule.cssRules,
+						property,
+						source,
+						expanded,
+						childNeedsConservativeCheck,
+					)
+				) {
+					return true;
+				}
+				continue;
+			}
+			const isNestedDeclarations =
+				"[object CSSNestedDeclarations]" ===
+				Object.prototype.toString.call(rule);
+			if (isNestedDeclarations) {
+				const style = (rule as CSSRule & { style?: CSSStyleDeclaration }).style;
+				if (!style || "function" !== typeof style.getPropertyValue) return true;
+				if (
+					styleAffectsPadding(style, property) &&
+					(parentOrAncestorMatched ||
+						selectorMatchesSourceConservatively(source, parentSelectorText))
+				) {
+					return true;
+				}
+				continue;
+			}
 			if (
 				"style" in rule &&
 				rule.style &&
@@ -182,7 +373,13 @@ function subtreeAffectsPadding(
 				const childRules = (rule as { cssRules: CSSRuleList }).cssRules;
 				if (
 					childRules.length > 0 &&
-					subtreeAffectsPadding(childRules, property)
+					subtreeAffectsPadding(
+						childRules,
+						property,
+						source,
+						parentSelectorText,
+						parentOrAncestorMatched,
+					)
 				) {
 					return true;
 				}
@@ -376,7 +573,19 @@ function portablePaddingTransportDecision(
 				continue;
 			}
 			if (rule.cssRules && rule.cssRules.length > 0) {
-				if (subtreeAffectsPadding(rule.cssRules, property)) {
+				const parentOrAncestorMatched = sourceOrAncestorMatchesConservatively(
+					source,
+					rule.selectorText,
+				);
+				if (
+					subtreeAffectsPadding(
+						rule.cssRules,
+						property,
+						source,
+						rule.selectorText,
+						parentOrAncestorMatched,
+					)
+				) {
 					unreadableStyleSheet = true;
 				}
 			}

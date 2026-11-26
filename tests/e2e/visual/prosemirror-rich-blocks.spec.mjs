@@ -378,20 +378,41 @@ test.describe('Unified ProseMirror visual editor rich blocks and long documents'
       await expect(
         visualEditor.locator('[data-easymde-protected-block][data-easymde-protected-kind="raw"][data-easymde-visual-markdown-source*="这是右对齐文本。"] .easymde-protected-meta-chip')
       ).toHaveCount(1);
-      const firstDetailsPreview = rawBlocks.locator('.easymde-protected-preview').filter({ hasText: '这里是默认折叠的内容。' });
-      await expect(firstDetailsPreview).toHaveCount(1);
-      await expect(firstDetailsPreview.locator('ul li')).toHaveText([
+      // CommonMark Type-6 HTML blocks (<details>\n<summary>...</summary>) also
+      // close at the first blank line, matching PHP League\CommonMark with
+      // html_input => 'strip': inner paragraphs/lists render directly as
+      // editable visual blocks while the wrapper tags remain collapsed chips.
+      await expect(
+        visualEditor.locator('p').filter({ hasText: '这里是默认折叠的内容。' })
+      ).toHaveCount(1);
+      await expect(
+        visualEditor.locator('ul').filter({ hasText: '可以放说明文字' }).locator('li')
+      ).toHaveText([
         '可以放列表',
         '可以放代码',
         '可以放说明文字'
       ]);
-      await expect(firstDetailsPreview.locator('ul li p')).toHaveCount(0);
-      const secondDetailsPreview = rawBlocks.locator('.easymde-protected-preview').filter({ hasText: '支持 Markdown 粗体' });
-      await expect(secondDetailsPreview).toHaveCount(1);
-      await expect(secondDetailsPreview.locator('ol li')).toHaveText([
+      await expect(
+        visualEditor.locator('p').filter({ hasText: '支持 Markdown 粗体' })
+      ).toHaveCount(1);
+      await expect(
+        visualEditor.locator('ol').filter({ hasText: '第二项' }).locator('li')
+      ).toHaveText([
         '第一项',
         '第二项'
       ]);
+      await expect(
+        rawBlocks.locator('.easymde-protected-meta-chip').filter({ hasText: 'HTML' })
+      ).not.toHaveCount(0);
+      await expect(
+        visualEditor.locator('[data-easymde-protected-block][data-easymde-protected-kind="raw"][data-easymde-visual-markdown-source*="点击展开查看隐藏内容"] .easymde-protected-meta-chip')
+      ).toHaveCount(1);
+      await expect(
+        visualEditor.locator('[data-easymde-protected-block][data-easymde-protected-kind="raw"][data-easymde-visual-markdown-source*="HTML details 测试"] .easymde-protected-meta-chip')
+      ).toHaveCount(1);
+      await expect(
+        visualEditor.locator('[data-easymde-protected-block][data-easymde-protected-kind="raw"][data-easymde-visual-markdown-source="</details>"] .easymde-protected-meta-chip')
+      ).toHaveCount(2);
       await expect(
         visualEditor.locator('[data-easymde-protected-block][data-easymde-protected-kind="footnotes"]')
       ).toHaveCount(2);

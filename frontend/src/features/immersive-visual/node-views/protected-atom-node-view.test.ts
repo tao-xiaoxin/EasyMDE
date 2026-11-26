@@ -9,6 +9,7 @@ import { parseMarkdownToVisualDoc } from "../markdown-parser";
 import { visualEditorSchema } from "../visual-schema";
 import {
 	createProtectedBlockNodeView,
+	extractInlineMathTex,
 	type MermaidRuntime,
 	type ProtectedAtomNodeViewOptions,
 } from "./protected-atom-node-view";
@@ -252,5 +253,13 @@ describe("ProtectedAtomNodeView Mermaid runtime parity and intrinsic layout", ()
 		expect(render).toHaveBeenCalledTimes(1);
 		expect(card?.classList.contains("easymde-render-error")).toBe(false);
 		expect(card?.querySelector("svg")).not.toBeNull();
+	});
+
+	it("extracts inline TeX cleanly for $...$, \\(...\\), $$...$$, and \\[...\\] delimiters", () => {
+		expect(extractInlineMathTex("$x$")).toBe("x");
+		expect(extractInlineMathTex("\\(x + y\\)")).toBe("x + y");
+		expect(extractInlineMathTex("\\[\\frac{1}{n}\\]")).toBe("\\frac{1}{n}");
+		expect(extractInlineMathTex("$$a^2 + b^2$$")).toBe("a^2 + b^2");
+		expect(extractInlineMathTex("$$")).toBe("$$");
 	});
 });

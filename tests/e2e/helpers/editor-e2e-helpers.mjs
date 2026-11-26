@@ -227,6 +227,10 @@ export async function login(page, user) {
   }, user);
   await expect(page.locator('#wpadminbar')).toBeVisible();
   await page.waitForLoadState('load');
+  // WordPress 7.1+ Dashboard triggers post-load emoji/thickbox asset fetches;
+  // let them finish before tests navigate straight to post-new.php under
+  // privacy-safe browser request monitoring.
+  await page.waitForLoadState('networkidle');
 }
 
 async function pulseWordPressHeartbeat(page) {

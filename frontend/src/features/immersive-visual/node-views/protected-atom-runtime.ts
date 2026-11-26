@@ -79,9 +79,10 @@ export function extractBlockMathTex(rawMarkdown: string): string {
 export function extractInlineMathTex(rawMarkdown: string): string {
 	const trimmed = rawMarkdown.trim();
 	if (
-		trimmed.startsWith("\\(") &&
-		trimmed.endsWith("\\)") &&
-		trimmed.length >= 4
+		trimmed.length >= 4 &&
+		((trimmed.startsWith("\\(") && trimmed.endsWith("\\)")) ||
+			(trimmed.startsWith("\\[") && trimmed.endsWith("\\]")) ||
+			(trimmed.startsWith("$$") && trimmed.endsWith("$$")))
 	) {
 		return trimmed.slice(2, -2).trim();
 	}

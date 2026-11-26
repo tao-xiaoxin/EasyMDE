@@ -489,6 +489,43 @@ describe("responsive portable padding semantics", () => {
 		}
 	});
 
+	it("ignores unrelated nested padding rules from non-matching WordPress UI classes", () => {
+		const fixture = portableQuoteFixture();
+		const wpUiInput = document.createElement("style");
+		wpUiInput.textContent = `
+			.wp-ui-input {
+				&:is(textarea, [type="text"]) {
+					padding: 6px 10px;
+				}
+			}
+			.wp-ui-slot {
+				[data-slot-type="prefix"] & {
+					padding-inline-start: 12px;
+				}
+			}
+		`;
+		document.head.append(wpUiInput);
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBe("9%");
+		} finally {
+			wpUiInput.remove();
+			fixture.cleanup();
+		}
+	});
+
 	it("walks nested child and grandchild rules before falling back", () => {
 		const fixture = portableQuoteFixture();
 		const override = document.createElement("style");

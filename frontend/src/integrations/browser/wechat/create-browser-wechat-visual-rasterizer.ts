@@ -578,13 +578,33 @@ async function encodePng(
   });
 }
 
+const arrayBufferByteLength = Object.getOwnPropertyDescriptor(
+  ArrayBuffer.prototype,
+  'byteLength',
+)?.get;
+
+function currentRealmBytes(raw: unknown): Uint8Array<ArrayBuffer> {
+  if (raw instanceof ArrayBuffer) {
+    return new Uint8Array(raw);
+  }
+  if ('function' !== typeof arrayBufferByteLength) {
+    throw new TypeError('ArrayBuffer byteLength getter unavailable');
+  }
+  arrayBufferByteLength.call(raw);
+  const source = new Uint8Array(raw as ArrayBuffer);
+  const copy = new Uint8Array(source.byteLength);
+  copy.set(source);
+  return copy;
+}
+
 async function pngContentDigest(png: Blob, document: Document): Promise<string> {
   const subtle = document.defaultView?.crypto?.subtle ?? globalThis.crypto?.subtle;
   if (!subtle) {
     throw new WechatVisualRasterizationError('wechat-png-encode-failed');
   }
   try {
-    const digest = await subtle.digest('SHA-256', await png.arrayBuffer());
+    const bytes = currentRealmBytes(await png.arrayBuffer());
+    const digest = await subtle.digest('SHA-256', bytes);
     return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, '0')).join('');
   } catch {
     throw new WechatVisualRasterizationError('wechat-png-encode-failed');

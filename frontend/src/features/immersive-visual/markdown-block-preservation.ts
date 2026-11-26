@@ -1,7 +1,7 @@
 import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
+import { resolveMatchedContainerHeadLine } from "./markdown-container-head-line";
 import {
 	alignContainerChildren,
-	canPreserveContainerHeadStructurally,
 	checkRawPreservationRisks,
 	createTightSharedGroupChecker,
 	isListSwallowingFollowingBlock,
@@ -348,27 +348,23 @@ function serializeContainerPreservingChildren(
 			origIdx >= 0 &&
 			origIdx === prevMatched + 1;
 
-		// Monotonic risk dominance: when a matched-invalidated or paired
-		// container keeps its baseline `child 0` and the baseline raw's own
-		// leading line already triggers swallow/indented risk, emit canonical
-		// directly instead of partially preserving it, exactly as liveness
-		// predicts regardless of the wave in which `child 0` is invalidated.
-		const baselineHeadRisk = (
+		// Monotonic risk dominance: a matched-invalidated or paired container
+		// whose immutable Pass-1 matched head line (shared with liveness)
+		// triggers swallow/indented risk is emitted canonically, independent
+		// of the wave in which any of its references is invalidated.
+		const matchedHeadRisk = (
 			base: ParsedVisualBlockSource | undefined,
 			effIdx: number,
 		): boolean => {
-			if (
-				!base ||
-				base.raw === null ||
-				!canPreserveContainerHeadStructurally(
-					child,
-					base,
-					ctx.parsed.blockquoteSources,
-				)
-			) {
-				return false;
-			}
-			const rawInner = stripAtDepth(base.raw, depth);
+			const headLine = resolveMatchedContainerHeadLine(
+				child,
+				base,
+				depth,
+				ctx.plan,
+				ctx.parsed,
+			);
+			if (headLine === null) return false;
+			const rawInner = stripAtDepth(headLine, depth);
 			const join = resolveContainerSlotJoin({
 				baselineBlocks,
 				child,
@@ -386,7 +382,7 @@ function serializeContainerPreservingChildren(
 			const risks = checkRawPreservationRisks(
 				child,
 				depth,
-				base.raw,
+				headLine,
 				rawInner,
 				join.separator,
 				prevNode,
@@ -399,7 +395,7 @@ function serializeContainerPreservingChildren(
 		if (intactGroup || (origBlock && !sharedGroup && !origInvalidated)) {
 			effectiveOrigIndex[idx] = origIdx;
 		} else if (origBlock && origInvalidated) {
-			const nested = baselineHeadRisk(origBlock, origIdx)
+			const nested = matchedHeadRisk(origBlock, origIdx)
 				? null
 				: tryPreserveContainerChild(child, origBlock);
 			if (nested !== null) {
@@ -413,7 +409,7 @@ function serializeContainerPreservingChildren(
 			const pairedIdx = pairedOrigIndex[idx] ?? -1;
 			const pairedBlock =
 				pairedIdx >= 0 ? baselineBlocks[pairedIdx] : undefined;
-			const nested = baselineHeadRisk(pairedBlock, pairedIdx)
+			const nested = matchedHeadRisk(pairedBlock, pairedIdx)
 				? null
 				: tryPreserveContainerChild(child, pairedBlock);
 			if (nested !== null) {

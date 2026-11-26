@@ -4,18 +4,13 @@ import {
 	prepareListPreservation,
 	resolveAuthoritativeListPreservation,
 } from "./markdown-list-preservation";
-import {
-	type BlockSerializer,
-	isLooseList,
-	serializeListItemAt,
-} from "./markdown-list-serialization";
+import type { BlockSerializer } from "./markdown-list-serialization";
 import type { ParsedVisualBlockSource } from "./markdown-parser";
 import {
 	addListUpstreamLabel,
 	type CandidatePartialRefDef,
 	discoverSubtree,
 	dropListUpstreamLabel,
-	firstLineOf,
 	type InvalidationTask,
 	isBlockContainerForRefDefs,
 	isLivePartialLabel,
@@ -35,11 +30,13 @@ import {
  * non-reusable items BEFORE resolving reuse, so `st.partialTitleRefNodes`
  * matches what the final serializer sees. All Pass-2 list re-validation
  * (first ordered marker, indented-item left-shifts, and the whole-list
- * `allowShift = false` fallback) goes through ONE authoritative
- * `resolveAuthoritativeListPreservation` call per dirty-list drain; dirty
- * lists drain one at a time in true topological order (`liveUpstreamCount`,
- * non-sink before sink, smallest `listNode.nodeSize` first) so multi-wave
- * cascades never re-validate a heavy downstream list per wave.
+ * `allowShift = false` fallback) goes through the authoritative
+ * `resolveAuthoritativeListPreservation`, stabilizing newly non-reusable
+ * trailing items (and their partial-title refdefs) BEFORE committing item 0;
+ * dirty lists drain one at a time in exact active-producer topological order
+ * (`pendingUpstreamCount`, `liveUpstreamCount`, non-sink before sink, smallest
+ * `listNode.nodeSize` first) so multi-wave cascades never re-validate a heavy
+ * downstream list per wave.
  */
 
 /**
@@ -54,8 +51,6 @@ export type TailSource = {
 
 export type DescendResult = Readonly<{
 	hasAny: boolean;
-	/** Lazily computes line 0 of the preserved container at parent depth. */
-	head: (() => string) | null;
 	preserved: boolean;
 	tail: TailSource | null;
 }>;
@@ -100,6 +95,40 @@ function resolveListReuse(
 	);
 }
 
+/**
+ * Resolves list reuse to a fixed point: every newly non-reusable trailing item
+ * (`idx >= 1`) is downgraded first, re-resolving while that shrinks
+ * `st.partialTitleRefNodes` (which changes canonical blank-line emission and
+ * therefore tight/loose re-validation); item 0 is committed only once the
+ * trailing items are stable. Each item downgrades at most once (monotonic).
+ */
+function resolveStableListReuse(
+	st: LivenessState,
+	listNode: ProseMirrorNode,
+	prepared: PreparedListPreservation,
+	isDowngraded: (itemIdx: number) => boolean,
+	downgrade: (itemIdx: number) => void,
+): ReturnType<typeof resolveListReuse> {
+	while (true) {
+		const resolution = resolveListReuse(st, listNode, prepared, false);
+		const before = st.partialTitleRefNodes.size;
+		for (let idx = 1; idx < listNode.childCount; idx += 1) {
+			if (resolution.itemReusable[idx] !== true && !isDowngraded(idx)) {
+				downgrade(idx);
+			}
+		}
+		if (st.partialTitleRefNodes.size !== before) continue;
+		if (
+			listNode.childCount > 0 &&
+			resolution.itemReusable[0] !== true &&
+			!isDowngraded(0)
+		) {
+			downgrade(0);
+		}
+		return resolution;
+	}
+}
+
 function forEachCandidateIn(
 	st: LivenessState,
 	parent: ProseMirrorNode,
@@ -128,7 +157,7 @@ function isSinkList(st: LivenessState, check: PendingListCheck): boolean {
 function markListDirty(st: LivenessState, check: PendingListCheck): void {
 	if (!check.tracksValidation || check.heapIndex >= 0) return;
 	check.isSink = isSinkList(st, check);
-	pendingListHeapPush(st.pendingListHeap, check);
+	pendingListHeapPush(st, check);
 }
 
 /**
@@ -234,7 +263,6 @@ export function openList(
 				discover,
 				deferInvalidation,
 			),
-			head: null,
 			preserved: false,
 			tail: null,
 		};
@@ -253,6 +281,8 @@ export function openList(
 		itemHasCands[itemIdx] = has;
 		if (has) hasAny = true;
 	}
+	// Marked BEFORE collecting `selfLabels`, which `forEachCandidateIn` reads.
+	if (hasAny) st.subtreeHasCandidates.add(listNode);
 	// 2. Synchronously evaluate every already-non-reusable item in canonical
 	//    mode BEFORE `resolveListReuse`, so broken partial-title refdefs are
 	//    already removed from `st.partialTitleRefNodes`.
@@ -274,7 +304,29 @@ export function openList(
 		}
 	}
 
-	const resolution = resolveListReuse(st, listNode, prepared, false);
+	// 3. Stabilize newly non-reusable trailing items (and their partial-title
+	//    refdefs) BEFORE committing item 0; every non-reusable item ends up
+	//    evaluated canonically exactly once.
+	const resolution = resolveStableListReuse(
+		st,
+		listNode,
+		prepared,
+		(itemIdx) => preEvaluatedCanonical[itemIdx] === true,
+		(itemIdx) => {
+			walkSubtree(
+				st,
+				listNode.child(itemIdx),
+				"canonical",
+				false,
+				deferInvalidation,
+			);
+			preEvaluatedCanonical[itemIdx] = true;
+		},
+	);
+	for (let itemIdx = 0; itemIdx < itemCount; itemIdx += 1) {
+		if (preEvaluatedCanonical[itemIdx])
+			resolution.itemReusable[itemIdx] = false;
+	}
 	// One unified Pass-2 re-validation trigger: a reused first ordered item
 	// with candidates needing whole-list marker validation, or ANY indented
 	// trailing item whose left-shift (and the whole-list `allowShift = false`
@@ -304,7 +356,8 @@ export function openList(
 				itemUpstream[itemIdx] ?? [],
 				selfLabels,
 			),
-		firstEmittedSlice: resolution.firstEmittedSlice,
+		firstEmittedSlice:
+			resolution.itemReusable[0] === true ? resolution.firstEmittedSlice : null,
 		heapIndex: -1,
 		isSink: false,
 		itemReusable: resolution.itemReusable,
@@ -313,40 +366,17 @@ export function openList(
 		liveUpstreamCount: 0,
 		notifyTailChange: () => tail.onChange?.(),
 		ownLabels: [...selfLabels],
+		pendingUpstreamCount: 0,
 		prepared,
 		refCountByUpstreamLabel: new Map<string, number>(),
 		tracksValidation,
 	};
-	const head = (): string => {
-		const innerFirst =
-			check.itemReusable[0] === true && check.firstEmittedSlice !== null
-				? firstLineOf(check.firstEmittedSlice)
-				: itemCount > 0
-					? firstLineOf(
-							serializeListItemAt(
-								listNode,
-								0,
-								isLooseList(listNode),
-								createLiveBlockSerializer(st),
-								false,
-								undefined,
-								(node) => st.partialTitleRefNodes.has(node),
-							),
-						)
-					: "";
-		if (depth <= 0) return innerFirst;
-		return innerFirst.length > 0
-			? `${"> ".repeat(depth)}${innerFirst}`
-			: `${"> ".repeat(depth - 1)}>`;
-	};
+	for (const label of selfLabels) st.producerListByLabel.set(label, check);
 
 	const lastIdx = itemCount - 1;
 	for (let itemIdx = 0; itemIdx < itemCount; itemIdx += 1) {
 		const itemNode = listNode.child(itemIdx);
 		if (check.itemReusable[itemIdx] !== true) {
-			if (!preEvaluatedCanonical[itemIdx]) {
-				walkSubtree(st, itemNode, "canonical", false, deferInvalidation);
-			}
 			if (itemHasCands[itemIdx] === true) {
 				attachCanonicalCandidateDirtyHooks(st, check, itemNode, selfLabels);
 			}
@@ -395,44 +425,45 @@ export function openList(
 		check.itemTasks[itemIdx] = task;
 		registerNodeDependency(st, prepared.orig.child(origIdx), task);
 	}
-	if (hasAny) st.subtreeHasCandidates.add(listNode);
-	return { hasAny, head, preserved: true, tail };
+	return { hasAny, preserved: true, tail };
 }
 
 /**
- * Pops ONE dirty list in topological priority order (`liveUpstreamCount` first,
- * non-sink before sink, smallest `listNode.nodeSize` first) and re-runs the
- * single authoritative `resolveAuthoritativeListPreservation` (first ordered
- * marker, indented-item left-shifts, and the whole-list `allowShift = false`
- * fallback) ONCE, downgrading every newly non-reusable item. Returns `false`
- * once no list is dirty.
+ * Pops ONE dirty list in topological priority order (`pendingUpstreamCount`,
+ * `liveUpstreamCount`, non-sink before sink, smallest `listNode.nodeSize`)
+ * and re-runs the authoritative `resolveAuthoritativeListPreservation`
+ * (first ordered marker, indented-item left-shifts, and the whole-list
+ * `allowShift = false` fallback), stabilizing newly non-reusable trailing
+ * items before item 0. Returns `false` once no list is dirty.
  */
 export function drainNextPendingList(st: LivenessState): boolean {
-	const heap = st.pendingListHeap;
-	while (heap.length > 0) {
-		const check = pendingListHeapPop(heap);
+	while (st.pendingListHeap.length > 0) {
+		const check = pendingListHeapPop(st);
 		if (check === undefined) break;
 		if (!check.isSink && isSinkList(st, check)) {
 			check.isSink = true;
-			pendingListHeapPush(heap, check);
+			pendingListHeapPush(st, check);
 			continue;
 		}
 		const prevFirst = check.firstEmittedSlice;
-		const recheck = resolveListReuse(st, check.listNode, check.prepared, false);
+		let changed = false;
+		const recheck = resolveStableListReuse(
+			st,
+			check.listNode,
+			check.prepared,
+			(idx) => check.itemReusable[idx] !== true,
+			(idx) => {
+				changed = true;
+				// Drain-driven downgrades reuse the item transition WITHOUT
+				// re-dirtying this list: the stabilized `recheck` reflects them.
+				const task = check.itemTasks[idx];
+				if (task) task.fired = true;
+				check.downgradeItem(idx);
+			},
+		);
 		check.firstEmittedSlice =
 			check.itemReusable[0] === true ? recheck.firstEmittedSlice : null;
-		let changed = prevFirst !== check.firstEmittedSlice;
-		for (let idx = 0; idx < check.listNode.childCount; idx += 1) {
-			if (check.itemReusable[idx] !== true || recheck.itemReusable[idx]) {
-				continue;
-			}
-			changed = true;
-			// Drain-driven downgrades reuse the item transition WITHOUT
-			// re-dirtying this list: `recheck` already reflects them.
-			const task = check.itemTasks[idx];
-			if (task) task.fired = true;
-			check.downgradeItem(idx);
-		}
+		if (prevFirst !== check.firstEmittedSlice) changed = true;
 		if (changed || check.prepared.hasIndentedTrailingItem) {
 			check.notifyTailChange();
 		}

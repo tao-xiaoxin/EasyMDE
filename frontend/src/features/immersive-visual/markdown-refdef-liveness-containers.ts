@@ -1,4 +1,5 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
+import { resolveMatchedContainerHeadLine } from "./markdown-container-head-line";
 import {
 	alignContainerChildren,
 	canPreserveContainerHeadStructurally,
@@ -20,19 +21,17 @@ import {
 	type TailSource,
 } from "./markdown-refdef-liveness-lists";
 import {
-	baselineHeadRisk,
 	type ContainerState,
 	evaluateSlotJoin,
+	headLineHasRisk,
 	isBrokenTightLeft,
 	preservedSlotHasRisk,
 	type SlotState,
-	uneditedHeadBase,
 } from "./markdown-refdef-liveness-slot-risk";
 import {
 	type CandidatePartialRefDef,
 	evaluateCandidateCanonical,
 	fireTask,
-	firstLineOf,
 	type InvalidationTask,
 	isBlockContainerForRefDefs,
 	isPartialTitleFollowerType,
@@ -230,7 +229,7 @@ function descendNonVerbatimChild(
 	deferInvalidation: boolean,
 ): DescendResult {
 	if (child.childCount === 0 || !isBlockContainerForRefDefs(child)) {
-		return { hasAny: false, head: null, preserved: false, tail: null };
+		return { hasAny: false, preserved: false, tail: null };
 	}
 	if (
 		child.type.name === "blockquote" &&
@@ -253,7 +252,6 @@ function descendNonVerbatimChild(
 	}
 	return {
 		hasAny: walkSubtree(st, child, "canonical", discover, deferInvalidation),
-		head: null,
 		preserved: false,
 		tail: null,
 	};
@@ -261,11 +259,9 @@ function descendNonVerbatimChild(
 
 /**
  * Transitions a slot whose nested `blockquote`/`list` returned `preserved: true`
- * into either `"preserved-container"` (with a Pass-2 risk-downgrade task) or
- * immediately into `"canonical"` when `swallowRisk || indentedRisk` already
- * triggers — matching `serializeContainerPreservingChildren`. Callers have
- * already rejected an unedited-head baseline (`riskBase`) whose raw leading
- * line is risky.
+ * into `"preserved-container"` with a Pass-2 risk-downgrade task, matching
+ * `serializeContainerPreservingChildren`. Callers have already rejected a
+ * risky immutable matched head line (`headLine`).
  */
 function installPreservedContainerSlot(
 	st: LivenessState,
@@ -273,24 +269,11 @@ function installPreservedContainerSlot(
 	idx: number,
 	effIdx: number,
 	result: DescendResult,
-	deferInvalidation: boolean,
-	riskBase: ParsedVisualBlockSource | null,
+	headLine: string | null,
 ): void {
 	const child = cs.container.child(idx);
-	cs.headAt[idx] = result.head;
-	cs.riskBaseAt[idx] = riskBase;
+	cs.headLineAt[idx] = headLine;
 	cs.effectiveOrigIndex[idx] = effIdx;
-	if (riskBase === null && preservedSlotHasRisk(st, cs, idx)) {
-		cs.slotState[idx] = "canonical";
-		cs.innerAt[idx] = null;
-		cs.headAt[idx] = null;
-		cs.tailAt[idx] = null;
-		if (result.tail) result.tail.onChange = null;
-		if (st.subtreeHasCandidates.has(child)) {
-			walkSubtree(st, child, "canonical", false, deferInvalidation);
-		}
-		return;
-	}
 	cs.slotState[idx] = "preserved-container";
 	bindNestedTail(st, cs, idx, result.tail);
 	const downgradeTask: InvalidationTask = {
@@ -301,9 +284,8 @@ function installPreservedContainerSlot(
 			if (oldTail) oldTail.onChange = null;
 			cs.slotState[idx] = "canonical";
 			cs.innerAt[idx] = null;
-			cs.headAt[idx] = null;
+			cs.headLineAt[idx] = null;
 			cs.tailAt[idx] = null;
-			cs.riskBaseAt[idx] = null;
 			if (st.subtreeHasCandidates.has(child)) {
 				walkSubtree(st, child, "canonical", false, false);
 			}
@@ -347,7 +329,6 @@ function processIntactGroup(
 		discoverVerbatimChild(st, cs, slot, cs.container.child(slot));
 	}
 	const lastSlot = groupStart + groupLen - 1;
-	cs.headAt[groupStart] = () => firstLineOf(group.raw);
 	cs.innerAt[lastSlot] = verbatimInner(group.raw, cs.depth);
 
 	const breakGroupTask: InvalidationTask = {
@@ -358,7 +339,6 @@ function processIntactGroup(
 				cs.slotState[slot] = "canonical";
 				cs.effectiveOrigIndex[slot] = -1;
 				cs.innerAt[slot] = null;
-				cs.headAt[slot] = null;
 				const memberChild = cs.container.child(slot);
 				if (
 					memberChild.childCount > 0 &&
@@ -399,7 +379,6 @@ function processMatchedSlot(
 		// directly (`ensureGenerated()`), NEVER nested container preservation.
 		cs.slotState[idx] = "canonical";
 		cs.innerAt[idx] = null;
-		cs.headAt[idx] = null;
 		if (
 			child.childCount > 0 &&
 			isBlockContainerForRefDefs(child) &&
@@ -412,7 +391,6 @@ function processMatchedSlot(
 	const origRaw = origBlock.raw;
 	cs.slotState[idx] = "verbatim";
 	cs.innerAt[idx] = verbatimInner(origRaw, cs.depth);
-	cs.headAt[idx] = () => firstLineOf(origRaw);
 	if (
 		cs.discover &&
 		child.childCount > 0 &&
@@ -427,15 +405,20 @@ function processMatchedSlot(
 		run: () => {
 			cs.slotState[idx] = "canonical";
 			cs.innerAt[idx] = null;
-			cs.headAt[idx] = null;
 			// An invalidated match is re-preserved as a nested container by the
-			// serializer unless its unedited baseline head or its emitted head
-			// is risky; a risk break ALWAYS emits canonically (monotonic).
+			// serializer unless its immutable matched head line is risky; a
+			// risk break ALWAYS emits canonically (monotonic).
 			if (child.childCount > 0 && isBlockContainerForRefDefs(child)) {
-				const riskBase = uneditedHeadBase(st, child, origBlock);
+				const headLine = resolveMatchedContainerHeadLine(
+					child,
+					origBlock,
+					cs.depth,
+					st.plan,
+					st.parsed,
+				);
 				if (
 					nodeHasCurrentInvalidatedRef(st, origBlock.node) &&
-					!baselineHeadRisk(st, cs, idx, riskBase, origIdx)
+					!headLineHasRisk(st, cs, idx, headLine, origIdx)
 				) {
 					const result = descendNonVerbatimChild(
 						st,
@@ -452,8 +435,7 @@ function processMatchedSlot(
 							idx,
 							origIdx,
 							result,
-							false,
-							riskBase,
+							headLine,
 						);
 					}
 				} else if (st.subtreeHasCandidates.has(child)) {
@@ -497,8 +479,14 @@ function processUnmatchedSlot(
 	const baseIdx =
 		origBlock !== undefined ? origIdx : (cs.pairedOrigIndex[idx] ?? -1);
 	const baseBlock = baseIdx >= 0 ? cs.source.blocks[baseIdx] : undefined;
-	const riskBase = uneditedHeadBase(st, child, baseBlock);
-	if (baselineHeadRisk(st, cs, idx, riskBase, baseIdx)) {
+	const headLine = resolveMatchedContainerHeadLine(
+		child,
+		baseBlock,
+		cs.depth,
+		st.plan,
+		st.parsed,
+	);
+	if (headLineHasRisk(st, cs, idx, headLine, baseIdx)) {
 		if (origBlock !== undefined && origBlock.sharedGroup === undefined) {
 			cs.effectiveOrigIndex[idx] = baseIdx;
 		}
@@ -520,15 +508,7 @@ function processUnmatchedSlot(
 	);
 	if (result.hasAny) cs.hasAny = true;
 	if (result.preserved) {
-		installPreservedContainerSlot(
-			st,
-			cs,
-			idx,
-			baseIdx,
-			result,
-			cs.deferInvalidation,
-			riskBase,
-		);
+		installPreservedContainerSlot(st, cs, idx, baseIdx, result, headLine);
 		return;
 	}
 	if (
@@ -700,7 +680,6 @@ export function openContainer(
 		source.trailingSuffix.length > 0 &&
 		(baselineBlocks.length === 1 ||
 			matchedOrigIndex.some((origIdx) => origIdx >= 0));
-	const headAt = new Array<(() => string) | null>(newLen).fill(null);
 	const innerAt = new Array<(() => string) | null>(newLen).fill(null);
 	const tailAt = new Array<TailSource | null>(newLen).fill(null);
 	const cs: ContainerState = {
@@ -714,12 +693,11 @@ export function openContainer(
 		groupStartAt: new Array<number>(newLen).fill(-1),
 		groupTasks: new Map<number, InvalidationTask>(),
 		hasAny: false,
-		headAt,
+		headLineAt: new Array<string | null>(newLen).fill(null),
 		innerAt,
 		keepsTrailingSuffix,
 		matchedOrigIndex,
 		pairedOrigIndex,
-		riskBaseAt: new Array<ParsedVisualBlockSource | null>(newLen).fill(null),
 		slotCandidates: new Map<number, CandidatePartialRefDef[]>(),
 		slotState: new Array<SlotState>(newLen).fill("canonical"),
 		slotTasks: new Map<number, InvalidationTask>(),
@@ -753,22 +731,5 @@ export function openContainer(
 		}
 	}
 	if (cs.hasAny) st.subtreeHasCandidates.add(container);
-	const readHead: (() => string) | null =
-		depth > 0
-			? () => {
-					if (matchedOrigIndex[0] === 0 && source.leadingPrefix.length > 0) {
-						return firstLineOf(source.leadingPrefix);
-					}
-					if (newLen === 0) return "";
-					const head0 = headAt[0];
-					if (head0) return head0();
-					const firstCanonical = firstLineOf(
-						st.serializeBlock(container.child(0)),
-					);
-					return firstCanonical.length > 0
-						? `${"> ".repeat(depth)}${firstCanonical}`
-						: `${"> ".repeat(depth - 1)}>`;
-				}
-			: null;
-	return { hasAny: cs.hasAny, head: readHead, preserved: true, tail: cs.tail };
+	return { hasAny: cs.hasAny, preserved: true, tail: cs.tail };
 }

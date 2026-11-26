@@ -82,6 +82,12 @@ export type PendingListCheck = {
 	readonly notifyTailChange: () => void;
 	/** Partial-title candidate labels declared inside this list's items. */
 	readonly ownLabels: ReadonlyArray<string>;
+	/**
+	 * Count of distinct still-alive upstream labels whose producer list is
+	 * currently queued in `st.pendingListHeap`; kept in sync in O(deg) on
+	 * every enqueue, dequeue, upstream add/drop, and label invalidation.
+	 */
+	pendingUpstreamCount: number;
 	readonly prepared: PreparedListPreservation;
 	readonly refCountByUpstreamLabel: Map<string, number>;
 	readonly tracksValidation: boolean;
@@ -104,6 +110,8 @@ export type LivenessState = Readonly<{
 	partialTitleRefNodes: Set<ProseMirrorNode>;
 	pendingListHeap: PendingListCheck[];
 	plan: PreservationPlan;
+	/** Tracked list whose items declare each partial-title candidate label. */
+	producerListByLabel: Map<string, PendingListCheck>;
 	seenLabels: Set<string>;
 	serializeBlock: BlockSerializer;
 	serializeBlockWithRefs: BlockWithRefsSerializer | undefined;
@@ -113,12 +121,17 @@ export type LivenessState = Readonly<{
 }>;
 
 /**
- * Min-heap priority order for dirty lists:
- * 1. Smallest `liveUpstreamCount` first (0-dependency lists always pop first).
- * 2. Non-sink lists before sink lists.
- * 3. Smallest `listNode.nodeSize` (real parse cost) first.
+ * Min-heap priority order for dirty lists (exact active-producer topological
+ * order):
+ * 1. Fewest still-queued upstream producer lists (`pendingUpstreamCount`).
+ * 2. Smallest `liveUpstreamCount` first.
+ * 3. Non-sink lists before sink lists.
+ * 4. Smallest `listNode.nodeSize` (real parse cost) first.
  */
 function pendingListBefore(a: PendingListCheck, b: PendingListCheck): boolean {
+	if (a.pendingUpstreamCount !== b.pendingUpstreamCount) {
+		return a.pendingUpstreamCount < b.pendingUpstreamCount;
+	}
 	if (a.liveUpstreamCount !== b.liveUpstreamCount) {
 		return a.liveUpstreamCount < b.liveUpstreamCount;
 	}
@@ -146,12 +159,14 @@ function pendingListHeapSiftUp(
 }
 
 export function pendingListHeapPush(
-	heap: PendingListCheck[],
+	st: LivenessState,
 	check: PendingListCheck,
 ): void {
+	const heap = st.pendingListHeap;
 	check.heapIndex = heap.length;
 	heap.push(check);
 	pendingListHeapSiftUp(heap, check.heapIndex);
+	adjustDownstreamPendingCounts(st, check, 1);
 }
 
 /** Restores the min-heap invariant after `heap[startIndex]` lost priority. */
@@ -188,20 +203,73 @@ function pendingListHeapSiftDown(
 }
 
 export function pendingListHeapPop(
-	heap: PendingListCheck[],
+	st: LivenessState,
 ): PendingListCheck | undefined {
+	const heap = st.pendingListHeap;
 	const top = heap[0];
 	const last = heap.pop();
 	if (top === undefined) return undefined;
 	top.heapIndex = -1;
-	if (last === undefined || heap.length === 0) return top;
-	heap[0] = last;
-	last.heapIndex = 0;
-	pendingListHeapSiftDown(heap, 0);
+	if (last !== undefined && heap.length > 0) {
+		heap[0] = last;
+		last.heapIndex = 0;
+		pendingListHeapSiftDown(heap, 0);
+	}
+	adjustDownstreamPendingCounts(st, top, -1);
 	return top;
 }
 
-export function firstLineOf(text: string): string {
+/** Re-sifts a queued list after its priority counts changed by `delta`. */
+function resiftPendingList(
+	st: LivenessState,
+	check: PendingListCheck,
+	delta: number,
+): void {
+	if (check.heapIndex < 0) return;
+	if (delta > 0) pendingListHeapSiftDown(st.pendingListHeap, check.heapIndex);
+	else pendingListHeapSiftUp(st.pendingListHeap, check.heapIndex);
+}
+
+/**
+ * O(deg): `producer` entered (`delta = 1`) or left (`delta = -1`) the heap, so
+ * every downstream list watching one of its still-alive own labels gains or
+ * loses one queued upstream producer.
+ */
+function adjustDownstreamPendingCounts(
+	st: LivenessState,
+	producer: PendingListCheck,
+	delta: number,
+): void {
+	for (const label of producer.ownLabels) {
+		if (
+			st.invalidatedLabels.has(label) ||
+			st.producerListByLabel.get(label) !== producer
+		) {
+			continue;
+		}
+		const watchers = st.upstreamListsByLabel.get(label);
+		if (!watchers) continue;
+		for (const downstream of watchers) {
+			if (downstream === producer) continue;
+			downstream.pendingUpstreamCount += delta;
+			resiftPendingList(st, downstream, delta);
+		}
+	}
+}
+
+/** Whether `label`'s producer list (other than `check`) is currently queued. */
+function hasQueuedProducer(
+	st: LivenessState,
+	check: PendingListCheck,
+	label: string,
+): boolean {
+	const producer = st.producerListByLabel.get(label);
+	return (
+		producer !== undefined && producer !== check && producer.heapIndex >= 0
+	);
+}
+
+function firstLineOf(text: string): string {
 	const nl = text.indexOf("\n");
 	return nl === -1 ? text : text.slice(0, nl);
 }
@@ -229,9 +297,8 @@ export function addListUpstreamLabel(
 			st.upstreamListsByLabel.set(label, watchers);
 		}
 		watchers.add(check);
-		if (check.heapIndex >= 0) {
-			pendingListHeapSiftDown(st.pendingListHeap, check.heapIndex);
-		}
+		if (hasQueuedProducer(st, check, label)) check.pendingUpstreamCount += 1;
+		resiftPendingList(st, check, 1);
 	}
 }
 
@@ -249,9 +316,8 @@ export function dropListUpstreamLabel(
 	check.refCountByUpstreamLabel.delete(label);
 	st.upstreamListsByLabel.get(label)?.delete(check);
 	check.liveUpstreamCount -= 1;
-	if (check.heapIndex >= 0) {
-		pendingListHeapSiftUp(st.pendingListHeap, check.heapIndex);
-	}
+	if (hasQueuedProducer(st, check, label)) check.pendingUpstreamCount -= 1;
+	resiftPendingList(st, check, -1);
 }
 
 function notifyUpstreamLabelInvalidated(
@@ -264,9 +330,8 @@ function notifyUpstreamLabelInvalidated(
 	for (const check of watchers) {
 		if (check.refCountByUpstreamLabel.delete(label)) {
 			check.liveUpstreamCount -= 1;
-			if (check.heapIndex >= 0) {
-				pendingListHeapSiftUp(st.pendingListHeap, check.heapIndex);
-			}
+			if (hasQueuedProducer(st, check, label)) check.pendingUpstreamCount -= 1;
+			resiftPendingList(st, check, -1);
 		}
 	}
 }

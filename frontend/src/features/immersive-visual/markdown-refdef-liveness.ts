@@ -115,6 +115,7 @@ export function computeIntactRefDefLabels(
 		partialTitleRefNodes,
 		pendingListHeap: [],
 		plan,
+		producerListByLabel: new Map<string, PendingListCheck>(),
 		seenLabels: new Set<string>(),
 		serializeBlock,
 		serializeBlockWithRefs,
@@ -159,8 +160,8 @@ export function computeIntactRefDefLabels(
 
 	// Pass 2: O(N + E) worklist propagation. Every task fires at most once.
 	// After the FIFO queue empties, exactly ONE dirty list pops in topological
-	// priority order (`liveUpstreamCount`, non-sink before sink, smallest
-	// `listNode.nodeSize` first), draining any newly invalidated labels before
+	// priority order (`pendingUpstreamCount`, `liveUpstreamCount`, non-sink
+	// before sink, smallest `listNode.nodeSize` first), draining any newly invalidated labels before
 	// another list pops so downstream lists re-validate at most once.
 	let queueHead = 0;
 	while (true) {

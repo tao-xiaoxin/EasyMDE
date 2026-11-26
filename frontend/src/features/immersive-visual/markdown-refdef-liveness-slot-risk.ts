@@ -1,6 +1,5 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import {
-	canPreserveContainerHeadStructurally,
 	checkRawPreservationRisks,
 	leadingIndentAtDepth,
 	needsPrevInnerForRiskCheck,
@@ -9,7 +8,6 @@ import {
 import { resolveContainerSlotJoin } from "./markdown-container-slot-separator";
 import type {
 	BuiltVisualBlockSources,
-	ParsedVisualBlockSource,
 	ParsedVisualSharedGroup,
 } from "./markdown-parser";
 import type { TailSource } from "./markdown-refdef-liveness-lists";
@@ -23,7 +21,7 @@ import type {
  * Per-container slot state and serializer-parity join / raw-preservation risk
  * prediction for the refdef liveness container planner
  * (`markdown-refdef-liveness-containers.ts`), including the monotonic
- * unedited-head risk-dominance rule shared with
+ * matched-head-line risk-dominance rule shared with
  * `serializeContainerPreservingChildren`.
  */
 
@@ -46,10 +44,11 @@ export type ContainerState = {
 	readonly groupStartAt: number[];
 	readonly groupTasks: Map<number, InvalidationTask>;
 	/**
-	 * Lazily computes line 0 at `cs.depth` for verbatim or preserved-container
-	 * slots (used for `swallowRisk` / `indentedRisk` re-checks); `null` = canonical.
+	 * Immutable Pass-1 matched head line of each preserved-container slot
+	 * (`resolveMatchedContainerHeadLine`) deciding its `swallowRisk` /
+	 * `indentedRisk` re-checks; `null` when `child 0` is emitted canonically.
 	 */
-	readonly headAt: Array<(() => string) | null>;
+	readonly headLineAt: Array<string | null>;
 	/**
 	 * Lazily computes the depth-stripped text the serializer emits for each
 	 * slot when it is verbatim or a preserved nested container (its tail
@@ -59,12 +58,6 @@ export type ContainerState = {
 	readonly keepsTrailingSuffix: boolean;
 	readonly matchedOrigIndex: ReadonlyArray<number>;
 	readonly pairedOrigIndex: ReadonlyArray<number>;
-	/**
-	 * Baseline block of a preserved-container slot whose `child 0` is
-	 * unedited: its own raw leading line decides `swallowRisk` /
-	 * `indentedRisk` monotonically (see `baselineHeadRisk`); `null` otherwise.
-	 */
-	readonly riskBaseAt: Array<ParsedVisualBlockSource | null>;
 	readonly slotCandidates: Map<number, CandidatePartialRefDef[]>;
 	readonly slotState: SlotState[];
 	readonly slotTasks: Map<number, InvalidationTask>;
@@ -170,68 +163,41 @@ export function isBrokenTightLeft(
 
 /**
  * Monotonic risk dominance shared with `serializeContainerPreservingChildren`:
- * a matched-invalidated or paired container whose `child 0` is unedited
- * (`riskBase`, from `uneditedHeadBase`) goes straight to canonical whenever
- * its baseline raw leading line triggers `swallowRisk || indentedRisk`,
- * independent of the wave in which `child 0` is invalidated.
+ * a matched-invalidated or paired container goes straight to canonical
+ * whenever its immutable Pass-1 matched head line (`headLine`, from
+ * `resolveMatchedContainerHeadLine`) triggers `swallowRisk || indentedRisk`,
+ * independent of the wave in which any of its references is invalidated.
  */
-export function baselineHeadRisk(
+export function headLineHasRisk(
 	st: LivenessState,
 	cs: ContainerState,
 	idx: number,
-	riskBase: ParsedVisualBlockSource | null,
+	headLine: string | null,
 	effIdx: number,
 ): boolean {
-	if (riskBase === null || riskBase.raw === null) return false;
+	if (headLine === null) return false;
 	const { indentedRisk, swallowRisk } = evaluateSlotJoin(
 		st,
 		cs,
 		idx,
-		riskBase.raw,
+		headLine,
 		effIdx,
 		undefined,
 	);
 	return indentedRisk || swallowRisk;
 }
 
-/**
- * Risk check for a `"preserved-container"` slot: its unedited baseline head
- * (monotonic dominance) or, when `child 0` was edited, its emitted head.
- */
+/** Re-check for a `"preserved-container"` slot against its matched head line. */
 export function preservedSlotHasRisk(
 	st: LivenessState,
 	cs: ContainerState,
 	idx: number,
 ): boolean {
-	const effIdx = cs.effectiveOrigIndex[idx] ?? -1;
-	const riskBase = cs.riskBaseAt[idx];
-	if (riskBase) return baselineHeadRisk(st, cs, idx, riskBase, effIdx);
-	const headReader = cs.headAt[idx];
-	if (!headReader) return false;
-	const { indentedRisk, swallowRisk } = evaluateSlotJoin(
+	return headLineHasRisk(
 		st,
 		cs,
 		idx,
-		headReader(),
-		effIdx,
-		undefined,
+		cs.headLineAt[idx] ?? null,
+		cs.effectiveOrigIndex[idx] ?? -1,
 	);
-	return indentedRisk || swallowRisk;
-}
-
-/** `base` when `child` keeps its baseline container head (`child 0`). */
-export function uneditedHeadBase(
-	st: LivenessState,
-	child: ProseMirrorNode,
-	base: ParsedVisualBlockSource | undefined,
-): ParsedVisualBlockSource | null {
-	return base !== undefined &&
-		base.raw !== null &&
-		canPreserveContainerHeadStructurally(
-			child,
-			base,
-			st.parsed.blockquoteSources,
-		)
-		? base
-		: null;
 }

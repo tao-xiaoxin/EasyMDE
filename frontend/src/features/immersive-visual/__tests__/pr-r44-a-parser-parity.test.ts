@@ -388,6 +388,7 @@ describe("PR-R44-A monotonic container risk dominance, unified list drain, heap 
 				liveUpstreamCount: 0,
 				notifyTailChange: () => undefined,
 				ownLabels: [],
+				pendingUpstreamCount: 0,
 				// Heap ordering never reads the list preservation plan.
 				prepared: undefined as unknown as PendingListCheck["prepared"],
 				refCountByUpstreamLabel: new Map<string, number>(),
@@ -397,22 +398,24 @@ describe("PR-R44-A monotonic container risk dominance, unified list drain, heap 
 
 		it("3.1 drop + add of a queued list's upstream label sifts it back down (U0 pops before BIG)", () => {
 			const st = {
+				invalidatedLabels: new Set<string>(),
 				pendingListHeap: [] as PendingListCheck[],
+				producerListByLabel: new Map<string, PendingListCheck>(),
 				upstreamListsByLabel: new Map<string, Set<PendingListCheck>>(),
 			} as unknown as LivenessState;
 			const u0 = fakeCheck(800);
 			const big = fakeCheck(50);
 			addListUpstreamLabel(st, big, "u1");
-			pendingListHeapPush(st.pendingListHeap, u0);
-			pendingListHeapPush(st.pendingListHeap, big);
+			pendingListHeapPush(st, u0);
+			pendingListHeapPush(st, big);
 			dropListUpstreamLabel(st, big, "u1");
 			expect(st.pendingListHeap[0]).toBe(big);
 			addListUpstreamLabel(st, big, "u1");
 			expect(st.pendingListHeap[0]).toBe(u0);
 			expect(st.pendingListHeap.map((c) => c.heapIndex)).toEqual([0, 1]);
-			expect(pendingListHeapPop(st.pendingListHeap)).toBe(u0);
-			expect(pendingListHeapPop(st.pendingListHeap)).toBe(big);
-			expect(pendingListHeapPop(st.pendingListHeap)).toBeUndefined();
+			expect(pendingListHeapPop(st)).toBe(u0);
+			expect(pendingListHeapPop(st)).toBe(big);
+			expect(pendingListHeapPop(st)).toBeUndefined();
 		});
 
 		function drainOrder(md: string): Readonly<{

@@ -226,10 +226,95 @@ function expandNestedSelectorList(
 	return expanded.join(", ");
 }
 
+function isCssIdentChar(ch: string): boolean {
+	if (!ch) return false;
+	const code = ch.charCodeAt(0);
+	return (
+		(code >= 0x61 && code <= 0x7a) ||
+		(code >= 0x41 && code <= 0x5a) ||
+		(code >= 0x30 && code <= 0x39) ||
+		0x5f === code ||
+		0x2d === code ||
+		code >= 0x80
+	);
+}
+
+/**
+ * Detects selectors whose DOM `matches()` / `closest()` semantics diverge from
+ * document stylesheet matching (`:scope`, escaped pseudo-classes, and top-level
+ * `&` which binds to `:root` in a stylesheet but to the receiver element in
+ * DOM selector APIs).
+ */
+function selectorHasScopeOrTopLevelNesting(
+	selector: string,
+	rejectAmpersand: boolean,
+): boolean {
+	let quote: '"' | "'" | null = null;
+	let bracketDepth = 0;
+	let escaped = false;
+	let inPseudoIdent = false;
+	const lower = selector.toLowerCase();
+	for (let index = 0; index < selector.length; index += 1) {
+		const ch = selector[index] ?? "";
+		if (escaped) {
+			escaped = false;
+			continue;
+		}
+		if ("\\" === ch) {
+			if (!quote && 0 === bracketDepth && inPseudoIdent) {
+				// Fail closed on CSS escapes inside pseudo-class names (e.g. `:\73 cope`).
+				return true;
+			}
+			escaped = true;
+			continue;
+		}
+		if (quote) {
+			if (quote === ch) quote = null;
+			continue;
+		}
+		if ('"' === ch || "'" === ch) {
+			quote = ch;
+			inPseudoIdent = false;
+			continue;
+		}
+		if ("[" === ch) {
+			bracketDepth += 1;
+			inPseudoIdent = false;
+			continue;
+		}
+		if ("]" === ch) {
+			bracketDepth = Math.max(0, bracketDepth - 1);
+			inPseudoIdent = false;
+			continue;
+		}
+		if (bracketDepth > 0) continue;
+		if (rejectAmpersand && "&" === ch) {
+			return true;
+		}
+		if (":" === ch) {
+			if (
+				lower.startsWith(":scope", index) &&
+				!isCssIdentChar(lower[index + 6] ?? "")
+			) {
+				return true;
+			}
+			inPseudoIdent = true;
+			continue;
+		}
+		if (inPseudoIdent && !isCssIdentChar(ch)) {
+			inPseudoIdent = false;
+		}
+	}
+	return false;
+}
+
 function selectorMatchesSourceConservatively(
 	source: Element,
 	selectorText: string,
 ): boolean {
+	if (selectorHasScopeOrTopLevelNesting(selectorText, false)) {
+		return true;
+	}
 	try {
 		return source.matches(selectorText);
 	} catch {
@@ -238,6 +323,9 @@ function selectorMatchesSourceConservatively(
 }
 
 function selectorUsesSiblingOrNegatedNesting(selector: string): boolean {
+	if (selectorHasScopeOrTopLevelNesting(selector, false)) {
+		return true;
+	}
 	let quote: '"' | "'" | null = null;
 	let bracketDepth = 0;
 	let escaped = false;
@@ -387,7 +475,11 @@ function isSkippableNestedNonSelectorRule(
 function sourceOrAncestorMatchesConservatively(
 	source: Element,
 	selectorText: string,
+	rejectAmpersand = true,
 ): boolean {
+	if (selectorHasScopeOrTopLevelNesting(selectorText, rejectAmpersand)) {
+		return true;
+	}
 	try {
 		return null !== source.closest(selectorText);
 	} catch {
@@ -419,7 +511,7 @@ function subtreeAffectsPadding(
 				const childNeedsConservativeCheck =
 					parentOrAncestorMatched ||
 					selectorUsesSiblingOrNegatedNesting(styleRule.selectorText) ||
-					selectorMatchesSourceConservatively(source, expanded);
+					sourceOrAncestorMatchesConservatively(source, expanded, false);
 				if (
 					styleAffectsPadding(styleRule.style, property) &&
 					childNeedsConservativeCheck
@@ -650,6 +742,10 @@ function portablePaddingTransportDecision(
 			let matchingSelector: string | undefined;
 			let selectorListReadable = true;
 			for (const candidate of selectors) {
+				if (selectorHasScopeOrTopLevelNesting(candidate, true)) {
+					selectorListReadable = false;
+					break;
+				}
 				try {
 					if (!source.matches(candidate)) continue;
 					if (

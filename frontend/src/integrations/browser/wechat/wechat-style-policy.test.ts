@@ -571,6 +571,158 @@ describe("responsive portable padding semantics", () => {
 		}
 	});
 
+	it("fails closed on :scope, escaped pseudo-classes, and top-level & selectors without false positives on escaped classes or attribute values", () => {
+		const createStyleRule = (
+			selectorText: string,
+			declaration = "",
+			nestedRules: readonly unknown[] = [],
+		): CSSRule => {
+			const holder = document.createElement("style");
+			holder.textContent = `.placeholder { ${declaration} }`;
+			document.head.append(holder);
+			const rule = holder.sheet?.cssRules.item(0);
+			holder.remove();
+			if (!rule) throw new Error("placeholder rule missing");
+			Object.defineProperty(rule, "selectorText", {
+				configurable: true,
+				value: selectorText,
+			});
+			if (nestedRules.length > 0) {
+				Object.defineProperty(rule, "cssRules", {
+					configurable: true,
+					value: nestedRules,
+				});
+			}
+			return rule;
+		};
+
+		const createMediaRule = (nestedRules: readonly unknown[]): CSSRule => {
+			const holder = document.createElement("style");
+			holder.textContent = "@media all { .placeholder { color: inherit; } }";
+			document.head.append(holder);
+			const rule = holder.sheet?.cssRules.item(0);
+			holder.remove();
+			if (!rule) throw new Error("placeholder media rule missing");
+			Object.defineProperty(rule, "cssRules", {
+				configurable: true,
+				value: nestedRules,
+			});
+			return rule;
+		};
+
+		const assertRuleFailsClosed = (label: string, rule: CSSRule): void => {
+			const fixture = portableQuoteFixture();
+			const host = document.createElement("style");
+			host.textContent = ".host-placeholder {}";
+			document.head.append(host);
+			try {
+				if (!host.sheet) throw new Error("host sheet missing");
+				Object.defineProperty(host.sheet, "cssRules", {
+					configurable: true,
+					value: [rule],
+				});
+				const measured = style({
+					padding: "18px 20px 18px 41px",
+					position: "static",
+				});
+				const semantics = paddingSemantics("9%", "5%");
+				expect(
+					semanticPaddingValue(
+						"padding-left",
+						fixture.source,
+						measured,
+						semantics,
+						semantics.getComputedStyle(fixture.source),
+					),
+					label,
+				).toBeNull();
+			} finally {
+				host.remove();
+				fixture.cleanup();
+			}
+		};
+
+		const paddingDecl = "padding-left: 41px !important;";
+		const nestedBlockquote = (): CSSRule =>
+			createStyleRule("blockquote", paddingDecl);
+
+		assertRuleFailsClosed(
+			"top-level :scope",
+			createStyleRule(":scope blockquote", paddingDecl),
+		);
+		assertRuleFailsClosed(
+			"top-level &",
+			createStyleRule("& blockquote", paddingDecl),
+		);
+		assertRuleFailsClosed(
+			"top-level :is(&)",
+			createStyleRule(":is(&) blockquote", paddingDecl),
+		);
+		assertRuleFailsClosed(
+			"top-level escaped :scope",
+			createStyleRule(":\\73 cope blockquote", paddingDecl),
+		);
+		assertRuleFailsClosed(
+			"parent html:scope with nested blockquote",
+			createStyleRule("html:scope", "", [nestedBlockquote()]),
+		);
+		assertRuleFailsClosed(
+			"parent html& with nested blockquote",
+			createStyleRule("html&", "", [nestedBlockquote()]),
+		);
+		assertRuleFailsClosed(
+			"parent :is(html&) with nested blockquote",
+			createStyleRule(":is(html&)", "", [nestedBlockquote()]),
+		);
+		assertRuleFailsClosed(
+			"nested :is(html:scope, &) under .absent",
+			createStyleRule(".absent", "", [
+				createStyleRule(":is(html:scope, &)", "", [nestedBlockquote()]),
+			]),
+		);
+		assertRuleFailsClosed(
+			"nested :is(:scope > body, &) under .absent",
+			createStyleRule(".absent", "", [
+				createStyleRule(":is(:scope > body, &)", "", [nestedBlockquote()]),
+			]),
+		);
+		assertRuleFailsClosed(
+			"nested @media > :is(html:scope, &) under .absent",
+			createStyleRule(".absent", "", [
+				createMediaRule([
+					createStyleRule(":is(html:scope, &)", "", [nestedBlockquote()]),
+				]),
+			]),
+		);
+
+		const benignFixture = portableQuoteFixture();
+		const benignStyle = document.createElement("style");
+		benignStyle.textContent = `
+			.sm\\:px-4 { padding-left: 16px !important; }
+			[data-test=":scope &"] { padding-left: 16px !important; }
+		`;
+		document.head.append(benignStyle);
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					benignFixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(benignFixture.source),
+				),
+			).toBe("9%");
+		} finally {
+			benignStyle.remove();
+			benignFixture.cleanup();
+		}
+	});
+
 	it("walks nested child and grandchild rules before falling back", () => {
 		const fixture = portableQuoteFixture();
 		const override = document.createElement("style");

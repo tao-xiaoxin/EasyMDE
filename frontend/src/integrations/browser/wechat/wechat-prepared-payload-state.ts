@@ -26,6 +26,7 @@ export type PreparedClipboardFallback = Readonly<{
 	contentBoxes?: MermaidContentBoxLease | null;
 	contentBoxEvidence?: PreparedMermaidContentBoxEvidence | null;
 	dimensionSignature: string;
+	hasMathVectorAtlas?: boolean;
 	layoutSignature: string;
 	payload: SerializedClipboardPayload;
 	sequence: number;
@@ -38,6 +39,7 @@ export type PreparedClipboardPayload = {
 	cancel?: () => void;
 	contentBoxes?: MermaidContentBoxLease | null;
 	contentBoxEvidence?: PreparedMermaidContentBoxEvidence | null;
+	hasMathVectorAtlas?: boolean;
 	payload: SerializedClipboardPayload | null;
 	promise: Promise<SerializedClipboardPayload>;
 	sequence: number;

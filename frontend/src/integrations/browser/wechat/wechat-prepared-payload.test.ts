@@ -1353,4 +1353,59 @@ describe("prepared Clipboard math vector admission", () => {
 			expect(cleanup).toHaveBeenCalledOnce();
 		},
 	);
+
+	it("reuses fallback payload during background re-preparation when source and layout are unchanged", async () => {
+		const root = preview("<p>Warm background reuse</p>");
+		root.style.display = "block";
+		const backgroundAssetCache = new Map();
+		const preparedPayloads = new WeakMap<
+			HTMLElement,
+			PreparedClipboardPayload
+		>();
+		const serialization = await import("./wechat-portable-serialization");
+		const serialize = vi.spyOn(serialization, "serializeClipboardPayload");
+		const runtimeValue = runtime();
+
+		const first = preparedClipboardPayload(
+			root,
+			runtimeValue,
+			backgroundAssetCache,
+			preparedPayloads,
+			() => 1,
+			true,
+			true,
+		);
+		const firstPayload = await first.promise;
+		expect(serialize).toHaveBeenCalledTimes(1);
+
+		const second = preparedClipboardPayload(
+			root,
+			runtimeValue,
+			backgroundAssetCache,
+			preparedPayloads,
+			() => 2,
+			true,
+			true,
+		);
+		const secondPayload = await second.promise;
+		expect(secondPayload).toBe(firstPayload);
+		expect(serialize).toHaveBeenCalledTimes(1);
+
+		// A subsequent copy after background re-prep hits the warm cache without re-serializing
+		const freshness: ClipboardSourceFreshnessState = {
+			current: () => createClipboardSourceFreshnessGuard(root),
+			ready: Promise.resolve(),
+		};
+		const warm = await preparedClipboardPayloadAfterWrite(
+			root,
+			runtimeValue,
+			backgroundAssetCache,
+			preparedPayloads,
+			() => 3,
+			{},
+			freshness,
+		);
+		expect(warm.payload).toBe(firstPayload);
+		expect(serialize).toHaveBeenCalledTimes(1);
+	});
 });

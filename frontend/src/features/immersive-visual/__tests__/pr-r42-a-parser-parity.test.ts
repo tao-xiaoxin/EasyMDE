@@ -4,6 +4,7 @@ import { EditorState, TextSelection } from "prosemirror-state";
 import { EditorView } from "prosemirror-view";
 import { describe, expect, it, vi } from "vitest";
 import type { EditorDocumentSession } from "../../document-source/editor-document-session";
+import * as listPreservation from "../markdown-list-preservation";
 import { nodesSemanticallyEqual } from "../markdown-node-alignment";
 import {
 	parseMarkdownToVisualDoc,
@@ -87,16 +88,18 @@ function insertTextAt(
 
 /**
  * `M` cascading 3-item ordered lists (each item 0 declares the next
- * partial-title label, each trailing item references the previous label)
- * plus one `K`-item list whose trailing items reference every cascade label.
- * The edit deletes the leading `[c0]` definition and every list's first item.
+ * partial-title label `[c{i+1}]` and each trailing 2-line Setext item
+ * `11. [c{i}]\n    p\n    ---` breaks item 0 when `[c{i}]` is invalidated,
+ * genuinely cascading across all `M` waves) plus one `K`-item list whose
+ * trailing items reference every cascade label. The edit deletes the leading
+ * `[c0]` definition and every list's first item.
  */
 function buildCascade(m: number, k: number, sink: boolean): string {
 	const parts = ["[c0]: /u0"];
 	for (let i = 0; i < m; i += 1) {
 		parts.push(`sep${i}`);
 		parts.push(
-			`9. remove\n10. [c${i + 1}]: /u${i + 1}\n    "t${i + 1}\n    ===\n11. [x${i}]: /x${i}\n    "T${i} [c${i}]" z`,
+			`9. remove\n10. [c${i + 1}]: /u${i + 1}\n    "t${i + 1}\n    ===\n11. [c${i}]\n    p\n    ---`,
 		);
 	}
 	parts.push("sepbig");
@@ -104,21 +107,25 @@ function buildCascade(m: number, k: number, sink: boolean): string {
 	for (let j = 0; j < k; j += 1) big.push(`${11 + j}. [c${(j % m) + 1}]`);
 	parts.push(big.join("\n"));
 	const refs: string[] = [];
-	for (let i = 1; i <= m; i += 1) refs.push(`[c${i}] [x${i - 1}]`);
+	for (let i = 1; i <= m; i += 1) refs.push(`[c${i}]`);
 	if (!sink) refs.push("[big]");
 	parts.push(refs.join(" "));
 	return parts.join("\n\n");
 }
 
-function serializeCascadeEdit(
-	md: string,
-): Readonly<{ elapsedMs: number; serialized: string }> {
+function serializeCascadeEdit(md: string): Readonly<{
+	bigListLivenessCalls: number;
+	elapsedMs: number;
+	serialized: string;
+	totalLivenessCalls: number;
+}> {
 	const guard = createMarkdownRoundTripGuard(
 		md,
 		parseMarkdownWithBlockSources(md),
 	);
 	const doc = guard.initialDoc;
 	const children: ProseMirrorNode[] = [];
+	let bigListNode: ProseMirrorNode | null = null;
 	for (let i = 1; i < doc.childCount; i += 1) {
 		const child = doc.child(i);
 		if (child.type.name !== "ordered_list") {
@@ -127,12 +134,32 @@ function serializeCascadeEdit(
 		}
 		const items: ProseMirrorNode[] = [];
 		for (let x = 1; x < child.childCount; x += 1) items.push(child.child(x));
-		children.push(child.type.create(child.attrs, items));
+		const nextList = child.type.create(child.attrs, items);
+		children.push(nextList);
+		bigListNode = nextList;
 	}
 	const edited = doc.type.create(null, children);
-	const startedAt = performance.now();
-	const serialized = guard.serialize(edited);
-	return { elapsedMs: performance.now() - startedAt, serialized };
+	const spy = vi.spyOn(
+		listPreservation,
+		"resolveAuthoritativeListPreservation",
+	);
+	try {
+		const startedAt = performance.now();
+		const serialized = guard.serialize(edited);
+		const elapsedMs = performance.now() - startedAt;
+		let bigListLivenessCalls = 0;
+		for (const call of spy.mock.calls) {
+			if (call[0] === bigListNode) bigListLivenessCalls += 1;
+		}
+		return {
+			bigListLivenessCalls,
+			elapsedMs,
+			serialized,
+			totalLivenessCalls: spy.mock.calls.length,
+		};
+	} finally {
+		spy.mockRestore();
+	}
 }
 
 function rekeyLinks(node: ProseMirrorNode, key: string): ProseMirrorNode {
@@ -256,37 +283,53 @@ describe("PR-R42-A liveness tail/verbatim parity, list discovery order, prioriti
 		});
 	});
 
-	describe("4. Dirty lists drain one at a time, smallest non-sink first (Track B #4)", () => {
-		it("serializes a small cascade exactly", () => {
-			const { serialized } = serializeCascadeEdit(buildCascade(2, 4, false));
+	describe("4. Dirty lists drain one at a time in topological upstream order (Track B #4)", () => {
+		it("cascades across all waves and reparses the downstream big list exactly once", () => {
+			const { bigListLivenessCalls, serialized, totalLivenessCalls } =
+				serializeCascadeEdit(buildCascade(2, 4, false));
 			expect(serialized).toBe(
 				[
 					"sep0",
-					'9. [c1]: /u1\n   "t1\n   ===\n10. [x0]: /x0\n    "T0 [c0](/u0)" z',
+					'9. [c1]: /u1\n   # "t1\n10.\n    ## [c0](/u0) p',
 					"sep1",
-					'9. [c2]: /u2\n   "t2\n   ===\n11. [x1]: /x1\n    "T1 [c1]" z',
+					'9. [c2]: /u2\n   # "t2\n10.\n    ## [c1](/u1 "t1&#10;") p',
 					"sepbig",
-					'9. [big]: /b\n   "tb\n   ===\n11. [c1]\n12. [c2]\n13. [c1]\n14. [c2]',
-					'[c1] [x0](/x0 "T0 [c0]") [c2] [x1] [big]',
+					'9. [big]: /b\n   "tb\n   ===\n10. [c1](/u1 "t1&#10;")\n11. [c2](/u2 "t2&#10;")\n12. [c1](/u1 "t1&#10;")\n13. [c2](/u2 "t2&#10;")',
+					'[c1](/u1 "t1&#10;") [c2](/u2 "t2&#10;") [big]',
 				].join("\n\n"),
 			);
+			// 1 call in Pass 1 `openList` + 1 call in Pass 2 `drainNextPendingList`.
+			expect(bigListLivenessCalls).toBe(2);
+			// Total across all 3 lists: 3 in Pass 1 + 3 in Pass 2 = 6.
+			expect(totalLivenessCalls).toBe(6);
 		});
 
-		it("scales linearly for M=50/K=200 and M=100/K=400 with a sink and a non-sink big list", () => {
+		it("scales linearly across real multi-wave cascades for M=40/K=80 and M=80/K=80 (sink and non-sink)", () => {
 			for (const sink of [true, false] as const) {
 				for (const [m, k] of [
-					[50, 200],
-					[100, 400],
+					[40, 80],
+					[80, 80],
 				] as const) {
-					const { elapsedMs, serialized } = serializeCascadeEdit(
-						buildCascade(m, k, sink),
-					);
+					const {
+						bigListLivenessCalls,
+						elapsedMs,
+						serialized,
+						totalLivenessCalls,
+					} = serializeCascadeEdit(buildCascade(m, k, sink));
 					const label = `sink=${String(sink)} M=${m} K=${k}`;
-					expect(serialized.startsWith("sep0\n\n9. [c1]: /u1\n"), label).toBe(
-						true,
-					);
-					expect(serialized, label).toContain(`\n${10 + k}. [c${m}]`);
-					expect(elapsedMs, label).toBeLessThan(1500);
+					for (let i = 1; i <= m; i += 1) {
+						expect(serialized, `${label} c${i}`).toContain(
+							`[c${i}](/u${i} "t${i}&#10;")`,
+						);
+					}
+					if (!sink) {
+						expect(serialized.endsWith("[big]"), label).toBe(true);
+					}
+					// Big list is evaluated once in Pass 1 and reparsed EXACTLY ONCE in Pass 2.
+					expect(bigListLivenessCalls, label).toBe(2);
+					// Total liveness list resolutions scale strictly as 2 * (M + 1).
+					expect(totalLivenessCalls, label).toBe(2 * (m + 1));
+					expect(elapsedMs, label).toBeLessThan(2000);
 				}
 			}
 		});

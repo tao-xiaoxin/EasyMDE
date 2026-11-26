@@ -4,7 +4,6 @@ import {
 	checkRawPreservationRisks,
 	createTightSharedGroupChecker,
 	isListSwallowingFollowingBlock,
-	serializeListPreservingItems,
 	sharedGroupHasInvalidatedRef,
 	stripAtDepth,
 	tryStripAllLinesAtDepth,
@@ -13,6 +12,7 @@ import {
 	blankSeparatorAtDepth,
 	resolveContainerSlotJoin,
 } from "./markdown-container-slot-separator";
+import { serializeListPreservingItems } from "./markdown-list-preservation";
 import {
 	type BlockSerializer,
 	createMathNewlineSentinelForNode,
@@ -398,7 +398,6 @@ function serializeContainerPreservingChildren(
 					ctx.resolveReferences?.isPartialTitleRefDef ?? null,
 				prevEffIdx: idx > 0 ? (effectiveOrigIndex[idx - 1] ?? -1) : -1,
 				prevInnerText: () => prevInnerText,
-				prevMatchedIdx: prevMatched,
 				prevNode,
 				prevWasVerbatimAdjacent,
 				serializedIsNull: serialized === null,
@@ -555,6 +554,7 @@ function serializeDocPreservingUntouchedBlocks(
 		doc,
 		parsed,
 		serializers.serializeBlock,
+		serializers.serializeBlockWithRefs,
 	);
 	const resolveReferences = buildReferencePreserveResolver(
 		parsed,

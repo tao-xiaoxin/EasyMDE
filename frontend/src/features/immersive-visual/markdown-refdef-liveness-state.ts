@@ -1,8 +1,6 @@
-import type { Node as ProseMirrorNode } from "prosemirror-model";
-import type {
-	ContainerAlignmentPlan,
-	PreparedListPreservation,
-} from "./markdown-container-preservation";
+import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
+import type { ContainerAlignmentPlan } from "./markdown-container-preservation";
+import type { PreparedListPreservation } from "./markdown-list-preservation";
 import { normalizeReferenceLabel } from "./markdown-escape";
 import {
 	type BlockSerializer,
@@ -12,6 +10,8 @@ import {
 	extractReferenceDefinitionLabels,
 	inspectReferenceDefinitionBlock,
 	type ParsedVisualDocument,
+	type ReferenceImageOrigin,
+	type ReferenceLinkOrigin,
 	wouldReferenceDefinitionAbsorbFollowingBlock,
 } from "./markdown-parser";
 import { extractPhpPartialReferenceTitle } from "./markdown-reference-preservation";
@@ -22,6 +22,18 @@ import { extractPhpPartialReferenceTitle } from "./markdown-reference-preservati
  * (`markdown-refdef-liveness.ts`). Container/list planning lives in
  * `markdown-refdef-liveness-containers.ts`.
  */
+
+export type ReferencePreserveResolver = Readonly<{
+	isPartialTitleRefDef: (node: ProseMirrorNode) => boolean;
+	resolveImage: (node: ProseMirrorNode) => ReferenceImageOrigin | null;
+	resolveLink: (mark: Mark) => ReferenceLinkOrigin | null;
+}>;
+
+export type BlockWithRefsSerializer = (
+	node: ProseMirrorNode,
+	resolveReferences: ReferencePreserveResolver | null,
+	mathNewlineToken?: string,
+) => string;
 
 export type PreservationPlan = Readonly<{
 	containers: Map<ProseMirrorNode, ContainerAlignmentPlan>;
@@ -43,44 +55,196 @@ export type CandidatePartialRefDef = Readonly<{
 /**
  * One preservable ordered list whose reused first item needs whole-list
  * marker re-validation. Item tasks only mark it dirty in O(1); the
- * coordinator drains each dirty list once after the invalidation queue empties.
+ * coordinator drains each dirty list in topological upstream-count order
+ * after the invalidation queue empties.
  */
 export type PendingListCheck = {
+	/** Winning raw slice emitted for reused item 0, or `null` when canonical. */
+	firstEmittedSlice: string | null;
 	/** Partial-title candidate labels declared inside reused item 0. */
 	readonly firstLabels: string[];
 	firstTask: InvalidationTask | undefined;
+	/** Index inside `st.pendingListHeap`, or `-1` when not currently queued. */
+	heapIndex: number;
+	/** Cached sink status while queued in `st.pendingListHeap`. */
+	isSink: boolean;
 	readonly itemReusable: boolean[];
+	readonly itemTasks: Array<InvalidationTask | undefined>;
 	readonly listNode: ProseMirrorNode;
+	/**
+	 * Count of distinct still-alive external partial-title candidate labels
+	 * referenced by tracked items of this list. Lists with `0` remaining
+	 * upstream candidate dependencies always pop first (Kahn topological order).
+	 */
+	liveUpstreamCount: number;
 	needsFirstValidation: boolean;
 	readonly prepared: PreparedListPreservation;
+	readonly refCountByUpstreamLabel: Map<string, number>;
 };
-
-/** Dirty-list heap entry; `sink` = item 0's labels have no dependents. */
-export type PendingListEntry = Readonly<{
-	check: PendingListCheck;
-	sink: boolean;
-}>;
 
 export type LivenessState = Readonly<{
 	allIntact: Set<string>;
 	candidatesByParent: Map<ProseMirrorNode, CandidatePartialRefDef[]>;
+	deferredInvalidatedSet: Set<string>;
 	deferredInvalidations: string[];
 	dependentsByLabel: Map<string, Set<InvalidationTask>>;
 	firstByLabel: ReadonlyMap<string, ProseMirrorNode>;
 	invalidatedLabels: Set<string>;
 	invalidQueue: string[];
 	labelsByNode: ReadonlyMap<ProseMirrorNode, ReadonlyArray<string>>;
+	liveResolver: ReferencePreserveResolver | null;
 	parsed: ParsedVisualDocument;
 	partialLabels: ReadonlySet<string> | undefined;
 	partialTitleIntact: Set<string>;
 	partialTitleRefNodes: Set<ProseMirrorNode>;
-	pendingListChecks: Set<PendingListCheck>;
-	pendingListHeap: PendingListEntry[];
+	pendingListHeap: PendingListCheck[];
 	plan: PreservationPlan;
 	seenLabels: Set<string>;
 	serializeBlock: BlockSerializer;
+	serializeBlockWithRefs: BlockWithRefsSerializer | undefined;
 	subtreeHasCandidates: WeakSet<ProseMirrorNode>;
+	upstreamListsByLabel: Map<string, Set<PendingListCheck>>;
+	watchedCanonicalCandidates: WeakSet<CandidatePartialRefDef>;
 }>;
+
+/**
+ * Min-heap priority order for dirty lists:
+ * 1. Smallest `liveUpstreamCount` first (0-dependency lists always pop first).
+ * 2. Non-sink lists before sink lists.
+ * 3. Smallest `listNode.nodeSize` (real parse cost) first.
+ */
+function pendingListBefore(a: PendingListCheck, b: PendingListCheck): boolean {
+	if (a.liveUpstreamCount !== b.liveUpstreamCount) {
+		return a.liveUpstreamCount < b.liveUpstreamCount;
+	}
+	if (a.isSink !== b.isSink) return !a.isSink;
+	return a.listNode.nodeSize < b.listNode.nodeSize;
+}
+
+function pendingListHeapSiftUp(
+	heap: PendingListCheck[],
+	startIndex: number,
+): void {
+	let i = startIndex;
+	const item = heap[i];
+	if (item === undefined) return;
+	while (i > 0) {
+		const parent = (i - 1) >> 1;
+		const up = heap[parent];
+		if (up === undefined || !pendingListBefore(item, up)) break;
+		heap[i] = up;
+		up.heapIndex = i;
+		i = parent;
+	}
+	heap[i] = item;
+	item.heapIndex = i;
+}
+
+export function pendingListHeapPush(
+	heap: PendingListCheck[],
+	check: PendingListCheck,
+): void {
+	check.heapIndex = heap.length;
+	heap.push(check);
+	pendingListHeapSiftUp(heap, check.heapIndex);
+}
+
+export function pendingListHeapPop(
+	heap: PendingListCheck[],
+): PendingListCheck | undefined {
+	const top = heap[0];
+	const last = heap.pop();
+	if (top === undefined) return undefined;
+	top.heapIndex = -1;
+	if (last === undefined || heap.length === 0) return top;
+	let i = 0;
+	while (true) {
+		const left = 2 * i + 1;
+		if (left >= heap.length) break;
+		const right = left + 1;
+		const leftEntry = heap[left];
+		const rightEntry = heap[right];
+		let child = left;
+		let childEntry = leftEntry;
+		if (
+			rightEntry !== undefined &&
+			leftEntry !== undefined &&
+			pendingListBefore(rightEntry, leftEntry)
+		) {
+			child = right;
+			childEntry = rightEntry;
+		}
+		if (childEntry === undefined || !pendingListBefore(childEntry, last)) break;
+		heap[i] = childEntry;
+		childEntry.heapIndex = i;
+		i = child;
+	}
+	heap[i] = last;
+	last.heapIndex = i;
+	return top;
+}
+
+export function isLivePartialLabel(st: LivenessState, label: string): boolean {
+	return (
+		Boolean(st.partialLabels?.has(label)) &&
+		!st.invalidatedLabels.has(label) &&
+		!st.deferredInvalidatedSet.has(label)
+	);
+}
+
+export function addListUpstreamLabel(
+	st: LivenessState,
+	check: PendingListCheck,
+	label: string,
+): void {
+	const prev = check.refCountByUpstreamLabel.get(label) ?? 0;
+	check.refCountByUpstreamLabel.set(label, prev + 1);
+	if (prev === 0) {
+		check.liveUpstreamCount += 1;
+		let watchers = st.upstreamListsByLabel.get(label);
+		if (!watchers) {
+			watchers = new Set<PendingListCheck>();
+			st.upstreamListsByLabel.set(label, watchers);
+		}
+		watchers.add(check);
+	}
+}
+
+export function dropListUpstreamLabel(
+	st: LivenessState,
+	check: PendingListCheck,
+	label: string,
+): void {
+	const count = check.refCountByUpstreamLabel.get(label);
+	if (count === undefined) return;
+	if (count > 1) {
+		check.refCountByUpstreamLabel.set(label, count - 1);
+		return;
+	}
+	check.refCountByUpstreamLabel.delete(label);
+	st.upstreamListsByLabel.get(label)?.delete(check);
+	check.liveUpstreamCount -= 1;
+	if (check.heapIndex >= 0) {
+		pendingListHeapSiftUp(st.pendingListHeap, check.heapIndex);
+	}
+}
+
+function notifyUpstreamLabelInvalidated(
+	st: LivenessState,
+	label: string,
+): void {
+	const watchers = st.upstreamListsByLabel.get(label);
+	if (!watchers) return;
+	st.upstreamListsByLabel.delete(label);
+	for (const check of watchers) {
+		if (check.refCountByUpstreamLabel.delete(label)) {
+			check.liveUpstreamCount -= 1;
+			if (check.heapIndex >= 0) {
+				pendingListHeapSiftUp(st.pendingListHeap, check.heapIndex);
+			}
+		}
+	}
+}
 
 export function isBlockContainerForRefDefs(node: ProseMirrorNode): boolean {
 	switch (node.type.name) {
@@ -124,7 +288,19 @@ function canonicalParagraphPreservesPartialTitle(
 			: "";
 	const refInfo = inspectReferenceDefinitionBlock(refRaw);
 	if (!refInfo.isRefDef || refInfo.lastHasTitle) return false;
-	const serializedNext = st.serializeBlock(nextSibling);
+	const hasLivePartialRef =
+		st.liveResolver !== null &&
+		st.serializeBlockWithRefs !== undefined &&
+		visitReferencedLabels(
+			nextSibling,
+			st.parsed,
+			(label) => isLivePartialLabel(st, label),
+			true,
+		);
+	const serializedNext =
+		hasLivePartialRef && st.serializeBlockWithRefs
+			? st.serializeBlockWithRefs(nextSibling, st.liveResolver)
+			: st.serializeBlock(nextSibling);
 	const nl = serializedNext.indexOf("\n");
 	const firstLine = nl === -1 ? serializedNext : serializedNext.slice(0, nl);
 	if (!/^[ \t]*["'(]/.test(firstLine)) return false;
@@ -152,6 +328,7 @@ export function visitReferencedLabels(
 	node: ProseMirrorNode,
 	parsed: ParsedVisualDocument,
 	visit: (label: string) => boolean,
+	isLiveNode = false,
 ): boolean {
 	const blockLabels = parsed.referencedLabelsByNode?.get(node);
 	if (blockLabels) {
@@ -160,7 +337,9 @@ export function visitReferencedLabels(
 		}
 		if (node.isTextblock) return false;
 	}
-	if (node.isTextblock && parsed.referencedLabelsByNode) return false;
+	if (!isLiveNode && node.isTextblock && parsed.referencedLabelsByNode) {
+		return false;
+	}
 	if (node.type.name === "image") {
 		const origin = parsed.referenceImages?.get(node);
 		if (origin && visit(origin.normalizedLabel)) return true;
@@ -176,7 +355,9 @@ export function visitReferencedLabels(
 	}
 	if (node.isLeaf) return false;
 	for (let i = 0; i < node.childCount; i += 1) {
-		if (visitReferencedLabels(node.child(i), parsed, visit)) return true;
+		if (visitReferencedLabels(node.child(i), parsed, visit, isLiveNode)) {
+			return true;
+		}
 	}
 	return false;
 }
@@ -227,17 +408,21 @@ export function scheduleInvalidation(
 	label: string,
 	defer: boolean,
 ): void {
+	const refNode = st.firstByLabel.get(label);
+	if (refNode) st.partialTitleRefNodes.delete(refNode);
 	if (defer) {
-		st.deferredInvalidations.push(label);
+		if (!st.deferredInvalidatedSet.has(label)) {
+			st.deferredInvalidatedSet.add(label);
+			st.deferredInvalidations.push(label);
+		}
 		return;
 	}
 	if (st.invalidatedLabels.has(label)) return;
 	st.invalidatedLabels.add(label);
 	st.allIntact.delete(label);
 	st.partialTitleIntact.delete(label);
-	const refNode = st.firstByLabel.get(label);
-	if (refNode) st.partialTitleRefNodes.delete(refNode);
 	st.invalidQueue.push(label);
+	notifyUpstreamLabelInvalidated(st, label);
 }
 
 export function fireTask(task: InvalidationTask | undefined): void {
@@ -279,7 +464,12 @@ export function evaluateCandidateCanonical(
 	cand: CandidatePartialRefDef,
 	deferInvalidation: boolean,
 ): void {
-	if (st.invalidatedLabels.has(cand.label)) return;
+	if (
+		st.invalidatedLabels.has(cand.label) ||
+		st.deferredInvalidatedSet.has(cand.label)
+	) {
+		return;
+	}
 	const nextIdx = cand.refIdx + 1;
 	const nextSibling =
 		nextIdx < cand.parent.childCount ? cand.parent.child(nextIdx) : null;
@@ -289,6 +479,39 @@ export function evaluateCandidateCanonical(
 		!canonicalParagraphPreservesPartialTitle(st, cand, nextSibling)
 	) {
 		scheduleInvalidation(st, cand.label, deferInvalidation);
+		return;
+	}
+	if (
+		st.liveResolver !== null &&
+		st.serializeBlockWithRefs !== undefined &&
+		!st.watchedCanonicalCandidates.has(cand)
+	) {
+		st.watchedCanonicalCandidates.add(cand);
+		const seen = new Set<string>();
+		visitReferencedLabels(
+			nextSibling,
+			st.parsed,
+			(label) => {
+				if (
+					label !== cand.label &&
+					!seen.has(label) &&
+					isLivePartialLabel(st, label)
+				) {
+					seen.add(label);
+					let set = st.dependentsByLabel.get(label);
+					if (!set) {
+						set = new Set<InvalidationTask>();
+						st.dependentsByLabel.set(label, set);
+					}
+					set.add({
+						fired: false,
+						run: () => evaluateCandidateCanonical(st, cand, false),
+					});
+				}
+				return false;
+			},
+			true,
+		);
 	}
 }
 

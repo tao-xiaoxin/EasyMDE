@@ -43,12 +43,20 @@ type ContainerSlotJoinInput = Readonly<{
 	prevEffIdx: number;
 	/** Lazily computes the depth-stripped Markdown emitted for `prevNode`. */
 	prevInnerText: () => string;
-	prevMatchedIdx: number;
 	prevNode: ProseMirrorNode | null;
 	prevWasVerbatimAdjacent: boolean;
 	/** Whether `child` is emitted from canonical serialization. */
 	serializedIsNull: boolean;
 }>;
+
+function isDirectRefDefBlock(node: ProseMirrorNode): boolean {
+	return (
+		node.type.name === "protected_block" &&
+		node.attrs.kind === "raw" &&
+		typeof node.attrs.rawMarkdown === "string" &&
+		inspectReferenceDefinitionBlock(node.attrs.rawMarkdown).isRefDef
+	);
+}
 
 function hasRefDefAbsorbRisk(
 	prevNode: ProseMirrorNode,
@@ -70,15 +78,19 @@ function hasRefDefAbsorbRisk(
 }
 
 /**
- * Whether a tight `\n` join after an unmatched (edited or inserted) previous
- * block would let CommonMark lazily absorb `child` into it.
+ * Whether a tight `\n` join after a non-verbatim-adjacent previous block
+ * (edited, inserted, preserved-container, or risk-canonicalized) would let
+ * CommonMark lazily absorb `child` into it. A direct same-level reference
+ * definition cannot lazily absorb following blocks except an indented code
+ * block (or a link title handled by `hasRefDefAbsorbRisk`).
  */
 function shouldEscalateLazyContinuation(
 	input: ContainerSlotJoinInput,
 	prevNode: ProseMirrorNode,
 ): boolean {
 	return (
-		input.prevMatchedIdx < 0 &&
+		!input.prevWasVerbatimAdjacent &&
+		!(isDirectRefDefBlock(prevNode) && input.child.type.name !== "code_block") &&
 		nodeCanLazilyContinue(prevNode) &&
 		!endsWithBlankBlockquoteLine(input.prevInnerText()) &&
 		wouldBeLazilyAbsorbedByPrevious(input.child, input.innerText)
@@ -111,7 +123,8 @@ export function resolveContainerSlotJoin(
 	const separator = inherited ?? input.defaultBlankSep;
 	if (separator !== "\n") return { refDefMode: mode, separator };
 	const escalate =
-		(input.serializedIsNull && hasRefDefAbsorbRisk(prevNode, innerText)) ||
+		((input.serializedIsNull || !input.prevWasVerbatimAdjacent) &&
+			hasRefDefAbsorbRisk(prevNode, innerText)) ||
 		isListSwallowingFollowingBlock(
 			prevNode,
 			input.prevInnerText(),

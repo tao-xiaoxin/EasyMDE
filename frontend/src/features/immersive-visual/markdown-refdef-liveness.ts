@@ -1,29 +1,28 @@
-import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
-import type {
-	ContainerAlignmentPlan,
-	PreparedListPreservation,
-} from "./markdown-container-preservation";
+import type { Node as ProseMirrorNode } from "prosemirror-model";
+import type { ContainerAlignmentPlan } from "./markdown-container-preservation";
+import type { PreparedListPreservation } from "./markdown-list-preservation";
 import type { BlockSerializer } from "./markdown-list-serialization";
-import type {
-	ParsedVisualDocument,
-	ReferenceImageOrigin,
-	ReferenceLinkOrigin,
-} from "./markdown-parser";
+import type { ParsedVisualDocument } from "./markdown-parser";
 import { openContainer } from "./markdown-refdef-liveness-containers";
 import { drainNextPendingList } from "./markdown-refdef-liveness-lists";
 import {
+	type BlockWithRefsSerializer,
 	type CandidatePartialRefDef,
 	fireTask,
 	type InvalidationTask,
 	isBlockContainerForRefDefs,
+	isLivePartialLabel,
 	isRawProtectedBlock,
 	type LivenessState,
 	type PendingListCheck,
 	type PreservationPlan,
+	type ReferencePreserveResolver,
 	registerRefDefNode,
 	scheduleInvalidation,
 	visitReferencedLabels,
 } from "./markdown-refdef-liveness-state";
+
+export type { ReferencePreserveResolver } from "./markdown-refdef-liveness-state";
 
 /**
  * O(N + E) reference-definition liveness and partial-title follower validation
@@ -32,17 +31,11 @@ import {
  * Walks the document once to build a cached per-container alignment and list
  * preservation plan, wires a reverse-dependency graph keyed by referenced
  * label, and drains a FIFO invalidation worklist so every block, sharedGroup,
- * container, and list item transitions from verbatim to canonical at most once.
- * Shared worklist state lives in `markdown-refdef-liveness-state.ts`; container
- * and list planning live in `markdown-refdef-liveness-containers.ts` and
- * `markdown-refdef-liveness-lists.ts`.
+ * container, and list item transitions monotonically from verbatim toward
+ * canonical. Shared worklist state lives in `markdown-refdef-liveness-state.ts`;
+ * container and list planning live in `markdown-refdef-liveness-containers.ts`
+ * and `markdown-refdef-liveness-lists.ts`.
  */
-
-export type ReferencePreserveResolver = Readonly<{
-	isPartialTitleRefDef: (node: ProseMirrorNode) => boolean;
-	resolveImage: (node: ProseMirrorNode) => ReferenceImageOrigin | null;
-	resolveLink: (mark: Mark) => ReferenceLinkOrigin | null;
-}>;
 
 /**
  * Single O(N + E) pass + reverse-dependency worklist over `doc` determining
@@ -54,6 +47,7 @@ export function computeIntactRefDefLabels(
 	doc: ProseMirrorNode,
 	parsed: ParsedVisualDocument,
 	serializeBlock: BlockSerializer,
+	serializeBlockWithRefs?: BlockWithRefsSerializer,
 ): Readonly<{
 	allIntact: Set<string>;
 	partialTitleIntact: Set<string>;
@@ -80,25 +74,53 @@ export function computeIntactRefDefLabels(
 	}
 
 	const partialLabels = parsed.phpPartialTitleRefLabels;
+	const deferredInvalidatedSet = new Set<string>();
+	const invalidatedLabels = new Set<string>();
+	const partialTitleRefNodes = new Set<ProseMirrorNode>();
+	const liveResolver: ReferencePreserveResolver | null =
+		serializeBlockWithRefs !== undefined &&
+		partialLabels !== undefined &&
+		partialLabels.size > 0
+			? {
+					isPartialTitleRefDef: (node) => partialTitleRefNodes.has(node),
+					resolveImage: (node) => {
+						const origin = parsed.referenceImages?.get(node);
+						return origin && isLivePartialLabel(st, origin.normalizedLabel)
+							? origin
+							: null;
+					},
+					resolveLink: (mark) => {
+						const origin = parsed.referenceLinks?.get(mark);
+						return origin && isLivePartialLabel(st, origin.normalizedLabel)
+							? origin
+							: null;
+					},
+				}
+			: null;
+
 	const st: LivenessState = {
 		allIntact: new Set<string>(),
 		candidatesByParent: new Map<ProseMirrorNode, CandidatePartialRefDef[]>(),
+		deferredInvalidatedSet,
 		deferredInvalidations: [],
 		dependentsByLabel: new Map<string, Set<InvalidationTask>>(),
 		firstByLabel,
-		invalidatedLabels: new Set<string>(),
+		invalidatedLabels,
 		invalidQueue: [],
 		labelsByNode,
+		liveResolver,
 		parsed,
 		partialLabels,
 		partialTitleIntact: new Set<string>(),
-		partialTitleRefNodes: new Set<ProseMirrorNode>(),
-		pendingListChecks: new Set<PendingListCheck>(),
+		partialTitleRefNodes,
 		pendingListHeap: [],
 		plan,
 		seenLabels: new Set<string>(),
 		serializeBlock,
+		serializeBlockWithRefs,
 		subtreeHasCandidates: new WeakSet<ProseMirrorNode>(),
+		upstreamListsByLabel: new Map<string, Set<PendingListCheck>>(),
+		watchedCanonicalCandidates: new WeakSet<CandidatePartialRefDef>(),
 	};
 	const result = {
 		allIntact: st.allIntact,
@@ -136,10 +158,10 @@ export function computeIntactRefDefLabels(
 	}
 
 	// Pass 2: O(N + E) worklist propagation. Every task fires at most once.
-	// After the FIFO queue empties, exactly ONE dirty list (smallest non-sink
-	// first; sinks last) re-validates its first ordered item, and any labels
-	// that invalidates are drained before another list is popped, so a large
-	// list is never re-validated once per cascading wave.
+	// After the FIFO queue empties, exactly ONE dirty list pops in topological
+	// priority order (`liveUpstreamCount`, non-sink before sink, smallest
+	// `listNode.nodeSize` first), draining any newly invalidated labels before
+	// another list pops so downstream lists re-validate at most once.
 	let queueHead = 0;
 	while (true) {
 		while (queueHead < st.invalidQueue.length) {

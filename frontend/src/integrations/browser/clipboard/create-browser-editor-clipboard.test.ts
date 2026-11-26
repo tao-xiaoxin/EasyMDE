@@ -83,9 +83,275 @@ describe("createBrowserEditorClipboard", () => {
 			readText: vi.fn(),
 			writeText: vi.fn().mockResolvedValue(undefined),
 		});
+		const observedStates: string[] = [];
+		const unsubscribe = clipboard.subscribe(() => {
+			observedStates.push(clipboard.getState().status);
+		});
 
 		await expect(clipboard.write("")).resolves.toEqual({ status: "written" });
 		expect(clipboard.getState()).toEqual({ status: "unknown" });
+		expect(observedStates).toEqual([]);
+
+		unsubscribe();
+		clipboard.dispose();
+	});
+
+	it("does not double-publish transient state on write or mutate state after abort", async () => {
+		const pendingWrite = deferred<void>();
+		const clipboard = createBrowserEditorClipboard({
+			readText: vi.fn().mockResolvedValue(""),
+			writeText: vi
+				.fn()
+				.mockResolvedValueOnce(undefined)
+				.mockReturnValueOnce(pendingWrite.promise),
+		});
+		await clipboard.read();
+		expect(clipboard.getState()).toEqual({ status: "empty" });
+
+		const states: string[] = [];
+		const unsubscribe = clipboard.subscribe(() => {
+			states.push(clipboard.getState().status);
+		});
+
+		await expect(clipboard.write("copied text")).resolves.toEqual({
+			status: "written",
+		});
+		expect(states).toEqual(["unknown"]);
+
+		const controller = new AbortController();
+		const abortedWrite = clipboard.write("aborted text", {
+			signal: controller.signal,
+		});
+		controller.abort();
+		pendingWrite.resolve();
+		await expect(abortedWrite).resolves.toEqual({
+			code: "editor-clipboard-cancelled",
+			status: "failed",
+		});
+		expect(states).toEqual(["unknown"]);
+
+		unsubscribe();
+		clipboard.dispose();
+	});
+
+	it("avoids calling readText during passive check when read permission is denied, prompt, or unknown", async () => {
+		const deniedReadText = vi
+			.fn()
+			.mockRejectedValue(new Error("permission denied"));
+		const denied = createBrowserEditorClipboard({
+			queryReadPermission: vi.fn().mockResolvedValue("denied"),
+			readText: deniedReadText,
+			writeText: vi.fn(),
+		});
+
+		await expect(denied.check()).resolves.toEqual({
+			code: "editor-clipboard-read-failed",
+			status: "unavailable",
+		});
+		expect(deniedReadText).not.toHaveBeenCalled();
+		expect(denied.getState()).toEqual({
+			code: "editor-clipboard-read-failed",
+			status: "unavailable",
+		});
+		await expect(denied.read()).resolves.toEqual({
+			code: "editor-clipboard-read-failed",
+			status: "unavailable",
+		});
+		expect(deniedReadText).toHaveBeenCalledTimes(1);
+		denied.dispose();
+
+		const promptReadText = vi.fn().mockResolvedValue("user pasted");
+		const prompt = createBrowserEditorClipboard({
+			queryReadPermission: vi.fn().mockResolvedValue("prompt"),
+			readText: promptReadText,
+			writeText: vi.fn(),
+		});
+		const promptStates = [prompt.getState().status];
+		prompt.subscribe(() => promptStates.push(prompt.getState().status));
+
+		await expect(prompt.check()).resolves.toEqual({
+			code: "editor-clipboard-read-failed",
+			status: "unavailable",
+		});
+		expect(promptReadText).not.toHaveBeenCalled();
+		expect(prompt.getState()).toEqual({ status: "unknown" });
+		expect(promptStates).toEqual(["unknown", "checking", "unknown"]);
+		await expect(prompt.read()).resolves.toEqual({
+			status: "available",
+			text: "user pasted",
+		});
+		expect(promptReadText).toHaveBeenCalledTimes(1);
+		expect(prompt.getState()).toEqual({ status: "available" });
+		prompt.dispose();
+
+		const unknownReadText = vi.fn().mockResolvedValue("");
+		const unknown = createBrowserEditorClipboard({
+			queryReadPermission: vi.fn().mockRejectedValue(new TypeError("unsupported")),
+			readText: unknownReadText,
+			writeText: vi.fn(),
+		});
+		await expect(unknown.check()).resolves.toEqual({
+			code: "editor-clipboard-read-failed",
+			status: "unavailable",
+		});
+		expect(unknownReadText).not.toHaveBeenCalled();
+		expect(unknown.getState()).toEqual({ status: "unknown" });
+		await expect(unknown.read()).resolves.toEqual({ status: "empty" });
+		expect(unknownReadText).toHaveBeenCalledTimes(1);
+		expect(unknown.getState()).toEqual({ status: "empty" });
+		unknown.dispose();
+	});
+
+	it("silently reads during passive check when read permission is granted", async () => {
+		const readText = vi
+			.fn()
+			.mockResolvedValueOnce("hello")
+			.mockResolvedValueOnce("");
+		const queryReadPermission = vi.fn().mockResolvedValue("granted");
+		const clipboard = createBrowserEditorClipboard({
+			queryReadPermission,
+			readText,
+			writeText: vi.fn(),
+		});
+
+		await expect(clipboard.check()).resolves.toEqual({
+			status: "available",
+			text: "hello",
+		});
+		expect(clipboard.getState()).toEqual({ status: "available" });
+		expect(readText).toHaveBeenCalledTimes(1);
+
+		await expect(clipboard.check()).resolves.toEqual({ status: "empty" });
+		expect(clipboard.getState()).toEqual({ status: "empty" });
+		expect(readText).toHaveBeenCalledTimes(2);
+		expect(queryReadPermission).toHaveBeenCalledTimes(2);
+		clipboard.dispose();
+	});
+
+	it("queries navigator.permissions clipboard-read for passive check in default browser runtime without leaking into custom runtimes", async () => {
+		const query = vi.fn();
+		const readText = vi.fn().mockResolvedValue("");
+		vi.stubGlobal("navigator", {
+			clipboard: {
+				readText,
+				writeText: vi.fn().mockResolvedValue(undefined),
+			},
+			permissions: { query },
+		});
+
+		try {
+			query.mockResolvedValueOnce({ state: "prompt" });
+			const defaultClipboard = createBrowserEditorClipboard();
+			await expect(defaultClipboard.check()).resolves.toEqual({
+				code: "editor-clipboard-read-failed",
+				status: "unavailable",
+			});
+			expect(query).toHaveBeenCalledWith({ name: "clipboard-read" });
+			expect(readText).not.toHaveBeenCalled();
+			expect(defaultClipboard.getState()).toEqual({ status: "unknown" });
+
+			query.mockResolvedValueOnce({ state: "granted" });
+			await expect(defaultClipboard.check()).resolves.toEqual({
+				status: "empty",
+			});
+			expect(readText).toHaveBeenCalledTimes(1);
+			expect(defaultClipboard.getState()).toEqual({ status: "empty" });
+
+			query.mockRejectedValueOnce(new TypeError("unknown permission"));
+			await expect(defaultClipboard.check()).resolves.toEqual({
+				code: "editor-clipboard-read-failed",
+				status: "unavailable",
+			});
+			expect(readText).toHaveBeenCalledTimes(1);
+			expect(defaultClipboard.getState()).toEqual({ status: "unknown" });
+			await expect(defaultClipboard.read()).resolves.toEqual({
+				status: "empty",
+			});
+			expect(readText).toHaveBeenCalledTimes(2);
+			defaultClipboard.dispose();
+
+			// Custom runtimes must remain isolated from ambient navigator.permissions.
+			const customReadText = vi.fn().mockResolvedValue("custom text");
+			const customRuntimeClipboard = createBrowserEditorClipboard({
+				readText: customReadText,
+				writeText: vi.fn(),
+			});
+			const queryCallsBeforeCustom = query.mock.calls.length;
+			await expect(customRuntimeClipboard.check()).resolves.toEqual({
+				status: "available",
+				text: "custom text",
+			});
+			expect(query).toHaveBeenCalledTimes(queryCallsBeforeCustom);
+			expect(customReadText).toHaveBeenCalledTimes(1);
+			customRuntimeClipboard.dispose();
+
+			// Custom runtimes opting into permission gating pass queryReadPermission explicitly.
+			const gatedReadText = vi.fn().mockResolvedValue("");
+			const customQueryPermission = vi
+				.fn()
+				.mockRejectedValueOnce(new TypeError("unknown permission"));
+			const gatedCustomClipboard = createBrowserEditorClipboard({
+				queryReadPermission: customQueryPermission,
+				readText: gatedReadText,
+				writeText: vi.fn(),
+			});
+			await expect(gatedCustomClipboard.check()).resolves.toEqual({
+				code: "editor-clipboard-read-failed",
+				status: "unavailable",
+			});
+			expect(customQueryPermission).toHaveBeenCalledTimes(1);
+			expect(query).toHaveBeenCalledTimes(queryCallsBeforeCustom);
+			expect(gatedReadText).not.toHaveBeenCalled();
+			expect(gatedCustomClipboard.getState()).toEqual({ status: "unknown" });
+			await expect(gatedCustomClipboard.read()).resolves.toEqual({
+				status: "empty",
+			});
+			expect(gatedReadText).toHaveBeenCalledTimes(1);
+			gatedCustomClipboard.dispose();
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it("cancels or disposes a passive check cleanly while permission query is pending", async () => {
+		const pendingPermission = deferred<"denied" | "granted" | "prompt" | "unknown">();
+		const readText = vi.fn().mockResolvedValue("never read");
+		const clipboard = createBrowserEditorClipboard({
+			queryReadPermission: vi.fn().mockReturnValue(pendingPermission.promise),
+			readText,
+			writeText: vi.fn(),
+		});
+
+		const controller = new AbortController();
+		const abortedCheck = clipboard.check({ signal: controller.signal });
+		controller.abort();
+		pendingPermission.resolve("granted");
+		await expect(abortedCheck).resolves.toEqual({
+			code: "editor-clipboard-cancelled",
+			status: "failed",
+		});
+		expect(readText).not.toHaveBeenCalled();
+		expect(clipboard.getState()).toEqual({ status: "checking" });
+
+		const pendingDisposePermission = deferred<
+			"denied" | "granted" | "prompt" | "unknown"
+		>();
+		const disposingClipboard = createBrowserEditorClipboard({
+			queryReadPermission: vi
+				.fn()
+				.mockReturnValue(pendingDisposePermission.promise),
+			readText,
+			writeText: vi.fn(),
+		});
+		const disposedCheck = disposingClipboard.check();
+		disposingClipboard.dispose();
+		pendingDisposePermission.resolve("granted");
+		await expect(disposedCheck).resolves.toEqual({
+			code: "editor-clipboard-disposed",
+			status: "failed",
+		});
+		expect(readText).not.toHaveBeenCalled();
+		clipboard.dispose();
 	});
 
 	it("starts a deferred write synchronously and resolves after the payload promise", async () => {

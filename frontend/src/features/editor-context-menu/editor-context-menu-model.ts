@@ -178,8 +178,15 @@ function submenu(
   };
 }
 
-function readableClipboard(state: EditorClipboardState): boolean {
-  return 'available' === state.status;
+export function isEditorClipboardReadable(state: EditorClipboardState): boolean {
+  if ('empty' === state.status) return false;
+  if (
+    'unavailable' === state.status
+    && 'editor-clipboard-unsupported' === state.code
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function canInsertRelative(
@@ -265,41 +272,6 @@ function codeItems(
 ): EditorContextMenuSubmenuItem {
   const children: EditorContextMenuItem[] = [];
   const hasCodeBlock = 'code' === context.block || Boolean(context.code?.target);
-  const canInsert = canInsertRelative(context, canEdit);
-  if (hasCodeBlock && !context.hasSelection) {
-    const canUseSelection = context.hasSelection;
-    const canMutateSelection = canUseSelection && canEdit;
-    const canPaste = canEdit && readableClipboard(context.clipboard);
-
-    // A fenced/indented code block owns these general editing actions inside
-    // its context submenu. Keeping them here avoids rendering a second copy
-    // of the same actions at the root while retaining the ordinary selection
-    // and Clipboard disabled semantics.
-    children.push(
-      action('bold', context.labels.bold, !canMutateSelection, context.shortcut),
-      submenu('copy-paste-as', context.labels.copyPasteAs, [
-        action('copy-as-markdown', context.labels.copyAsMarkdown, !canUseSelection),
-        action('copy-as-html', context.labels.copyAsHtml, !canUseSelection),
-        action(
-          'copy-simplified-formatting',
-          context.labels.copySimplifiedFormatting,
-          !canUseSelection || context.canCopySimplified !== true
-        ),
-        action('paste-plain-text', context.labels.pastePlainText, !canPaste)
-      ]),
-      submenu('insert', context.labels.insert, [
-        action('insert-table-above', context.labels.insertTableAbove, !canInsert),
-        action('insert-table-below', context.labels.insertTableBelow, !canInsert),
-        action(
-          'insert-image-above',
-          context.labels.insertImageAbove,
-          !canInsert,
-          context.imageShortcut
-        ),
-        action('insert-image-below', context.labels.insertImageBelow, !canInsert)
-      ])
-    );
-  }
   if (hasCodeBlock) {
     children.push(action('copy-code-block', context.labels.copyCodeBlock, false));
   }
@@ -381,17 +353,26 @@ export function createEditorContextMenuModel(
   const canInsert = canInsertRelative(context, canEdit);
   const canUseSelection = context.hasSelection;
   const canMutateSelection = context.hasSelection && canEdit;
-  const canPaste = canEdit && readableClipboard(context.clipboard);
-  const copyPaste = submenu('copy-paste-as', context.labels.copyPasteAs, [
-    action('copy-as-markdown', context.labels.copyAsMarkdown, !canUseSelection),
-    action('copy-as-html', context.labels.copyAsHtml, !canUseSelection),
-    action(
-      'copy-simplified-formatting',
-      context.labels.copySimplifiedFormatting,
-      !canUseSelection || context.canCopySimplified !== true
-    ),
-    action('paste-plain-text', context.labels.pastePlainText, !canPaste)
-  ]);
+  const canPaste = canEdit && isEditorClipboardReadable(context.clipboard);
+  const copyPaste = submenu(
+    'copy-paste-as',
+    context.labels.copyPasteAs,
+    codeBlockContext
+      ? [
+          action('copy-as-markdown', context.labels.copyAsMarkdown, !canUseSelection),
+          action('paste-plain-text', context.labels.pastePlainText, !canPaste)
+        ]
+      : [
+          action('copy-as-markdown', context.labels.copyAsMarkdown, !canUseSelection),
+          action('copy-as-html', context.labels.copyAsHtml, !canUseSelection),
+          action(
+            'copy-simplified-formatting',
+            context.labels.copySimplifiedFormatting,
+            !canUseSelection || context.canCopySimplified !== true
+          ),
+          action('paste-plain-text', context.labels.pastePlainText, !canPaste)
+        ]
+  );
   const items: EditorContextMenuItem[] = [];
   const generatedContext = Boolean(context.generated);
   const formulaContext = context.block === 'math' || generatedContext;
@@ -403,7 +384,7 @@ export function createEditorContextMenuModel(
     action('copy', context.labels.copy, !canUseSelection),
     action('paste', context.labels.paste, !canPaste)
   );
-  if (!context.image && !codeBlockContext) items.push(copyPaste);
+  if (!context.image) items.push(copyPaste);
   if (context.link) {
     items.push(action('copy-link-address', context.labels.copyLinkAddress, false));
   }
@@ -420,7 +401,7 @@ export function createEditorContextMenuModel(
     action('insert-paragraph-above', context.labels.insertAbove, !canInsert),
     action('insert-paragraph-below', context.labels.insertBelow, !canInsert)
   ]);
-  if (!codeBlockContext) items.push(insert);
+  items.push(insert);
   if ('heading' === context.block) {
     const heading = headingItems(context, canEdit);
     if (heading) items.push(heading);

@@ -8,7 +8,10 @@ import {
 } from '../contracts/bootstrap/editor-root-bootstrap';
 import type { WordPressApiFetch } from '../integrations/wordpress/preview/create-wordpress-preview-port';
 import { createBrowserScrollSync } from '../integrations/browser/editor-layout/create-browser-scroll-sync';
-import { createBrowserEditorClipboard } from '../integrations/browser/clipboard/create-browser-editor-clipboard';
+import {
+  createBrowserClipboardReadPermissionQuery,
+  createBrowserEditorClipboard
+} from '../integrations/browser/clipboard/create-browser-editor-clipboard';
 import { createBrowserEditorImagePixels } from '../integrations/browser/image-copy/create-browser-editor-image-pixels';
 import {
   createBrowserEditorBlockIndexWorker,
@@ -490,9 +493,13 @@ export function mountAdminEditor(
       return false;
     }
   };
+  const queryReadPermission = createBrowserClipboardReadPermissionQuery(
+    windowRef.navigator
+  );
   const editorClipboardPort = createBrowserEditorClipboard(
     browserClipboard
       ? {
+          ...(queryReadPermission ? { queryReadPermission } : {}),
           readText: () => browserClipboard.readText(),
           supportsPngWrite,
           supportsRichWrite,

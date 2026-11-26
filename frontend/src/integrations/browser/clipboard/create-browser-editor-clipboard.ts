@@ -16,7 +16,14 @@ import {
 	DEFAULT_EDITOR_CLIPBOARD_RICH_MAX_BYTES,
 } from "../../../contracts/ports/editor-clipboard-port";
 
+export type BrowserClipboardReadPermissionState =
+	| "denied"
+	| "granted"
+	| "prompt"
+	| "unknown";
+
 export type BrowserEditorClipboardRuntime = Readonly<{
+	queryReadPermission?: () => Promise<BrowserClipboardReadPermissionState>;
 	readText: () => Promise<string>;
 	supportsPngWrite?: () => boolean;
 	supportsRichWrite?: () => boolean;
@@ -142,6 +149,35 @@ function failureResult(
 	return { code, status: "failed" };
 }
 
+function normalizePermissionState(
+	value: unknown,
+): BrowserClipboardReadPermissionState {
+	if ("denied" === value || "granted" === value || "prompt" === value) {
+		return value;
+	}
+	return "unknown";
+}
+
+export function createBrowserClipboardReadPermissionQuery(
+	navigatorRef: Pick<Navigator, "permissions"> | undefined =
+		"undefined" === typeof navigator ? undefined : navigator,
+): (() => Promise<BrowserClipboardReadPermissionState>) | undefined {
+	const permissions = navigatorRef?.permissions;
+	if (!permissions || "function" !== typeof permissions.query) {
+		return undefined;
+	}
+	return async (): Promise<BrowserClipboardReadPermissionState> => {
+		try {
+			const status = await permissions.query({
+				name: "clipboard-read" as PermissionName,
+			});
+			return normalizePermissionState(status?.state);
+		} catch {
+			return "unknown";
+		}
+	};
+}
+
 function browserClipboardRuntime(): BrowserEditorClipboardRuntime | null {
 	if ("undefined" === typeof navigator || !navigator.clipboard) {
 		return null;
@@ -156,8 +192,10 @@ function browserClipboardRuntime(): BrowserEditorClipboardRuntime | null {
 			: null;
 	const supportsPng = supportsPngClipboardWrite(clipboard, clipboardItem);
 	const supportsRich = supportsRichClipboardWrite(clipboard, clipboardItem);
+	const queryReadPermission = createBrowserClipboardReadPermissionQuery();
 
 	return {
+		...(queryReadPermission ? { queryReadPermission } : {}),
 		readText: () => clipboard.readText(),
 		supportsPngWrite: () => supportsPng,
 		supportsRichWrite: () => supportsRich,
@@ -342,6 +380,7 @@ export function createBrowserEditorClipboard(
 	const deferredImageWrites = new Set<DeferredWriteOperation>();
 	const deferredRichWrites = new Set<DeferredWriteOperation>();
 	let state: EditorClipboardState = { status: "unknown" };
+	const queryReadPermission = runtime?.queryReadPermission;
 
 	const supportsPngWrite = (): boolean =>
 		active &&
@@ -390,13 +429,9 @@ export function createBrowserEditorClipboard(
 		return operation;
 	};
 
-	const read = async (
-		options?: EditorClipboardOperationOptions,
+	const executeReadText = async (
+		operation: MutableOperation,
 	): Promise<EditorClipboardReadResult> => {
-		const operationOrResult = beginRead(options);
-		if ("status" in operationOrResult) return operationOrResult;
-		const operation = operationOrResult;
-
 		if (!runtime) {
 			if (pendingRead?.id === operation.id) {
 				pendingRead = null;
@@ -411,8 +446,9 @@ export function createBrowserEditorClipboard(
 		try {
 			const text = await runtime.readText();
 			if (!active) return failureResult("editor-clipboard-disposed");
-			if (pendingRead?.id !== operation.id || operation.signal?.aborted)
+			if (pendingRead?.id !== operation.id || operation.signal?.aborted) {
 				return cancelledResult();
+			}
 			pendingRead = null;
 			const result = readResult(text);
 			if ("available" === result.status) {
@@ -433,6 +469,50 @@ export function createBrowserEditorClipboard(
 		}
 	};
 
+	const read = async (
+		options?: EditorClipboardOperationOptions,
+	): Promise<EditorClipboardReadResult> => {
+		const operationOrResult = beginRead(options);
+		if ("status" in operationOrResult) return operationOrResult;
+		return executeReadText(operationOrResult);
+	};
+
+	const check = async (
+		options?: EditorClipboardOperationOptions,
+	): Promise<EditorClipboardReadResult> => {
+		const operationOrResult = beginRead(options);
+		if ("status" in operationOrResult) return operationOrResult;
+		const operation = operationOrResult;
+
+		if (queryReadPermission) {
+			let permission: BrowserClipboardReadPermissionState = "unknown";
+			try {
+				permission = normalizePermissionState(await queryReadPermission());
+			} catch {
+				permission = "unknown";
+			}
+			if (!active) return failureResult("editor-clipboard-disposed");
+			if (pendingRead?.id !== operation.id || operation.signal?.aborted) {
+				return cancelledResult();
+			}
+			if ("denied" === permission) {
+				pendingRead = null;
+				publish({
+					code: "editor-clipboard-read-failed",
+					status: "unavailable",
+				});
+				return unavailableResult("editor-clipboard-read-failed");
+			}
+			if ("granted" !== permission) {
+				pendingRead = null;
+				publish({ status: "unknown" });
+				return unavailableResult("editor-clipboard-read-failed");
+			}
+		}
+
+		return executeReadText(operation);
+	};
+
 	const write = async (
 		text: string,
 		options?: EditorClipboardOperationOptions,
@@ -446,7 +526,6 @@ export function createBrowserEditorClipboard(
 
 		try {
 			await runtime.writeText(text);
-			publish("" === text ? { status: "empty" } : { status: "available" });
 		} catch {
 			return { code: "editor-clipboard-write-failed", status: "failed" };
 		}
@@ -796,7 +875,7 @@ export function createBrowserEditorClipboard(
 	};
 
 	return {
-		check: read,
+		check,
 		dispose() {
 			if (!active) return;
 			active = false;

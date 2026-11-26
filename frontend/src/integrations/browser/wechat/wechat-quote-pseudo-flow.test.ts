@@ -179,6 +179,7 @@ function dimensionSemanticsFor(
       return null;
     },
     getFormattingOwnerDisplay: () => 'block',
+    getRefreshGeneration: () => 1,
     getRootComputedStyle: () => null,
     getSourceComputedStyle: (element: Element) => runtimeFor().getComputedStyle(element),
     rasterizesVisualRoots: false,

@@ -3,7 +3,6 @@ import {
 	buildPaddingCascadeIndex,
 	evaluatePortablePaddingTransportDecision,
 	type PaddingCascadeIndex,
-	type PortablePaddingTransportDecision,
 	SEMANTIC_PADDING_PROPERTIES,
 	type SemanticPaddingProperty,
 } from "./wechat-padding-cascade";
@@ -30,13 +29,6 @@ import {
 } from "./wechat-tree-predicates";
 
 export { buildPaddingCascadeIndex, type PaddingCascadeIndex };
-
-const PORTABLE_PADDING_TOKENS: Readonly<
-	Record<SemanticPaddingProperty, string>
-> = {
-	"padding-left": "--easymde-portable-padding-left",
-	"padding-right": "--easymde-portable-padding-right",
-};
 
 function isSemanticMathNode(source: Element): boolean {
 	if ("math" === source.localName.toLowerCase()) return true;
@@ -145,63 +137,18 @@ export function semanticMarginSignature(
 	).join(";");
 }
 
-function semanticPaddingTransportDecisionForStyle(
-	property: SemanticPaddingProperty,
-	source: Element,
-	semanticStyle: CSSStyleDeclaration | null,
-	dimensionSemantics: WechatDimensionSemanticsContext | null,
-): PortablePaddingTransportDecision {
-	const tokenName = PORTABLE_PADDING_TOKENS[property];
-	const token = semanticStyle?.getPropertyValue(tokenName).trim() ?? "";
-	return evaluatePortablePaddingTransportDecision(
-		source,
-		property,
-		semanticStyle,
-		token,
-		dimensionSemantics,
-	);
-}
-
 export function semanticPaddingValueForEligibleStyle(
 	property: SemanticPaddingProperty,
 	source: Element,
 	semanticStyle: CSSStyleDeclaration | null,
 	dimensionSemantics: WechatDimensionSemanticsContext | null,
 ): string | null {
-	return semanticPaddingTransportDecisionForStyle(
-		property,
+	return evaluatePortablePaddingTransportDecision(
 		source,
+		property,
 		semanticStyle,
 		dimensionSemantics,
 	).value;
-}
-
-function semanticPaddingTransportDecision(
-	property: string,
-	source: Element,
-	computed: CSSStyleDeclaration,
-	dimensionSemantics: WechatDimensionSemanticsContext | null,
-	semanticComputed?: CSSStyleDeclaration | null,
-	predicates?: WechatTreePredicateCache,
-): PortablePaddingTransportDecision {
-	if (
-		!SEMANTIC_PADDING_PROPERTIES.includes(property as SemanticPaddingProperty)
-	) {
-		return { signature: "", value: null };
-	}
-	if (
-		!dimensionSemantics ||
-		!semanticMarginSource(source, computed, undefined, predicates)
-	)
-		return { signature: "", value: null };
-	const semanticStyle =
-		semanticComputed ?? dimensionSemantics.getComputedStyle(source);
-	return semanticPaddingTransportDecisionForStyle(
-		property as SemanticPaddingProperty,
-		source,
-		semanticStyle,
-		dimensionSemantics,
-	);
 }
 
 export function semanticPaddingValue(
@@ -212,14 +159,25 @@ export function semanticPaddingValue(
 	semanticComputed?: CSSStyleDeclaration | null,
 	predicates?: WechatTreePredicateCache,
 ): string | null {
-	return semanticPaddingTransportDecision(
-		property,
+	if (
+		!SEMANTIC_PADDING_PROPERTIES.includes(property as SemanticPaddingProperty)
+	) {
+		return null;
+	}
+	if (
+		!dimensionSemantics ||
+		!semanticMarginSource(source, computed, undefined, predicates)
+	) {
+		return null;
+	}
+	const semanticStyle =
+		semanticComputed ?? dimensionSemantics.getComputedStyle(source);
+	return semanticPaddingValueForEligibleStyle(
+		property as SemanticPaddingProperty,
 		source,
-		computed,
+		semanticStyle,
 		dimensionSemantics,
-		semanticComputed,
-		predicates,
-	).value;
+	);
 }
 
 export function semanticPaddingSignature(
@@ -237,9 +195,9 @@ export function semanticPaddingSignature(
 	const semanticStyle =
 		semanticComputed ?? dimensionSemantics.getComputedStyle(source);
 	const values = SEMANTIC_PADDING_PROPERTIES.map((property) => {
-		const decision = semanticPaddingTransportDecisionForStyle(
-			property,
+		const decision = evaluatePortablePaddingTransportDecision(
 			source,
+			property,
 			semanticStyle,
 			dimensionSemantics,
 		);

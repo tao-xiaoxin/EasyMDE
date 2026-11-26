@@ -139,7 +139,13 @@ export async function nativeVisualStyleDeclarations(
       ? await materializeBackgroundValue(property, value, runtime, cache)
       : value;
     if (null === materializedValue) continue;
-    if (keepStyle(property, materializedValue, source, false, false, value, false, '', svg)) {
+    if (
+      keepStyle(property, materializedValue, source, {
+        omitDefaultValues: false,
+        sourceValue: value,
+        svgElement: svg,
+      })
+    ) {
       declarations.push(`${property}:${materializedValue}`);
     }
     if (hasBackgroundUrl && yieldToBrowser?.shouldYield()) await yieldToBrowser();

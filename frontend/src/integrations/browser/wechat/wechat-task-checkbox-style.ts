@@ -5,8 +5,18 @@ const ZERO_LINE_HEIGHT_TOKEN =
 const FONT_SHORTHAND_ZERO_LINE_HEIGHT = new RegExp(`^\\s*${ZERO_LINE_HEIGHT_TOKEN}(?=\\s|$)`, 'iu');
 const ZERO_LINE_HEIGHT_VALUE = new RegExp(`^${ZERO_LINE_HEIGHT_TOKEN}$`, 'iu');
 
-function isInlineScriptElement(source: Element, pseudoElement: boolean): boolean {
-  return !pseudoElement && ('SUB' === source.tagName || 'SUP' === source.tagName) && !isSvgElement(source);
+export type ZeroLineHeightPrecomputed = Readonly<{
+  isSvg?: boolean | undefined;
+  isTaskListCheckbox?: boolean | undefined;
+}>;
+
+function isInlineScriptElement(
+  source: Element,
+  pseudoElement: boolean,
+  precomputed?: ZeroLineHeightPrecomputed
+): boolean {
+  if (pseudoElement || ('SUB' !== source.tagName && 'SUP' !== source.tagName)) return false;
+  return !(precomputed?.isSvg ?? isSvgElement(source));
 }
 
 /**
@@ -20,10 +30,11 @@ function isInlineScriptElement(source: Element, pseudoElement: boolean): boolean
 function shouldStripZeroLineHeight(
   source: Element,
   pseudoElement = false,
-  pseudoHasTextContent = false
+  pseudoHasTextContent = false,
+  precomputed?: ZeroLineHeightPrecomputed
 ): boolean {
-  if (isTaskListCheckbox(source)) return !pseudoHasTextContent;
-  return isInlineScriptElement(source, pseudoElement);
+  if (precomputed?.isTaskListCheckbox ?? isTaskListCheckbox(source)) return !pseudoHasTextContent;
+  return isInlineScriptElement(source, pseudoElement, precomputed);
 }
 
 /**
@@ -88,9 +99,10 @@ export function fontWithoutZeroLineHeight(
   source: Element,
   value: string,
   pseudoElement = false,
-  pseudoHasTextContent = false
+  pseudoHasTextContent = false,
+  precomputed?: ZeroLineHeightPrecomputed
 ): string {
-  if (!shouldStripZeroLineHeight(source, pseudoElement, pseudoHasTextContent)) return value;
+  if (!shouldStripZeroLineHeight(source, pseudoElement, pseudoHasTextContent, precomputed)) return value;
   return stripZeroLineHeightFromFontShorthand(value);
 }
 
@@ -103,9 +115,10 @@ export function shouldOmitZeroLineHeight(
   property: string,
   value: string,
   pseudoElement = false,
-  pseudoHasTextContent = false
+  pseudoHasTextContent = false,
+  precomputed?: ZeroLineHeightPrecomputed
 ): boolean {
   if ('line-height' !== property) return false;
-  if (!shouldStripZeroLineHeight(source, pseudoElement, pseudoHasTextContent)) return false;
+  if (!shouldStripZeroLineHeight(source, pseudoElement, pseudoHasTextContent, precomputed)) return false;
   return isZeroLineHeightValue(value);
 }

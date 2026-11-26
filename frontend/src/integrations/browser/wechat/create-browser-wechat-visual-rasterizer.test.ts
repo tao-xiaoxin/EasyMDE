@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 
 import { Blob as NodeBlob } from 'node:buffer';
+import { createHash } from 'node:crypto';
+import { runInNewContext } from 'node:vm';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -2831,6 +2833,105 @@ describe('createBrowserWechatVisualRasterizer', () => {
     expect(first.file.name).toMatch(/^easymde-wechat-mermaid-[0-9a-f]{64}\.png$/);
     expect(different.file.name).toMatch(/^easymde-wechat-mermaid-[0-9a-f]{64}\.png$/);
     expect(different.file.name).not.toBe(first.file.name);
+  });
+
+  it('normalizes cross-realm PNG ArrayBuffers before SHA-256 digesting and fails closed on digest errors', async () => {
+    const canvasContext = { drawImage: vi.fn() };
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockReturnValue(canvasContext as unknown as CanvasRenderingContext2D);
+    const pngBytes = [137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 4];
+    const expectedDigest = createHash('sha256')
+      .update(Uint8Array.from(pngBytes))
+      .digest('hex');
+    const crossRealmBuffer = runInNewContext(
+      `new Uint8Array(${JSON.stringify(pngBytes)}).buffer`,
+    ) as ArrayBuffer;
+    expect(crossRealmBuffer instanceof ArrayBuffer).toBe(false);
+
+    const originalDigest = window.crypto.subtle.digest.bind(window.crypto.subtle);
+    const strictDigestSpy = vi.spyOn(window.crypto.subtle, 'digest').mockImplementation(
+      (algorithm, data) => {
+        const isCurrentRealmBufferSource = data instanceof ArrayBuffer
+          || (ArrayBuffer.isView(data) && data.buffer instanceof ArrayBuffer);
+        if (!isCurrentRealmBufferSource) {
+          return Promise.reject(new TypeError('Cross-realm BufferSource rejected'));
+        }
+        return originalDigest(algorithm, data);
+      },
+    );
+    const toBlobSpy = vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation((callback) => {
+      callback({
+        arrayBuffer: async () => crossRealmBuffer,
+        size: pngBytes.length,
+        type: 'image/png',
+      } as unknown as Blob);
+    });
+    const source = document.createElement('div');
+    source.innerHTML = '<svg width="20" height="10" viewBox="0 0 20 10"><rect width="20" height="10"></rect></svg>';
+    const rasterizer = createBrowserWechatVisualRasterizer(runtime());
+
+    const result = await rasterizer.rasterize(request(source));
+    expect(result.file.name).toBe(`easymde-wechat-mermaid-${expectedDigest}.png`);
+    expect(strictDigestSpy).toHaveBeenCalledOnce();
+
+    // Rejecting png.arrayBuffer() must fail closed.
+    toBlobSpy.mockImplementation((callback) => {
+      callback({
+        arrayBuffer: async () => {
+          throw new Error('blob-read-failed');
+        },
+        size: pngBytes.length,
+        type: 'image/png',
+      } as unknown as Blob);
+    });
+    await expect(rasterizer.rasterize(request(source))).rejects.toMatchObject({
+      code: 'wechat-png-encode-failed',
+    });
+
+    // Non-ArrayBuffer value from png.arrayBuffer() must fail closed rather than hashing empty bytes.
+    toBlobSpy.mockImplementation((callback) => {
+      callback({
+        arrayBuffer: async () => null as unknown as ArrayBuffer,
+        size: pngBytes.length,
+        type: 'image/png',
+      } as unknown as Blob);
+    });
+    await expect(rasterizer.rasterize(request(source))).rejects.toMatchObject({
+      code: 'wechat-png-encode-failed',
+    });
+
+    // Rejecting subtle.digest() must fail closed.
+    toBlobSpy.mockImplementation((callback) => {
+      callback(new NodeBlob([Uint8Array.from(pngBytes)], { type: 'image/png' }) as unknown as Blob);
+    });
+    strictDigestSpy.mockRejectedValueOnce(new Error('digest-failed'));
+    await expect(rasterizer.rasterize(request(source))).rejects.toMatchObject({
+      code: 'wechat-png-encode-failed',
+    });
+
+    // Unavailable crypto.subtle on both window and globalThis must fail closed.
+    const originalWindowCrypto = Object.getOwnPropertyDescriptor(window, 'crypto');
+    const originalGlobalCrypto = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+    Object.defineProperty(window, 'crypto', {
+      configurable: true,
+      value: undefined,
+    });
+    Object.defineProperty(globalThis, 'crypto', {
+      configurable: true,
+      value: undefined,
+    });
+    try {
+      await expect(rasterizer.rasterize(request(source))).rejects.toMatchObject({
+        code: 'wechat-png-encode-failed',
+      });
+    } finally {
+      if (originalWindowCrypto) {
+        Object.defineProperty(window, 'crypto', originalWindowCrypto);
+      }
+      if (originalGlobalCrypto) {
+        Object.defineProperty(globalThis, 'crypto', originalGlobalCrypto);
+      }
+    }
   });
 
   it('rejects detached SVG background shorthand var/env/escape/paint and box-shadow: transparent consistently across rasterizer and geometry', () => {

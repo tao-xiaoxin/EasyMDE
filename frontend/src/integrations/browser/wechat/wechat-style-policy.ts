@@ -1,4 +1,5 @@
 import { isSvgElement, isTaskListCheckbox } from "./wechat-clone-metadata";
+import { splitCssDeclarations } from "./wechat-css-list";
 import type { WechatDimensionSemanticsContext } from "./wechat-dimension-semantics";
 import { pseudoContent } from "./wechat-pseudo-content";
 import {
@@ -21,6 +22,9 @@ import {
 	UNSAFE_URL,
 	URL_ATTRIBUTES,
 	uniqueStyleProperties,
+	WECHAT_DARKMODE_GRADIENT_EXEMPTION,
+	WECHAT_GRADIENT_FUNCTION,
+	WECHAT_IGNORE_DARKMODE_ATTRIBUTE,
 } from "./wechat-style-policy-catalog";
 import {
 	contentBoxDimensionValue,
@@ -79,7 +83,10 @@ export {
 	UNSAFE_URL,
 	URL_ATTRIBUTES,
 	uniqueStyleProperties,
+	WECHAT_DARKMODE_GRADIENT_EXEMPTION,
 	WECHAT_EXPORT_STYLE_CONTEXT_ATTRIBUTE,
+	WECHAT_GRADIENT_FUNCTION,
+	WECHAT_IGNORE_DARKMODE_ATTRIBUTE,
 } from "./wechat-style-policy-catalog";
 export {
 	contentBoxDimensionValue,
@@ -638,4 +645,36 @@ export function appendPortableStyleDeclaration(
 			),
 		);
 	}
+}
+
+export function hasFinalizedBackgroundGradient(styleText: string): boolean {
+	if (!styleText || !/gradient\s*\(/i.test(styleText)) return false;
+	let effectiveValue = "";
+	let effectiveImportant = false;
+	for (const declaration of splitCssDeclarations(styleText)) {
+		if (
+			"background" !== declaration.property &&
+			"background-image" !== declaration.property
+		) {
+			continue;
+		}
+		if (effectiveImportant && !declaration.important) continue;
+		effectiveValue = declaration.value;
+		effectiveImportant = declaration.important;
+	}
+	return WECHAT_GRADIENT_FUNCTION.test(effectiveValue);
+}
+
+export function markWechatGradientDarkmodeExemptions(root: HTMLElement): void {
+	const markIfGradient = (element: Element): void => {
+		if (isSvgElement(element)) return;
+		const style = element.getAttribute("style") ?? "";
+		if (!hasFinalizedBackgroundGradient(style)) return;
+		element.setAttribute(
+			WECHAT_IGNORE_DARKMODE_ATTRIBUTE,
+			WECHAT_DARKMODE_GRADIENT_EXEMPTION,
+		);
+	};
+	markIfGradient(root);
+	root.querySelectorAll("[style]").forEach(markIfGradient);
 }

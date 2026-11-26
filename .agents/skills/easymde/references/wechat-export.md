@@ -278,8 +278,9 @@ its source background, border, and padding once, and the generated scene
 replaces only the target's visual descendants. For block owners, there is no
 inline `A`: the styled target remains the responsive, border-box outer scroll
 owner rather than retaining its source column's physical pixel width. An
-undecorated normal-flow `section` carrier owns the intrinsic visual width and auto
-side margins. Short scenes center in the destination content box; wider scenes
+undecorated normal-flow `section` carrier owns the intrinsic visual width, auto
+side margins, and exporter-owned `data-ignore-width=""` alongside the outer
+block-math scroll owner. Short scenes center in the destination content box; wider scenes
 retain a reachable local scroll range without expanding the article. The block
 SVG stays in normal flow; CSS absolute positioning and source-column offsets
 must not determine its placement after native Save.
@@ -1063,19 +1064,28 @@ their own verified normal path before all-theme acceptance. Retain each source t
 table's intrinsic width is not compressed. Preserve source and table RGBA
 colors from computed source styles without platform or theme color hardcoding.
 
-The generated table scroll section, registered block-math scroll root,
-intrinsic/compensated Mermaid scroll wrapper, and direct code scroll owner
-declare `data-ignore-width=""` after source attribute sanitization.
-This is WeChat's documented intentional-local-overflow metadata;
-it skips width checks only for that owner and its descendants, and changes
-neither geometry nor content. Never inherit this attribute from
-untrusted Preview content or emit it on the article root, PRE/header, or an
-arbitrary element merely because its CSS scrolls. Unowned overflow remains
-detectable. Real destination verification must prove complete local scrolling,
-unchanged desktop/phone paint, and an unmarked overflowing negative case.
+The generated table scroll section, its exporter-owned `table`, the registered
+block-math scroll root and its generated block-math vector `section` carrier,
+the intrinsic/compensated Mermaid scroll wrapper, and the direct code scroll
+owner declare `data-ignore-width=""` after source attribute sanitization.
+This is WeChat's documented intentional-local-overflow metadata; WeChat's
+`#1.4 width` check inspects the wide element directly as well as its scroll
+owner, so both the generated table scroll wrapper and its owned `table`, and
+both the outer block-math scroll owner and its fixed-width vector `section`
+carrier, declare `data-ignore-width=""`. It changes neither geometry nor
+content. Never inherit this attribute from untrusted Preview content or emit it
+on the article root, PRE/header, or an arbitrary element merely because its CSS
+scrolls. Unowned overflow remains detectable. Real destination verification must
+prove complete local scrolling, unchanged desktop/phone paint, and an unmarked
+overflowing negative case.
 The [official WeChat plugin specification](https://developers.weixin.qq.com/doc/service/guide/product/plugin_spec.html)
-owns the destination marker semantics. Its independent gradient/dark-mode
-advice is not exempted by this width-only declaration.
+owns the destination marker semantics. Independently, untrusted source
+`data-ignore-dm` attributes are stripped with transient attributes before
+finalization; at the end of `finalizeMarkup()`, the exporter emits
+`data-ignore-dm="text-bg-gradient"` only on finalized non-SVG elements whose
+effective inline `background` or `background-image` declaration contains a CSS
+gradient function, exempting intentional gradient surfaces from WeChat's
+`#4.1.2 darkmode-no-gradient` check without affecting plain or SVG nodes.
 
 ## Failure and evidence
 

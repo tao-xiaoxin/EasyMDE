@@ -233,14 +233,14 @@ describe('createBrowserWechatClipboard', () => {
       expect(holder.textContent).toContain('Standalone code');
       expect(holder.textContent).toContain('Unowned overflow');
       const markers = [...holder.querySelectorAll('[data-ignore-width]')];
-      expect(markers).toHaveLength(3);
+      expect(markers).toHaveLength(4);
       expect(markers.every((element) => element.getAttribute('data-ignore-width') === '')).toBe(true);
       expect(holder.querySelectorAll('section[data-ignore-width]')).toHaveLength(2);
-      expect(holder.querySelectorAll('section[data-ignore-width] table')).toHaveLength(1);
+      expect(holder.querySelectorAll('section[data-ignore-width] > table[data-ignore-width]')).toHaveLength(1);
       expect(holder.querySelectorAll('section[data-ignore-width] img')).toHaveLength(0);
       expect(holder.querySelectorAll('pre > code[data-ignore-width]')).toHaveLength(1);
       expect(holder.querySelectorAll('pre[data-ignore-width]')).toHaveLength(0);
-      expect(holder.querySelectorAll('table[data-ignore-width]')).toHaveLength(0);
+      expect(holder.querySelectorAll('table[data-ignore-width]')).toHaveLength(1);
       expect(holder.querySelectorAll('code[data-ignore-width]')).toHaveLength(1);
       expect(holder.firstElementChild?.hasAttribute('data-ignore-width')).toBe(false);
       expect(holder.querySelector('[data-ignore-width="untrusted"]')).toBeNull();
@@ -250,6 +250,14 @@ describe('createBrowserWechatClipboard', () => {
       expect(holder.querySelector('[data-ignore-width="untrusted-code"]')).toBeNull();
       expect(holder.querySelector('[data-ignore-width="untrusted-standalone-code"]')).toBeNull();
       expect(holder.querySelector('[data-ignore-width="untrusted-overflow"]')).toBeNull();
+      const outputTable = holder.querySelector('table');
+      if (!outputTable) throw new Error('clipboard table missing');
+      expect(declaredStyleDeclarations(outputTable, 'width')).toEqual([
+        { property: 'width', value: 'max-content', important: true }
+      ]);
+      expect(declaredStyleDeclarations(outputTable, 'max-width')).toEqual([
+        { property: 'max-width', value: 'none', important: true }
+      ]);
     };
     assertOwnedMarkers(modernHtml);
 
@@ -859,6 +867,136 @@ describe('createBrowserWechatClipboard', () => {
     expect(modernText).toContain('Plain');
     expect(modernText).toContain('Underlined');
     expect(preview.innerHTML).toBe(sourceMarkup);
+  });
+
+  it('strips untrusted data-ignore-dm and marks only finalized non-SVG gradient surfaces across modern and legacy payloads', async () => {
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.setAttribute('data-ignore-dm', 'untrusted-root');
+    preview.innerHTML = [
+      '<p class="plain" data-ignore-dm="untrusted-plain">Plain</p>',
+      '<p class="linear" data-ignore-dm="untrusted-linear">Linear</p>',
+      '<div class="radial">Radial</div>',
+      '<div class="conic">Conic</div>',
+      '<div class="repeating">Repeating</div>',
+      '<svg class="svg-gradient" data-ignore-dm="untrusted-svg" viewBox="0 0 10 10"><rect width="10" height="10"></rect></svg>'
+    ].join('');
+    const sourceMarkup = preview.innerHTML;
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: 'Plain\nLinear\nRadial\nConic\nRepeating'
+    });
+    const gradientComputedStyle = (element: Element, pseudoElement?: string): CSSStyleDeclaration => {
+      if ('::before' === pseudoElement || '::after' === pseudoElement)
+        return computedStyle(element, pseudoElement);
+      if (pseudoElement) return declaration({});
+      if ('ARTICLE' === element.tagName) {
+        return declaration({
+          background: 'linear-gradient(180deg, rgb(255, 255, 255), rgb(248, 250, 252))',
+          'background-image': 'linear-gradient(180deg, rgb(255, 255, 255), rgb(248, 250, 252))',
+          display: 'block'
+        });
+      }
+      if (element.classList.contains('plain')) {
+        return declaration({
+          'background-color': 'rgb(241, 245, 249)',
+          'background-image': 'none',
+          display: 'block'
+        });
+      }
+      if (element.classList.contains('linear')) {
+        return declaration({
+          'background-image': 'linear-gradient(90deg, rgb(59, 130, 246), rgb(147, 51, 234))',
+          display: 'block'
+        });
+      }
+      if (element.classList.contains('radial')) {
+        return declaration({
+          background: 'radial-gradient(circle, rgb(254, 243, 199), rgb(253, 230, 138))',
+          display: 'block'
+        });
+      }
+      if (element.classList.contains('conic')) {
+        return declaration({
+          'background-image': 'conic-gradient(from 90deg, rgb(16, 185, 129), rgb(6, 182, 212))',
+          display: 'block'
+        });
+      }
+      if (element.classList.contains('repeating')) {
+        return declaration({
+          'background-image': 'repeating-linear-gradient(45deg, rgb(241, 245, 249) 0px, rgb(226, 232, 240) 8px)',
+          display: 'block'
+        });
+      }
+      if (element.classList.contains('svg-gradient')) {
+        return declaration({
+          'background-image': 'linear-gradient(90deg, rgb(1, 2, 3), rgb(4, 5, 6))',
+          display: 'block'
+        });
+      }
+      return declaration({ display: 'block' });
+    };
+    class ClipboardItemStub { constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {  }  }
+    const modernWrites: ClipboardItemStub[] = [];
+    const createRuntime = (
+      clipboardItem: typeof ClipboardItemStub | null,
+      write: ((items: unknown[]) => Promise<void>) | null
+    ) =>
+      createBrowserWechatClipboard({
+        blob: Blob,
+        clipboardItem,
+        document,
+        getComputedStyle: gradientComputedStyle,
+        getSelection: window.getSelection.bind(window),
+        pageOffset: () => ({ x: 0, y: 0 }),
+        scrollTo: vi.fn(),
+        write
+      });
+    const modern = createRuntime(ClipboardItemStub, async (items) => {
+      modernWrites.push(items[0] as ClipboardItemStub);
+    });
+
+    await expect(modern.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const modernHtmlBlob = modernWrites[0]?.payload['text/html'];
+    if (!modernHtmlBlob) throw new Error('gradient modern payload missing');
+    const modernHtml = await blobText(modernHtmlBlob);
+
+    const assertGradientMarkers = (html: string): void => {
+      const holder = document.createElement('div');
+      holder.innerHTML = html;
+      const root = holder.firstElementChild;
+      expect(root?.getAttribute('data-ignore-dm')).toBe('text-bg-gradient');
+      const marked = [...holder.querySelectorAll('[data-ignore-dm]')];
+      expect(marked).toHaveLength(5);
+      expect(marked.every((element) => element.getAttribute('data-ignore-dm') === 'text-bg-gradient')).toBe(true);
+      expect(holder.querySelector('[data-ignore-dm="untrusted-root"]')).toBeNull();
+      expect(holder.querySelector('[data-ignore-dm="untrusted-plain"]')).toBeNull();
+      expect(holder.querySelector('[data-ignore-dm="untrusted-linear"]')).toBeNull();
+      expect(holder.querySelector('[data-ignore-dm="untrusted-svg"]')).toBeNull();
+      const paragraphs = holder.querySelectorAll('p');
+      expect(paragraphs[0]?.hasAttribute('data-ignore-dm')).toBe(false);
+      expect(paragraphs[1]?.getAttribute('data-ignore-dm')).toBe('text-bg-gradient');
+      const svg = holder.querySelector('svg');
+      expect(svg?.hasAttribute('data-ignore-dm')).toBe(false);
+    };
+    assertGradientMarkers(modernHtml);
+
+    let legacyHtml = '';
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: vi.fn(() => {
+        legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        dispatchSuccessfulLegacyCopy();
+        return true;
+      })
+    });
+    const legacy = createRuntime(null, null);
+    await prepareClipboard(legacy, preview);
+    await expect(legacy.copy(preview)).resolves.toEqual({ method: 'legacy', status: 'copied' });
+    expect(legacyHtml).toBe(modernHtml);
+    assertGradientMarkers(legacyHtml);
+    expect(preview.innerHTML).toBe(sourceMarkup);
+    expect(preview.getAttribute('data-ignore-dm')).toBe('untrusted-root');
   });
 
 });

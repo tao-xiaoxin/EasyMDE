@@ -580,6 +580,7 @@ describe("materializeWechatMathVectorScenes", () => {
 		expect(carrier.getAttribute("data-easymde-wechat-math-vector-carrier")).toBe(
 			"",
 		);
+		expect(carrier.getAttribute("data-ignore-width")).toBe("");
 		expect(carrier.style.width).toBe("100px");
 		expect(carrier.style.marginLeft).toBe("auto");
 		expect(carrier.style.marginRight).toBe("auto");

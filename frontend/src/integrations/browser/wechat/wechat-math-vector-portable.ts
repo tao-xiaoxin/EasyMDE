@@ -9,6 +9,7 @@ import {
 	WECHAT_STRUCTURE_REPLACEMENTS,
 } from "./wechat-clone-metadata";
 import type { WechatMathVectorCapturedScene } from "./wechat-math-vector-capture";
+import { markWechatOwnedScrollOwner } from "./wechat-list-table-layout";
 import {
 	buildWechatMathVectorScenes,
 	type WechatMathVectorAtlas,
@@ -562,6 +563,7 @@ function blockSceneWrapper(
 	);
 	const carrier = document.createElement("section");
 	carrier.setAttribute("data-easymde-wechat-math-vector-carrier", "");
+	markWechatOwnedScrollOwner(carrier);
 	replaceDeclarations(
 		carrier,
 		[

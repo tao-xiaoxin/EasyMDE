@@ -38,7 +38,10 @@ import {
 import { normalizePortableMedia } from "./wechat-portable-media";
 import { generatedHeadingAfterContentIsEmpty } from "./wechat-pseudo-elements";
 import { replaceDeclarations } from "./wechat-style-declarations";
-import { appendDeclarations } from "./wechat-style-policy";
+import {
+	appendDeclarations,
+	markWechatGradientDarkmodeExemptions,
+} from "./wechat-style-policy";
 import type { WechatSvgPortableIntegration } from "./wechat-svg-portable-integration";
 import {
 	applyWechatTableNativeGridForSerialization,
@@ -401,5 +404,6 @@ export function finalizeMarkup(
 	if (exportTextNormalizations)
 		EXPORT_TEXT_NORMALIZATIONS.set(normalized, exportTextNormalizations);
 	assertTaskCheckboxCaptionRuns(normalized, exportTextNormalizations);
+	markWechatGradientDarkmodeExemptions(normalized);
 	return normalized;
 }

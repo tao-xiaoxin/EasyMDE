@@ -308,6 +308,9 @@ export function captureVisualMarkdownSources(
 	const sources: VisualMarkdownSourceMarker[] = [];
 	for (const node of surface.querySelectorAll<HTMLElement>(".easymde-math")) {
 		if (node.closest("pre > code")) continue;
+		// Only capture raw pre-enhancement PHP math text; never scrape already-
+		// rendered KaTeX/MathML DOM text into `data-easymde-visual-markdown-source`.
+		if (node.querySelector(".katex-mathml, .katex, math")) continue;
 		const marker = surface.ownerDocument.createComment(
 			"easymde-visual-markdown-source",
 		);

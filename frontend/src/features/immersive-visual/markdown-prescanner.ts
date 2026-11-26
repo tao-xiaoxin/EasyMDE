@@ -1,27 +1,73 @@
+import { isCommonMarkWhitespaceCode } from "../../shared/markdown/markdown-char-codes";
+import { matchLeagueHtmlBlockType } from "../../shared/markdown/markdown-html-scanners";
+import {
+	advanceCodePoint,
+	findLinkTitleCloseIndex,
+	scanLinkDestinationRange,
+} from "../../shared/markdown/markdown-link-destination";
+import {
+	checkFenceLineStatus,
+	createBlockScanCache,
+	createContainerCodeLineStepper,
+	detectFenceInBody,
+	FOOTNOTE_DEF_LINE,
+	findBlockMathEnd,
+	findGfmTableEnd,
+	findLeagueHtmlBlockEnd,
+	findParagraphProseRunEnd,
+	hasMultilineInlineOpener,
+	isCommonMarkParagraphInterrupter,
+	isGfmTableStartAt,
+	isGfmTableStartAtLine,
+} from "./markdown-prescanner-blocks";
+import {
+	type ClassifiedLineContainers,
+	type ContainerFrame,
+	formatContainerSignature,
+	isMarkdownBlankLine,
+	leadingColumnsFrom,
+	type StripContainerBlockOptions,
+	standardContainerPrefix,
+	stepContainerBlockLine,
+	stripContainerBlockLines,
+	stripLeadingAsciiSpaceTab,
+	stripTrailingAsciiSpaceTab,
+} from "./markdown-prescanner-containers";
 import {
 	extractInlineProtectedSyntax,
+	extractInlineProtectedSyntaxChunk,
 	type ProtectedInlineEntry,
 } from "./markdown-prescanner-inline";
+import {
+	TABLE_ALIGN_PREFIX,
+	TABLE_ALIGN_SUFFIX,
+} from "./table-alignment-codec";
 import type { ProtectedBlockKind } from "./visual-schema";
 
-export type { ProtectedInlineEntry };
-
-export type ProtectedBlockEntry = Readonly<{
+type ProtectedBlockEntry = Readonly<{
 	kind: ProtectedBlockKind;
 	rawMarkdown: string;
 }>;
 
-export type ReferenceDefinition = Readonly<{
+type ReferenceDefinition = Readonly<{
 	href: string;
 	title: string;
 }>;
 
-export type PrescannedLineRange = Readonly<{
+type PrescannedLineRange = Readonly<{
 	end: number;
 	start: number;
 }>;
 
+type FencedBlockOrigin = Readonly<{
+	closed: boolean;
+	col: number;
+	firstLineBody: string;
+	frames: ReadonlyArray<ContainerFrame>;
+}>;
+
 export type PreScanResult = Readonly<{
+	fencedBlocks: ReadonlyMap<number, FencedBlockOrigin>;
 	lineEnding: "\n" | "\r\n";
 	markdown: string;
 	outputLineRanges: ReadonlyArray<PrescannedLineRange | null>;
@@ -33,20 +79,8 @@ export type PreScanResult = Readonly<{
 	tableAlignMarkers: ReadonlyMap<string, string>;
 }>;
 
-import {
-	TABLE_ALIGN_PREFIX,
-	TABLE_ALIGN_SUFFIX,
-} from "./table-alignment-codec";
-
-export { TABLE_ALIGN_PREFIX, TABLE_ALIGN_SUFFIX };
-
-const HTML_BLOCK_TAGS: ReadonlySet<string> = new Set(
-	"article aside audio blockquote center details div dl fieldset figure footer form header hr iframe main nav ol p pre script section style summary table ul video".split(
-		" ",
-	),
-);
-
 const INTERNAL_TOKEN_PATTERN = /EASYMDEPH[A-Z]*(?:INL|BLK|TBLALIGN|BR)\d*END/g;
+
 function createCollisionFreeSentinel(source: string): string {
 	let sentinel = "EASYMDEPH";
 	while (source.includes(sentinel)) {
@@ -86,403 +120,243 @@ export function restoreProtectedInlineSentinels(
 	});
 }
 
-function readBlockquotePrefix(
-	line: string,
-): Readonly<{ prefix: string; rest: string }> {
-	const prefix = /^(?: {0,3}>[ \t]?)*/.exec(line)?.[0] ?? "";
-	return { prefix, rest: line.slice(prefix.length) };
-}
-
-function measureIndent(text: string): number {
-	return text.split("\t").join("    ").length;
-}
-
-type ListMarkerMatch = Readonly<{ contentIndent: number }>;
-
-function matchListMarker(rest: string): ListMarkerMatch | null {
-	const match = /^( *)([-*+]|\d{1,9}[.)])([ \t]+)(.*)$/.exec(rest);
-	if (!match?.[2]) {
-		return null;
-	}
-	const indent = match[1]?.length ?? 0;
-	const spaces = match[3] ?? "";
-	const content = match[4] ?? "";
-	const padding = content.length > 0 && spaces.length > 4 ? 1 : spaces.length;
-	return { contentIndent: indent + match[2].length + Math.max(padding, 1) };
-}
-export type LineAnalysis = Readonly<{
-	containerIndent: number;
-	content: string;
-	indent: number;
-	listMarker: ListMarkerMatch | null;
-	prefix: string;
-	rest: string;
-}>;
-
-export function analyzeLine(line: string, containerIndent: number): LineAnalysis {
-	const { prefix, rest } = readBlockquotePrefix(line);
-	const indentText = /^[ \t]*/.exec(rest)?.[0] ?? "";
-	return {
-		containerIndent,
-		content: rest.slice(indentText.length),
-		indent: measureIndent(indentText),
-		listMarker: matchListMarker(rest),
-		prefix,
-		rest,
-	};
-}
-
-export type DetectableFence = Readonly<{
-	containerIndent: number;
-	fenceChar: "`" | "~";
-	fenceLength: number;
-	info: string;
-}>;
-
-function matchFenceAt(
-	content: string,
-	indent: number,
-	containerIndent: number,
-): DetectableFence | null {
-	const relative = indent - containerIndent;
-	if (relative < 0 || relative > 3) {
-		return null;
-	}
-	const match = /^(`{3,}|~{3,})(.*)$/.exec(content);
-	if (!match?.[1]) {
-		return null;
-	}
-	const info = match[2] ?? "";
-	const fenceChar = match[1][0] === "~" ? "~" : "`";
-	if (fenceChar === "`" && info.includes("`")) {
-		return null;
-	}
-	return {
-		containerIndent,
-		fenceChar,
-		fenceLength: match[1].length,
-		info,
-	};
-}
-
-export function detectFence(analysis: LineAnalysis): DetectableFence | null {
-	const direct = matchFenceAt(
-		analysis.content,
-		analysis.indent,
-		analysis.containerIndent,
-	);
-	if (direct || !analysis.listMarker) {
-		return direct;
-	}
-	const markerIndent = analysis.listMarker.contentIndent;
-	return matchFenceAt(
-		analysis.rest.slice(markerIndent),
-		markerIndent,
-		markerIndent,
-	);
-}
-
-export function isFenceCloser(line: string, fence: DetectableFence): boolean {
-	const { rest } = readBlockquotePrefix(line);
-	const indentText = /^[ \t]*/.exec(rest)?.[0] ?? "";
-	const indent = measureIndent(indentText);
-	const relative = indent - fence.containerIndent;
-	if (relative < 0 || relative > 3) {
-		return false;
-	}
-	const content = rest.slice(indentText.length);
-	const match =
-		fence.fenceChar === "`"
-			? /^(`{3,})[ \t]*$/.exec(content)
-			: /^(~{3,})[ \t]*$/.exec(content);
-	return Boolean(match?.[1] && match[1].length >= fence.fenceLength);
-}
-function isGfmTableDelimiter(text: string): boolean {
-	const trimmed = text.trim();
-	return (
-		trimmed.includes("-") &&
-		(/^\|?[ \t]*:?-{1,}:?[ \t]*(?:\|[ \t]*:?-{1,}:?[ \t]*)+\|?$/.test(
-			trimmed,
-		) ||
-			/^\|[ \t]*:?-{1,}:?[ \t]*\|$/.test(trimmed))
-	);
-}
-
-function isGfmTableStartAt(headerLine: string, delimiterLine: string): boolean {
-	const header = readBlockquotePrefix(headerLine).rest;
-	const delimiter = readBlockquotePrefix(delimiterLine).rest;
-	return header.includes("|") && isGfmTableDelimiter(delimiter);
-}
-
-function findGfmTableEnd(
-	lines: ReadonlyArray<string>,
-	headerIndex: number,
-): number {
-	let end = headerIndex + 1;
-	for (let index = headerIndex + 2; index < lines.length; index += 1) {
-		const { rest } = readBlockquotePrefix(lines[index] ?? "");
-		if (rest.trim().length === 0 || !rest.includes("|")) {
-			break;
-		}
-		if (/^ {0,3}(?:#{1,6}(?:[ \t]|$)|`{3,}|~{3,}|>)/.test(rest)) {
-			break;
-		}
-		end = index;
-	}
-	return end;
-}
 function normalizeReferenceKey(label: string): string {
-	return label.trim().replace(/\s+/g, " ").toUpperCase();
+	return label.trim().replace(/\s+/g, " ").toLowerCase().toUpperCase();
 }
-function parseReferenceTitle(raw: string): string | null {
-	const trimmed = raw.trim();
-	const quote = trimmed[0];
-	if (quote !== '"' && quote !== "'" && quote !== "(") {
-		return null;
-	}
-	const closing = quote === "(" ? ")" : quote;
-	if (trimmed.length < 2 || !trimmed.endsWith(closing)) {
-		return null;
-	}
-	const inner = trimmed.slice(1, -1);
-	let title = "";
-	for (let index = 0; index < inner.length; index += 1) {
-		const ch = inner[index] ?? "";
-		if (ch === "\\" && index + 1 < inner.length) {
-			title += inner[index + 1] ?? "";
-			index += 1;
-			continue;
-		}
-		if (ch === closing) {
-			return null;
-		}
-		title += ch;
-	}
-	return title;
-}
+
+const MAX_REF_LABEL_CODE_POINTS = 999;
 
 type ReferenceDefinitionMatch = Readonly<{
 	end: number;
 	href: string;
 	key: string;
+	label: string;
 	title: string;
 }>;
 
-export const REFERENCE_DEF_LINE = /^ {0,3}\[([^\]^][^\]]*)\]:[ \t]*(.*)$/;
-export const FOOTNOTE_DEF_LINE = /^ {0,3}\[\^([^\s\]]+)\]:(?:[ \t]|$)/;
-
-function matchReferenceDefinition(
+function scanMultilineReferenceTitle(
 	lines: ReadonlyArray<string>,
-	start: number,
-): ReferenceDefinitionMatch | null {
-	const line = readBlockquotePrefix(lines[start] ?? "").rest;
-	const match = REFERENCE_DEF_LINE.exec(line);
-	if (!match?.[1]) {
+	startLineIdx: number,
+	initialText: string,
+	frames: ReadonlyArray<ContainerFrame>,
+): Readonly<{ end: number; title: string }> | null {
+	if (initialText.length === 0) return null;
+	const quoteCode = initialText.charCodeAt(0);
+	if (
+		34 /* " */ !== quoteCode &&
+		39 /* ' */ !== quoteCode &&
+		40 /* ( */ !== quoteCode
+	) {
 		return null;
 	}
-	const key = normalizeReferenceKey(match[1]);
+	const parts: string[] = [];
+	let curLineIdx = startLineIdx;
+	let lineText = initialText;
+	let pos = 1;
+
+	for (;;) {
+		const foundClose = findLinkTitleCloseIndex(
+			lineText,
+			pos,
+			lineText.length,
+			quoteCode,
+		);
+		if (foundClose === -2) return null;
+		if (foundClose >= 0) {
+			if (!isMarkdownBlankLine(lineText.slice(foundClose + 1))) {
+				return null;
+			}
+			parts.push(lineText.slice(0, foundClose + 1));
+			return { end: curLineIdx, title: parts.join("\n").slice(1, -1) };
+		}
+		parts.push(lineText);
+		curLineIdx += 1;
+		if (curLineIdx >= lines.length) return null;
+		const nextStep = stepContainerBlockLine(lines[curLineIdx] ?? "", frames);
+		if (
+			!nextStep.continues ||
+			nextStep.isBlank ||
+			isCommonMarkParagraphInterrupter(nextStep.body, nextStep.col, false)
+		) {
+			return null;
+		}
+		lineText = stripLeadingAsciiSpaceTab(nextStep.body);
+		pos = 0;
+	}
+}
+
+export function matchReferenceDefinition(
+	lines: ReadonlyArray<string>,
+	start: number,
+	firstLineContent: string | null,
+	frames: ReadonlyArray<ContainerFrame>,
+): ReferenceDefinitionMatch | null {
+	let content: string;
+	if (firstLineContent !== null) {
+		content = firstLineContent;
+	} else {
+		if (start >= lines.length) return null;
+		const step = stepContainerBlockLine(lines[start] ?? "", frames);
+		if (!step.continues || step.isBlank) return null;
+		if (leadingColumnsFrom(step.body, step.col) > 3) return null;
+		content = stripLeadingAsciiSpaceTab(step.body);
+	}
+	if (
+		content.length === 0 ||
+		91 /* [ */ !== content.charCodeAt(0) ||
+		FOOTNOTE_DEF_LINE.test(content)
+	) {
+		return null;
+	}
+	const labelParts: string[] = [];
+	let labelLineIdx = start;
+	let lineText = content;
+	let segStart = 1;
+	let pos = 1;
+	let codePoints = 0;
+	let hasNonWs = false;
+	let closeBracketPos = -1;
+
+	for (;;) {
+		const len = lineText.length;
+		while (pos < len) {
+			const ch = lineText.charCodeAt(pos);
+			if (92 /* \ */ === ch) {
+				if (pos + 1 < len) {
+					codePoints += 2;
+					if (codePoints > MAX_REF_LABEL_CODE_POINTS) return null;
+					hasNonWs = true;
+					pos = advanceCodePoint(lineText, pos + 1, len);
+					continue;
+				}
+				codePoints += 1;
+				if (codePoints > MAX_REF_LABEL_CODE_POINTS) return null;
+				hasNonWs = true;
+				pos += 1;
+				break;
+			}
+			if (91 /* [ */ === ch) return null;
+			if (93 /* ] */ === ch) {
+				closeBracketPos = pos;
+				break;
+			}
+			codePoints += 1;
+			if (codePoints > MAX_REF_LABEL_CODE_POINTS) return null;
+			if (!isCommonMarkWhitespaceCode(ch)) hasNonWs = true;
+			pos = advanceCodePoint(lineText, pos, len);
+		}
+		if (closeBracketPos >= 0) {
+			if (
+				!hasNonWs ||
+				closeBracketPos + 1 >= len ||
+				58 /* : */ !== lineText.charCodeAt(closeBracketPos + 1)
+			) {
+				return null;
+			}
+			labelParts.push(lineText.slice(segStart, closeBracketPos));
+			break;
+		}
+		labelParts.push(lineText.slice(segStart));
+		codePoints += 1;
+		if (codePoints > MAX_REF_LABEL_CODE_POINTS) return null;
+		labelLineIdx += 1;
+		if (labelLineIdx >= lines.length) return null;
+		const nextStep = stepContainerBlockLine(lines[labelLineIdx] ?? "", frames);
+		if (
+			!nextStep.continues ||
+			nextStep.isBlank ||
+			isCommonMarkParagraphInterrupter(nextStep.body, nextStep.col, false)
+		) {
+			return null;
+		}
+		lineText = stripLeadingAsciiSpaceTab(nextStep.body);
+		segStart = 0;
+		pos = 0;
+	}
+
+	const label = labelParts.join(" ").trim().replace(/\s+/g, " ");
+	const key = normalizeReferenceKey(label);
 	if (key.length === 0) {
 		return null;
 	}
-	let remainder = (match[2] ?? "").trim();
-	let end = start;
-	if (remainder.length === 0) {
-		const next = lines[start + 1];
+	let remainder = stripLeadingAsciiSpaceTab(
+		lineText.slice(closeBracketPos + 2),
+	);
+	let end = labelLineIdx;
+	if (isMarkdownBlankLine(remainder)) {
+		const next = lines[end + 1];
 		if (next === undefined) {
 			return null;
 		}
-		const nextRest = readBlockquotePrefix(next).rest;
-		if (!/^[ \t]+/.test(nextRest)) {
+		const nextStep = stepContainerBlockLine(next, frames);
+		if (
+			!nextStep.continues ||
+			nextStep.isBlank ||
+			isCommonMarkParagraphInterrupter(nextStep.body, nextStep.col, false)
+		) {
 			return null;
 		}
-		remainder = nextRest.trim();
-		end = start + 1;
+		remainder = stripLeadingAsciiSpaceTab(nextStep.body);
+		end += 1;
 	}
-	const destinationMatch = /^(<[^>\n]*>|\S+)(.*)$/.exec(remainder);
-	if (!destinationMatch?.[1]) {
+	const destRange = scanLinkDestinationRange(remainder, 0, remainder.length);
+	if (!destRange) {
 		return null;
 	}
-	let href = destinationMatch[1];
-	if (href.startsWith("<") && href.endsWith(">") && href.length >= 2) {
-		href = href.slice(1, -1);
+	const rest = remainder.slice(destRange.to);
+	if (
+		rest.length > 0 &&
+		32 !== rest.charCodeAt(0) &&
+		9 !== rest.charCodeAt(0)
+	) {
+		return null;
 	}
-	let titleSource = (destinationMatch[2] ?? "").trim();
-	if (titleSource.length === 0) {
-		const nextLine = lines[end + 1];
-		if (nextLine !== undefined) {
-			const nextRest = readBlockquotePrefix(nextLine).rest;
-			if (/^[ \t]+["'(]/.test(nextRest)) {
-				titleSource = nextRest.trim();
-				end += 1;
-			}
+	const isAngle = 60 /* < */ === remainder.charCodeAt(destRange.from);
+	const href = isAngle
+		? remainder.slice(destRange.from + 1, destRange.to - 1)
+		: remainder.slice(destRange.from, destRange.to);
+	if (!isAngle) {
+		for (let idx = 0; idx < href.length; idx += 1) {
+			const code = href.charCodeAt(idx);
+			if (code <= 31 || 127 === code) return null;
 		}
 	}
 	let title = "";
-	if (titleSource.length > 0) {
-		const parsedTitle = parseReferenceTitle(titleSource);
-		if (parsedTitle === null) {
+	if (!isMarkdownBlankLine(rest)) {
+		const parsedTitle = scanMultilineReferenceTitle(
+			lines,
+			end,
+			stripLeadingAsciiSpaceTab(rest),
+			frames,
+		);
+		if (!parsedTitle) {
 			return null;
 		}
-		title = parsedTitle;
-	}
-	return { end, href, key, title };
-}
-function matchHtmlBlockOpener(
-	line: string,
-): Readonly<{ tagName: string; selfClosing: boolean }> | null {
-	const match = /^ {0,3}<([a-zA-Z][a-zA-Z0-9-]*)(?=[\s>/])[^>]*>/.exec(line);
-	if (!match?.[1]) {
-		return null;
-	}
-	const tagName = match[1].toLowerCase();
-	if (!HTML_BLOCK_TAGS.has(tagName)) {
-		return null;
-	}
-	return { tagName, selfClosing: match[0].endsWith("/>") || tagName === "hr" };
-}
-function findHtmlBlockEnd(
-	lines: ReadonlyArray<string>,
-	startIndex: number,
-	tagName: string,
-): number {
-	const openPattern = new RegExp(`<${tagName}(?=[\\s>/])[^>]*>`, "gi");
-	const closePattern = new RegExp(`</${tagName}\\s*>`, "gi");
-	let depth = 0;
-	let activeFence: DetectableFence | null = null;
-
-	for (let index = startIndex; index < lines.length; index += 1) {
-		const line = lines[index] ?? "";
-		if (activeFence) {
-			if (isFenceCloser(line, activeFence)) {
-				activeFence = null;
-			}
-			continue;
-		}
-		if (index > startIndex) {
-			const fence = detectFence(analyzeLine(line, 0));
-			if (fence) {
-				activeFence = fence;
-				continue;
+		title = parsedTitle.title;
+		end = parsedTitle.end;
+	} else {
+		const nextLine = lines[end + 1];
+		if (nextLine !== undefined) {
+			const nextStep = stepContainerBlockLine(nextLine, frames);
+			if (
+				nextStep.continues &&
+				!nextStep.isBlank &&
+				!isCommonMarkParagraphInterrupter(nextStep.body, nextStep.col, false)
+			) {
+				const parsedTitle = scanMultilineReferenceTitle(
+					lines,
+					end + 1,
+					stripLeadingAsciiSpaceTab(nextStep.body),
+					frames,
+				);
+				if (parsedTitle) {
+					title = parsedTitle.title;
+					end = parsedTitle.end;
+				}
 			}
 		}
-		for (const tag of line.match(openPattern) ?? []) {
-			if (!tag.endsWith("/>")) {
-				depth += 1;
-			}
-		}
-		depth -= (line.match(closePattern) ?? []).length;
-		if (depth <= 0) {
-			return index;
-		}
 	}
-	return -1;
-}
-
-export const ATX_HEADING = /^#{1,6}(?:[ \t]+.*|[ \t]*)$/;
-export const THEMATIC_BREAK =
-	/^(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/;
-export const SETEXT_UNDERLINE = /^(?:=+|-+)[ \t]*$/;
-const CONTAINER_QUOTE = /^ {0,3}>[ \t]?/;
-const CONTAINER_LIST_MARKER = /^ {0,3}(?:[-+*]|(\d{1,9})[.)])(?=[ \t]|$)/;
-const leadingColumns = (text: string): number =>
-	measureIndent(/^[ \t]*/.exec(text)?.[0] ?? "");
-
-/**
- * Whether a line emitted as text leaves a paragraph open (so the next line
- * cannot start a reference definition), classified on the content inside any
- * nested quote/list containers, plus the quote depth those containers add.
- */
-function classifyParagraphLine(
-	content: string,
-	relativeIndent: number,
-	paragraphOpen: boolean,
-): Readonly<{ nestedQuotes: number; open: boolean }> {
-	let inner = content;
-	let nestedQuotes = 0;
-	if (relativeIndent > 3) return { nestedQuotes, open: true };
-	for (let depth = 0; depth < 32; depth += 1) {
-		const nested = depth > 0;
-		const trimmed = inner.trim();
-		if (
-			trimmed === "" ||
-			(nested && leadingColumns(inner) >= 4) ||
-			ATX_HEADING.test(trimmed) ||
-			THEMATIC_BREAK.test(trimmed) ||
-			(!nested && paragraphOpen && SETEXT_UNDERLINE.test(trimmed))
-		) {
-			return { nestedQuotes, open: false };
-		}
-		const quote = CONTAINER_QUOTE.exec(inner);
-		const marker = quote ? null : CONTAINER_LIST_MARKER.exec(inner);
-		if (quote) {
-			inner = inner.slice(quote[0].length);
-			nestedQuotes += 1;
-			continue;
-		}
-		if (!marker) return { nestedQuotes, open: true };
-		const after = inner.slice(marker[0].length);
-		const blank = after.trim() === "";
-		// An empty or non-1 ordered item cannot interrupt a paragraph.
-		const ordered = marker[1];
-		if (!nested && paragraphOpen && (blank || (ordered && +ordered !== 1))) {
-			return { nestedQuotes, open: true };
-		}
-		// Marker spacing of 5+ columns starts indented code in the item.
-		if (blank || leadingColumns(after) >= 5) {
-			return { nestedQuotes, open: false };
-		}
-		inner = after.replace(/^[ \t]/, "");
-	}
-	return { nestedQuotes, open: true };
-}
-
-/**
- * Last line of a `$$...$$` or `\[...\]` block starting at `start`, or -1. A
- * mid-line display formula that is neither a one-line block nor a canonical
- * fence line is left to the inline scanner.
- */
-function findBlockMathEnd(
-	lines: ReadonlyArray<string>,
-	start: number,
-	content: string,
-	containerIndent: number,
-): number {
-	const dollar = content.startsWith("$$") && !content.startsWith("$$$$");
-	if (!dollar && !content.startsWith("\\[")) return -1;
-	const single = dollar
-		? /^\$\$([\s\S]+?)\$\$[ \t]*$/.exec(content)
-		: /^\\\[([\s\S]+?)\\\][ \t]*$/.exec(content);
-	const inner = single?.[1] ?? "";
-	if (single && (dollar ? !inner.includes("$$") : inner.trim().length > 0)) {
-		return start;
-	}
-	if (!(dollar ? /^\$\$[ \t]*$/ : /^\\\[[ \t]*$/).test(content)) return -1;
-	const close = dollar ? "$$" : "\\]";
-	for (let k = start + 1; k < lines.length; k += 1) {
-		const next = analyzeLine(lines[k] ?? "", containerIndent);
-		if (detectFence(next)) return -1;
-		if (next.content.trimEnd().endsWith(close)) return k;
-	}
-	return -1;
-}
-
-function stripBlockContainerPrefix(
-	line: string,
-	prefix: string,
-	indent: number,
-): string {
-	let result = line;
-	if (prefix.length > 0) {
-		if (result.startsWith(prefix)) {
-			result = result.slice(prefix.length);
-		} else if (result.trimEnd() === prefix.trimEnd()) {
-			return "";
-		} else {
-			result = readBlockquotePrefix(result).rest;
-		}
-	}
-	const leading = /^[ \t]*/.exec(result)?.[0] ?? "";
-	return result.slice(Math.min(indent, leading.length));
+	return { end, href, key, label, title };
 }
 
 export function prescanMarkdown(rawMarkdown: string): PreScanResult {
@@ -494,10 +368,12 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 	const lines = normalized.split("\n");
 	const outputLines: string[] = [];
 	const outputLineRanges: Array<PrescannedLineRange | null> = [];
+	const fencedBlocks = new Map<number, FencedBlockOrigin>();
 	const protectedBlocks = new Map<string, ProtectedBlockEntry>();
 	const protectedInlines = new Map<string, ProtectedInlineEntry>();
 	const tableAlignMarkers = new Map<string, string>();
 	const references: Record<string, ReferenceDefinition> = {};
+	const blockScanCache = createBlockScanCache();
 
 	const pushOutputLine = (
 		text: string,
@@ -507,206 +383,219 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		outputLineRanges.push(range);
 	};
 
-	/** Protect original lines `origStart..lastLine` (inclusive). */
+	/**
+	 * Protect original lines `origStart..lastLine` (inclusive), peeling ONLY the
+	 * active container frames via `stripContainerBlockLines` and emitting a
+	 * single-line self-terminating ATX heading sentinel for `markdown-it`.
+	 */
 	const pushProtectedBlock = (
 		kind: ProtectedBlockKind,
-		{ indent, prefix }: Pick<LineAnalysis, "indent" | "prefix">,
+		classified: ClassifiedLineContainers,
 		origStart: number,
 		lastLine: number,
+		stripOptions?: StripContainerBlockOptions,
 	): void => {
 		const origEnd = lastLine + 1;
 		const token = `${sentinel}BLK${protectedBlocks.size}END`;
-		const rawMarkdown = lines
-			.slice(origStart, origEnd)
-			.map((blockLine) => stripBlockContainerPrefix(blockLine, prefix, indent))
-			.join("\n");
+		const relIndent = Math.min(classified.relIndent, 3);
+		const rawMarkdown = stripContainerBlockLines(
+			lines,
+			classified.blockFrames,
+			origStart,
+			origEnd,
+			classified.body,
+			classified.col,
+			stripOptions,
+		).join("\n");
 		protectedBlocks.set(token, { kind, rawMarkdown });
-		const blankLine = prefix.length === 0 ? "" : prefix.replace(/[ \t]+$/, "");
-		const prevLine = outputLines[outputLines.length - 1];
-		if (prevLine !== undefined && prevLine.trim().length > 0) {
-			pushOutputLine(blankLine, null);
-		}
-		pushOutputLine(`${prefix}${" ".repeat(indent)}${token}`, {
+
+		// Emit as a single-line ATX heading sentinel so markdown-it treats the
+		// placeholder as a closed block (never merging a following `2. Text`).
+		pushOutputLine(`${classified.prefix}${" ".repeat(relIndent)}# ${token}`, {
 			end: origEnd,
 			start: origStart,
 		});
-		pushOutputLine(blankLine, null);
 	};
 
+	const stepper = createContainerCodeLineStepper({ detectFences: false });
 	let i = 0;
-	let inIndentedCode = false;
-	let indentedCodeContainer = 0;
-	let listContentIndent: number | null = null;
-	let paragraphOpen = false;
-	let paragraphQuoteDepth = 0;
 	let tableRowStart = -1;
 	let tableRowEnd = -1;
 
 	while (i < lines.length) {
 		const line = lines[i] ?? "";
-		let analysis = analyzeLine(line, listContentIndent ?? 0);
-		const isBlank = line.trim().length === 0;
-
-		if (inIndentedCode) {
-			if (isBlank) {
-				pushOutputLine(line, { end: i + 1, start: i });
-				i += 1;
-				continue;
-			}
-			if (analysis.indent - indentedCodeContainer >= 4) {
-				pushOutputLine(line, { end: i + 1, start: i });
-				i += 1;
-				continue;
-			}
-			inIndentedCode = false;
-		}
-
-		if (isBlank) {
-			pushOutputLine(line, { end: i + 1, start: i });
-			paragraphOpen = false;
-			inIndentedCode = false;
-			i += 1;
-			continue;
-		}
-
-		// A deeper blockquote marker opens a quote that interrupts a paragraph.
-		const lineQuoteDepth = (analysis.prefix.match(/>/g) ?? []).length;
-		if (paragraphOpen && lineQuoteDepth > paragraphQuoteDepth) {
-			paragraphOpen = false;
-		}
-
-		if (analysis.listMarker) {
-			listContentIndent = analysis.listMarker.contentIndent;
-		} else if (
-			listContentIndent !== null &&
-			analysis.indent < listContentIndent
-		) {
-			listContentIndent = null;
-			analysis = analyzeLine(line, 0);
-		}
-
-		const effectiveContainer = listContentIndent ?? 0;
-		const relativeIndent = analysis.indent - effectiveContainer;
-
-		// 1. Indented code blocks can only start when no paragraph is open.
-		if (!paragraphOpen && relativeIndent >= 4) {
-			inIndentedCode = true;
-			indentedCodeContainer = effectiveContainer;
+		const stepped = stepper.step(line);
+		if (typeof stepped === "string" || stepped.kind !== "content") {
 			pushOutputLine(line, { end: i + 1, start: i });
 			i += 1;
 			continue;
 		}
+		const { classified } = stepped;
+		const bodyFrames = classified.blockFrames;
 
-		// 2. Fenced code blocks (container aware: blockquotes and list items).
-		const fence = detectFence(analysis);
+		// 1. Fenced code blocks (container aware: blockquotes and list items).
+		const fence = detectFenceInBody(classified.body, classified.col, bodyFrames);
 		if (fence) {
 			let end = i + 1;
-			while (end < lines.length && !isFenceCloser(lines[end] ?? "", fence)) {
+			let closed = false;
+			while (end < lines.length) {
+				const status = checkFenceLineStatus(lines[end] ?? "", fence);
+				if (status === "closed") {
+					closed = true;
+					break;
+				}
+				if (status === "exited") {
+					end -= 1;
+					break;
+				}
 				end += 1;
 			}
-			const blockEnd = end < lines.length ? end : lines.length - 1;
-			const lang = (fence.info.trim().split(/\s+/)[0] ?? "").toLowerCase();
-			if (lang === "mermaid" && analysis.listMarker === null) {
-				pushProtectedBlock("mermaid", analysis, i, blockEnd);
-			} else {
-				for (let k = i; k <= blockEnd; k += 1) {
-					pushOutputLine(lines[k] ?? "", { end: k + 1, start: k });
-				}
+			const blockEnd = Math.min(end, lines.length - 1);
+			fencedBlocks.set(i, {
+				closed,
+				col: classified.col,
+				firstLineBody: classified.body,
+				frames: bodyFrames,
+			});
+			for (let k = i; k <= blockEnd; k += 1) {
+				pushOutputLine(lines[k] ?? "", { end: k + 1, start: k });
 			}
-			paragraphOpen = false;
+			stepper.setState(bodyFrames, false);
 			i = blockEnd + 1;
 			continue;
 		}
 
-		// 3. EasyMDE table alignment annotation directly preceding a GFM table.
+		// 2. EasyMDE table alignment annotation directly preceding a GFM table.
 		if (
-			analysis.content.startsWith(TABLE_ALIGN_PREFIX) &&
-			analysis.content.trim().endsWith(TABLE_ALIGN_SUFFIX) &&
-			isGfmTableStartAt(lines[i + 1] ?? "", lines[i + 2] ?? "")
+			classified.relIndent <= 3 &&
+			classified.bodyContent.startsWith(TABLE_ALIGN_PREFIX) &&
+			stripTrailingAsciiSpaceTab(classified.bodyContent).endsWith(
+				TABLE_ALIGN_SUFFIX,
+			) &&
+			isGfmTableStartAtLine(lines, i + 1, bodyFrames)
 		) {
 			const markerToken = `${sentinel}TBLALIGN${tableAlignMarkers.size}END`;
-			tableAlignMarkers.set(markerToken, analysis.content.trim());
+			tableAlignMarkers.set(
+				markerToken,
+				stripTrailingAsciiSpaceTab(classified.bodyContent),
+			);
 			pushOutputLine(
-				`${analysis.prefix}${" ".repeat(analysis.indent)}${markerToken}`,
+				`${classified.prefix}${" ".repeat(classified.relIndent)}${markerToken}`,
 				{ end: i + 1, start: i },
 			);
-			paragraphOpen = false;
+			stepper.setState(bodyFrames, false);
 			i += 1;
 			continue;
 		}
 
 		if (
 			i > tableRowEnd &&
-			isGfmTableStartAt(lines[i] ?? "", lines[i + 1] ?? "")
+			classified.relIndent <= 3 &&
+			isGfmTableStartAt(classified.body, lines[i + 1] ?? "", bodyFrames)
 		) {
 			tableRowStart = i;
-			tableRowEnd = findGfmTableEnd(lines, i);
+			tableRowEnd = findGfmTableEnd(lines, i, bodyFrames);
 		}
 		const isTableRow = i >= tableRowStart && i <= tableRowEnd;
 
-		// 4. Block math: $$...$$ and \[...\] (single-line or multi-line).
-		const blockMathEnd = findBlockMathEnd(
-			lines,
-			i,
-			analysis.content,
-			effectiveContainer,
-		);
+		// 3. Block math: $$...$$ and \[...\] (single-line or multi-line).
+		const blockMathEnd =
+			classified.relIndent <= 3
+				? findBlockMathEnd(
+						lines,
+						i,
+						classified.bodyContent,
+						bodyFrames,
+						blockScanCache,
+					)
+				: -1;
 		if (blockMathEnd >= i) {
-			pushProtectedBlock("math", analysis, i, blockMathEnd);
-			paragraphOpen = false;
+			pushProtectedBlock("math", classified, i, blockMathEnd);
+			stepper.setState(bodyFrames, false);
 			i = blockMathEnd + 1;
 			continue;
 		}
 
-		// 5. Standalone [TOC] line.
+		// 4. Standalone [TOC] line.
 		if (
-			/^\[TOC\][ \t]*$/i.test(analysis.content) &&
-			(i === 0 || (lines[i - 1] ?? "").trim().length === 0) &&
-			(i + 1 >= lines.length || (lines[i + 1] ?? "").trim().length === 0)
+			classified.relIndent <= 3 &&
+			91 /* [ */ === classified.bodyContent.charCodeAt(0) &&
+			/^\[TOC\][ \t]*$/i.test(classified.bodyContent) &&
+			(i === 0 || isMarkdownBlankLine(lines[i - 1] ?? "")) &&
+			(i + 1 >= lines.length || isMarkdownBlankLine(lines[i + 1] ?? ""))
 		) {
-			pushProtectedBlock("toc", analysis, i, i);
-			paragraphOpen = false;
+			pushProtectedBlock("toc", classified, i, i);
+			stepper.setState(bodyFrames, false);
 			i += 1;
 			continue;
 		}
 
-		// 6. Footnote definitions (including blank-line separated continuations).
-		if (/^\[\^([^\s\]]+)\]:(?:[ \t]|$)/.test(analysis.content)) {
+		// 5. Footnote definitions (including blank-line separated continuations).
+		if (
+			classified.relIndent <= 3 &&
+			91 /* [ */ === classified.bodyContent.charCodeAt(0) &&
+			FOOTNOTE_DEF_LINE.test(classified.bodyContent)
+		) {
 			let end = i;
 			while (end + 1 < lines.length) {
-				const next = analyzeLine(lines[end + 1] ?? "", effectiveContainer);
-				if (
-					/^(?: {2,}|\t)/.test(next.rest) ||
-					/^\[\^([^\s\]]+)\]:(?:[ \t]|$)/.test(next.content)
-				) {
-					end += 1;
-					continue;
-				}
-				if (next.content.trim().length === 0) {
-					let lookahead = end + 1;
-					while (
-						lookahead < lines.length &&
-						(lines[lookahead] ?? "").trim().length === 0
+				const next = stepContainerBlockLine(lines[end + 1] ?? "", bodyFrames);
+				if (!next.continues) break;
+				if (!next.isBlank) {
+					const nextIndent = leadingColumnsFrom(next.body, next.col);
+					if (
+						nextIndent >= 2 ||
+						FOOTNOTE_DEF_LINE.test(stripLeadingAsciiSpaceTab(next.body))
 					) {
-						lookahead += 1;
-					}
-					const after = analyzeLine(lines[lookahead] ?? "", effectiveContainer);
-					if (lookahead < lines.length && after.indent >= 2) {
-						end = lookahead;
+						end += 1;
 						continue;
 					}
+					break;
+				}
+				let lookahead = end + 1;
+				let afterStep: ReturnType<typeof stepContainerBlockLine> | null = null;
+				while (lookahead < lines.length) {
+					const step = stepContainerBlockLine(
+						lines[lookahead] ?? "",
+						bodyFrames,
+					);
+					if (!step.continues) {
+						afterStep = null;
+						break;
+					}
+					if (!step.isBlank) {
+						afterStep = step;
+						break;
+					}
+					lookahead += 1;
+				}
+				if (
+					afterStep &&
+					leadingColumnsFrom(afterStep.body, afterStep.col) >= 2
+				) {
+					end = lookahead;
+					continue;
 				}
 				break;
 			}
-			pushProtectedBlock("footnotes", analysis, i, end);
-			paragraphOpen = false;
+			pushProtectedBlock("footnotes", classified, i, end, {
+				expandContinuationTabs: "all",
+			});
+			stepper.setState(bodyFrames, false);
 			i = end + 1;
 			continue;
 		}
 
-		// 7. Reference link definitions. CommonMark forbids them from
+		// 6. Reference link definitions. CommonMark forbids them from
 		// interrupting a paragraph and resolves duplicates first-wins.
-		let reference = paragraphOpen ? null : matchReferenceDefinition(lines, i);
+		let reference =
+			classified.inParagraph || classified.relIndent > 3
+				? null
+				: matchReferenceDefinition(
+						lines,
+						i,
+						classified.bodyContent,
+						bodyFrames,
+					);
 		if (reference) {
 			let end = i;
 			while (reference) {
@@ -717,66 +606,106 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 					};
 				}
 				end = reference.end;
-				reference = matchReferenceDefinition(lines, end + 1);
+				reference = matchReferenceDefinition(lines, end + 1, null, bodyFrames);
 			}
-			pushProtectedBlock("raw", analysis, i, end);
-			paragraphOpen = false;
+			pushProtectedBlock("raw", classified, i, end, {
+				expandContinuationTabs: "all",
+			});
+			stepper.setState(bodyFrames, false);
 			i = end + 1;
 			continue;
 		}
 
-		// 8. Raw HTML comments and paired HTML block containers.
-		if (analysis.prefix.length === 0 && analysis.content.startsWith("<!--")) {
-			let end = i;
-			while (end < lines.length && !(lines[end] ?? "").includes("-->")) {
-				end += 1;
-			}
-			if (end < lines.length) {
-				pushProtectedBlock("raw", analysis, i, end);
-				paragraphOpen = false;
-				i = end + 1;
-				continue;
-			}
-		}
-
-		if (analysis.prefix.length === 0) {
-			const htmlOpener = matchHtmlBlockOpener(analysis.content);
-			if (htmlOpener) {
-				const end = htmlOpener.selfClosing
-					? i
-					: findHtmlBlockEnd(lines, i, htmlOpener.tagName);
+		// 7. CommonMark §4.6 / League 2.8.2 HTML Blocks (Types 1–7).
+		if (classified.relIndent <= 3) {
+			const htmlBlockType = matchLeagueHtmlBlockType(
+				classified.bodyContent,
+				0,
+				classified.inParagraph,
+			);
+			if (htmlBlockType > 0) {
+				const end = findLeagueHtmlBlockEnd(
+					lines,
+					i,
+					htmlBlockType,
+					classified.bodyContent,
+					bodyFrames,
+					blockScanCache,
+				);
 				if (end >= i) {
-					pushProtectedBlock("raw", analysis, i, end);
-					paragraphOpen = false;
+					pushProtectedBlock("raw", classified, i, end);
+					stepper.setState(bodyFrames, false);
 					i = end + 1;
 					continue;
 				}
 			}
 		}
 
-		pushOutputLine(
-			extractInlineProtectedSyntax(
-				line,
-				sentinel,
-				protectedInlines,
-				isTableRow,
-			),
-			{ end: i + 1, start: i },
-		);
-		const lineState = classifyParagraphLine(
-			analysis.content,
-			relativeIndent,
-			paragraphOpen,
-		);
-		if (!(paragraphOpen && lineState.open)) {
-			// A continued (possibly lazy) paragraph keeps its original depth.
-			paragraphQuoteDepth = lineQuoteDepth + lineState.nestedQuotes;
+		if (
+			!isTableRow &&
+			classified.paragraphContinues &&
+			i + 1 < lines.length &&
+			hasMultilineInlineOpener(classified.body)
+		) {
+			const run = findParagraphProseRunEnd(
+				lines,
+				i,
+				{ body: classified.body, prefix: classified.prefix },
+				classified.proseFrames,
+				blockScanCache,
+			);
+			if (run.end > i) {
+				const containerContext =
+					classified.proseFrames.length > 0
+						? {
+								linePrefixes: run.lines.map((entry) => entry.prefix),
+								signature: formatContainerSignature(classified.proseFrames),
+								standardPrefix: standardContainerPrefix(classified.proseFrames),
+							}
+						: undefined;
+				const emittedLines = extractInlineProtectedSyntaxChunk(
+					run.lines.map((entry) => entry.body).join("\n"),
+					sentinel,
+					protectedInlines,
+					false,
+					containerContext,
+				);
+				for (const entry of emittedLines) {
+					const prefix =
+						entry.startOffset === 0
+							? classified.normalizedPrefix
+							: (run.lines[entry.startOffset]?.prefix ?? "");
+					pushOutputLine(`${prefix}${entry.text}`, {
+						end: i + entry.endOffset,
+						start: i + entry.startOffset,
+					});
+				}
+				stepper.setState(classified.proseFrames, true);
+				i = run.end + 1;
+				continue;
+			}
 		}
-		paragraphOpen = lineState.open;
+
+		const renderedLine =
+			classified.normalizedPrefix !== classified.prefix
+				? `${classified.normalizedPrefix}${extractInlineProtectedSyntax(
+						classified.body,
+						sentinel,
+						protectedInlines,
+						isTableRow,
+					)}`
+				: extractInlineProtectedSyntax(
+						line,
+						sentinel,
+						protectedInlines,
+						isTableRow,
+					);
+		pushOutputLine(renderedLine, { end: i + 1, start: i });
 		i += 1;
 	}
 
 	return {
+		fencedBlocks,
 		lineEnding,
 		markdown: outputLines.join("\n"),
 		outputLineRanges,
@@ -786,5 +715,41 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		references,
 		sentinel,
 		tableAlignMarkers,
+	};
+}
+
+/**
+ * Prescan an inline Markdown fragment (such as the HTML-stripped body of a
+ * `raw-inline` atom) without running block-level rules (`$$...$$` / `\[...\]`
+ * display math stays a `math-inline` atom instead of becoming an unmapped
+ * block sentinel).
+ */
+export function prescanInlineMarkdown(rawMarkdown: string): PreScanResult {
+	const lineEnding: "\n" | "\r\n" = rawMarkdown.includes("\r\n")
+		? "\r\n"
+		: "\n";
+	const normalized = rawMarkdown.replace(/\r\n?/g, "\n");
+	const sentinel = createCollisionFreeSentinel(normalized);
+	const protectedInlines = new Map<string, ProtectedInlineEntry>();
+	const emitted = extractInlineProtectedSyntaxChunk(
+		normalized,
+		sentinel,
+		protectedInlines,
+		false,
+	);
+	return {
+		fencedBlocks: new Map(),
+		lineEnding,
+		markdown: emitted.map((entry) => entry.text).join("\n"),
+		outputLineRanges: emitted.map((entry) => ({
+			end: entry.endOffset,
+			start: entry.startOffset,
+		})),
+		protectedBlocks: new Map(),
+		protectedInlines,
+		rawLines: normalized.split("\n"),
+		references: {},
+		sentinel,
+		tableAlignMarkers: new Map(),
 	};
 }

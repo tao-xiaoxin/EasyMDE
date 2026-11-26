@@ -1,11 +1,15 @@
 import {
+	type Attrs,
 	type DOMOutputSpec,
 	type MarkSpec,
 	type NodeSpec,
+	type Node as ProseMirrorNode,
 	Schema,
 } from "prosemirror-model";
 import { tableNodes } from "prosemirror-tables";
 import type { VisualEditorImageScalePercentage } from "../../contracts/visual-editor";
+import { VISUAL_MARKDOWN_SOURCE_ATTRIBUTE } from "../../shared/markdown/normalize-math-tex";
+import { isDisplayMathMarkdown } from "./node-views/protected-atom-runtime";
 
 export type VisualImageScale = VisualEditorImageScalePercentage;
 
@@ -260,6 +264,29 @@ function validateColumnAlignments(value: unknown): void {
 	}
 }
 
+type ProtectedInlineContinuationHint = Readonly<{
+	containerSignature: string;
+	continuationPrefixes: ReadonlyArray<string>;
+}>;
+
+const protectedInlineContinuationHints = new WeakMap<
+	Attrs,
+	ProtectedInlineContinuationHint
+>();
+
+export function setProtectedInlineContinuationHint(
+	node: ProseMirrorNode,
+	hint: ProtectedInlineContinuationHint,
+): void {
+	protectedInlineContinuationHints.set(node.attrs, hint);
+}
+
+export function getProtectedInlineContinuationHint(
+	node: ProseMirrorNode,
+): ProtectedInlineContinuationHint | undefined {
+	return protectedInlineContinuationHints.get(node.attrs);
+}
+
 function parseCodeBlockLanguageFromDom(dom: HTMLElement): string {
 	const dataLanguage = dom.getAttribute("data-language")?.trim();
 	if (dataLanguage) {
@@ -292,10 +319,15 @@ function protectedBlockExtraClasses(kind: ProtectedBlockKind): string {
 	}
 }
 
-function protectedInlineExtraClasses(kind: ProtectedInlineKind): string {
+function protectedInlineExtraClasses(
+	kind: ProtectedInlineKind,
+	rawMarkdown = "",
+): string {
 	switch (kind) {
 		case "math-inline":
-			return " easymde-math easymde-math-inline";
+			return isDisplayMathMarkdown(rawMarkdown)
+				? " easymde-math easymde-math-block"
+				: " easymde-math easymde-math-inline";
 		case "footnote-ref":
 			return " easymde-footnote-ref";
 		case "raw-inline":
@@ -613,7 +645,7 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 							dom.getAttribute("data-easymde-protected-kind"),
 						),
 						rawMarkdown: sanitizePastedProtectedRaw(
-							dom.getAttribute("data-easymde-visual-markdown-source") ??
+							dom.getAttribute(VISUAL_MARKDOWN_SOURCE_ATTRIBUTE) ??
 								dom.textContent,
 						),
 					};
@@ -633,7 +665,7 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 					contenteditable: "false",
 					"data-easymde-protected-block": "1",
 					"data-easymde-protected-kind": kind,
-					"data-easymde-visual-markdown-source": rawMarkdown,
+					[VISUAL_MARKDOWN_SOURCE_ATTRIBUTE]: rawMarkdown,
 				},
 				rawMarkdown,
 			];
@@ -720,20 +752,26 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 		group: "inline",
 		atom: true,
 		selectable: true,
-		attrs: { kind: { default: "math-inline" }, rawMarkdown: { default: "" } },
+		attrs: {
+			kind: { default: "math-inline" },
+			rawMarkdown: { default: "" },
+		},
 		parseDOM: [
 			{
 				tag: "span[data-easymde-protected-inline]",
 				getAttrs(dom) {
 					if (!(dom instanceof HTMLElement)) {
-						return { kind: "raw-inline", rawMarkdown: "" };
+						return {
+							kind: "raw-inline",
+							rawMarkdown: "",
+						};
 					}
 					return {
 						kind: normalizeProtectedInlineKind(
 							dom.getAttribute("data-easymde-protected-kind"),
 						),
 						rawMarkdown: sanitizePastedProtectedRaw(
-							dom.getAttribute("data-easymde-visual-markdown-source") ??
+							dom.getAttribute(VISUAL_MARKDOWN_SOURCE_ATTRIBUTE) ??
 								dom.textContent,
 						),
 					};
@@ -749,11 +787,11 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 			return [
 				"span",
 				{
-					class: `easymde-protected-inline${protectedInlineExtraClasses(kind)}`,
+					class: `easymde-protected-inline${protectedInlineExtraClasses(kind, rawMarkdown)}`,
 					contenteditable: "false",
 					"data-easymde-protected-inline": "1",
 					"data-easymde-protected-kind": kind,
-					"data-easymde-visual-markdown-source": rawMarkdown,
+					[VISUAL_MARKDOWN_SOURCE_ATTRIBUTE]: rawMarkdown,
 				},
 				rawMarkdown,
 			];

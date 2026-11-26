@@ -11,6 +11,7 @@ import type {
 	VisualRuntimeFeature,
 	VisualRuntimeState,
 } from "../../../contracts/visual-editor";
+import { VISUAL_MARKDOWN_SOURCE_ATTRIBUTE } from "../../../shared/markdown/normalize-math-tex";
 import {
 	normalizeProtectedBlockKind,
 	normalizeProtectedInlineKind,
@@ -38,6 +39,7 @@ import {
 	createRuntimeProvider,
 	createStandaloneRuntimePort,
 	extractMermaidSource,
+	isDisplayMathMarkdown,
 	type KatexRuntime,
 	type MermaidRuntime,
 	type ProtectedAtomRuntimeProvider,
@@ -51,6 +53,7 @@ export {
 	extractBlockMathTex,
 	extractInlineMathTex,
 	extractMermaidSource,
+	isDisplayMathMarkdown,
 	type KatexRenderOptions,
 	type KatexRuntime,
 	type MermaidRenderResult,
@@ -421,22 +424,22 @@ class ProtectedAtomNodeView implements NodeView {
 	private syncRootAttributes(): void {
 		const kind = this.currentKind();
 		const kindLabel = this.labels[KIND_LABEL_KEY[kind]];
+		const rawMarkdown = readRawMarkdown(this.node);
 		this.dom.className = ROOT_KIND_CLASSES[kind];
 		this.dom.setAttribute("data-easymde-protected-kind", kind);
-		this.dom.setAttribute(
-			"data-easymde-visual-markdown-source",
-			readRawMarkdown(this.node),
-		);
-		this.previewContainer.className = `easymde-protected-preview${PREVIEW_KIND_CLASSES[kind]}`;
+		this.dom.setAttribute(VISUAL_MARKDOWN_SOURCE_ATTRIBUTE, rawMarkdown);
+		const previewKindClasses =
+			kind === "math-inline" && isDisplayMathMarkdown(rawMarkdown)
+				? " easymde-math easymde-math-block"
+				: PREVIEW_KIND_CLASSES[kind];
+		this.previewContainer.className = `easymde-protected-preview${previewKindClasses}`;
 		if (GENERATED_MARKER_KINDS.has(kind)) {
 			this.previewContainer.setAttribute(
-				"data-easymde-visual-markdown-source",
-				readRawMarkdown(this.node),
+				VISUAL_MARKDOWN_SOURCE_ATTRIBUTE,
+				rawMarkdown,
 			);
 		} else {
-			this.previewContainer.removeAttribute(
-				"data-easymde-visual-markdown-source",
-			);
+			this.previewContainer.removeAttribute(VISUAL_MARKDOWN_SOURCE_ATTRIBUTE);
 		}
 		if (this.editing) {
 			this.dom.classList.add("easymde-protected-editing");
@@ -554,6 +557,7 @@ class ProtectedAtomNodeView implements NodeView {
 				? "easymde-math easymde-math-block"
 				: "easymde-math easymde-math-inline",
 		);
+		host.setAttribute(VISUAL_MARKDOWN_SOURCE_ATTRIBUTE, rawMarkdown);
 		const outcome = renderMathWithRuntime(
 			host,
 			displayMode,
@@ -697,7 +701,10 @@ class ProtectedAtomNodeView implements NodeView {
 		this.dom.removeAttribute("data-easymde-rendered");
 		this.clearPreviewCleanup();
 		if (kind === "math" || kind === "math-inline") {
-			this.renderMathPreview(kind === "math", rawMarkdown);
+			this.renderMathPreview(
+				kind === "math" || isDisplayMathMarkdown(rawMarkdown),
+				rawMarkdown,
+			);
 		} else if (kind === "mermaid") {
 			this.renderMermaidPreview(rawMarkdown, generation);
 		} else {

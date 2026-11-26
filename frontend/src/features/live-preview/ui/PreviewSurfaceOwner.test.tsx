@@ -2534,4 +2534,774 @@ describe("PreviewSurfaceOwner", () => {
 			current.unmount();
 		}
 	});
+
+	it("withholds math targets when block math count, source marker, or display-mode class disagrees, while accepting PHP-normalized TeX (R31A #1)", async () => {
+		const source = "A < x $y$ > and $frac{1}{2}$";
+		const signature = "r31-math-defense-in-depth";
+		const current = setup({
+			currentSourceSnapshot: () => ({ revision: 31, value: source }),
+			enhance: async (surface) => {
+				for (const node of surface.querySelectorAll<HTMLElement>(
+					".easymde-math",
+				)) {
+					node.innerHTML = `<span class="katex-mathml"><math><mi>${node.textContent ?? ""}</mi></math></span>`;
+				}
+			},
+			initialHtml: "<p>Initial preview</p>",
+			initialSignature: signature,
+			sourceRevision: 31,
+		});
+		try {
+			await act(async () => {
+				for (let index = 0; index < 16; index += 1) await Promise.resolve();
+				await flushAnimationFrames(4);
+			});
+			act(() => {
+				current.session.schedule(request(source, signature), true);
+			});
+			await act(async () => {
+				current.responses[0]?.resolve({
+					editMap: {
+						blocks: [{ editable: true, endLine: 1, id: "b0", startLine: 0 }],
+						coordinate: "line",
+						signature,
+						version: 1,
+					},
+					features: { math: true },
+					html: safeHtml(
+						'<p data-easymde-visual-block-id="b0">' +
+							'<span class="easymde-math easymde-math-inline">\\(y\\)</span>' +
+							'<span class="easymde-math easymde-math-inline">\\(\\frac{1}{2}\\)</span>' +
+							"</p>",
+					),
+				});
+				for (let index = 0; index < 16; index += 1) await Promise.resolve();
+				await flushAnimationFrames(6);
+			});
+
+			const roots = Array.from(
+				current.surface.querySelectorAll<HTMLElement>(".easymde-math"),
+			);
+			expect(roots).toHaveLength(2);
+			const yStart = source.indexOf("$y$");
+			const fracStart = source.indexOf("$frac{1}{2}$");
+			const fullIndex: PreviewGeneratedContentTargetIndex = {
+				blocks: [
+					{
+						editable: true,
+						from: 0,
+						kind: "paragraph",
+						lineEnd: 0,
+						lineStart: 0,
+						to: source.length,
+					},
+				],
+				length: source.length,
+				mathSpans: [
+					{
+						bodyFrom: yStart + 1,
+						bodyTo: yStart + 2,
+						displayMode: false,
+						from: yStart,
+						to: yStart + 3,
+					},
+					{
+						bodyFrom: fracStart + 1,
+						bodyTo: fracStart + "$frac{1}{2}$".length - 1,
+						displayMode: false,
+						from: fracStart,
+						to: fracStart + "$frac{1}{2}$".length,
+					},
+				],
+				revision: 31,
+				source,
+			};
+
+			// Valid inline $y$ (PHP-restored \(y\)) and $frac{1}{2}$ (PHP-normalized \(\frac{1}{2}\)) resolve cleanly.
+			const yLease = current.runtime.prepareGeneratedContentTarget({
+				element: roots[0] as HTMLElement,
+				index: fullIndex,
+				kind: "math",
+				ordinal: 0,
+			});
+			expect(yLease?.target.original.full).toBe("$y$");
+			expect(yLease?.isCurrent()).toBe(true);
+			yLease?.release();
+
+			const fracLease = current.runtime.prepareGeneratedContentTarget({
+				element: roots[1] as HTMLElement,
+				index: fullIndex,
+				kind: "math",
+				ordinal: 1,
+			});
+			expect(fracLease?.target.original.full).toBe("$frac{1}{2}$");
+			expect(fracLease?.isCurrent()).toBe(true);
+			fracLease?.release();
+
+			// Simulated dropped first span: DOM has 2 roots while index only has 1 span ($frac{1}{2}$).
+			const droppedSpanIndex: PreviewGeneratedContentTargetIndex = {
+				...fullIndex,
+				mathSpans: fullIndex.mathSpans.slice(1),
+			};
+			expect(
+				current.runtime.prepareGeneratedContentTarget({
+					element: roots[0] as HTMLElement,
+					index: droppedSpanIndex,
+					kind: "math",
+					ordinal: 0,
+				}),
+			).toBeNull();
+			expect(
+				current.runtime.prepareGeneratedContentTarget({
+					element: roots[1] as HTMLElement,
+					index: droppedSpanIndex,
+					kind: "math",
+					ordinal: 0,
+				}),
+			).toBeNull();
+			const droppedPin =
+				current.runtime.prepareGeneratedContentTargetForSelection({
+					index: droppedSpanIndex,
+					selection: {
+						end: fracStart + "$frac{1}{2}$".length,
+						start: fracStart,
+					},
+				});
+			expect(droppedPin?.getLease() ?? null).toBeNull();
+			droppedPin?.release();
+
+			// Mismatched source marker even with 1:1 count parity must be withheld.
+			const firstRoot = roots[0] as HTMLElement;
+			firstRoot.setAttribute(
+				"data-easymde-visual-markdown-source",
+				"\\(wrong\\)",
+			);
+			expect(
+				current.runtime.prepareGeneratedContentTarget({
+					element: firstRoot,
+					index: fullIndex,
+					kind: "math",
+					ordinal: 0,
+				}),
+			).toBeNull();
+			const mismatchPin =
+				current.runtime.prepareGeneratedContentTargetForSelection({
+					index: fullIndex,
+					selection: { end: yStart + 3, start: yStart },
+				});
+			expect(mismatchPin?.getLease() ?? null).toBeNull();
+			mismatchPin?.release();
+
+			// Mismatched display-mode class must be withheld even when source marker is absent.
+			firstRoot.removeAttribute("data-easymde-visual-markdown-source");
+			firstRoot.classList.remove("easymde-math-inline");
+			firstRoot.classList.add("easymde-math-block");
+			expect(
+				current.runtime.prepareGeneratedContentTarget({
+					element: firstRoot,
+					index: fullIndex,
+					kind: "math",
+					ordinal: 0,
+				}),
+			).toBeNull();
+		} finally {
+			current.unmount();
+		}
+	});
+
+	it("accepts PHP-rendered matrices (4 backslashes), NBSP formulas, and HTML5-decoded entities in Preview target resolution while rejecting mismatches (R32A #1, R32B #1)", async () => {
+		const markdown =
+			"A $\\text{&copy;}$ and $frac\u00a0{1}{2}$ and $x + &amp;lt;$\n\n$$\\begin{pmatrix}a \\, b \\\\ c & d\\end{pmatrix}$$";
+		const signature = "r32-php-parity";
+		const copyFrom = markdown.indexOf("$\\text{&copy;}$");
+		const nbspFrom = markdown.indexOf("$frac\u00a0{1}{2}$");
+		const ampFrom = markdown.indexOf("$x + &amp;lt;$");
+		const matrixFrom = markdown.indexOf("$$\\begin{pmatrix}");
+		const paraEnd = markdown.indexOf("\n\n");
+		const current = setup({
+			currentSourceSnapshot: () => ({ revision: 32, value: markdown }),
+			enhance: async (surface) => {
+				for (const root of surface.querySelectorAll<HTMLElement>(
+					".easymde-math",
+				)) {
+					root.innerHTML = `<span class="katex-mathml"><math><mi>${root.textContent ?? ""}</mi></math></span>`;
+				}
+			},
+			initialHtml: "<p>Initial preview</p>",
+			initialSignature: signature,
+			sourceRevision: 32,
+		});
+		try {
+			await act(async () => {
+				for (let index = 0; index < 16; index += 1) await Promise.resolve();
+				await flushAnimationFrames(4);
+			});
+			act(() => {
+				current.session.schedule(request(markdown, signature), true);
+			});
+			await act(async () => {
+				current.responses[0]?.resolve({
+					editMap: {
+						blocks: [
+							{ editable: true, endLine: 1, id: "b0", startLine: 0 },
+							{ editable: true, endLine: 3, id: "b1", startLine: 2 },
+						],
+						coordinate: "line",
+						signature,
+						version: 1,
+					},
+					features: { math: true },
+					html: safeHtml(
+						[
+							'<p data-easymde-visual-block-id="b0">',
+							'A <span class="easymde-math easymde-math-inline">\\(\\text{&copy;}\\)</span>',
+							' and <span class="easymde-math easymde-math-inline">\\(frac\u00a0{1}{2}\\)</span>',
+							' and <span class="easymde-math easymde-math-inline">\\(x + &amp;lt;\\)</span>',
+							"</p>",
+							'<div class="easymde-math easymde-math-block" data-easymde-visual-block-id="b1">',
+							"$$\\begin{pmatrix}a \\\\\\\\, b \\\\ c &amp; d\\end{pmatrix}$$",
+							"</div>",
+						].join(""),
+					),
+				});
+				for (let index = 0; index < 16; index += 1) await Promise.resolve();
+				await flushAnimationFrames(6);
+			});
+			const index: PreviewGeneratedContentTargetIndex = {
+				blocks: [
+					{
+						editable: true,
+						from: 0,
+						kind: "paragraph",
+						lineEnd: 0,
+						lineStart: 0,
+						to: paraEnd,
+					},
+					{
+						editable: true,
+						from: matrixFrom,
+						kind: "math",
+						lineEnd: 2,
+						lineStart: 2,
+						to: markdown.length,
+					},
+				],
+				length: markdown.length,
+				mathSpans: [
+					{
+						bodyFrom: copyFrom + 1,
+						bodyTo: copyFrom + "$\\text{&copy;}$".length - 1,
+						displayMode: false,
+						from: copyFrom,
+						to: copyFrom + "$\\text{&copy;}$".length,
+					},
+					{
+						bodyFrom: nbspFrom + 1,
+						bodyTo: nbspFrom + "$frac\u00a0{1}{2}$".length - 1,
+						displayMode: false,
+						from: nbspFrom,
+						to: nbspFrom + "$frac\u00a0{1}{2}$".length,
+					},
+					{
+						bodyFrom: ampFrom + 1,
+						bodyTo: ampFrom + "$x + &amp;lt;$".length - 1,
+						displayMode: false,
+						from: ampFrom,
+						to: ampFrom + "$x + &amp;lt;$".length,
+					},
+					{
+						bodyFrom: matrixFrom + 2,
+						bodyTo: markdown.length - 2,
+						displayMode: true,
+						from: matrixFrom,
+						to: markdown.length,
+					},
+				],
+				revision: 32,
+				source: markdown,
+			};
+			const roots = Array.from(
+				current.surface.querySelectorAll<HTMLElement>(".easymde-math"),
+			);
+			expect(roots).toHaveLength(4);
+			expect(
+				roots[0]?.getAttribute("data-easymde-visual-markdown-source"),
+			).toBe("\\(\\text{\u00a9}\\)");
+			expect(
+				roots[2]?.getAttribute("data-easymde-visual-markdown-source"),
+			).toBe("\\(x + &lt;\\)");
+
+			const expectedFulls = [
+				"$\\text{&copy;}$",
+				"$frac\u00a0{1}{2}$",
+				"$x + &amp;lt;$",
+				"$$\\begin{pmatrix}a \\, b \\\\ c & d\\end{pmatrix}$$",
+			];
+			const ordinals = [0, 1, 2, 0];
+			for (let i = 0; i < roots.length; i += 1) {
+				const lease = current.runtime.prepareGeneratedContentTarget({
+					element: roots[i] as HTMLElement,
+					index,
+					kind: "math",
+					ordinal: ordinals[i] as number,
+				});
+				expect(lease?.target.original.full, `root ${i}`).toBe(expectedFulls[i]);
+				lease?.release();
+			}
+
+			// Mismatch still rejected.
+			roots[0]?.setAttribute(
+				"data-easymde-visual-markdown-source",
+				"\\(z\\)",
+			);
+			expect(
+				current.runtime.prepareGeneratedContentTarget({
+					element: roots[0] as HTMLElement,
+					index,
+					kind: "math",
+					ordinal: 0,
+				}),
+			).toBeNull();
+		} finally {
+			current.unmount();
+		}
+	});
+
+	it("pairs Preview math symmetrically across WP 6.7 and WP 7.1.5 while failing closed on ambiguous duplicates and dropped spans (R34A #1)", async () => {
+		const mountPreview = async (
+			source: string,
+			htmlBody: string,
+			revision: number,
+			signature: string,
+		) => {
+			const current = setup({
+				currentSourceSnapshot: () => ({ revision, value: source }),
+				enhance: async (surface) => {
+					for (const root of surface.querySelectorAll<HTMLElement>(
+						".easymde-math",
+					)) {
+						root.innerHTML = `<span class="katex-mathml"><math><mi>${root.textContent ?? ""}</mi></math></span>`;
+					}
+				},
+				initialHtml: "<p>Initial preview</p>",
+				initialSignature: signature,
+				sourceRevision: revision,
+			});
+			await act(async () => {
+				for (let index = 0; index < 16; index += 1) await Promise.resolve();
+				await flushAnimationFrames(4);
+			});
+			act(() => {
+				current.session.schedule(request(source, signature), true);
+			});
+			await act(async () => {
+				current.responses[0]?.resolve({
+					editMap: {
+						blocks: [{ editable: true, endLine: 1, id: "b0", startLine: 0 }],
+						coordinate: "line",
+						signature,
+						version: 1,
+					},
+					features: { math: true },
+					html: safeHtml(`<p data-easymde-visual-block-id="b0">${htmlBody}</p>`),
+				});
+				for (let index = 0; index < 16; index += 1) await Promise.resolve();
+				await flushAnimationFrames(6);
+			});
+			const parsed = createEditorMarkdownBlockIndex(source);
+			const index: PreviewGeneratedContentTargetIndex = {
+				blocks: parsed.blocks,
+				length: parsed.length,
+				mathSpans: parsed.mathSpans,
+				revision,
+				source,
+			};
+			return { current, index };
+		};
+
+		// 1. Before $x$ and [note](/url "year $199$") on WP 6.7 DOM (1 root vs 2 spans).
+		{
+			const source = 'Before $x$ and [note](/url "year $199$")';
+			const { current, index } = await mountPreview(
+				source,
+				'Before <span class="easymde-math easymde-math-inline">\\(x\\)</span> and <a href="/url">note</a>',
+				3401,
+				"r34-wp67-before",
+			);
+			try {
+				expect(index.mathSpans).toHaveLength(2);
+				const roots = Array.from(
+					current.surface.querySelectorAll<HTMLElement>(".easymde-math"),
+				);
+				expect(roots).toHaveLength(1);
+				const lease = current.runtime.prepareGeneratedContentTarget({
+					element: roots[0] as HTMLElement,
+					index,
+					kind: "math",
+					ordinal: 0,
+				});
+				expect(lease?.target.ordinal).toBe(0);
+				expect(lease?.target.original.full).toBe("$x$");
+				expect(lease?.isCurrent()).toBe(true);
+				lease?.release();
+
+				const xStart = source.indexOf("$x$");
+				const pinX = current.runtime.prepareGeneratedContentTargetForSelection({
+					index,
+					selection: { end: xStart + 3, start: xStart },
+				});
+				expect(pinX?.target.ordinal).toBe(0);
+				expect(pinX?.target.original.full).toBe("$x$");
+				expect(pinX?.getLease()?.root).toBe(roots[0]);
+				pinX?.release();
+
+				const titleStart = source.indexOf("$199$");
+				expect(
+					current.runtime.prepareGeneratedContentTargetForSelection({
+						index,
+						selection: { end: titleStart + 5, start: titleStart },
+					}),
+				).toBeNull();
+
+				// Missing source marker under count mismatch must fail closed.
+				roots[0]?.removeAttribute("data-easymde-visual-markdown-source");
+				expect(
+					current.runtime.prepareGeneratedContentTarget({
+						element: roots[0] as HTMLElement,
+						index,
+						kind: "math",
+						ordinal: 0,
+					}),
+				).toBeNull();
+			} finally {
+				current.unmount();
+			}
+		}
+
+		// 2. Before $x$ and [note](/url "year $199$") on WP 7.1.5 DOM (2 roots vs 2 spans).
+		{
+			const source = 'Before $x$ and [note](/url "year $199$")';
+			const { current, index } = await mountPreview(
+				source,
+				'Before <span class="easymde-math easymde-math-inline">\\(x\\)</span> and &lt;a href="/url" title="year <span class="easymde-math easymde-math-inline">\\(199\\)</span>"&gt;note&lt;/a&gt;',
+				3402,
+				"r34-wp71-before",
+			);
+			try {
+				expect(index.mathSpans).toHaveLength(2);
+				const roots = Array.from(
+					current.surface.querySelectorAll<HTMLElement>(".easymde-math"),
+				);
+				expect(roots).toHaveLength(2);
+				const lease0 = current.runtime.prepareGeneratedContentTarget({
+					element: roots[0] as HTMLElement,
+					index,
+					kind: "math",
+					ordinal: 0,
+				});
+				expect(lease0?.target.original.full).toBe("$x$");
+				lease0?.release();
+
+				const lease1 = current.runtime.prepareGeneratedContentTarget({
+					element: roots[1] as HTMLElement,
+					index,
+					kind: "math",
+					ordinal: 1,
+				});
+				expect(lease1?.target.original.full).toBe("$199$");
+				lease1?.release();
+			} finally {
+				current.unmount();
+			}
+		}
+
+		// 3. [note](/url "year $199$") then $x$ on WP 6.7 DOM (1 root at domIndex=0, spanIndex=1).
+		{
+			const source = '[note](/url "year $199$") then $x$';
+			const { current, index } = await mountPreview(
+				source,
+				'<a href="/url">note</a> then <span class="easymde-math easymde-math-inline">\\(x\\)</span>',
+				3403,
+				"r34-wp67-after",
+			);
+			try {
+				expect(index.mathSpans).toHaveLength(2);
+				const roots = Array.from(
+					current.surface.querySelectorAll<HTMLElement>(".easymde-math"),
+				);
+				expect(roots).toHaveLength(1);
+				const lease = current.runtime.prepareGeneratedContentTarget({
+					element: roots[0] as HTMLElement,
+					index,
+					kind: "math",
+					ordinal: 0,
+				});
+				expect(lease?.target.ordinal).toBe(0);
+				expect(lease?.target.original.full).toBe("$x$");
+				expect(lease?.root).toBe(roots[0]);
+				expect(lease?.isCurrent()).toBe(true);
+				lease?.release();
+
+				const xStart = source.indexOf("$x$");
+				const pinX = current.runtime.prepareGeneratedContentTargetForSelection({
+					index,
+					selection: { end: xStart + 3, start: xStart },
+				});
+				expect(pinX?.target.ordinal).toBe(0);
+				expect(pinX?.target.original.full).toBe("$x$");
+				const selLease = pinX?.getLease();
+				expect(selLease?.root).toBe(roots[0]);
+				expect(selLease?.isCurrent()).toBe(true);
+				selLease?.release();
+				pinX?.release();
+
+				const titleStart = source.indexOf("$199$");
+				expect(
+					current.runtime.prepareGeneratedContentTargetForSelection({
+						index,
+						selection: { end: titleStart + 5, start: titleStart },
+					}),
+				).toBeNull();
+			} finally {
+				current.unmount();
+			}
+		}
+
+		// 4. [note](/url "cost $x$") and same $x$ rejected on WP 6.7 DOM (1 root vs 2 matching spans).
+		{
+			const source = '[note](/url "cost $x$") and same $x$';
+			const { current, index } = await mountPreview(
+				source,
+				'<a href="/url">note</a> and same <span class="easymde-math easymde-math-inline">\\(x\\)</span>',
+				3404,
+				"r34-wp67-ambiguous-dup",
+			);
+			try {
+				expect(index.mathSpans).toHaveLength(2);
+				const roots = Array.from(
+					current.surface.querySelectorAll<HTMLElement>(".easymde-math"),
+				);
+				expect(roots).toHaveLength(1);
+				expect(
+					current.runtime.prepareGeneratedContentTarget({
+						element: roots[0] as HTMLElement,
+						index,
+						kind: "math",
+						ordinal: 0,
+					}),
+				).toBeNull();
+				const firstX = source.indexOf("$x$");
+				const secondX = source.lastIndexOf("$x$");
+				expect(
+					current.runtime.prepareGeneratedContentTargetForSelection({
+						index,
+						selection: { end: firstX + 3, start: firstX },
+					}),
+				).toBeNull();
+				expect(
+					current.runtime.prepareGeneratedContentTargetForSelection({
+						index,
+						selection: { end: secondX + 3, start: secondX },
+					}),
+				).toBeNull();
+			} finally {
+				current.unmount();
+			}
+		}
+
+		// 5. Simulated dropped $y$ in A < x $y$ > and $z$ rejected (2 DOM roots > 1 span).
+		{
+			const source = "A < x $y$ > and $z$";
+			const { current, index } = await mountPreview(
+				source,
+				'A &lt; x <span class="easymde-math easymde-math-inline">\\(y\\)</span> &gt; and <span class="easymde-math easymde-math-inline">\\(z\\)</span>',
+				3405,
+				"r34-dropped-distinct",
+			);
+			try {
+				const droppedIndex: PreviewGeneratedContentTargetIndex = {
+					...index,
+					mathSpans: index.mathSpans.slice(1),
+				};
+				const roots = Array.from(
+					current.surface.querySelectorAll<HTMLElement>(".easymde-math"),
+				);
+				expect(roots).toHaveLength(2);
+				expect(
+					current.runtime.prepareGeneratedContentTarget({
+						element: roots[0] as HTMLElement,
+						index: droppedIndex,
+						kind: "math",
+						ordinal: 0,
+					}),
+				).toBeNull();
+				expect(
+					current.runtime.prepareGeneratedContentTarget({
+						element: roots[1] as HTMLElement,
+						index: droppedIndex,
+						kind: "math",
+						ordinal: 1,
+					}),
+				).toBeNull();
+				const zStart = source.indexOf("$z$");
+				expect(
+					current.runtime.prepareGeneratedContentTargetForSelection({
+						index: droppedIndex,
+						selection: { end: zStart + 3, start: zStart },
+					}),
+				).toBeNull();
+			} finally {
+				current.unmount();
+			}
+		}
+
+		// 6. Simulated dropped duplicate $y$ in A < x $y$ > and $y$ rejected (2 DOM roots > 1 span).
+		{
+			const source = "A < x $y$ > and $y$";
+			const { current, index } = await mountPreview(
+				source,
+				'A &lt; x <span class="easymde-math easymde-math-inline">\\(y\\)</span> &gt; and <span class="easymde-math easymde-math-inline">\\(y\\)</span>',
+				3406,
+				"r34-dropped-dup",
+			);
+			try {
+				const droppedIndex: PreviewGeneratedContentTargetIndex = {
+					...index,
+					mathSpans: index.mathSpans.slice(1),
+				};
+				const roots = Array.from(
+					current.surface.querySelectorAll<HTMLElement>(".easymde-math"),
+				);
+				expect(roots).toHaveLength(2);
+				expect(
+					current.runtime.prepareGeneratedContentTarget({
+						element: roots[0] as HTMLElement,
+						index: droppedIndex,
+						kind: "math",
+						ordinal: 0,
+					}),
+				).toBeNull();
+				expect(
+					current.runtime.prepareGeneratedContentTarget({
+						element: roots[1] as HTMLElement,
+						index: droppedIndex,
+						kind: "math",
+						ordinal: 1,
+					}),
+				).toBeNull();
+				const secondY = source.lastIndexOf("$y$");
+				expect(
+					current.runtime.prepareGeneratedContentTargetForSelection({
+						index: droppedIndex,
+						selection: { end: secondY + 3, start: secondY },
+					}),
+				).toBeNull();
+			} finally {
+				current.unmount();
+			}
+		}
+
+		// 7. R35B #2: WP 6.7 stripped-only math block ([note](/url "year $199$") alone, 0 DOM roots vs 1 span) returns null immediately without stalling pending.
+		{
+			const source = '[note](/url "year $199$")';
+			const { current, index } = await mountPreview(
+				source,
+				'<a href="/url">note</a>',
+				3501,
+				"r35-wp67-stripped-only",
+			);
+			try {
+				expect(index.mathSpans).toHaveLength(1);
+				expect(
+					current.surface.querySelectorAll<HTMLElement>(".easymde-math"),
+				).toHaveLength(0);
+				const titleStart = source.indexOf("$199$");
+				expect(
+					current.runtime.prepareGeneratedContentTargetForSelection({
+						index,
+						selection: { end: titleStart + 5, start: titleStart },
+					}),
+				).toBeNull();
+			} finally {
+				current.unmount();
+			}
+		}
+
+		// 8. R35A #1/#2: Equal-cardinality duplicate classes under WP 6.7 pair cleanly in both pointer and selection paths.
+		for (const scenario of [
+			{
+				expectedSpanIndices: [1, 2],
+				html: '<a href="/url">note</a> then <span class="easymde-math easymde-math-inline">\\(x\\)</span> and <span class="easymde-math easymde-math-inline">\\(x\\)</span>',
+				rev: 3502,
+				sig: "r35-wp67-dup-after",
+				source: '[note](/url "year $199$") then $x$ and $x$',
+				strippedSpanIndex: 0,
+			},
+			{
+				expectedSpanIndices: [0, 2],
+				html: 'Before <span class="easymde-math easymde-math-inline">\\(x\\)</span> and <a href="/url">note</a> and <span class="easymde-math easymde-math-inline">\\(x\\)</span>',
+				rev: 3503,
+				sig: "r35-wp67-dup-straddle",
+				source: 'Before $x$ and [note](/url "year $199$") and $x$',
+				strippedSpanIndex: 1,
+			},
+		]) {
+			const { current, index } = await mountPreview(
+				scenario.source,
+				scenario.html,
+				scenario.rev,
+				scenario.sig,
+			);
+			try {
+				expect(index.mathSpans).toHaveLength(3);
+				const roots = Array.from(
+					current.surface.querySelectorAll<HTMLElement>(".easymde-math"),
+				);
+				expect(roots).toHaveLength(2);
+				for (let domIdx = 0; domIdx < 2; domIdx += 1) {
+					const spanIdx = scenario.expectedSpanIndices[domIdx] as number;
+					const expectedSpan = index.mathSpans[spanIdx];
+					if (!expectedSpan) throw new Error("expected-span-missing");
+					const lease = current.runtime.prepareGeneratedContentTarget({
+						element: roots[domIdx] as HTMLElement,
+						index,
+						kind: "math",
+						ordinal: domIdx,
+					});
+					expect(lease?.target.ordinal).toBe(domIdx);
+					expect(lease?.target.original.fullRange).toEqual({
+						from: expectedSpan.from,
+						to: expectedSpan.to,
+					});
+					expect(lease?.root).toBe(roots[domIdx]);
+					lease?.release();
+
+					const pin = current.runtime.prepareGeneratedContentTargetForSelection({
+						index,
+						selection: { end: expectedSpan.to, start: expectedSpan.from },
+					});
+					expect(pin?.target.ordinal).toBe(domIdx);
+					expect(pin?.target.original.fullRange).toEqual({
+						from: expectedSpan.from,
+						to: expectedSpan.to,
+					});
+					const selLease = pin?.getLease();
+					expect(selLease?.root).toBe(roots[domIdx]);
+					expect(selLease?.isCurrent()).toBe(true);
+					selLease?.release();
+					pin?.release();
+				}
+				const stripped = index.mathSpans[scenario.strippedSpanIndex];
+				if (!stripped) throw new Error("stripped-span-missing");
+				expect(
+					current.runtime.prepareGeneratedContentTargetForSelection({
+						index,
+						selection: { end: stripped.to, start: stripped.from },
+					}),
+				).toBeNull();
+			} finally {
+				current.unmount();
+			}
+		}
+	});
 });

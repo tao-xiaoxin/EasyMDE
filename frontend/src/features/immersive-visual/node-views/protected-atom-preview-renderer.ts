@@ -8,38 +8,29 @@ import {
 	parseInlineMarkdownFragment,
 	parseMarkdownToVisualDoc,
 } from "../markdown-parser";
+import { matchReferenceDefinition } from "../markdown-prescanner";
+import { FOOTNOTE_DEF_LINE } from "../markdown-prescanner-blocks";
 import {
-	ATX_HEADING,
-	analyzeLine,
-	type DetectableFence,
-	detectFence,
-	FOOTNOTE_DEF_LINE,
-	isFenceCloser,
-	REFERENCE_DEF_LINE,
-	SETEXT_UNDERLINE,
-	THEMATIC_BREAK,
-} from "../markdown-prescanner";
-import {
-	execInlineHtmlCloseTag,
-	execInlineHtmlOpenTag,
-	skipInlineCodeSpan,
-} from "../markdown-prescanner-inline";
+	isMarkdownBlankLine,
+	isMarkdownBlankText,
+} from "../markdown-prescanner-containers";
 import { sanitizeDomUrl, visualEditorSchema } from "../visual-schema";
 import {
 	highlightCodeIntoElement,
 	scheduleCodeFrameBackgroundSync,
 } from "./code-block-node-view";
 import { createAtomElement } from "./protected-atom-card-editor";
+import { isDisplayMathMarkdown } from "./protected-atom-runtime";
+import {
+	isHtmlComment,
+	stripCommonMarkHtmlForPreview,
+	stripInlineHtmlOutsideCode,
+} from "./raw-html-preview-stripper";
 import { subscribeVisualDocumentUpdate } from "./visual-view-events";
 
-/** CommonMark §4.6 Type-6 block-level HTML tags (interrupt paragraphs). */
-const COMMONMARK_HTML_BLOCK_TAGS: ReadonlySet<string> = new Set(
-	"address article aside base basefont blockquote body caption center col colgroup dd details dialog dir div dl dt fieldset figcaption figure footer form frame frameset h1 h2 h3 h4 h5 h6 head header hr html iframe legend li link main menu menuitem nav noframes ol optgroup option p param search section summary table tbody td tfoot th thead title tr track ul".split(
-		" ",
-	),
-);
-const HTML_TYPE1_OPEN = /^ {0,3}<(script|pre|style|textarea)(?=[\s>]|$)/i;
-const HTML_BLOCK_TAG_OPEN = /^ {0,3}<\/?([a-zA-Z][a-zA-Z0-9-]*)(?=[\s>/]|$)/;
+export { stripCommonMarkHtmlForPreview };
+
+const HTML_TAG_HINT_PATTERN = /^ {0,3}<\/?([a-zA-Z][a-zA-Z0-9-]*)(?=[\s>/]|$)/;
 const INLINE_MARKDOWN_SPECIAL = /[*_`[\]!~\\$<&\r\n]/;
 const RAW_BLOCK_HEADINGS_CACHE_MAX = 64;
 
@@ -62,176 +53,9 @@ export type RawBlockPreviewOptions = Readonly<{
 	viewWindow: Window | null;
 }>;
 
-function isHtmlComment(raw: string): boolean {
-	const trimmed = raw.trim();
-	return trimmed.startsWith("<!--") && trimmed.endsWith("-->");
-}
-
 function footnoteDisplayLabel(raw: string): string {
 	const match = /^\[\^([^\s\]]+)\]$/.exec(raw.trim());
 	return match?.[1] ? `^${match[1]}` : raw;
-}
-
-function isStandaloneHtmlTagLine(content: string): boolean {
-	if (!content.startsWith("<")) return false;
-	const match =
-		execInlineHtmlOpenTag(content, 0) ?? execInlineHtmlCloseTag(content, 0);
-	if (!match) return false;
-	return content.slice(match[0].length).trim().length === 0;
-}
-
-/**
- * Strip CommonMark inline HTML tags and comments outside backtick code spans
- * using quote-aware sticky regexes in O(L) without per-tag string slicing.
- */
-function stripInlineHtmlOutsideCode(line: string): string {
-	let out = "";
-	let i = 0;
-	const len = line.length;
-	while (i < len) {
-		const ch = line[i] ?? "";
-		if (ch === "`") {
-			const codeEnd = skipInlineCodeSpan(line, i);
-			out += line.slice(i, codeEnd);
-			i = codeEnd;
-			continue;
-		}
-		if (ch === "<") {
-			if (line.startsWith("<!--", i)) {
-				const endComment = line.indexOf("-->", i + 4);
-				if (endComment >= 0) {
-					i = endComment + 3;
-					continue;
-				}
-			}
-			const tagMatch =
-				execInlineHtmlOpenTag(line, i) ?? execInlineHtmlCloseTag(line, i);
-			if (tagMatch) {
-				i += tagMatch[0].length;
-				continue;
-			}
-		}
-		out += ch;
-		i += 1;
-	}
-	return out;
-}
-
-/**
- * Strip raw HTML blocks and inline tags from a protected `raw` Markdown block
- * using CommonMark `html_input: 'strip'` semantics (matching EasyMDE's `main`
- * PHP `MarkdownRenderer`), keeping inner blank-line-separated Markdown intact.
- */
-export function stripCommonMarkHtmlForPreview(rawMarkdown: string): string {
-	const lines = rawMarkdown.replace(/\r\n?/g, "\n").split("\n");
-	const kept: string[] = [];
-	let activeFence: DetectableFence | null = null;
-	let inParagraph = false;
-	let htmlBlockEnd:
-		| { type: "blank" }
-		| { type: "comment" }
-		| { type: "tag"; closePattern: RegExp }
-		| null = null;
-
-	for (const line of lines) {
-		if (activeFence) {
-			kept.push(line);
-			if (isFenceCloser(line, activeFence)) activeFence = null;
-			inParagraph = false;
-			continue;
-		}
-
-		if (htmlBlockEnd) {
-			if (htmlBlockEnd.type === "blank") {
-				if (line.trim().length === 0) {
-					htmlBlockEnd = null;
-					kept.push("");
-				}
-				inParagraph = false;
-				continue;
-			}
-			if (htmlBlockEnd.type === "comment") {
-				if (line.includes("-->")) htmlBlockEnd = null;
-				inParagraph = false;
-				continue;
-			}
-			if (htmlBlockEnd.closePattern.test(line)) htmlBlockEnd = null;
-			inParagraph = false;
-			continue;
-		}
-
-		if (line.trim().length === 0) {
-			inParagraph = false;
-			kept.push("");
-			continue;
-		}
-
-		const analysis = analyzeLine(line, 0);
-		const isTopLevel = analysis.prefix.length === 0 && analysis.indent <= 3;
-
-		const fence = detectFence(analysis);
-		if (fence) {
-			activeFence = fence;
-			inParagraph = false;
-			kept.push(line);
-			continue;
-		}
-
-		const type1 = HTML_TYPE1_OPEN.exec(line);
-		if (type1?.[1]) {
-			const closePattern = new RegExp(`</${type1[1]}\\s*>`, "i");
-			if (!closePattern.test(line)) {
-				htmlBlockEnd = { type: "tag", closePattern };
-			}
-			inParagraph = false;
-			continue;
-		}
-
-		if (isTopLevel && analysis.content.startsWith("<!--")) {
-			if (!line.includes("-->")) htmlBlockEnd = { type: "comment" };
-			inParagraph = false;
-			continue;
-		}
-
-		const blockTag = HTML_BLOCK_TAG_OPEN.exec(line)?.[1]?.toLowerCase();
-		if (
-			(blockTag && COMMONMARK_HTML_BLOCK_TAGS.has(blockTag)) ||
-			(!inParagraph && isTopLevel && isStandaloneHtmlTagLine(analysis.content))
-		) {
-			// CommonMark §4.6: Types 1-6 can interrupt a paragraph, while
-			// Type 7 (a standalone non-block tag line) cannot.
-			htmlBlockEnd = { type: "blank" };
-			inParagraph = false;
-			continue;
-		}
-
-		const isIndentedCodeLine: boolean =
-			!inParagraph && analysis.prefix.length === 0 && analysis.indent >= 4;
-		const isSetextUnderline: boolean =
-			inParagraph && isTopLevel && SETEXT_UNDERLINE.test(analysis.content);
-		const strippedLine = isIndentedCodeLine
-			? line
-			: stripInlineHtmlOutsideCode(line);
-		if (inParagraph && strippedLine.trim().length === 0) {
-			// A stripped inline-only HTML line (e.g. standalone `<kbd>`) inside
-			// an open paragraph must not emit a blank line and split the `<p>`.
-			continue;
-		}
-		kept.push(strippedLine);
-		inParagraph =
-			!isIndentedCodeLine &&
-			!isSetextUnderline &&
-			!(
-				isTopLevel &&
-				(ATX_HEADING.test(analysis.content) ||
-					THEMATIC_BREAK.test(analysis.content))
-			);
-	}
-
-	return kept
-		.join("\n")
-		.replace(/^(?:[ \t]*\n)+/, "")
-		.replace(/(?:\n[ \t]*)+$/, "");
 }
 
 const baseSerializer = DOMSerializer.fromSchema(visualEditorSchema);
@@ -320,7 +144,7 @@ function createPreviewSerializer(
 					return renderFootnoteRefPreview(doc, raw);
 				}
 				if (kind === "math-inline" && renderNestedMath) {
-					return renderNestedMath(doc, false, raw);
+					return renderNestedMath(doc, isDisplayMathMarkdown(raw), raw);
 				}
 				return renderRawInlinePreview(doc, raw, labels, renderNestedMath);
 			},
@@ -367,17 +191,16 @@ function createCollapsedMetaChip(
 function collectReferenceLabels(rawMarkdown: string): string[] | null {
 	const lines = rawMarkdown.replace(/\r\n?/g, "\n").split("\n");
 	const labels: string[] = [];
-	let sawAny = false;
-	for (const line of lines) {
-		if (line.trim().length === 0) continue;
-		const match = REFERENCE_DEF_LINE.exec(line);
-		if (match?.[1]) {
-			labels.push(match[1].trim());
-			sawAny = true;
+	let i = 0;
+	while (i < lines.length) {
+		if (isMarkdownBlankLine(lines[i] ?? "")) {
+			i += 1;
 			continue;
 		}
-		if (sawAny && /^[ \t]+/.test(line)) continue;
-		return null;
+		const matched = matchReferenceDefinition(lines, i, null, []);
+		if (!matched) return null;
+		labels.push(matched.label);
+		i = matched.end + 1;
 	}
 	return labels.length > 0 ? labels : null;
 }
@@ -548,7 +371,7 @@ function extractRawBlockHeadings(
 	}
 	const headings: RawBlockHeading[] = [];
 	const stripped = stripCommonMarkHtmlForPreview(rawMarkdown);
-	if (stripped.trim().length > 0) {
+	if (!isMarkdownBlankText(stripped)) {
 		const parsedDoc = parseMarkdownToVisualDoc(stripped);
 		parsedDoc.descendants((node) => {
 			if (node.type.name === "heading") {
@@ -717,7 +540,7 @@ function renderRawBlockPreviewInternal(
 	}
 
 	const strippedMarkdown = stripCommonMarkHtmlForPreview(rawMarkdown);
-	if (strippedMarkdown.trim().length > 0) {
+	if (!isMarkdownBlankText(strippedMarkdown)) {
 		const parsedDoc = parseMarkdownToVisualDoc(strippedMarkdown);
 		const serializer = createPreviewSerializer(
 			doc,
@@ -735,7 +558,7 @@ function renderRawBlockPreviewInternal(
 		}
 	}
 
-	const tagMatch = HTML_BLOCK_TAG_OPEN.exec(trimmed);
+	const tagMatch = HTML_TAG_HINT_PATTERN.exec(trimmed);
 	const tagHint = tagMatch?.[1] ? ` <${tagMatch[1].toLowerCase()}>` : "";
 	return createCollapsedMetaChip(doc, `${options.fallbackLabel}${tagHint}`);
 }

@@ -4,6 +4,7 @@ import type {
 	VisualCanonicalChangeRequest,
 	VisualEditorSelection,
 	VisualEditorSelectionDirection,
+	VisualExpectedSnapshot,
 } from "../../contracts/visual-editor";
 import {
 	ATOM_BLOCK_NAMES,
@@ -158,6 +159,7 @@ type MarkdownToPmResult = Readonly<{
 function mapMarkdownToPm(
 	index: VisualSourceIndex,
 	offset: number,
+	edge: "end" | "start" = "start",
 ): MarkdownToPmResult {
 	const block = findBlockForMdOffset(index, offset);
 	if (!block) return { atomPos: null, pos: 0 };
@@ -197,6 +199,9 @@ function mapMarkdownToPm(
 	const unit = units[low - 1] as VisualSourceUnit;
 	if (unit.atom && offset < unit.mdEnd)
 		return { atomPos: unit.pmPos, pos: unit.pmPos };
+	if (!unit.atom && offset < unit.mdEnd && edge === "start") {
+		return { atomPos: null, pos: unit.pmPos };
+	}
 	return {
 		atomPos: null,
 		pos: Math.min(unit.pmPos + unit.pmSize, segment.contentEnd),
@@ -401,8 +406,8 @@ export function resolveMarkdownSelectionToVisualSelection(
 		if (nodeSelection) return nodeSelection;
 	}
 
-	const from = mapMarkdownToPm(sourceIndex, start);
-	const to = start === end ? from : mapMarkdownToPm(sourceIndex, end);
+	const from = mapMarkdownToPm(sourceIndex, start, "start");
+	const to = start === end ? from : mapMarkdownToPm(sourceIndex, end, "end");
 	const fromPos = clampNumber(from.pos, 0, doc.content.size);
 	const toPos = clampNumber(to.pos, 0, doc.content.size);
 	const $from = doc.resolve(fromPos);
@@ -413,13 +418,12 @@ export function resolveMarkdownSelectionToVisualSelection(
 		: TextSelection.between($from, $to);
 }
 
-export function assertCanonicalChangePrecondition(
-	request: VisualCanonicalChangeRequest,
+export function assertExpectedVisualSnapshot(
+	expected: VisualExpectedSnapshot,
 	currentRevision: number,
 	currentValue: string,
 	currentSelection: VisualEditorSelection,
 ): CanonicalChangePreconditionResult {
-	const { change, expected } = request;
 	if (
 		!Number.isSafeInteger(expected.revision) ||
 		expected.revision !== currentRevision
@@ -436,6 +440,23 @@ export function assertCanonicalChangePrecondition(
 	) {
 		return { code: "canonical-change-selection-mismatch", ok: false };
 	}
+	return { ok: true };
+}
+
+export function assertCanonicalChangePrecondition(
+	request: VisualCanonicalChangeRequest,
+	currentRevision: number,
+	currentValue: string,
+	currentSelection: VisualEditorSelection,
+): CanonicalChangePreconditionResult {
+	const { change, expected } = request;
+	const snapshot = assertExpectedVisualSnapshot(
+		expected,
+		currentRevision,
+		currentValue,
+		currentSelection,
+	);
+	if (!snapshot.ok) return snapshot;
 	const { from, insert, to } = change.changes;
 	if (
 		!Number.isSafeInteger(from) ||

@@ -1,10 +1,16 @@
 import type { EditorMarkdownMathSpan } from "../../../contracts/ports/editor-block-index-port";
 import {
 	associateGeneratedContentTarget,
+	createGeneratedContentTarget,
 	type GeneratedContentKind,
 	type GeneratedContentOriginal,
 	type GeneratedContentTarget,
+	mathElementMatchesSource,
 } from "../../generated-content-export/generated-content-target";
+import {
+	pairMathDomIndexToSpanIndex,
+	pairMathSpanIndexToDomIndex,
+} from "../../generated-content-export/generated-math-pairing";
 import {
 	generatedTargetMatchesSourceSelection,
 	lowerBoundByFrom,
@@ -22,15 +28,71 @@ import type {
 	PreviewSurfaceRefs,
 } from "./preview-surface-types";
 
+type MintedGeneratedContentTarget = Readonly<{
+	expectedDomMathCount?: number;
+	target: GeneratedContentTarget;
+}>;
+
+function mintMathTargetForIndices(
+	acceptedPreview: Readonly<{ revision: number; signature: string }>,
+	blockId: string,
+	source: string,
+	sourceRevision: number,
+	spans: ReadonlyArray<EditorMarkdownMathSpan>,
+	spanIndex: number,
+	domIndex: number,
+): GeneratedContentTarget | null {
+	const associated = associateGeneratedContentTarget({
+		acceptedPreview,
+		blockId,
+		kind: "math",
+		mathSpans: spans,
+		ordinal: spanIndex,
+		source,
+		sourceRevision,
+	});
+	if ("associated" !== associated.status) return null;
+	if (domIndex === spanIndex) return associated.target;
+	const remapped = createGeneratedContentTarget({
+		acceptedPreview,
+		blockId,
+		kind: "math",
+		ordinal: domIndex,
+		original: associated.target.original,
+		source,
+		sourceRevision,
+	});
+	return "associated" === remapped.status ? remapped.target : null;
+}
+
+function visualBlockElementForId(
+	accepted: AcceptedGeneratedPreview,
+	surface: HTMLElement,
+	blockId: string,
+): HTMLElement | null {
+	const blockRange = accepted.blockRanges.get(blockId);
+	if (!blockRange) return null;
+	const block = surface.children[blockRange.index];
+	if (
+		!(block instanceof HTMLElement) ||
+		block.getAttribute("data-easymde-visual-block-id") !== blockId
+	) {
+		return null;
+	}
+	return block;
+}
+
 function mintGeneratedContentTargetForBlock(
 	request: Readonly<{
+		element: Element;
 		index: PreviewGeneratedContentTargetIndex;
 		kind: GeneratedContentKind;
 		ordinal: number;
 	}>,
 	accepted: AcceptedGeneratedPreview,
+	visualBlock: HTMLElement | null,
 	blockId: string | null,
-): GeneratedContentTarget | null {
+): MintedGeneratedContentTarget | null {
 	const sourceIndex = request.index;
 	if (
 		sourceIndex.revision !== accepted.sourceRevision ||
@@ -57,19 +119,30 @@ function mintGeneratedContentTargetForBlock(
 		signature: accepted.signature,
 	};
 	if ("math" === request.kind) {
+		if (!visualBlock) return null;
+		const renderedRoots = generatedRootsForBlock(visualBlock, "math");
+		if (renderedRoots[request.ordinal] !== request.element) return null;
 		const spans = sourceIndex.mathSpans.filter(
 			(span) => span.from >= blockStart && span.to <= blockEnd,
 		);
-		const associated = associateGeneratedContentTarget({
+		const spanIndex = pairMathDomIndexToSpanIndex(
+			sourceIndex.source,
+			renderedRoots,
+			spans,
+			request.ordinal,
+		);
+		if (null === spanIndex) return null;
+		const target = mintMathTargetForIndices(
 			acceptedPreview,
-			blockId: block.id,
-			kind: request.kind,
-			mathSpans: spans,
-			ordinal: request.ordinal,
-			source: sourceIndex.source,
-			sourceRevision: accepted.sourceRevision,
-		});
-		return "associated" === associated.status ? associated.target : null;
+			block.id,
+			sourceIndex.source,
+			accepted.sourceRevision,
+			spans,
+			spanIndex,
+			request.ordinal,
+		);
+		if (!target) return null;
+		return { expectedDomMathCount: renderedRoots.length, target };
 	}
 	const mermaidOriginals = sourceIndex.blocks
 		.filter(
@@ -95,19 +168,25 @@ function mintGeneratedContentTargetForBlock(
 		source: sourceIndex.source,
 		sourceRevision: accepted.sourceRevision,
 	});
-	return "associated" === associated.status ? associated.target : null;
+	return "associated" === associated.status
+		? { target: associated.target }
+		: null;
 }
 
 function mintGeneratedContentTarget(
 	request: PreviewGeneratedContentTargetRequest,
 	accepted: AcceptedGeneratedPreview,
-): GeneratedContentTarget | null {
+): MintedGeneratedContentTarget | null {
+	const visualBlockNode = request.element.closest(
+		"[data-easymde-visual-block-id]",
+	);
+	const visualBlock =
+		visualBlockNode instanceof HTMLElement ? visualBlockNode : null;
 	return mintGeneratedContentTargetForBlock(
 		request,
 		accepted,
-		request.element
-			.closest("[data-easymde-visual-block-id]")
-			?.getAttribute("data-easymde-visual-block-id") ?? null,
+		visualBlock,
+		visualBlock?.getAttribute("data-easymde-visual-block-id") ?? null,
 	);
 }
 
@@ -132,6 +211,7 @@ function currentGeneratedContentTarget(
 	accepted: AcceptedGeneratedPreview,
 	surface: HTMLElement,
 	verifySourceValue = false,
+	expectedDomMathCount?: number,
 ): boolean {
 	const target = request.target;
 	if (
@@ -180,9 +260,25 @@ function currentGeneratedContentTarget(
 		return false;
 	}
 	if ("math" === target.kind) {
+		const roots = generatedRootsForBlock(visualBlock, "math");
+		if (
+			(undefined !== expectedDomMathCount &&
+				roots.length !== expectedDomMathCount) ||
+			roots[target.ordinal] !== request.element
+		) {
+			return false;
+		}
+		const displayMode =
+			target.original.full.startsWith("$$") ||
+			target.original.full.startsWith("\\[");
 		return (
 			request.element.matches(".easymde-math") &&
-			1 === request.element.querySelectorAll(".katex-mathml > math").length
+			1 === request.element.querySelectorAll(".katex-mathml > math").length &&
+			mathElementMatchesSource(request.element, {
+				body: target.original.body,
+				displayMode,
+				full: target.original.full,
+			})
 		);
 	}
 	return (
@@ -195,18 +291,21 @@ function generatedRootForTarget(
 	refs: PreviewSurfaceRefs,
 	target: GeneratedContentTarget,
 	surface: HTMLElement,
+	expectedDomMathCount?: number,
 ): HTMLElement | null {
 	const accepted = refs.acceptedGeneratedPreviewRef.current;
-	const blockRange = accepted?.blockRanges.get(target.blockId);
-	if (!accepted || !blockRange) return null;
-	const block = surface.children[blockRange.index];
+	if (!accepted) return null;
+	const block = visualBlockElementForId(accepted, surface, target.blockId);
+	if (!block) return null;
+	const roots = generatedRootsForBlock(block, target.kind);
 	if (
-		!(block instanceof HTMLElement) ||
-		block.getAttribute("data-easymde-visual-block-id") !== target.blockId
+		"math" === target.kind &&
+		undefined !== expectedDomMathCount &&
+		roots.length !== expectedDomMathCount
 	) {
 		return null;
 	}
-	return generatedRootsForBlock(block, target.kind)[target.ordinal] ?? null;
+	return roots[target.ordinal] ?? null;
 }
 
 function createGeneratedContentTargetLease(
@@ -217,11 +316,20 @@ function createGeneratedContentTargetLease(
 	surface: HTMLElement,
 	onRelease?: () => void,
 	parentIsCurrent?: () => boolean,
+	expectedDomMathCount?: number,
 ): PreviewGeneratedContentTargetLease | null {
 	const targetRequest = { element, target };
 	if (
-		generatedRootForTarget(refs, target, surface) !== element ||
-		!currentGeneratedContentTarget(refs, targetRequest, accepted, surface, true)
+		generatedRootForTarget(refs, target, surface, expectedDomMathCount) !==
+			element ||
+		!currentGeneratedContentTarget(
+			refs,
+			targetRequest,
+			accepted,
+			surface,
+			true,
+			expectedDomMathCount,
+		)
 	) {
 		return null;
 	}
@@ -231,7 +339,14 @@ function createGeneratedContentTargetLease(
 			!released &&
 			(parentIsCurrent?.() ?? true) &&
 			Boolean(refs.acceptedGeneratedPreviewRef.current) &&
-			currentGeneratedContentTarget(refs, targetRequest, accepted, surface),
+			currentGeneratedContentTarget(
+				refs,
+				targetRequest,
+				accepted,
+				surface,
+				false,
+				expectedDomMathCount,
+			),
 		release: () => {
 			if (released) return;
 			released = true;
@@ -246,7 +361,9 @@ function generatedContentTargetForSelection(
 	request: PreviewGeneratedContentTargetForSelectionRequest,
 	accepted: AcceptedGeneratedPreview,
 	blockId: string,
+	surface: HTMLElement,
 ): Readonly<{
+	expectedDomMathCount?: number;
 	kind: GeneratedContentKind;
 	ordinal: number;
 	target: GeneratedContentTarget;
@@ -259,9 +376,11 @@ function generatedContentTargetForSelection(
 	};
 	type PendingCandidate =
 		| Readonly<{
+				domOrdinal: number;
+				expectedDomMathCount: number;
 				kind: "math";
 				mathSpans: ReadonlyArray<EditorMarkdownMathSpan>;
-				ordinal: number;
+				spanOrdinal: number;
 		  }>
 		| Readonly<{
 				kind: "mermaid";
@@ -301,10 +420,36 @@ function generatedContentTargetForSelection(
 	if (1 === matchingMathIndices.length) {
 		const mathIndex = matchingMathIndices[0];
 		if (undefined !== mathIndex) {
+			const visualBlock = visualBlockElementForId(accepted, surface, blockId);
+			if (!visualBlock) return null;
+			const renderedRoots = generatedRootsForBlock(visualBlock, "math");
+			const blockSpans: EditorMarkdownMathSpan[] = [];
+			let spanOrdinal = -1;
+			for (let index = mathBlockStart; index < mathBlockEnd; index += 1) {
+				const span = mathSpans[index];
+				if (
+					span &&
+					span.from >= blockRange.start &&
+					span.to <= blockRange.end
+				) {
+					if (index === mathIndex) spanOrdinal = blockSpans.length;
+					blockSpans.push(span);
+				}
+			}
+			if (spanOrdinal < 0) return null;
+			const domOrdinal = pairMathSpanIndexToDomIndex(
+				request.index.source,
+				renderedRoots,
+				blockSpans,
+				spanOrdinal,
+			);
+			if (null === domOrdinal) return null;
 			candidates.push({
+				domOrdinal,
+				expectedDomMathCount: renderedRoots.length,
 				kind: "math",
-				mathSpans: mathSpans.slice(mathBlockStart, mathBlockEnd),
-				ordinal: mathIndex - mathBlockStart,
+				mathSpans: blockSpans,
+				spanOrdinal,
 			});
 		}
 	} else if (matchingMathIndices.length > 1) {
@@ -383,26 +528,38 @@ function generatedContentTargetForSelection(
 	if (1 !== candidates.length) return null;
 	const candidate = candidates[0];
 	if (!candidate) return null;
-	const associated =
-		"math" === candidate.kind
-			? associateGeneratedContentTarget({
-					acceptedPreview,
-					blockId,
-					kind: candidate.kind,
-					mathSpans: candidate.mathSpans,
-					ordinal: candidate.ordinal,
-					source: request.index.source,
-					sourceRevision: accepted.sourceRevision,
-				})
-			: associateGeneratedContentTarget({
-					acceptedPreview,
-					blockId,
-					kind: candidate.kind,
-					ordinal: candidate.ordinal,
-					original: candidate.original,
-					source: request.index.source,
-					sourceRevision: accepted.sourceRevision,
-				});
+	if ("math" === candidate.kind) {
+		const target = mintMathTargetForIndices(
+			acceptedPreview,
+			blockId,
+			request.index.source,
+			accepted.sourceRevision,
+			candidate.mathSpans,
+			candidate.spanOrdinal,
+			candidate.domOrdinal,
+		);
+		if (
+			!target ||
+			!generatedTargetMatchesSourceSelection(target, request.selection)
+		) {
+			return null;
+		}
+		return {
+			expectedDomMathCount: candidate.expectedDomMathCount,
+			kind: "math",
+			ordinal: candidate.domOrdinal,
+			target,
+		};
+	}
+	const associated = associateGeneratedContentTarget({
+		acceptedPreview,
+		blockId,
+		kind: candidate.kind,
+		ordinal: candidate.ordinal,
+		original: candidate.original,
+		source: request.index.source,
+		sourceRevision: accepted.sourceRevision,
+	});
 	if (
 		"associated" !== associated.status ||
 		!generatedTargetMatchesSourceSelection(associated.target, request.selection)
@@ -441,14 +598,17 @@ export function assignGeneratedContentTargetHandlers(
 		const accepted = refs.acceptedGeneratedPreviewRef.current;
 		const surface = refs.surfaceRef.current;
 		if (!accepted || !surface) return null;
-		const target = mintGeneratedContentTarget(request, accepted);
-		if (!target) return null;
+		const minted = mintGeneratedContentTarget(request, accepted);
+		if (!minted) return null;
 		return createGeneratedContentTargetLease(
 			refs,
-			target,
+			minted.target,
 			request.element,
 			accepted,
 			surface,
+			undefined,
+			undefined,
+			minted.expectedDomMathCount,
 		);
 	};
 
@@ -485,12 +645,18 @@ export function assignGeneratedContentTargetHandlers(
 			request,
 			accepted,
 			block.id,
+			surface,
 		);
 		if (!candidate) return null;
 		const getMountedLease = (
 			parentIsCurrent?: () => boolean,
 		): PreviewGeneratedContentTargetLease | null => {
-			const element = generatedRootForTarget(refs, candidate.target, surface);
+			const element = generatedRootForTarget(
+				refs,
+				candidate.target,
+				surface,
+				candidate.expectedDomMathCount,
+			);
 			if (!element) return null;
 			return createGeneratedContentTargetLease(
 				refs,
@@ -500,6 +666,7 @@ export function assignGeneratedContentTargetHandlers(
 				surface,
 				undefined,
 				parentIsCurrent,
+				candidate.expectedDomMathCount,
 			);
 		};
 		let released = false;

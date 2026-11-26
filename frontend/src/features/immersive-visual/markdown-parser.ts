@@ -1,3 +1,4 @@
+import { decodeHTMLStrict } from "entities";
 import MarkdownIt from "markdown-it";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import {
@@ -7,9 +8,16 @@ import {
 } from "./markdown-parser-inline";
 import {
 	type PreScanResult,
+	prescanInlineMarkdown,
 	prescanMarkdown,
 	restoreProtectedInlineSentinels,
 } from "./markdown-prescanner";
+import {
+	isMarkdownBlankLine,
+	isMarkdownBlankText,
+	stripContainerBlockLines,
+	trimAsciiSpaceTab,
+} from "./markdown-prescanner-containers";
 import {
 	parseTableAlignComment,
 	resolveTableAlignments,
@@ -49,6 +57,94 @@ const markdownItParser = new MarkdownIt({
 	linkify: false,
 	breaks: false,
 });
+// Reference definitions are owned exclusively by `prescanMarkdown` (passed via
+// `env.references`), preventing markdown-it's `reference` rule from swallowing
+// Setext underlines such as `[ref]:\n===` or silently dropping unprotected defs.
+markdownItParser.disable("reference");
+// mdurl.parse() calls JS `.trim()`, which strips leading/trailing non-ASCII
+// whitespace such as U+00A0 (NBSP) contrary to CommonMark §2.2 / §6.3 and
+// League CommonMark 2.8.2. Percent-encode those code points before normalizing.
+const defaultNormalizeLink =
+	markdownItParser.normalizeLink.bind(markdownItParser);
+markdownItParser.normalizeLink = (url: string): string =>
+	defaultNormalizeLink(
+		url.replace(
+			/[\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]/g,
+			encodeURIComponent,
+		),
+	);
+
+// Exact League CommonMark 2.8.2 (`RegexHelper::unescape` + `Html5EntityDecoder`)
+// two-pass backslash + entity decoder for link destinations and titles so
+// Visual projections and post-edit serialization preserve authoritative PHP
+// output across escaped entities (`\&#0;`, `\&copy;`), single- vs multi-zero
+// decimal entities (`&#0;` -> U+FFFD vs `&#00;` -> `\u0000`), hex zeros
+// (`&#x0;` / `&#x00;` -> U+FFFD), and `> 0x2FFFF` code points.
+const LEAGUE_ESCAPABLE_RE = /\\([!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~])/g;
+const LEAGUE_ENTITY_RE =
+	/&(#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[a-zA-Z][a-zA-Z0-9]{1,31});/g;
+
+function decodeLeagueEntity(match: string, entity: string): string {
+	if (entity.charCodeAt(0) === 35 /* # */) {
+		const isHex =
+			entity.charCodeAt(1) === 120 /* x */ ||
+			entity.charCodeAt(1) === 88 /* X */;
+		const digits = isHex ? entity.slice(2) : entity.slice(1);
+		const code = Number.parseInt(digits, isHex ? 16 : 10);
+		if (
+			(isHex && code === 0) ||
+			(!isHex && digits === "0") ||
+			code > 0x2ffff ||
+			(code >= 0xd800 && code <= 0xdfff)
+		) {
+			return "\ufffd";
+		}
+		return String.fromCodePoint(code);
+	}
+	return decodeHTMLStrict(match);
+}
+
+function unescapeCommonMarkText(value: string): string {
+	const unescaped = value.includes("\\")
+		? value.replace(LEAGUE_ESCAPABLE_RE, "$1")
+		: value;
+	if (!unescaped.includes("&")) {
+		return unescaped;
+	}
+	return unescaped.replace(LEAGUE_ENTITY_RE, decodeLeagueEntity);
+}
+
+const defaultParseLinkDestination =
+	markdownItParser.helpers.parseLinkDestination;
+markdownItParser.helpers.parseLinkDestination = (
+	str: string,
+	pos: number,
+	max: number,
+) => {
+	const res = defaultParseLinkDestination(str, pos, max);
+	if (res.ok) {
+		const raw =
+			str.charCodeAt(pos) === 60 /* < */
+				? str.slice(pos + 1, res.pos - 1)
+				: str.slice(pos, res.pos);
+		res.str = unescapeCommonMarkText(raw);
+	}
+	return res;
+};
+
+const defaultParseLinkTitle = markdownItParser.helpers.parseLinkTitle;
+markdownItParser.helpers.parseLinkTitle = (
+	str: string,
+	pos: number,
+	max: number,
+	prevState?: Parameters<typeof defaultParseLinkTitle>[3],
+) => {
+	const res = defaultParseLinkTitle(str, pos, max, prevState);
+	if (prevState === undefined && res.ok && res.pos >= pos + 2) {
+		res.str = unescapeCommonMarkText(str.slice(pos + 1, res.pos - 1));
+	}
+	return res;
+};
 
 function parseCellAlignmentFromToken(token: MarkdownToken): TableTextAlign {
 	const match = /text-align\s*:\s*(left|center|right)/i.exec(
@@ -363,18 +459,42 @@ function mapBulletListTokens(
 	return lists;
 }
 
+function extractMermaidRawMarkdown(
+	origRange: Readonly<{ end: number; start: number }> | null,
+	preScan: PreScanResult,
+	fallbackFence: string,
+): string | null {
+	if (!origRange) return null;
+	const origin = preScan.fencedBlocks.get(origRange.start);
+	if (!origin) return null;
+	const strippedLines = stripContainerBlockLines(
+		preScan.rawLines,
+		origin.frames,
+		origRange.start,
+		origRange.end,
+		origin.firstLineBody,
+		origin.col,
+		{ expandContinuationTabs: origin.closed ? "last-only" : "none" },
+	);
+	if (!origin.closed) {
+		strippedLines.push(fallbackFence);
+	}
+	return strippedLines.join("\n");
+}
+
 function mapCodeToken(
 	token: MarkdownToken,
 	preScan: PreScanResult,
+	origRange: Readonly<{ end: number; start: number }> | null,
 ): ProseMirrorNode {
 	const isFence = token.type === "fence";
 	const fenceChar = isFence && token.markup.startsWith("~") ? "~" : "`";
 	const fenceLength =
 		isFence && token.markup.length >= 3 ? token.markup.length : 3;
 	const info = isFence
-		? restoreProtectedInlineSentinels(token.info.trim(), preScan)
+		? restoreProtectedInlineSentinels(trimAsciiSpaceTab(token.info), preScan)
 		: "";
-	const language = info ? (info.split(/\s+/)[0] ?? "") : "";
+	const language = info ? (info.split(/[ \t]+/)[0] ?? "") : "";
 	const content = restoreProtectedInlineSentinels(token.content, preScan);
 	// Bijection with `serializeCodeBlock`: a body of only blank lines
 	// (`"\n".repeat(k)`) is kept verbatim; any other body drops exactly the one
@@ -389,11 +509,12 @@ function mapCodeToken(
 	if (language.toLowerCase() === "mermaid") {
 		const fence = fenceChar.repeat(fenceLength);
 		const rawMarkdown =
-			rawContent.length === 0
+			extractMermaidRawMarkdown(origRange, preScan, fence) ??
+			(rawContent.length === 0
 				? `${fence}${info}\n${fence}`
 				: pureNewlines
 					? `${fence}${info}\n${rawContent}${fence}`
-					: `${fence}${info}\n${rawContent}\n${fence}`;
+					: `${fence}${info}\n${rawContent}\n${fence}`);
 		return visualEditorSchema.nodes.protected_block.create({
 			kind: "mermaid",
 			rawMarkdown,
@@ -448,7 +569,7 @@ function resolveOriginalRangeFromTokenMap(
 	// trim trailing blank lines so the exact inter-block separator stays outside the block.
 	while (
 		origEnd > origStart &&
-		(preScan.rawLines[origEnd - 1] ?? "").trim().length === 0
+		isMarkdownBlankLine(preScan.rawLines[origEnd - 1] ?? "")
 	) {
 		origEnd -= 1;
 	}
@@ -495,7 +616,9 @@ function mapBlockTokensWithRanges(
 			);
 			const inlineToken = tokens[i + 1];
 			const trimmed =
-				inlineToken?.type === "inline" ? inlineToken.content.trim() : "";
+				inlineToken?.type === "inline"
+					? trimAsciiSpaceTab(inlineToken.content)
+					: "";
 			const origRange = resolveOriginalRangeFromTokenMap(token.map, preScan);
 
 			const tableAlign = preScan.tableAlignMarkers.get(trimmed);
@@ -576,10 +699,23 @@ function mapBlockTokensWithRanges(
 				"heading_open",
 				"heading_close",
 			);
+			const inlineToken = tokens[i + 1];
+			const trimmed =
+				inlineToken?.type === "inline"
+					? trimAsciiSpaceTab(inlineToken.content)
+					: "";
+			const protectedEntry = preScan.protectedBlocks.get(trimmed);
+			if (protectedEntry) {
+				entries.push({
+					node: visualEditorSchema.nodes.protected_block.create(protectedEntry),
+					origRange,
+				});
+				i = closeIdx;
+				continue;
+			}
 			const level = normalizeHeadingLevel(
 				Number.parseInt(token.tag.slice(1), 10),
 			);
-			const inlineToken = tokens[i + 1];
 			const inlines =
 				inlineToken?.type === "inline"
 					? mapInlineTokens(inlineToken.children, preScan, false)
@@ -651,7 +787,7 @@ function mapBlockTokensWithRanges(
 			}
 			i = closeIdx;
 		} else if (token.type === "fence" || token.type === "code_block") {
-			entries.push({ node: mapCodeToken(token, preScan), origRange });
+			entries.push({ node: mapCodeToken(token, preScan, origRange), origRange });
 		} else if (token.type === "hr") {
 			entries.push({
 				node: visualEditorSchema.nodes.horizontal_rule.create(),
@@ -678,7 +814,7 @@ function mapBlockTokens(
 export function parseMarkdownWithBlockSources(
 	markdown: string,
 ): ParsedVisualDocument {
-	if (markdown.trim().length === 0) {
+	if (isMarkdownBlankText(markdown)) {
 		return {
 			blocks: [],
 			doc: visualEditorSchema.nodes.doc.create(null, [
@@ -690,9 +826,25 @@ export function parseMarkdownWithBlockSources(
 		};
 	}
 	const preScan = prescanMarkdown(markdown);
+	const normalizedReferences: Record<
+		string,
+		Readonly<{ href: string; title: string }>
+	> = {};
+	for (const [key, entry] of Object.entries(preScan.references)) {
+		const normalizedHref = markdownItParser.normalizeLink(
+			unescapeCommonMarkText(entry.href),
+		);
+		if (!markdownItParser.validateLink(normalizedHref)) {
+			continue;
+		}
+		normalizedReferences[key] = {
+			href: normalizedHref,
+			title: unescapeCommonMarkText(entry.title),
+		};
+	}
 	const env: Record<string, unknown> =
-		Object.keys(preScan.references).length > 0
-			? { references: { ...preScan.references } }
+		Object.keys(normalizedReferences).length > 0
+			? { references: normalizedReferences }
 			: {};
 	const tokens = markdownItParser.parse(preScan.markdown, env);
 	const mapped = mapBlockTokensWithRanges(tokens, 0, tokens.length, preScan);
@@ -765,7 +917,7 @@ export function parseInlineMarkdownFragment(
 	if (markdown.length === 0) {
 		return [];
 	}
-	const preScan = prescanMarkdown(markdown);
+	const preScan = prescanInlineMarkdown(markdown);
 	const tokens = markdownItParser.parseInline(preScan.markdown, {});
 	return mapInlineTokens(tokens[0]?.children ?? null, preScan, false);
 }

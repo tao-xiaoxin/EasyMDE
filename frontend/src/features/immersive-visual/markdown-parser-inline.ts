@@ -1,11 +1,13 @@
 import type MarkdownIt from "markdown-it";
 import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
+import { appendAll } from "../../shared/markdown/markdown-source-projection";
 import {
 	type PreScanResult,
 	restoreProtectedInlineSentinels,
 } from "./markdown-prescanner";
 import {
 	isValidVisualImageScale,
+	setProtectedInlineContinuationHint,
 	type VisualImageScale,
 	visualEditorSchema,
 } from "./visual-schema";
@@ -88,18 +90,33 @@ function splitTextWithProtectedInlines(
 			);
 		} else {
 			const entry = preScan.protectedInlines.get(match[0]);
-			result.push(
-				entry
-					? visualEditorSchema.nodes.protected_inline.create(
-							{ kind: entry.kind, rawMarkdown: entry.rawMarkdown },
-							null,
-							activeMarks,
-						)
-					: visualEditorSchema.text(
-							restoreProtectedInlineSentinels(match[0], preScan),
-							activeMarks,
-						),
-			);
+			if (entry) {
+				const node = visualEditorSchema.nodes.protected_inline.create(
+					{
+						kind: entry.kind,
+						rawMarkdown: entry.rawMarkdown,
+					},
+					null,
+					activeMarks,
+				);
+				if (
+					entry.containerSignature !== undefined &&
+					entry.continuationPrefixes !== undefined
+				) {
+					setProtectedInlineContinuationHint(node, {
+						containerSignature: entry.containerSignature,
+						continuationPrefixes: entry.continuationPrefixes,
+					});
+				}
+				result.push(node);
+			} else {
+				result.push(
+					visualEditorSchema.text(
+						restoreProtectedInlineSentinels(match[0], preScan),
+						activeMarks,
+					),
+				);
+			}
 		}
 		lastPos = match.index + match[0].length;
 		match = tokenPattern.exec(text);
@@ -155,8 +172,9 @@ export function mapInlineTokens(
 	for (const token of tokens) {
 		switch (token.type) {
 			case "text":
-				output.push(
-					...splitTextWithProtectedInlines(
+				appendAll(
+					output,
+					splitTextWithProtectedInlines(
 						token.content,
 						currentMarkSet(),
 						preScan,
@@ -254,8 +272,9 @@ export function mapInlineTokens(
 			}
 			default:
 				if (token.content.length > 0) {
-					output.push(
-						...splitTextWithProtectedInlines(
+					appendAll(
+						output,
+						splitTextWithProtectedInlines(
 							token.content,
 							currentMarkSet(),
 							preScan,

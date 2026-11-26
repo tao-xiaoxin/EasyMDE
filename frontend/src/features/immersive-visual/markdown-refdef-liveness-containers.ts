@@ -157,6 +157,19 @@ function clearPlannedDedented(
 	st.plan.dedentedSlots.get(container)?.delete(slot);
 }
 
+function recordCanonicalContainerSlot(
+	st: LivenessState,
+	container: ProseMirrorNode,
+	slot: number,
+): void {
+	let set = st.plan.canonicalContainerSlots.get(container);
+	if (!set) {
+		set = new Set<number>();
+		st.plan.canonicalContainerSlots.set(container, set);
+	}
+	set.add(slot);
+}
+
 function recheckFollowingIndentRisks(
 	st: LivenessState,
 	cs: ContainerState,
@@ -353,10 +366,12 @@ function downgradeMatchedContainer(
 		st.plan,
 		st.parsed,
 	);
-	if (
-		nodeHasCurrentInvalidatedRef(st, origBlock.node) &&
-		!headLineHasRisk(st, cs, idx, headLine, origIdx)
-	) {
+	const invalidated = nodeHasCurrentInvalidatedRef(st, origBlock.node);
+	const risky = invalidated && headLineHasRisk(st, cs, idx, headLine, origIdx);
+	if (risky) {
+		recordCanonicalContainerSlot(st, cs.container, idx);
+	}
+	if (invalidated && !risky) {
 		const result = descendNonVerbatimChild(
 			st,
 			child,
@@ -495,6 +510,7 @@ function installPreservedContainerSlot(
 			const oldTail = cs.tailAt[idx];
 			if (oldTail) oldTail.onChange = null;
 			cs.slotState[idx] = "canonical";
+			recordCanonicalContainerSlot(st, cs.container, idx);
 			// A paired (or shared-group) slot emitted canonically no longer
 			// inherits its paired baseline index, so the following slot's
 			// tight-left / inherited-separator checks see the real join.
@@ -695,6 +711,7 @@ function processUnmatchedSlot(
 		st.parsed,
 	);
 	if (headLineHasRisk(st, cs, idx, headLine, baseIdx)) {
+		recordCanonicalContainerSlot(st, cs.container, idx);
 		cs.effectiveOrigIndex[idx] = canonicalEffectiveOrigIndex(cs, idx);
 		cs.slotState[idx] = "canonical";
 		if (

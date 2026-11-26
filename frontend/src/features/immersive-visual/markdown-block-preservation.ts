@@ -363,6 +363,9 @@ function serializeContainerPreservingChildren(
 			base: ParsedVisualBlockSource | undefined,
 			effIdx: number,
 		): boolean => {
+			if (ctx.plan?.canonicalContainerSlots.get(container)?.has(idx)) {
+				return true;
+			}
 			const headLine = resolveMatchedContainerHeadLine(
 				child,
 				base,

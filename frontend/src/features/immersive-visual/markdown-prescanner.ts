@@ -217,6 +217,58 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		i = htmlScan.endLine + 1;
 	};
 
+	const maskIndentedCodeLogicalLine = (
+		startLine: number,
+		endLine: number,
+	): string => {
+		const startOff = mathIndex.lineStarts[startLine] ?? 0;
+		const endOff = mathIndex.lineEnds[endLine] ?? startOff;
+		const rawLogical = normalized.slice(startOff, endOff);
+		const inlineRanges = collectRelativeInlineMathRanges(
+			mathIndex,
+			startOff,
+			endOff,
+			0,
+			true,
+		);
+		if (inlineRanges.length === 0) return rawLogical;
+		let out = "";
+		let cursor = 0;
+		for (const range of inlineRanges) {
+			if (range.from < cursor) continue;
+			out += rawLogical.slice(cursor, range.from);
+			const token = `${sentinel}INL${protectedInlines.size}END`;
+			protectedInlines.set(token, {
+				kind: "math-inline",
+				rawMarkdown: rawLogical.slice(range.from, range.to),
+			});
+			out += token;
+			cursor = range.to;
+		}
+		return out + rawLogical.slice(cursor);
+	};
+	const tryEmitIndentedCodeLine = (startLine: number): boolean => {
+		const endLine = findLogicalLineEnd(mathIndex, startLine);
+		if (findFirstDisplayMathInLines(mathIndex, startLine, endLine) !== null) {
+			return false;
+		}
+		if (endLine === startLine) {
+			pushOutputLine(lines[startLine] ?? "", {
+				end: startLine + 1,
+				start: startLine,
+			});
+			advancePhpStateRange(startLine, startLine);
+		} else {
+			pushOutputLine(maskIndentedCodeLogicalLine(startLine, endLine), {
+				end: endLine + 1,
+				start: startLine,
+			});
+			advancePhpStateMaskedLines(startLine, endLine);
+		}
+		i = endLine + 1;
+		return true;
+	};
+
 	while (i < lines.length) {
 		if (activeTable !== null && i <= activeTable.endLine) {
 			if (i === activeTable.delimiterLine) {
@@ -274,10 +326,16 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		const isBlank = isCommonMarkBlankLine(line);
 
 		if (inIndentedCode) {
-			if (isBlank || baseAnalysis.indent - indentedCodeContainer >= 4) {
+			if (isBlank) {
 				pushOutputLine(line, { end: i + 1, start: i });
 				advancePhpStateRange(i, i);
 				i += 1;
+				continue;
+			}
+			if (
+				baseAnalysis.indent - indentedCodeContainer >= 4 &&
+				tryEmitIndentedCodeLine(i)
+			) {
 				continue;
 			}
 			inIndentedCode = false;
@@ -329,21 +387,18 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		const relativeIndent = analysis.indent - effectiveContainer;
 
 		// 1. Indented code blocks can only start when no paragraph is open.
-		//    PHP `extract_math()` runs first: any line containing an
-		//    authoritative display-math span (no PHP block code range covers
-		//    it, even with leading text like `>     foo $$x$$`) must flow to
-		//    Step 8 instead of being swallowed as indented code.
+		//    PHP `extract_math()` runs first: any logical line carrying an
+		//    authoritative display-math span flows to Step 8 instead of being
+		//    swallowed as indented code; multiline inline math on an indented
+		//    code line is masked so its continuation is not torn into a block.
 		if (
 			!paragraphOpen &&
 			relativeIndent >= 4 &&
-			findFirstDisplayMathInLines(mathIndex, i, i) === null
+			tryEmitIndentedCodeLine(i)
 		) {
 			inIndentedCode = true;
 			indentedCodeContainer = effectiveContainer;
 			clearDroppedList(droppedOutOfList);
-			pushOutputLine(line, { end: i + 1, start: i });
-			advancePhpStateRange(i, i);
-			i += 1;
 			continue;
 		}
 

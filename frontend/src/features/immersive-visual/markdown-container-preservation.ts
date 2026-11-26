@@ -240,30 +240,58 @@ export function dedentSwallowedBlockAtDepth(
 		return null;
 	}
 	const isListBlock =
-		nodeTypeName === "bullet_list" || nodeTypeName === "ordered_list";
-	const listItemIndent = isListBlock
+		nodeTypeName === "bullet_list" ||
+		nodeTypeName === "ordered_list" ||
+		nodeTypeName === "task_list";
+	let listItemIndent = isListBlock
 		? (matchListMarker(head.rest, head.column)?.contentIndent ?? 0)
 		: 0;
 	const lines = rawEmitted.slice(nl + 1).split("\n");
+	let sawBlank = false;
 	for (let i = 0; i < lines.length; i += 1) {
 		const line = lines[i] ?? "";
 		const stripped = stripBlockquoteDepthWithColumn(line, quoteDepth);
 		if (stripped.matched !== quoteDepth) {
 			return null;
 		}
-		if (!isCommonMarkBlankLine(stripped.rest)) {
-			const lineIndent = measureIndentColumns(stripped.rest, stripped.column);
-			if (isListBlock) {
-				if (lineIndent < leadCols) return null;
-				if (lineIndent >= 4 && lineIndent < listItemIndent) return null;
-			} else {
-				if (lineIndent >= 4) return null;
-				if (lineIndent === 0) continue;
-				if (lineIndent < leadCols) return null;
-			}
-			const content = stripped.rest.replace(/^[ \t]+/, "");
-			lines[i] = `${quotePrefix}${" ".repeat(lineIndent - leadCols)}${content}`;
+		if (isCommonMarkBlankLine(stripped.rest)) {
+			sawBlank = true;
+			continue;
 		}
+		const lineIndent = measureIndentColumns(stripped.rest, stripped.column);
+		if (isListBlock) {
+			if (lineIndent < leadCols) return null;
+			if (lineIndent >= 4 && lineIndent < listItemIndent) return null;
+			const nextMarker = matchListMarker(stripped.rest, stripped.column);
+			if (nextMarker !== null) {
+				listItemIndent = nextMarker.contentIndent;
+			}
+		} else {
+			if (lineIndent >= 4) {
+				// A 4+-column continuation line on a blockquote or setext
+				// heading cannot carry a container marker and is a lazy
+				// continuation: leaving it verbatim preserves CommonMark's
+				// 4-space boundary and any inline backticks on line 0.
+				if (
+					!sawBlank &&
+					(nodeTypeName === "blockquote" || nodeTypeName === "heading")
+				) {
+					continue;
+				}
+				return null;
+			}
+			if (lineIndent === 0) {
+				sawBlank = false;
+				continue;
+			}
+			if (lineIndent < leadCols) return null;
+		}
+		const content = stripped.rest.replace(/^[ \t]+/, "");
+		// Shifting an interior tab (e.g. `*\tsecond`, `>\t  code`) changes its
+		// tab stop width and can flip prose vs. indented code blocks.
+		if (content.includes("\t")) return null;
+		lines[i] = `${quotePrefix}${" ".repeat(lineIndent - leadCols)}${content}`;
+		sawBlank = false;
 	}
 	return `${out}\n${lines.join("\n")}`;
 }
@@ -364,9 +392,24 @@ function stripLeadingDisplayMathPrefix(
 	text: string,
 	depth: number,
 	matchTopItem: TopItemMatcher,
+	expectedItems: number,
+	blankLineFollows: boolean,
 	precedingMathRaws?: ReadonlyArray<string>,
 ): string {
 	const quotePrefix = "> ".repeat(Math.max(depth, 0));
+	let fallback: string | null = null;
+	const accept = (tail: string): string | null => {
+		if (!matchTopItem(firstLine(tail), 0)) return null;
+		const candidate = `${quotePrefix}${tail}`;
+		if (
+			scanTrailingListItem(candidate, matchTopItem, depth, blankLineFollows)
+				.items === expectedItems
+		) {
+			return candidate;
+		}
+		if (fallback === null) fallback = candidate;
+		return null;
+	};
 	if (precedingMathRaws !== undefined) {
 		if (precedingMathRaws.length === 0) return text;
 		const lastMath = precedingMathRaws[precedingMathRaws.length - 1] ?? "";
@@ -375,11 +418,9 @@ function stripLeadingDisplayMathPrefix(
 		for (let i = ranges.length - 1; i >= 0; i -= 1) {
 			const range = ranges[i];
 			if (!range?.block) continue;
-			if (
-				text.slice(range.from, range.to) === lastMath &&
-				matchTopItem(firstLine(text.slice(range.to)), 0)
-			) {
-				return `${quotePrefix}${text.slice(range.to)}`;
+			if (text.slice(range.from, range.to) === lastMath) {
+				const matched = accept(text.slice(range.to));
+				if (matched !== null) return matched;
 			}
 		}
 		// Fallback when cross-block backticks outside `text` make an isolated
@@ -388,24 +429,21 @@ function stripLeadingDisplayMathPrefix(
 		while (searchFrom >= lastMath.length) {
 			const pos = text.lastIndexOf(lastMath, searchFrom - 1);
 			if (pos < 0) break;
-			const tail = text.slice(pos + lastMath.length);
-			if (matchTopItem(firstLine(tail), 0)) {
-				return `${quotePrefix}${tail}`;
-			}
+			const matched = accept(text.slice(pos + lastMath.length));
+			if (matched !== null) return matched;
 			searchFrom = pos;
 		}
-		return text;
+		return fallback ?? text;
 	}
 	if (!text.includes("$$") && !text.includes("\\[")) return text;
 	const ranges = scanPhpMarkdownMathRanges(text);
 	for (let i = ranges.length - 1; i >= 0; i -= 1) {
 		const range = ranges[i];
 		if (!range?.block) continue;
-		if (matchTopItem(firstLine(text.slice(range.to)), 0)) {
-			return `${quotePrefix}${text.slice(range.to)}`;
-		}
+		const matched = accept(text.slice(range.to));
+		if (matched !== null) return matched;
 	}
-	return text;
+	return fallback ?? text;
 }
 
 /**
@@ -572,6 +610,8 @@ function trailingListItemContentIndent(
 		listEmitted,
 		depth,
 		matchTopItem,
+		listNode.childCount,
+		blankLineFollows,
 		precedingMathRaws,
 	);
 	const raw = scanTrailingListItem(text, matchTopItem, depth, blankLineFollows);

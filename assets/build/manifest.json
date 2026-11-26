@@ -11,7 +11,7 @@
     "name": "shared"
   },
   "frontend/src/entrypoints/admin-editor.tsx": {
-    "file": "assets/admin-editor-DE7HBobR.js",
+    "file": "assets/admin-editor-Caut8Mcj.js",
     "name": "editor",
     "src": "frontend/src/entrypoints/admin-editor.tsx",
     "isEntry": true,
@@ -49,7 +49,7 @@
     ]
   },
   "frontend/src/features/immersive-visual/MountedProseMirrorVisualEditor.tsx": {
-    "file": "assets/admin-editor-chunk-CMdnnlXZ.js",
+    "file": "assets/admin-editor-chunk-CxTzZYEx.js",
     "name": "MountedProseMirrorVisualEditor",
     "src": "frontend/src/features/immersive-visual/MountedProseMirrorVisualEditor.tsx",
     "isDynamicEntry": true,

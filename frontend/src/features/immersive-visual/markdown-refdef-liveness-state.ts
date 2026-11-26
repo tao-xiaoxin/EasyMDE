@@ -37,6 +37,13 @@ export type BlockWithRefsSerializer = (
 ) => string;
 
 export type PreservationPlan = Readonly<{
+	/**
+	 * Monotonic canonical downgrades committed by liveness for matched-invalidated
+	 * or paired container slots whose head line triggered `headLineHasRisk` or
+	 * `preservedSlotHasRisk`; the serializer never re-preserves them even if a
+	 * preceding list's indent grows in a subsequent wave.
+	 */
+	canonicalContainerSlots: Map<ProseMirrorNode, Set<number>>;
 	containers: Map<ProseMirrorNode, ContainerAlignmentPlan>;
 	/**
 	 * Monotonic swallow-risk dedented emissions committed by liveness per

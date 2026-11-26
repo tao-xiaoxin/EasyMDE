@@ -54,6 +54,7 @@ export function computeIntactRefDefLabels(
 	plan: PreservationPlan;
 }> {
 	const plan: PreservationPlan = {
+		canonicalContainerSlots: new Map<ProseMirrorNode, Set<number>>(),
 		containers: new Map<ProseMirrorNode, ContainerAlignmentPlan>(),
 		dedentedSlots: new Map<ProseMirrorNode, Map<number, string>>(),
 		listItemReusable: new Map<ProseMirrorNode, ReadonlyArray<boolean>>(),

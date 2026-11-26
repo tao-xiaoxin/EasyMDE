@@ -805,25 +805,52 @@ describe("PR-R51-A list-marker padding, trailing-item scan, depth-aware list val
 			);
 		});
 
-		it("rejects unsafe multi-line swallow dedents that would alter fenced code, lazy continuations, tabs, or math", () => {
+		it("rejects unsafe multi-line swallow dedents while preserving 4-column lazy continuations on blockquotes and headings", () => {
 			expect(
 				dedentSwallowedBlockAtDepth("   ```\n    ```\n   ```", 0, "code_block"),
 			).toBeNull();
 			expect(
 				dedentSwallowedBlockAtDepth("   > a\n    > b", 0, "blockquote"),
-			).toBeNull();
+			).toBe("> a\n    > b");
 			expect(
 				dedentSwallowedBlockAtDepth("   > a\n    # h1", 0, "blockquote"),
-			).toBeNull();
+			).toBe("> a\n    # h1");
 			expect(
 				dedentSwallowedBlockAtDepth("   head\n    ---\n   ===", 0, "heading"),
-			).toBeNull();
+			).toBe("head\n    ---\n===");
 			expect(
 				dedentSwallowedBlockAtDepth(
 					"   * item1\n* item2\n\n   sub",
 					0,
 					"bullet_list",
 				),
+			).toBeNull();
+			expect(
+				dedentSwallowedBlockAtDepth(
+					"  * [x] item1\n* [ ] item2\n\n  sub",
+					0,
+					"task_list",
+				),
+			).toBeNull();
+			expect(
+				dedentSwallowedBlockAtDepth(
+					"  * a\n   *   b\n    > c",
+					0,
+					"bullet_list",
+				),
+			).toBeNull();
+			expect(
+				dedentSwallowedBlockAtDepth(
+					"  9. a\n  10. b\n     > c",
+					0,
+					"ordered_list",
+				),
+			).toBeNull();
+			expect(
+				dedentSwallowedBlockAtDepth("  * first\n  *\tsecond", 0, "bullet_list"),
+			).toBeNull();
+			expect(
+				dedentSwallowedBlockAtDepth("  > a\n  >\n  >\t  code", 0, "blockquote"),
 			).toBeNull();
 			expect(
 				dedentSwallowedBlockAtDepth("  +\tab\n    - tail", 0, "bullet_list"),
@@ -930,8 +957,181 @@ describe("PR-R51-A list-marker padding, trailing-item scan, depth-aware list val
 				"> ```\n> bar \n> ```\n\n$$x$$\n\nzz",
 				[],
 			],
+			[
+				"w55.lazy-blockquote-backtick-math-shield",
+				"- abc\n\ndrop\n\n  > head ``\n    continuation\n\n$$x$$ ``",
+				deleteParagraph("drop"),
+				"- abc\n\n> head ``\n    continuation\n\n$$x$$ ``",
+				[],
+			],
+			[
+				"w55.continuation-tab-rejected-list",
+				"- abc\n\ndrop\n\n  * first\n  *\tsecond\n\n        code",
+				deleteParagraph("drop"),
+				"- abc\n\n* first\n\n* second\n\n  ```\n  code\n  ```",
+				[],
+			],
+			[
+				"w55.task-list-heterogeneous-indent-rejected",
+				"- prev\n\ndrop\n\n  * [x] item1\n* [ ] item2\n\n  sub",
+				deleteParagraph("drop"),
+				"- prev\n\n* [x] item1\n\n* [ ] item2\n\n  sub",
+				[],
+			],
+			[
+				"w55.list-wider-item-lazy-rejected",
+				"- prev\n\ndrop\n\n  9. a\n  10. b\n     > c",
+				deleteParagraph("drop"),
+				"- prev\n\n9. a\n10. b\n    \\> c",
+				[],
+			],
+			[
+				"w55.cross-block-backtick-duplicate-last-math-1",
+				"pre ``\n\na `` $$b$$- item1\n- x ``$$b$$-   fake``\n\ndrop\n\n  para",
+				deleteParagraph("drop"),
+				"pre ``\n\na `` $$b$$- item1\n- x ``$$b$$-   fake``\n\npara",
+				[],
+			],
+			[
+				"w55.cross-block-backtick-duplicate-last-math-2",
+				"pre ``\n\na `` $$b$$- item1\n- x `` $$b$$-   fake\n\ndrop\n\n  para\n\npost ``",
+				deleteParagraph("drop"),
+				"pre ``\n\na `` $$b$$- item1\n- x `` $$b$$-   fake\n\npara\n\npost ``",
+				[],
+			],
+			[
+				"w55.indented-code-cont-display-math",
+				">     foo\n>     $$x$$\n\nzz",
+				replaceText("foo", "baz"),
+				"> ```\n> baz\n> ```\n>\n> $$x$$\n\nzz",
+				[],
+			],
+			[
+				"w55.indented-code-cont-prefixed-display-math",
+				">     foo\n>     bar $$x$$\n\nzz",
+				replaceText("foo", "baz"),
+				"> ```\n> baz\n> bar \n> ```\n\n$$x$$\n\nzz",
+				[],
+			],
+			[
+				"w55.indented-code-multiline-inline-math-plus-display",
+				">     foo \\(a\nb\\) $$x$$\n\nzz",
+				replaceText("zz", "yy"),
+				">     foo \\(a\nb\\) $$x$$\n\nyy",
+				[],
+			],
+			[
+				"w55.indented-code-multiline-inline-math-only",
+				">     foo \\(a\nb\\)\n\nzz",
+				replaceText("zz", "yy"),
+				">     foo \\(a\nb\\)\n\nyy",
+				[],
+			],
 		];
 		runCases(cases);
+
+		it("keeps liveness and serializer monotonically aligned on matched-invalidated and paired containers across Wave-2 list indent growth", () => {
+			// Path A: matched-invalidated blockquote downgraded by headLineHasRisk
+			const pathA = [
+				"1. item1",
+				"2. item2",
+				"3. item3",
+				"4. item4",
+				"5. item5",
+				"6. item6",
+				"7. item7",
+				"8. item8",
+				"9. item9",
+				"1. [q]",
+				"",
+				"drop",
+				"",
+				"   > [p]: /u",
+				'   > "t',
+				"   > ===",
+				"   >",
+				"   > [s]",
+				"",
+				"prefix `` [link][p]",
+				"",
+				"$$x$$ ``",
+				"",
+				"- [r]",
+				"",
+				"  [q]: /q",
+				'  "qt',
+				"  ===",
+				"",
+				"[s]: /s",
+				"",
+				"[r]: /r",
+			].join("\n");
+			const parsedA = parser.parseMarkdownWithBlockSources(pathA);
+			const guardA = createMarkdownRoundTripGuard(pathA, parsedA);
+			const editedA = chain(
+				deleteParagraph("drop"),
+				deleteRefDef("s"),
+				deleteRefDef("r"),
+			)(guardA.initialDoc);
+			const liveA = computeIntactRefDefLabels(
+				editedA,
+				parsedA,
+				MARKDOWN_SERIALIZERS.serializeBlock,
+				MARKDOWN_SERIALIZERS.serializeBlockWithRefs,
+			);
+			const serializedA = guardA.serialize(editedA);
+			expect(liveA.partialTitleIntact.has("P")).toBe(false);
+			expect(serializedA).not.toContain('   > "t\n   > ===');
+
+			// Path B: paired edited blockquote downgraded by headLineHasRisk
+			const pathB = [
+				"1. item1",
+				"2. item2",
+				"3. item3",
+				"4. item4",
+				"5. item5",
+				"6. item6",
+				"7. item7",
+				"8. item8",
+				"9. item9",
+				"1. [q]",
+				"11. dropli",
+				"",
+				"   > [p]: /u",
+				'   > "t',
+				"   > ===",
+				"   >",
+				"   > editme",
+				"",
+				"prefix `` [link][p]",
+				"",
+				"$$x$$ ``",
+				"",
+				"- [r]",
+				"",
+				"  [q]: /q",
+				'  "qt',
+				"  ===",
+				"",
+				"[r]: /r",
+			].join("\n");
+			const parsedB = parser.parseMarkdownWithBlockSources(pathB);
+			const guardB = createMarkdownRoundTripGuard(pathB, parsedB);
+			const editedB = chain(
+				deleteListItem("dropli"),
+				replaceText("editme", "edited"),
+				deleteRefDef("r"),
+			)(guardB.initialDoc);
+			const liveB = computeIntactRefDefLabels(
+				editedB,
+				parsedB,
+				MARKDOWN_SERIALIZERS.serializeBlock,
+				MARKDOWN_SERIALIZERS.serializeBlockWithRefs,
+			);
+			const serializedB = guardB.serialize(editedB);
+			expect(liveB.partialTitleIntact.has("P")).toBe(false);
+			expect(serializedB).not.toContain('   > "t\n   > ===');
+		});
 
 		it("keeps liveness and serializer monotonically aligned when a Wave-2 list indent grows past an already-dedented follower", () => {
 			const md = [

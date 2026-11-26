@@ -298,42 +298,27 @@ final class MarkdownRenderer {
 			'/&#(?:([0-9]+)|[xX]([0-9a-fA-F]+));/',
 			static function ( $matches ) use ( $decode_numeric_entities, $strip_zero_entities ) {
 				$dec_digits = isset( $matches[1] ) ? (string) $matches[1] : '';
-				if ( '' !== $dec_digits ) {
-					if ( '0' === $dec_digits ) {
-						return $strip_zero_entities ? '' : $matches[0];
-					}
-					if ( ! $decode_numeric_entities ) {
-						return $matches[0];
-					}
-					$trimmed = ltrim( $dec_digits, '0' );
-					if ( '' === $trimmed || strlen( $trimmed ) > 7 ) {
-						return $matches[0];
-					}
-					$code_point = (int) $trimmed;
-					return self::is_valid_wp_kses_unicode( $code_point )
-						? self::unicode_code_point_to_utf8( $code_point )
-						: $matches[0];
-				}
-
 				$hex_digits = isset( $matches[2] ) ? (string) $matches[2] : '';
-				if ( '' !== $hex_digits ) {
-					if ( '0' === $hex_digits ) {
-						return $strip_zero_entities ? '' : $matches[0];
-					}
-					if ( ! $decode_numeric_entities ) {
-						return $matches[0];
-					}
-					$trimmed = ltrim( $hex_digits, '0' );
-					if ( '' === $trimmed || strlen( $trimmed ) > 6 ) {
-						return $matches[0];
-					}
-					$code_point = (int) hexdec( $trimmed );
-					return self::is_valid_wp_kses_unicode( $code_point )
-						? self::unicode_code_point_to_utf8( $code_point )
-						: $matches[0];
+				$is_hex     = '' === $dec_digits && '' !== $hex_digits;
+				$digits     = $is_hex ? $hex_digits : $dec_digits;
+				if ( '' === $digits ) {
+					return $matches[0];
 				}
-
-				return $matches[0];
+				if ( '0' === $digits ) {
+					return $strip_zero_entities ? '' : $matches[0];
+				}
+				if ( ! $decode_numeric_entities ) {
+					return $matches[0];
+				}
+				$trimmed = ltrim( $digits, '0' );
+				$max_len = $is_hex ? 6 : 7;
+				if ( '' === $trimmed || strlen( $trimmed ) > $max_len ) {
+					return $matches[0];
+				}
+				$code_point = $is_hex ? (int) hexdec( $trimmed ) : (int) $trimmed;
+				return self::is_valid_wp_kses_unicode( $code_point )
+					? self::unicode_code_point_to_utf8( $code_point )
+					: $matches[0];
 			},
 			$title
 		);
@@ -342,20 +327,30 @@ final class MarkdownRenderer {
 	}
 
 	private static function wp_kses_preserves_encoded_numeric_entities() {
+		static $cached = null;
+		if ( null !== $cached ) {
+			return $cached;
+		}
 		if ( ! function_exists( 'wp_kses_normalize_entities' ) ) {
 			return true;
 		}
 
-		return '&amp;#123;' === wp_kses_normalize_entities( '&amp;#123;' );
+		$cached = '&amp;#123;' === wp_kses_normalize_entities( '&amp;#123;' );
+		return $cached;
 	}
 
 	private static function wp_kses_preserves_encoded_zero_entities() {
+		static $cached = null;
+		if ( null !== $cached ) {
+			return $cached;
+		}
 		if ( ! function_exists( 'wp_kses_normalize_entities' ) ) {
 			return true;
 		}
 
-		return '' !== wp_kses_normalize_entities( '&amp;#0;' )
+		$cached = '' !== wp_kses_normalize_entities( '&amp;#0;' )
 			|| '' !== wp_kses_normalize_entities( '&amp;#x0;' );
+		return $cached;
 	}
 
 	private static function is_valid_wp_kses_unicode( $code_point ) {

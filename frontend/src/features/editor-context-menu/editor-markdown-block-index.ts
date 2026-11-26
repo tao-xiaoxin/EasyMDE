@@ -25,6 +25,7 @@ import {
 } from "./editor-markdown-league-parser-factory";
 import { lineIndexAtOffsets } from "./editor-markdown-lines";
 import {
+	inspectProjectedLinkNodes,
 	linkCandidatesForBlocks,
 	type MarkdownSyntaxNode,
 	type ParserLinkNode,
@@ -44,6 +45,7 @@ import {
 } from "./editor-markdown-math-preparation";
 
 const blockIndexMarkdownParser = createLinearLeagueMarkdownParser({
+	allowNestedShortcutLinkCandidates: true,
 	blockNesting: { maxDepth: MAX_LEAGUE_BLOCK_NESTING_DEPTH, mode: "cap" },
 	htmlTagDialect: "league",
 	rejectUnescapedOpenParenInTitle: true,
@@ -75,6 +77,7 @@ const LINK_PROJECTION_SYNTAX_NODES: ReadonlySet<string> = new Set([
 	"InlineCode",
 	"Link",
 	"LinkLabel",
+	"LinkMark",
 	"LinkReference",
 	"LinkTitle",
 	"URL",
@@ -464,7 +467,30 @@ function buildIndexFromTree(
 		});
 	}
 
-	const projectedLinks = projectedLinkNodes(treeText, syntaxNodes, profile);
+	const initialProjection = inspectProjectedLinkNodes(
+		treeText,
+		syntaxNodes,
+		profile,
+	);
+	let projectedLinks = initialProjection.links;
+	if (initialProjection.needsReferenceAwareReparse) {
+		const resolvedParser = createLinearLeagueMarkdownParser({
+			allowNestedShortcutLinkCandidates: true,
+			blockNesting: { maxDepth: MAX_LEAGUE_BLOCK_NESTING_DEPTH, mode: "cap" },
+			htmlTagDialect: "league",
+			isReferenceDefined: initialProjection.isReferenceDefined,
+			rejectUnescapedOpenParenInTitle: true,
+		});
+		const resolvedNodes: MarkdownSyntaxNode[] = [];
+		resolvedParser.parse(treeText).iterate({
+			enter: (node) => {
+				if (LINK_PROJECTION_SYNTAX_NODES.has(node.name)) {
+					resolvedNodes.push({ from: node.from, name: node.name, to: node.to });
+				}
+			},
+		});
+		projectedLinks = projectedLinkNodes(treeText, resolvedNodes, profile);
+	}
 	let mappedLinks: ReadonlyArray<ParserLinkNode> = projectedLinks;
 	if (hasSubs) {
 		const remapped: ParserLinkNode[] = [];

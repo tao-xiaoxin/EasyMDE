@@ -180,7 +180,6 @@ function referenceDefinitionQueryFromStructure(
 ): (label: string) => MarkdownReferenceDefinition | null {
 	let definitions: Map<string, MarkdownReferenceDefinition> | null = null;
 	return (label) => {
-		const normalized = normalizeMarkdownReferenceLabel(label, profile);
 		if (!definitions) {
 			const collected = new Map<string, MarkdownReferenceDefinition>();
 			for (let index = 0; index < nodes.length; index += 1) {
@@ -213,6 +212,8 @@ function referenceDefinitionQueryFromStructure(
 			}
 			definitions = collected;
 		}
+		if (0 === definitions.size) return null;
+		const normalized = normalizeMarkdownReferenceLabel(label, profile);
 		return definitions.get(normalized) ?? null;
 	};
 }
@@ -254,14 +255,65 @@ export function markdownReferenceContextQuery(
 }
 
 /**
- * Derives links that the formal CommonMark renderer creates from the caller's
- * existing parser tree, including the existing nested-link ownership rules.
+ * Checks parser-owned direct children of an inline `Link` node (`LinkMark "]"`,
+ * `LinkMark "("`, `URL`, optional `LinkTitle`, `LinkMark ")"`), handling
+ * multiline blockquote destinations (`> [label](\n> https://example.org)`)
+ * without misattributing bare URLs inside the link text to an empty `()` tail.
  */
-export function projectedLinkNodes(
+function hasOwnInlineDestinationUrl(
+	text: string,
+	children: ReadonlyArray<ReadonlyArray<number> | undefined>,
+	nodes: ReadonlyArray<MarkdownSyntaxNode>,
+	linkIndex: number,
+): boolean {
+	const childList = children[linkIndex];
+	if (!childList || childList.length < 4) return false;
+	let cursor = childList.length - 1;
+	const closeParen = nodes[childList[cursor] ?? -1];
+	if (
+		"LinkMark" !== closeParen?.name ||
+		")" !== text[closeParen.from] ||
+		closeParen.to !== closeParen.from + 1
+	) {
+		return false;
+	}
+	cursor -= 1;
+	if ("LinkTitle" === nodes[childList[cursor] ?? -1]?.name) {
+		cursor -= 1;
+	}
+	const urlNode = nodes[childList[cursor] ?? -1];
+	if ("URL" !== urlNode?.name) return false;
+	cursor -= 1;
+	const openParen = nodes[childList[cursor] ?? -1];
+	const closeBracket = nodes[childList[cursor - 1] ?? -1];
+	return (
+		"LinkMark" === openParen?.name &&
+		"(" === text[openParen.from] &&
+		openParen.to === openParen.from + 1 &&
+		"LinkMark" === closeBracket?.name &&
+		"]" === text[closeBracket.from] &&
+		closeBracket.to === openParen.from
+	);
+}
+
+export type ProjectedLinkNodesInspection = Readonly<{
+	isReferenceDefined: (rawLabel: string) => boolean;
+	links: ReadonlyArray<ParserLinkNode>;
+	needsReferenceAwareReparse: boolean;
+}>;
+
+/**
+ * Derives links that the formal CommonMark renderer creates from the caller's
+ * existing parser tree, also reporting whether any uncreated `Link` frame
+ * consumed a trailing `LinkLabel` or was revoked by a resolved inner `Link`
+ * so callers can re-parse with exact reference knowledge without letting a
+ * non-link outer bracket pair swallow trailing `[b]` or `[b](url)` syntax.
+ */
+export function inspectProjectedLinkNodes(
 	text: string,
 	nodes: ReadonlyArray<MarkdownSyntaxNode>,
 	profile: ReferenceLabelCaseFoldProfile,
-): ReadonlyArray<ParserLinkNode> {
+): ProjectedLinkNodesInspection {
 	const structure = markdownSyntaxStructure(nodes);
 	const { blockedAncestorMask, children, namesAt, urlDescendants } = structure;
 	let definition: ReturnType<typeof referenceDefinitionQueryFromStructure> | null = null;
@@ -269,13 +321,22 @@ export function projectedLinkNodes(
 	const referenceLinks = new Uint8Array(nodes.length);
 	const frameIndices: number[] = [];
 	const frameHasCreatedChild: number[] = [];
+	let needsReferenceAwareReparse = false;
 	const closeFrame = (): void => {
 		const frameIndex = frameIndices.pop();
 		const hasCreatedChild = frameHasCreatedChild.pop() ?? 0;
 		if (undefined === frameIndex) return;
 		const frameNode = nodes[frameIndex];
-		if ("Link" === frameNode?.name && 0 !== hasCreatedChild) {
-			created[frameIndex] = 0;
+		if ("Link" === frameNode?.name) {
+			if (0 !== hasCreatedChild) {
+				created[frameIndex] = 0;
+				needsReferenceAwareReparse = true;
+			} else if (
+				0 === created[frameIndex] &&
+				null !== directChildIndex(children, nodes, frameIndex, "LinkLabel")
+			) {
+				needsReferenceAwareReparse = true;
+			}
 		}
 		const propagated = 0 !== hasCreatedChild || 0 !== created[frameIndex];
 		const parentTop = frameHasCreatedChild.length - 1;
@@ -292,21 +353,33 @@ export function projectedLinkNodes(
 			closeFrame();
 		}
 		if ("Link" === node.name) {
+			const hasOwnInlineUrl =
+				"[" === text[node.from] &&
+				")" === text[node.to - 1] &&
+				hasOwnInlineDestinationUrl(text, children, nodes, index);
 			const hasUrl = 1 === urlDescendants[index];
-			if ("[" === text[node.from] && ")" === text[node.to - 1] && hasUrl) {
+			if (hasOwnInlineUrl) {
 				created[index] = 1;
-			} else if (hasUrl || "[^" !== text.slice(node.from, node.from + 2)) {
+			} else if (
+				!(
+					"[" === text[node.from] &&
+					")" === text[node.to - 1] &&
+					!hasOwnInlineUrl
+				) &&
+				(hasUrl || "[^" !== text.slice(node.from, node.from + 2))
+			) {
+				const labelIndex = directChildIndex(
+					children,
+					nodes,
+					index,
+					"LinkLabel",
+				);
 				const malformed =
-					0 !== (namesAt.get(node.to) ?? 0) ||
-					"(" === text[node.to] ||
-					"[" === text[node.to];
+					null === labelIndex &&
+					(0 !== (namesAt.get(node.to) ?? 0) ||
+						"(" === text[node.to] ||
+						"[" === text[node.to]);
 				if (!malformed) {
-					const labelIndex = directChildIndex(
-						children,
-						nodes,
-						index,
-						"LinkLabel",
-					);
 					const label = nodes[labelIndex ?? -1];
 					const labelText = label
 						? text.slice(label.from + 1, label.to - 1)
@@ -376,7 +449,32 @@ export function projectedLinkNodes(
 			});
 		}
 	}
-	return projected;
+	const isReferenceDefined = (rawLabel: string): boolean => {
+		definition ??= referenceDefinitionQueryFromStructure(
+			text,
+			nodes,
+			structure,
+			profile,
+		);
+		return null !== definition(rawLabel);
+	};
+	return {
+		isReferenceDefined,
+		links: projected,
+		needsReferenceAwareReparse,
+	};
+}
+
+/**
+ * Derives links that the formal CommonMark renderer creates from the caller's
+ * existing parser tree, including the existing nested-link ownership rules.
+ */
+export function projectedLinkNodes(
+	text: string,
+	nodes: ReadonlyArray<MarkdownSyntaxNode>,
+	profile: ReferenceLabelCaseFoldProfile,
+): ReadonlyArray<ParserLinkNode> {
+	return inspectProjectedLinkNodes(text, nodes, profile).links;
 }
 
 /**

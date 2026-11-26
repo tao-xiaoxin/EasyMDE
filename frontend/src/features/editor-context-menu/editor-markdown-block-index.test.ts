@@ -2659,4 +2659,261 @@ describe("editor-markdown-block-index Stage 4 Round 30 unified PHP two-stage pip
 			}
 		}
 	});
+
+	it("preserves CommonMark §6.3 balanced nested brackets inside link labels while suppressing links that contain real inner links", () => {
+		const cases: ReadonlyArray<
+			Readonly<{ expected: ReadonlyArray<{ ref: boolean; src: string }>; md: string }>
+		> = [
+			{
+				md: "[Bracket [Link]](https://example.org/nested)",
+				expected: [
+					{ ref: false, src: "[Bracket [Link]](https://example.org/nested)" },
+				],
+			},
+			{
+				md: "[A [B [C]]](https://example.org/deep)",
+				expected: [{ ref: false, src: "[A [B [C]]](https://example.org/deep)" }],
+			},
+			{
+				md: "[Outer [Inner]](https://outer.test)\n\n[inner]: https://inner.test",
+				expected: [
+					{ ref: true, src: "[Inner]" },
+					{ ref: false, src: "https://outer.test" },
+				],
+			},
+			{
+				md: "[Outer [Inner](https://inner.test)](https://outer.test)",
+				expected: [
+					{ ref: false, src: "[Inner](https://inner.test)" },
+					{ ref: false, src: "https://outer.test" },
+				],
+			},
+			{
+				md: "[Outer [Inner][ref]](https://outer.test)\n\n[ref]: https://inner.test",
+				expected: [
+					{ ref: true, src: "[Inner][ref]" },
+					{ ref: false, src: "https://outer.test" },
+				],
+			},
+			{
+				md: "[Outer [a][b]](https://outer.test)",
+				expected: [{ ref: false, src: "[Outer [a][b]](https://outer.test)" }],
+			},
+			{
+				md: "[Outer [a][b]](https://outer.test)\n\n[b]: https://b.test",
+				expected: [
+					{ ref: true, src: "[a][b]" },
+					{ ref: false, src: "https://outer.test" },
+				],
+			},
+			{
+				md: "[Outer [Inner] text](https://outer.test)",
+				expected: [
+					{ ref: false, src: "[Outer [Inner] text](https://outer.test)" },
+				],
+			},
+			{
+				md: "[Outer [Inner]](https://outer.test) and [tail](https://tail.test)",
+				expected: [
+					{ ref: false, src: "[Outer [Inner]](https://outer.test)" },
+					{ ref: false, src: "[tail](https://tail.test)" },
+				],
+			},
+			{
+				md: "[Outer [https://a.test]](https://b.test)",
+				expected: [
+					{ ref: false, src: "[Outer [https://a.test]](https://b.test)" },
+				],
+			},
+			{
+				md: "[Outer [a] [b]](https://outer.test)\n\n[a]: https://a.test",
+				expected: [
+					{ ref: true, src: "[a]" },
+					{ ref: false, src: "https://outer.test" },
+				],
+			},
+			{
+				md: "[Outer [Inner]][ref]\n\n[ref]: https://outer.test",
+				expected: [{ ref: true, src: "[Outer [Inner]][ref]" }],
+			},
+			{
+				md: '[Outer [Inner]](<https://example.org/a b> "t")',
+				expected: [
+					{ ref: false, src: '[Outer [Inner]](<https://example.org/a b> "t")' },
+				],
+			},
+			{
+				md: "[Outer [Inner]()](https://outer.test)",
+				expected: [{ ref: false, src: "https://outer.test" }],
+			},
+			{
+				md: "> [label](\n> https://example.org)",
+				expected: [{ ref: false, src: "[label](\n> https://example.org)" }],
+			},
+			{
+				md: '> [Bracket [Link]](\n> <https://example.org/a b>\n> "title"\n> )',
+				expected: [
+					{
+						ref: false,
+						src: '[Bracket [Link]](\n> <https://example.org/a b>\n> "title"\n> )',
+					},
+				],
+			},
+			{
+				md: "> [label](\r\n> https://example.org)",
+				expected: [{ ref: false, src: "[label](\r\n> https://example.org)" }],
+			},
+			{
+				md: "[Outer [https://a.test]]()",
+				expected: [{ ref: false, src: "https://a.test" }],
+			},
+			{
+				md: "[outer [a]][b]\n\n[a]: https://a.test\n[b]: https://b.test",
+				expected: [
+					{ ref: true, src: "[a]" },
+					{ ref: true, src: "[b]" },
+				],
+			},
+			{
+				md: "[outer [a]][b](https://b.test)\n\n[a]: https://a.test",
+				expected: [
+					{ ref: true, src: "[a]" },
+					{ ref: false, src: "[b](https://b.test)" },
+				],
+			},
+			{
+				md: "[outer [a]][b]\n\n[b]: https://b.test",
+				expected: [{ ref: true, src: "[outer [a]][b]" }],
+			},
+			{
+				md: "[outer [a][b]][c]\n\n[b]: https://b.test\n[c]: https://c.test",
+				expected: [
+					{ ref: true, src: "[a][b]" },
+					{ ref: true, src: "[c]" },
+				],
+			},
+			{
+				md: "[outer [a][x]][b]\n\n[a]: https://a.test\n[b]: https://b.test",
+				expected: [{ ref: true, src: "[outer [a][x]][b]" }],
+			},
+			{
+				md: "[outer [a][]][b]\n\n[a]: https://a.test\n[b]: https://b.test",
+				expected: [
+					{ ref: true, src: "[a][]" },
+					{ ref: true, src: "[b]" },
+				],
+			},
+			{
+				md: "[outer [a]][b](https://b.test)\n\n[b]: https://ref-b.test",
+				expected: [
+					{ ref: true, src: "[outer [a]][b]" },
+					{ ref: false, src: "https://b.test" },
+				],
+			},
+			{
+				md: "[outer [a]][b](/b)",
+				expected: [{ ref: false, src: "[b](/b)" }],
+			},
+			{
+				md: "[x][b](/b)",
+				expected: [{ ref: false, src: "[b](/b)" }],
+			},
+			{
+				md: "[outer [a]][](/b)",
+				expected: [{ ref: false, src: "[](/b)" }],
+			},
+			{
+				md: "[x][](/b)",
+				expected: [{ ref: false, src: "[](/b)" }],
+			},
+			{
+				// Undefined reference images stay untouched across passes so image
+				// ranges stay consistent and bare text inside `![...]` is never
+				// promoted into a false link candidate.
+				md: "![[a]()][b][a]\n\n[a]: /a",
+				expected: [{ ref: true, src: "[a]" }],
+			},
+			{
+				md: "![https://a.test][b]",
+				expected: [],
+			},
+			{
+				// Linked inline images stay owned by `imageRanges`, so `linkCandidates`
+				// intentionally excludes the overlapping outer link.
+				md: "[![alt](/img)](/link)",
+				expected: [],
+			},
+			{
+				md: "[outer ![inner [a]](/img)](/outer)\n\n[a]: /a",
+				expected: [],
+			},
+			{
+				md: "[foo \\] bar]\n\n[foo \\] bar]: /esc",
+				expected: [{ ref: true, src: "[foo \\] bar]" }],
+			},
+			{
+				md: "[foo \\] bar][]\n\n[foo \\] bar]: /esc",
+				expected: [{ ref: true, src: "[foo \\] bar][]" }],
+			},
+			{
+				md: "[foo \\[ bar]\n\n[foo \\[ bar]: /esc",
+				expected: [{ ref: true, src: "[foo \\[ bar]" }],
+			},
+			{
+				// EasyMDE extracts `\[bar\]` as LaTeX display math before link parsing.
+				md: "[foo \\[bar\\]]\n\n[foo \\[bar\\]]: /esc",
+				expected: [],
+			},
+			{
+				// 500 astral code points = 1000 UTF-16 units: valid PHP reference label.
+				md: `[outer [${"😀".repeat(500)}]](/outer)\n\n[${"😀".repeat(500)}]: /inner`,
+				expected: [{ ref: true, src: `[${"😀".repeat(500)}]` }],
+			},
+			{
+				// Whitespace-padded shortcut label > 999 chars still resolves `[a]`.
+				md: `[${" ".repeat(1000)}a]\n\n[a]: /u`,
+				expected: [{ ref: true, src: `[${" ".repeat(1000)}a]` }],
+			},
+		];
+
+		for (const item of cases) {
+			const index = createEditorMarkdownBlockIndex(item.md);
+			expect(
+				(index.linkCandidates ?? []).map((candidate) => ({
+					ref: candidate.reference,
+					src: item.md.slice(candidate.from, candidate.to),
+				})),
+				item.md,
+			).toEqual(item.expected);
+		}
+
+		// Linear scaling on deeply nested balanced brackets (both Pass 1 and
+		// reference-aware re-parse).
+		const scalingCases: ReadonlyArray<
+			Readonly<{ expected: ReadonlyArray<string>; md: string }>
+		> = [
+			{
+				md: `${"[".repeat(5000)}a${"]".repeat(5000)}(https://example.test)`,
+				expected: [
+					`${"[".repeat(5000)}a${"]".repeat(5000)}(https://example.test)`,
+				],
+			},
+			{
+				md: `[a]: /a\n\n${"[".repeat(8000)}z${"]".repeat(8000)}`,
+				expected: [],
+			},
+			{
+				md: `[outer [a]][b]\n\n[a]: /a\n[b]: /b\n\n${"[".repeat(8000)}z${"]".repeat(8000)}`,
+				expected: ["[a]", "[b]"],
+			},
+		];
+		for (const item of scalingCases) {
+			const startMs = performance.now();
+			const deepIndex = createEditorMarkdownBlockIndex(item.md);
+			expect(performance.now() - startMs).toBeLessThan(1500);
+			expect(
+				(deepIndex.linkCandidates ?? []).map((c) => item.md.slice(c.from, c.to)),
+			).toEqual(item.expected);
+		}
+	});
 });

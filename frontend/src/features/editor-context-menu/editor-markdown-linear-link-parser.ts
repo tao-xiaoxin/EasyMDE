@@ -34,6 +34,7 @@ type LinearLinkState = {
 	closeDoubleQuote: CloseScanCache;
 	closeParenTitle: CloseScanCache;
 	closeSingleQuote: CloseScanCache;
+	lastBracketPos: number;
 	lastCloseAngle: number;
 	lastCloseParen: number;
 	openIndices: number[];
@@ -76,6 +77,7 @@ function getLinearLinkState(cx: InlineContext): LinearLinkState {
 			closeDoubleQuote: { closeAt: -1, scannedFrom: -1 },
 			closeParenTitle: { closeAt: -1, scannedFrom: -1 },
 			closeSingleQuote: { closeAt: -1, scannedFrom: -1 },
+			lastBracketPos: -1,
 			lastCloseAngle: -2,
 			lastCloseParen: -2,
 			openIndices: [],
@@ -400,20 +402,13 @@ function finishLinearLink(
 	typeName: "Image" | "Link",
 	start: number,
 	startPos: number,
-	state: LinearLinkState,
+	tail: LinearLinkTail | null,
 	contentMaxDepth: number,
-	rejectUnescapedOpenParenInTitle: boolean,
 ): Element {
 	content.unshift(
 		cx.elt("LinkMark", start, start + ("Image" === typeName ? 2 : 1)),
 	);
 	content.push(cx.elt("LinkMark", startPos - 1, startPos));
-	const tail = parseLinearLinkTail(
-		cx,
-		startPos,
-		state,
-		rejectUnescapedOpenParenInTitle,
-	);
 	let endPos = startPos;
 	if (tail) {
 		endPos = tail.endPos;
@@ -466,6 +461,7 @@ export function parseLinearLink(
 	const idx = internal.parts.length;
 	const end = cx.addDelimiter(InlineContext.linkStart, start, start + 1, true, false);
 	const state = getLinearLinkState(cx);
+	if (start > state.lastBracketPos) state.lastBracketPos = start;
 	state.openIndices.push(idx);
 	state.openLinkIndices.push(idx);
 	return end;
@@ -481,16 +477,29 @@ export function parseLinearImage(
 	const idx = internal.parts.length;
 	const end = cx.addDelimiter(InlineContext.imageStart, start, start + 2, true, false);
 	const state = getLinearLinkState(cx);
+	if (start + 1 > state.lastBracketPos) state.lastBracketPos = start + 1;
 	state.openIndices.push(idx);
 	return end;
 }
 
 export function createLinearLinkEndParser(
 	options: Readonly<{
+		/**
+		 * When true, only an inline `(...)` link (or a resolved reference link
+		 * when `isReferenceDefined` is supplied) deactivates enclosing `[`
+		 * link openers so CommonMark §6.3 balanced brackets (`[Bracket [Link]](url)`)
+		 * stay intact while defined inner reference links still deactivate outer
+		 * openers before they can swallow a trailing `[b]` or `[b](url)`.
+		 */
+		allowNestedShortcutLinkCandidates?: boolean;
+		isReferenceDefined?: (rawLabel: string) => boolean;
 		onExceededDepth?: (from: number, to: number) => void;
 		rejectUnescapedOpenParenInTitle?: boolean;
 	}> = {},
 ): (cx: InlineContext, next: number, start: number) => number {
+	const allowNestedShortcutLinkCandidates =
+		options.allowNestedShortcutLinkCandidates ?? false;
+	const isReferenceDefined = options.isReferenceDefined;
 	const onExceededDepth = options.onExceededDepth ?? NOOP_EXCEEDED_DEPTH;
 	const rejectUnescapedOpenParenInTitle =
 		options.rejectUnescapedOpenParenInTitle ?? false;
@@ -502,6 +511,8 @@ export function createLinearLinkEndParser(
 		if (93 /* ] */ !== next) return -1;
 		const state = peekLinearLinkState(cx);
 		if (!state || 0 === state.openIndices.length) return -1;
+		const prevBracketPos = state.lastBracketPos;
+		if (start > state.lastBracketPos) state.lastBracketPos = start;
 		const internal = asInternalInlineContext(cx);
 		const parts = internal.parts;
 		const linkStart = InlineContext.linkStart;
@@ -536,7 +547,63 @@ export function createLinearLinkEndParser(
 			return -1;
 		}
 
-		if (isLink) {
+		const tail = parseLinearLinkTail(
+			cx,
+			start + 1,
+			state,
+			rejectUnescapedOpenParenInTitle,
+		);
+		const isReferenceAware = isLink && undefined !== isReferenceDefined;
+		if (isLink && (isReferenceAware || allowNestedShortcutLinkCandidates)) {
+			// Spans without inner unescaped brackets are pairwise disjoint, so
+			// total inner-label work across the document stays strictly O(N)
+			// without imposing an arbitrary UTF-16 length cap on astral or
+			// whitespace-padded shortcut/collapsed labels.
+			const canUseInnerAsLabel = prevBracketPos < openerPart.to;
+			let createsLink: boolean;
+			if (tail && tail.parenClosePos >= 0) {
+				createsLink = true;
+			} else if (tail?.label) {
+				const tailLabelText = cx.slice(
+					tail.label.from + 1,
+					tail.label.to - 1,
+				);
+				if (tailLabelText.length > 0) {
+					createsLink =
+						!isReferenceAware || isReferenceDefined(tailLabelText);
+				} else {
+					createsLink =
+						canUseInnerAsLabel &&
+						(!isReferenceAware ||
+							isReferenceDefined(cx.slice(openerPart.to, start)));
+				}
+			} else {
+				const malformed =
+					40 === afterChar ||
+					91 === afterChar ||
+					"[^" === cx.slice(openerPart.from, openerPart.from + 2);
+				createsLink =
+					canUseInnerAsLabel &&
+					(!isReferenceAware ||
+						(!malformed &&
+							isReferenceDefined(cx.slice(openerPart.to, start))));
+			}
+			if (!createsLink) {
+				parts[openerIdx] = null;
+				if (
+					state.openLinkIndices[state.openLinkIndices.length - 1] === openerIdx
+				) {
+					state.openLinkIndices.pop();
+				}
+				return -1;
+			}
+		}
+		const deactivateOuterLinks =
+			isLink &&
+			(!allowNestedShortcutLinkCandidates ||
+				isReferenceAware ||
+				Boolean(tail && tail.parenClosePos >= 0));
+		if (deactivateOuterLinks) {
 			while (state.openLinkIndices.length > 0) {
 				const linkIdx = state.openLinkIndices.pop() ?? -1;
 				if (linkIdx < 0 || linkIdx >= openerIdx || linkIdx >= parts.length) {
@@ -547,6 +614,11 @@ export function createLinearLinkEndParser(
 					candidate.side = 0;
 				}
 			}
+		} else if (
+			isLink &&
+			state.openLinkIndices[state.openLinkIndices.length - 1] === openerIdx
+		) {
+			state.openLinkIndices.pop();
 		}
 
 		const resolved = resolveInlineMarkersLinear(
@@ -556,12 +628,6 @@ export function createLinearLinkEndParser(
 			onExceededDepth,
 		);
 		if ("flat" === resolved.kind) {
-			const tail = parseLinearLinkTail(
-				cx,
-				start + 1,
-				state,
-				rejectUnescapedOpenParenInTitle,
-			);
 			const tailEndPos = tail ? tail.endPos : start + 1;
 			onExceededDepth(openerPart.from, tailEndPos);
 			parts[openerIdx] = resolved.flatGroup;
@@ -575,9 +641,8 @@ export function createLinearLinkEndParser(
 			isLink ? "Link" : "Image",
 			openerPart.from,
 			start + 1,
-			state,
+			tail,
 			resolved.maxDepth,
-			rejectUnescapedOpenParenInTitle,
 		);
 		parts[openerIdx] = link;
 		return link.to;

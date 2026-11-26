@@ -32,6 +32,10 @@ import { createLeagueLinkReferenceLeafParser } from "./editor-markdown-reference
 export const MAX_LEAGUE_BLOCK_NESTING_DEPTH = MAX_LEZER_INLINE_DEPTH;
 
 export type LinearLeagueMarkdownParserOptions = Readonly<{
+	/** Keeps enclosing `[` openers active past non-inline bracket pairs for CommonMark §6.3 projection. */
+	allowNestedShortcutLinkCandidates?: boolean;
+	/** Optional reference-definition predicate so resolved inner reference links deactivate outer `[` openers inline. */
+	isReferenceDefined?: (rawLabel: string) => boolean;
 	/**
 	 * Block-nesting overflow policy:
 	 * - `"cap"` (default, worker/index): stops opening nested blocks past
@@ -74,6 +78,15 @@ export function createLinearLeagueMarkdownParser(
 		mode: "cap",
 	};
 	const parseLinkEnd = createLinearLinkEndParser({
+		...(undefined !== options.allowNestedShortcutLinkCandidates
+			? {
+					allowNestedShortcutLinkCandidates:
+						options.allowNestedShortcutLinkCandidates,
+				}
+			: {}),
+		...(options.isReferenceDefined
+			? { isReferenceDefined: options.isReferenceDefined }
+			: {}),
 		...(options.onExceededInlineDepth
 			? { onExceededDepth: options.onExceededInlineDepth }
 			: {}),

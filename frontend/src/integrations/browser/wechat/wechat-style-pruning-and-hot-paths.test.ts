@@ -906,4 +906,53 @@ describe("WeChat hot-path micro-allocation and yield optimizations", () => {
 		// 3 elements in `preview` (`article`, `p`, `p`) -> 1 shouldYield check per element.
 		expect(sigShouldYield).toHaveBeenCalledTimes(3);
 	});
+
+	it("preserves Chromium serialized transparent background shorthand on task-list checkboxes and their pseudos", () => {
+		const list = document.createElement("ul");
+		list.className = "task-list";
+		const item = document.createElement("li");
+		item.className = "task-list-item";
+		const checkbox = document.createElement("input");
+		checkbox.type = "checkbox";
+		item.append(checkbox);
+		list.append(item);
+		const blinkTransparentBackground =
+			"rgba(0, 0, 0, 0) none repeat scroll 0% 0% / auto padding-box border-box";
+		const computed = declaration({
+			background: blinkTransparentBackground,
+			"background-image": "none",
+			"background-position": "0% 0%",
+			"background-repeat": "repeat",
+			"background-size": "auto",
+		});
+
+		expect(
+			keepStyle(
+				"background",
+				blinkTransparentBackground,
+				checkbox,
+				false,
+				false,
+				blinkTransparentBackground,
+				true,
+				"",
+				false,
+				computed,
+			),
+		).toBe(true);
+		expect(
+			keepStyle(
+				"background",
+				blinkTransparentBackground,
+				checkbox,
+				true,
+				false,
+				blinkTransparentBackground,
+				true,
+				'""',
+				false,
+				computed,
+			),
+		).toBe(true);
+	});
 });

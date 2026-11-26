@@ -955,4 +955,105 @@ describe("WeChat hot-path micro-allocation and yield optimizations", () => {
 			),
 		).toBe(true);
 	});
+
+	it("caches per-element pruning computed-style queries across styleDeclarations and passes svg predicates through native visual capture", async () => {
+		const paragraph = document.createElement("p");
+		const rawComputed = declaration({
+			background:
+				"rgba(0, 0, 0, 0) none repeat scroll 0% 0% / auto padding-box border-box",
+			"background-image": "none",
+			"background-position": "0% 0%",
+			"background-repeat": "repeat",
+			"background-size": "auto",
+			"border-top-width": "0px",
+			"border-top-style": "none",
+			"border-top-color": "rgb(34, 34, 34)",
+			"border-right-width": "0px",
+			"border-right-style": "none",
+			"border-right-color": "rgb(34, 34, 34)",
+			"border-bottom-width": "2px",
+			"border-bottom-style": "solid",
+			"border-bottom-color": "rgb(200, 10, 20)",
+			"border-left-width": "0px",
+			"border-left-style": "none",
+			"border-left-color": "rgb(34, 34, 34)",
+			"border-collapse": "separate",
+			"border-spacing": "0px",
+			display: "block",
+			color: "rgb(34, 34, 34)",
+		});
+		const readCounts = new Map<string, number>();
+		const trackedComputed = {
+			getPropertyValue: (property: string): string => {
+				readCounts.set(property, (readCounts.get(property) ?? 0) + 1);
+				return rawComputed.getPropertyValue(property);
+			},
+		} as unknown as CSSStyleDeclaration;
+
+		const declarations = await styleDeclarations(
+			paragraph,
+			trackedComputed,
+			false,
+			false,
+			mockRuntime(() => trackedComputed),
+			new Map(),
+		);
+		expect(declarations).toContain("border-bottom-width:2px");
+		expect(declarations).toContain("border-bottom-style:solid");
+		expect(declarations).toContain("border-bottom-color:rgb(200, 10, 20)");
+		expect(
+			declarations.some((entry) => entry.startsWith("border-top-")),
+		).toBe(false);
+		expect(
+			declarations.some((entry) => entry.startsWith("background")),
+		).toBe(false);
+		expect(
+			declarations.some((entry) => entry.startsWith("border-collapse:")),
+		).toBe(false);
+		expect(
+			declarations.some((entry) => entry.startsWith("border-spacing:")),
+		).toBe(false);
+		// Each side style/width is read at most once by pruning (+1 for the main property loop).
+		expect(readCounts.get("border-top-style")).toBe(2);
+		expect(readCounts.get("border-top-width")).toBe(2);
+		// Bordered bottom edge short-circuits before reading border-bottom-width in pruning.
+		expect(readCounts.get("border-bottom-style")).toBe(2);
+		expect(readCounts.get("border-bottom-width")).toBe(1);
+		// Background image/shorthand pruning reads once across all 4 background sub-properties (+1 main loop).
+		expect(readCounts.get("background-image")).toBe(2);
+		expect(readCounts.get("background")).toBe(2);
+		// Table display check runs at most once across border-collapse and border-spacing (+1 main loop).
+		expect(readCounts.get("display")).toBe(2);
+
+		// nativeVisualStyleDeclarations reuses the pass-local tree predicate cache once per element
+		// rather than walking ancestors on every CSS property inside keepStyle.
+		const container = document.createElement("div");
+		container.className = "easymde-math-inline";
+		const katex = document.createElement("span");
+		katex.className = "katex";
+		const leaf = document.createElement("span");
+		katex.append(leaf);
+		container.append(katex);
+		const predicates = createWechatTreePredicateCache();
+		const isSvgSpy = vi.spyOn(predicates, "isSvgElement");
+		const specialSpy = vi.spyOn(predicates, "supportsSpecialLayout");
+		const nativeMeasured = declaration({
+			display: "inline-block",
+			color: "rgb(10, 20, 30)",
+			position: "relative",
+			"vertical-align": "baseline",
+		});
+		const nativeDecls = await nativeVisualStyleDeclarations(
+			leaf,
+			nativeMeasured,
+			mockRuntime(() => nativeMeasured),
+			new Map(),
+			null,
+			predicates,
+		);
+		expect(nativeDecls).toContain("display:inline-block");
+		expect(nativeDecls).toContain("position:relative");
+		expect(isSvgSpy).toHaveBeenCalledTimes(1);
+		expect(specialSpy).toHaveBeenCalledTimes(1);
+	});
 });

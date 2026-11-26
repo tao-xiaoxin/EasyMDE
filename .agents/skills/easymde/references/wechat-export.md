@@ -642,17 +642,26 @@ returns fractional `inlineLayout` allocation (`width`, `height`, `baseline`,
 `paintOffsetX`, and `paintOffsetY`) plus optional `viewport` geometry
 (`width`, `height`, `offsetX`, and `offsetY`) measured before capture
 normalization, including custom `vertical-align` values such as `super`, `sub`,
-and `middle`. PNG paint bounds do not define inline allocation. The outer
-inline-block wrapper always owns the original allocation and line box. When a
-viewport is present, the inner original source-root viewport owns
-`auto`/`scroll`/`hidden`/`clip`; the PNG uses root-local union paint offsets
-plus the viewport offset. The outer physical `margin-left` is owned once by
-the wrapper and removed once from the local paint offset; vertical margin stays
-allocation-only: source `vertical-align:top` and `bottom` retain their original
-neighboring line-box keywords, while other modes use the measured allocation
-`B-H` relation. Paint placement still uses only root-local union and viewport
-offsets; no fixed offset is used. A
-missing, non-finite, or out-of-bound allocation is an explicit
+and `middle`. PNG paint bounds do not define inline allocation. For ordinary
+unclipped inline math (`overflow-x` and `overflow-y` neither `auto`, `scroll`,
+`hidden`, nor `clip`), replacement swaps the source span directly with one
+static `display:inline-block` `<img>` (no positioned wrapper or inner
+`display:block` child inside an inline span, avoiding WeChat ProseMirror node
+splitting during async image transfer): horizontal allocation deltas
+(`paintOffsetX` and `width - (paintOffsetX + imageWidth)`) are folded into the
+image's static `margin-left`/`margin-right` along with source `float`/`clear`,
+while source `vertical-align:top` and `bottom` retain their original neighboring
+line-box keywords and other modes use the measured
+`baseline - (paintOffsetY + imageHeight)` relation. When inline overflow
+clipping or scrolling is active (`auto`/`scroll`/`hidden`/`clip`), replacement
+keeps a single non-positioned `display:inline-block` overflow wrapper owning the
+viewport dimensions, overflow axes, folded outer horizontal margins, and
+vertical alignment (`baseline - (viewport.offsetY + viewport.height)` or
+`baseline - inlineLayout.height`), containing one static-flow
+`display:inline-block` `<img>` positioned via static `margin-left`/`margin-top`
+offsets and `vertical-align:top` rather than `position:relative`/`absolute`.
+Paint placement still uses only root-local union and viewport offsets; no fixed
+offset is used. A missing, non-finite, or out-of-bound allocation is an explicit
 baseline/rasterization failure and never falls back to CSS's unmeasured
 baseline.
 

@@ -172,8 +172,37 @@ const BORDER_PRUNE_EXCLUDED_TAGS: ReadonlySet<string> = new Set([
 	"select",
 	"iframe",
 ]);
-const BORDER_EDGE_PROPERTY =
-	/^border-(top|right|bottom|left)-(width|style|color)$/;
+type BorderSide = "top" | "right" | "bottom" | "left";
+
+/**
+ * Per-element memoized cache for computed-style pruning reads across the
+ * property loop of a single element snapshot. Construct once per
+ * `(source, computed, pseudoElement, root)` context and discard after its
+ * declaration loop completes.
+ */
+export type WechatElementStylePruningCache = {
+	readonly borderPruneEligible: boolean;
+	borderlessSides?: Partial<Record<BorderSide, boolean>>;
+	hasPaintedBackgroundImage?: boolean;
+	readonly localName: string;
+	nonTableBorderModel?: boolean;
+	readonly taskListCheckbox: boolean;
+};
+
+const BORDER_EDGE_SIDE_BY_PROPERTY: ReadonlyMap<string, BorderSide> = new Map([
+	["border-top-width", "top"],
+	["border-top-style", "top"],
+	["border-top-color", "top"],
+	["border-right-width", "right"],
+	["border-right-style", "right"],
+	["border-right-color", "right"],
+	["border-bottom-width", "bottom"],
+	["border-bottom-style", "bottom"],
+	["border-bottom-color", "bottom"],
+	["border-left-width", "left"],
+	["border-left-style", "left"],
+	["border-left-color", "left"],
+]);
 const TABLE_DISPLAY_VALUES: ReadonlySet<string> = new Set([
 	"table",
 	"inline-table",
@@ -254,6 +283,18 @@ function hasPaintedBackgroundImage(computed: CSSStyleDeclaration): boolean {
 	);
 }
 
+function resolveHasPaintedBackgroundImage(
+	computed: CSSStyleDeclaration,
+	pruningCache: WechatElementStylePruningCache | undefined,
+): boolean {
+	if (undefined !== pruningCache?.hasPaintedBackgroundImage) {
+		return pruningCache.hasPaintedBackgroundImage;
+	}
+	const painted = hasPaintedBackgroundImage(computed);
+	if (pruningCache) pruningCache.hasPaintedBackgroundImage = painted;
+	return painted;
+}
+
 function isBorderPruneEligible(
 	source: Element,
 	pseudoElement: boolean,
@@ -269,28 +310,65 @@ function shouldOmitDefaultBackgroundProperty(
 	property: string,
 	value: string,
 	computed: CSSStyleDeclaration | undefined,
+	pruningCache: WechatElementStylePruningCache | undefined,
 ): boolean {
+	if (!property.startsWith("background")) return false;
 	if ("background" === property) {
 		return isNoopTransparentBackgroundShorthand(value);
 	}
+	const normalized = value.trim().toLowerCase();
 	if ("background-image" === property) {
 		return (
-			"none" === value.trim().toLowerCase() &&
-			(!computed || !hasPaintedBackgroundImage(computed))
+			"none" === normalized &&
+			(!computed || !resolveHasPaintedBackgroundImage(computed, pruningCache))
 		);
 	}
-	if (!computed || hasPaintedBackgroundImage(computed)) return false;
-	const normalized = value.trim().toLowerCase();
+	if (!computed) return false;
 	if ("background-position" === property) {
-		return DEFAULT_BACKGROUND_POSITION_VALUES.has(normalized);
+		return (
+			DEFAULT_BACKGROUND_POSITION_VALUES.has(normalized) &&
+			!resolveHasPaintedBackgroundImage(computed, pruningCache)
+		);
 	}
 	if ("background-repeat" === property) {
-		return DEFAULT_BACKGROUND_REPEAT_VALUES.has(normalized);
+		return (
+			DEFAULT_BACKGROUND_REPEAT_VALUES.has(normalized) &&
+			!resolveHasPaintedBackgroundImage(computed, pruningCache)
+		);
 	}
 	if ("background-size" === property) {
-		return DEFAULT_BACKGROUND_SIZE_VALUES.has(normalized);
+		return (
+			DEFAULT_BACKGROUND_SIZE_VALUES.has(normalized) &&
+			!resolveHasPaintedBackgroundImage(computed, pruningCache)
+		);
 	}
 	return false;
+}
+
+function isBorderSideBorderless(
+	side: BorderSide,
+	computed: CSSStyleDeclaration,
+	pruningCache: WechatElementStylePruningCache | undefined,
+): boolean {
+	const cached = pruningCache?.borderlessSides?.[side];
+	if (undefined !== cached) return cached;
+	const edgeStyle = computed
+		.getPropertyValue(`border-${side}-style`)
+		.trim()
+		.toLowerCase();
+	let borderless = false;
+	if ("none" === edgeStyle) {
+		const edgeWidth = computed
+			.getPropertyValue(`border-${side}-width`)
+			.trim()
+			.toLowerCase();
+		borderless = "0px" === edgeWidth || "0" === edgeWidth;
+	}
+	if (pruningCache) {
+		if (!pruningCache.borderlessSides) pruningCache.borderlessSides = {};
+		pruningCache.borderlessSides[side] = borderless;
+	}
+	return borderless;
 }
 
 function shouldOmitBorderlessProperty(
@@ -301,32 +379,22 @@ function shouldOmitBorderlessProperty(
 	root: boolean,
 	localName: string,
 	computed: CSSStyleDeclaration | undefined,
+	pruningCache: WechatElementStylePruningCache | undefined,
 ): boolean {
 	if ("border-radius" === property) {
-		return (
-			("0px" === value || "0" === value) &&
-			isBorderPruneEligible(source, pseudoElement, root, localName)
-		);
+		if ("0px" !== value && "0" !== value) return false;
+		return pruningCache
+			? pruningCache.borderPruneEligible
+			: isBorderPruneEligible(source, pseudoElement, root, localName);
 	}
 	if (!computed || !property.startsWith("border-")) return false;
-	const edgeMatch = BORDER_EDGE_PROPERTY.exec(property);
-	if (
-		!edgeMatch ||
-		!isBorderPruneEligible(source, pseudoElement, root, localName)
-	) {
-		return false;
-	}
-	const side = edgeMatch[1];
-	const edgeStyle = computed
-		.getPropertyValue(`border-${side}-style`)
-		.trim()
-		.toLowerCase();
-	if ("none" !== edgeStyle) return false;
-	const edgeWidth = computed
-		.getPropertyValue(`border-${side}-width`)
-		.trim()
-		.toLowerCase();
-	return "0px" === edgeWidth || "0" === edgeWidth;
+	const side = BORDER_EDGE_SIDE_BY_PROPERTY.get(property);
+	if (!side) return false;
+	const eligible = pruningCache
+		? pruningCache.borderPruneEligible
+		: isBorderPruneEligible(source, pseudoElement, root, localName);
+	if (!eligible) return false;
+	return isBorderSideBorderless(side, computed, pruningCache);
 }
 
 function shouldOmitNonTableBorderModel(
@@ -336,6 +404,7 @@ function shouldOmitNonTableBorderModel(
 	isSvg: boolean,
 	computed: CSSStyleDeclaration | undefined,
 	predicates: WechatTreePredicateCache | undefined,
+	pruningCache: WechatElementStylePruningCache | undefined,
 ): boolean {
 	const isDefaultBorderModel =
 		("border-collapse" === property &&
@@ -344,14 +413,21 @@ function shouldOmitNonTableBorderModel(
 			("0px" === value || "0px 0px" === value || "0" === value));
 	if (!isDefaultBorderModel) return false;
 	if (isSvg) return true;
+	if (undefined !== pruningCache?.nonTableBorderModel) {
+		return pruningCache.nonTableBorderModel;
+	}
 	const display = computed
 		? computed.getPropertyValue("display").trim().toLowerCase()
 		: "";
-	if (TABLE_DISPLAY_VALUES.has(display)) return false;
-	const insideTable = predicates
-		? predicates.isInsideTable(source)
-		: isInsideTable(source);
-	return !insideTable;
+	let nonTable = !TABLE_DISPLAY_VALUES.has(display);
+	if (nonTable) {
+		const insideTable = predicates
+			? predicates.isInsideTable(source)
+			: isInsideTable(source);
+		nonTable = !insideTable;
+	}
+	if (pruningCache) pruningCache.nonTableBorderModel = nonTable;
+	return nonTable;
 }
 
 function preservesSvgPresentationAttributeOverride(
@@ -427,6 +503,7 @@ export function keepStyle(
 	svgElement?: boolean,
 	computed?: CSSStyleDeclaration,
 	predicates?: WechatTreePredicateCache,
+	pruningCache?: WechatElementStylePruningCache,
 ): boolean {
 	if (
 		omitDefaultValues &&
@@ -492,7 +569,9 @@ export function keepStyle(
 	const preservesInheritedDefault =
 		PRESERVE_INHERITED_DEFAULT_STYLE_PROPERTIES.has(property);
 	if (omitDefaultValues && !preservesInheritedDefault) {
-		const localName = source.localName.toLowerCase();
+		const localName = pruningCache
+			? pruningCache.localName
+			: source.localName.toLowerCase();
 		if (
 			("stop-color" === property || "stop-opacity" === property) &&
 			"stop" !== localName
@@ -500,8 +579,16 @@ export function keepStyle(
 			return false;
 		}
 		if (
-			!isTaskListCheckbox(source) &&
-			shouldOmitDefaultBackgroundProperty(property, value, computed)
+			property.startsWith("background") &&
+			!(pruningCache
+				? pruningCache.taskListCheckbox
+				: isTaskListCheckbox(source)) &&
+			shouldOmitDefaultBackgroundProperty(
+				property,
+				value,
+				computed,
+				pruningCache,
+			)
 		) {
 			return false;
 		}
@@ -514,6 +601,7 @@ export function keepStyle(
 				root,
 				localName,
 				computed,
+				pruningCache,
 			)
 		) {
 			return false;
@@ -526,6 +614,7 @@ export function keepStyle(
 				isSvg,
 				computed,
 				predicates,
+				pruningCache,
 			)
 		) {
 			return false;
@@ -538,7 +627,9 @@ export function keepStyle(
 			) &&
 			!(
 				TASK_CHECKBOX_PRESERVED_DEFAULT_PROPERTIES.has(property) &&
-				isTaskListCheckbox(source)
+				(pruningCache
+					? pruningCache.taskListCheckbox
+					: isTaskListCheckbox(source))
 			) &&
 			!preservesSvgPresentationAttributeOverride(property, source, isSvg)
 		) {
@@ -730,6 +821,7 @@ export type PortableStyleDeclarationContext = Readonly<{
 	dimensionSemantics: WechatDimensionSemanticsContext | null;
 	predicates: WechatTreePredicateCache | undefined;
 	promoteContentBoxBounds: boolean;
+	pruningCache: WechatElementStylePruningCache;
 	pseudoElement: boolean;
 	pseudoElementContent: string;
 	pseudoElementName: "::before" | "::after" | undefined;
@@ -840,7 +932,18 @@ export function createStyleDeclarationContext(
 	const specialLayout = predicates
 		? predicates.supportsSpecialLayout(source)
 		: supportsSpecialLayout(source);
-	const taskCheckbox = !pseudoElement && isTaskListCheckbox(source);
+	const localName = source.localName.toLowerCase();
+	const taskListCheckbox = isTaskListCheckbox(source);
+	const taskCheckbox = !pseudoElement && taskListCheckbox;
+	const pruningCache: WechatElementStylePruningCache = {
+		borderPruneEligible:
+			!root &&
+			!pseudoElement &&
+			!taskListCheckbox &&
+			!BORDER_PRUNE_EXCLUDED_TAGS.has(localName),
+		localName,
+		taskListCheckbox,
+	};
 	const style =
 		root && !pseudoElement
 			? rootExportComputedStyle(source, computed, dimensionSemantics)
@@ -885,6 +988,7 @@ export function createStyleDeclarationContext(
 		dimensionSemantics: dimensionSemantics ?? null,
 		predicates,
 		promoteContentBoxBounds,
+		pruningCache,
 		pseudoElement,
 		pseudoElementContent,
 		pseudoElementName,
@@ -982,6 +1086,7 @@ export function appendPortableStyleDeclaration(
 			context.svg,
 			context.style,
 			context.predicates,
+			context.pruningCache,
 		)
 	) {
 		declarations.push(

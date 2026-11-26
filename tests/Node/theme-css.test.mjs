@@ -541,6 +541,25 @@ test('Qingbi Liujin and Qinghe Zhusha keep a compact, separated first heading', 
     assert.match(h1Rule, /line-height:\s*1\.25;/);
   }
 });
+
+test('Qingbi Liujin hr uses a pure CSS repeating-linear-gradient without data:image URIs', () => {
+  const css = readFileSync(join(repoRoot, 'assets/themes/article/qingbi-liujin.css'), 'utf8');
+  const root = scopedArticleRoot('qingbi-liujin');
+  const ruleTexture = cssVariable(css, '--easymde-qingbi-rule-texture');
+  const hrRules = cssRuleBodies(css, `${root} hr`);
+
+  assert.equal(
+    ruleTexture,
+    'repeating-linear-gradient(135deg, rgba(0, 0, 0, 0.2) 0, rgba(0, 0, 0, 0.2) 2.12px, transparent 2.12px, transparent 4.24px)'
+  );
+  assert.doesNotMatch(ruleTexture, /data:image\//i);
+  assert.equal(hrRules.length, 1);
+  assert.match(hrRules[0], /background:\s*transparent var\(--easymde-qingbi-rule-texture\);/);
+  assert.doesNotMatch(hrRules[0], /data:image\//i);
+  assert.doesNotMatch(hrRules[0], /repeat-x/i);
+  assert.doesNotMatch(css, /data:image\//i);
+});
+
 test('Crimson focus follows the reference light surface and preserves code-theme ownership', () => {
   const css = readFileSync(join(repoRoot, 'assets/themes/article/crimson-focus.css'), 'utf8');
   const root = '.easymde-rendered-content.easymde-markdown-theme-crimson-focus';

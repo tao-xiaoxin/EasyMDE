@@ -1,7 +1,7 @@
 import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
 import type { ContainerAlignmentPlan } from "./markdown-container-preservation";
-import type { PreparedListPreservation } from "./markdown-list-preservation";
 import { normalizeReferenceLabel } from "./markdown-escape";
+import type { PreparedListPreservation } from "./markdown-list-preservation";
 import {
 	type BlockSerializer,
 	isDeferredTaskParagraph,
@@ -53,17 +53,18 @@ export type CandidatePartialRefDef = Readonly<{
 }>;
 
 /**
- * One preservable ordered list whose reused first item needs whole-list
- * marker re-validation. Item tasks only mark it dirty in O(1); the
- * coordinator drains each dirty list in topological upstream-count order
- * after the invalidation queue empties.
+ * One preservable list. When `tracksValidation` (a reused first ordered item
+ * needing whole-list marker validation, or indented trailing items that may
+ * need left-shifting), item tasks only mark it dirty in O(1); the coordinator
+ * drains each dirty list in topological upstream-count order after the
+ * invalidation queue empties, re-running the single authoritative
+ * `resolveAuthoritativeListPreservation` once per drain.
  */
 export type PendingListCheck = {
+	/** Transitions reused item `itemIdx` to canonical (never re-dirties the list). */
+	readonly downgradeItem: (itemIdx: number) => void;
 	/** Winning raw slice emitted for reused item 0, or `null` when canonical. */
 	firstEmittedSlice: string | null;
-	/** Partial-title candidate labels declared inside reused item 0. */
-	readonly firstLabels: string[];
-	firstTask: InvalidationTask | undefined;
 	/** Index inside `st.pendingListHeap`, or `-1` when not currently queued. */
 	heapIndex: number;
 	/** Cached sink status while queued in `st.pendingListHeap`. */
@@ -77,9 +78,13 @@ export type PendingListCheck = {
 	 * upstream candidate dependencies always pop first (Kahn topological order).
 	 */
 	liveUpstreamCount: number;
-	needsFirstValidation: boolean;
+	/** Notifies the parent container slot that the list's emitted tail may have changed. */
+	readonly notifyTailChange: () => void;
+	/** Partial-title candidate labels declared inside this list's items. */
+	readonly ownLabels: ReadonlyArray<string>;
 	readonly prepared: PreparedListPreservation;
 	readonly refCountByUpstreamLabel: Map<string, number>;
+	readonly tracksValidation: boolean;
 };
 
 export type LivenessState = Readonly<{
@@ -149,15 +154,14 @@ export function pendingListHeapPush(
 	pendingListHeapSiftUp(heap, check.heapIndex);
 }
 
-export function pendingListHeapPop(
+/** Restores the min-heap invariant after `heap[startIndex]` lost priority. */
+function pendingListHeapSiftDown(
 	heap: PendingListCheck[],
-): PendingListCheck | undefined {
-	const top = heap[0];
-	const last = heap.pop();
-	if (top === undefined) return undefined;
-	top.heapIndex = -1;
-	if (last === undefined || heap.length === 0) return top;
-	let i = 0;
+	startIndex: number,
+): void {
+	let i = startIndex;
+	const item = heap[i];
+	if (item === undefined) return;
 	while (true) {
 		const left = 2 * i + 1;
 		if (left >= heap.length) break;
@@ -174,14 +178,32 @@ export function pendingListHeapPop(
 			child = right;
 			childEntry = rightEntry;
 		}
-		if (childEntry === undefined || !pendingListBefore(childEntry, last)) break;
+		if (childEntry === undefined || !pendingListBefore(childEntry, item)) break;
 		heap[i] = childEntry;
 		childEntry.heapIndex = i;
 		i = child;
 	}
-	heap[i] = last;
-	last.heapIndex = i;
+	heap[i] = item;
+	item.heapIndex = i;
+}
+
+export function pendingListHeapPop(
+	heap: PendingListCheck[],
+): PendingListCheck | undefined {
+	const top = heap[0];
+	const last = heap.pop();
+	if (top === undefined) return undefined;
+	top.heapIndex = -1;
+	if (last === undefined || heap.length === 0) return top;
+	heap[0] = last;
+	last.heapIndex = 0;
+	pendingListHeapSiftDown(heap, 0);
 	return top;
+}
+
+export function firstLineOf(text: string): string {
+	const nl = text.indexOf("\n");
+	return nl === -1 ? text : text.slice(0, nl);
 }
 
 export function isLivePartialLabel(st: LivenessState, label: string): boolean {
@@ -207,6 +229,9 @@ export function addListUpstreamLabel(
 			st.upstreamListsByLabel.set(label, watchers);
 		}
 		watchers.add(check);
+		if (check.heapIndex >= 0) {
+			pendingListHeapSiftDown(st.pendingListHeap, check.heapIndex);
+		}
 	}
 }
 
@@ -301,9 +326,7 @@ function canonicalParagraphPreservesPartialTitle(
 		hasLivePartialRef && st.serializeBlockWithRefs
 			? st.serializeBlockWithRefs(nextSibling, st.liveResolver)
 			: st.serializeBlock(nextSibling);
-	const nl = serializedNext.indexOf("\n");
-	const firstLine = nl === -1 ? serializedNext : serializedNext.slice(0, nl);
-	if (!/^[ \t]*["'(]/.test(firstLine)) return false;
+	if (!/^[ \t]*["'(]/.test(firstLineOf(serializedNext))) return false;
 	if (
 		wouldReferenceDefinitionAbsorbFollowingBlock(
 			refInfo.lastRaw,

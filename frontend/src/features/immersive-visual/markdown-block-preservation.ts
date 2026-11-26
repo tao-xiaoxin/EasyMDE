@@ -1,6 +1,7 @@
 import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
 import {
 	alignContainerChildren,
+	canPreserveContainerHeadStructurally,
 	checkRawPreservationRisks,
 	createTightSharedGroupChecker,
 	isListSwallowingFollowingBlock,
@@ -339,10 +340,68 @@ function serializeContainerPreservingChildren(
 				: null;
 		let serializedFromRaw = serialized !== null;
 
+		const prevNode = idx > 0 ? container.child(idx - 1) : null;
+		const prevMatched = idx > 0 ? (matchedOrigIndex[idx - 1] ?? -1) : -1;
+		const prevWasVerbatimAdjacent =
+			prevEmittedVerbatim &&
+			prevMatched >= 0 &&
+			origIdx >= 0 &&
+			origIdx === prevMatched + 1;
+
+		// Monotonic risk dominance: when a matched-invalidated or paired
+		// container keeps its baseline `child 0` and the baseline raw's own
+		// leading line already triggers swallow/indented risk, emit canonical
+		// directly instead of partially preserving it, exactly as liveness
+		// predicts regardless of the wave in which `child 0` is invalidated.
+		const baselineHeadRisk = (
+			base: ParsedVisualBlockSource | undefined,
+			effIdx: number,
+		): boolean => {
+			if (
+				!base ||
+				base.raw === null ||
+				!canPreserveContainerHeadStructurally(
+					child,
+					base,
+					ctx.parsed.blockquoteSources,
+				)
+			) {
+				return false;
+			}
+			const rawInner = stripAtDepth(base.raw, depth);
+			const join = resolveContainerSlotJoin({
+				baselineBlocks,
+				child,
+				defaultBlankSep,
+				effIdx,
+				groupSep: undefined,
+				innerText: rawInner,
+				isPartialTitleRefDef: null,
+				prevEffIdx: idx > 0 ? (effectiveOrigIndex[idx - 1] ?? -1) : -1,
+				prevInnerText: () => prevInnerText,
+				prevNode,
+				prevWasVerbatimAdjacent,
+				serializedIsNull: false,
+			});
+			const risks = checkRawPreservationRisks(
+				child,
+				depth,
+				base.raw,
+				rawInner,
+				join.separator,
+				prevNode,
+				prevInnerText,
+				prevWasVerbatimAdjacent,
+			);
+			return risks.indentedRisk || risks.swallowRisk;
+		};
+
 		if (intactGroup || (origBlock && !sharedGroup && !origInvalidated)) {
 			effectiveOrigIndex[idx] = origIdx;
 		} else if (origBlock && origInvalidated) {
-			const nested = tryPreserveContainerChild(child, origBlock);
+			const nested = baselineHeadRisk(origBlock, origIdx)
+				? null
+				: tryPreserveContainerChild(child, origBlock);
 			if (nested !== null) {
 				serialized = nested;
 				serializedFromRaw = false;
@@ -354,21 +413,15 @@ function serializeContainerPreservingChildren(
 			const pairedIdx = pairedOrigIndex[idx] ?? -1;
 			const pairedBlock =
 				pairedIdx >= 0 ? baselineBlocks[pairedIdx] : undefined;
-			const nested = tryPreserveContainerChild(child, pairedBlock);
+			const nested = baselineHeadRisk(pairedBlock, pairedIdx)
+				? null
+				: tryPreserveContainerChild(child, pairedBlock);
 			if (nested !== null) {
 				serialized = nested;
 				serializedFromRaw = false;
 				effectiveOrigIndex[idx] = pairedIdx;
 			}
 		}
-
-		const prevNode = idx > 0 ? container.child(idx - 1) : null;
-		const prevMatched = idx > 0 ? (matchedOrigIndex[idx - 1] ?? -1) : -1;
-		const prevWasVerbatimAdjacent =
-			prevEmittedVerbatim &&
-			prevMatched >= 0 &&
-			origIdx >= 0 &&
-			origIdx === prevMatched + 1;
 
 		let generated: RenderedChild | null = null;
 		const ensureGenerated = (): RenderedChild => {

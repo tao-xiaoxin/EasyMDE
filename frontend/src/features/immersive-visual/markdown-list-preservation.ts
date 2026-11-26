@@ -251,7 +251,7 @@ type AuthoritativeListResolution = Readonly<{
 }>;
 
 /** CommonMark §5.2 content indentation column of a single serialized list item. */
-export function listItemContentIndent(itemText: string): number {
+function listItemContentIndent(itemText: string): number {
 	const nl = itemText.indexOf("\n");
 	const firstLine = nl === -1 ? itemText : itemText.slice(0, nl);
 	return matchListMarker(firstLine)?.contentIndent ?? 0;
@@ -284,7 +284,7 @@ function hasMultilineMathInSlice(rawSlice: string): boolean {
  * column shifts unevenly (e.g. a tab after the marker), or when the shifted
  * slice does not re-parse to the exact item node.
  */
-export function tryLeftShiftReusableItem(
+function tryLeftShiftReusableItem(
 	rawSlice: string,
 	leadCols: number,
 	listNode: ProseMirrorNode,
@@ -474,7 +474,8 @@ export function resolveAuthoritativeListPreservation(
 				continue;
 			}
 			if (needOutput || needNextIndent) {
-				const pairedSlice = pairedIdx >= 0 ? slices.items[pairedIdx] : undefined;
+				const pairedSlice =
+					pairedIdx >= 0 ? slices.items[pairedIdx] : undefined;
 				const serializedItem = serializeListItemAt(
 					listNode,
 					idx,
@@ -491,7 +492,11 @@ export function resolveAuthoritativeListPreservation(
 				}
 			}
 		}
-		if (needOutput && newLen > 0 && (paired[newLen - 1] ?? -1) === origLen - 1) {
+		if (
+			needOutput &&
+			newLen > 0 &&
+			(paired[newLen - 1] ?? -1) === origLen - 1
+		) {
 			parts.push(slices.tail);
 		}
 		return {
@@ -523,8 +528,6 @@ export function resolveAuthoritativeListPreservation(
 					: full.output;
 			if (!listMarkdownParsesTo(unmasked, listNode, envReferences)) {
 				assembled = assemble(firstRaw, buildOutput, false);
-			} else if (buildOutput) {
-				assembled = full;
 			}
 		}
 		return {
@@ -602,7 +605,8 @@ export function serializeListPreservingItems(
 		prepareListPreservation(listNode, origBlock, 0, envReferences, rawOverride);
 	if (!prepared) return null;
 	const isReusableOrigItem = (origIdx: number): boolean =>
-		origIdx >= 0 && (!canReuseItem || canReuseItem(prepared.orig.child(origIdx)));
+		origIdx >= 0 &&
+		(!canReuseItem || canReuseItem(prepared.orig.child(origIdx)));
 	return resolveAuthoritativeListPreservation(
 		listNode,
 		prepared,

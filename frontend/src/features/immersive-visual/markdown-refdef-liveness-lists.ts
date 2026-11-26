@@ -1,10 +1,8 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import {
-	listItemContentIndent,
 	type PreparedListPreservation,
 	prepareListPreservation,
 	resolveAuthoritativeListPreservation,
-	tryLeftShiftReusableItem,
 } from "./markdown-list-preservation";
 import {
 	type BlockSerializer,
@@ -17,7 +15,7 @@ import {
 	type CandidatePartialRefDef,
 	discoverSubtree,
 	dropListUpstreamLabel,
-	fireTask,
+	firstLineOf,
 	type InvalidationTask,
 	isBlockContainerForRefDefs,
 	isLivePartialLabel,
@@ -35,14 +33,14 @@ import {
  * List planning for the refdef liveness analyzer. Each preservable list
  * registers every refdef inside its items and synchronously evaluates already-
  * non-reusable items BEFORE resolving reuse, so `st.partialTitleRefNodes`
- * matches what the final serializer sees. Dirty lists drain one at a time in
- * true topological order (`liveUpstreamCount`, non-sink before sink, smallest
- * `listNode.nodeSize` first) so multi-wave cascades never re-validate a heavy
- * downstream list per wave.
+ * matches what the final serializer sees. All Pass-2 list re-validation
+ * (first ordered marker, indented-item left-shifts, and the whole-list
+ * `allowShift = false` fallback) goes through ONE authoritative
+ * `resolveAuthoritativeListPreservation` call per dirty-list drain; dirty
+ * lists drain one at a time in true topological order (`liveUpstreamCount`,
+ * non-sink before sink, smallest `listNode.nodeSize` first) so multi-wave
+ * cascades never re-validate a heavy downstream list per wave.
  */
-
-const BLANK_BEFORE_NESTED_LIST =
-	/\n[ \t]*\n[ \t]+(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/;
 
 /**
  * Lazily computed text a preserved nested container emits (its tail decides
@@ -63,11 +61,6 @@ export type DescendResult = Readonly<{
 }>;
 
 export type InvalidCheck = ((node: ProseMirrorNode) => boolean) | null;
-
-function firstLineOf(text: string): string {
-	const nl = text.indexOf("\n");
-	return nl === -1 ? text : text.slice(0, nl);
-}
 
 function createLiveBlockSerializer(st: LivenessState): BlockSerializer {
 	const withRefs = st.serializeBlockWithRefs;
@@ -126,29 +119,22 @@ function forEachCandidateIn(
 }
 
 function isSinkList(st: LivenessState, check: PendingListCheck): boolean {
-	for (const label of check.firstLabels) {
+	for (const label of check.ownLabels) {
 		if ((st.dependentsByLabel.get(label)?.size ?? 0) > 0) return false;
 	}
 	return true;
 }
 
 function markListDirty(st: LivenessState, check: PendingListCheck): void {
-	if (
-		check.firstTask === undefined ||
-		!check.needsFirstValidation ||
-		check.itemReusable[0] !== true ||
-		check.heapIndex >= 0
-	) {
-		return;
-	}
+	if (!check.tracksValidation || check.heapIndex >= 0) return;
 	check.isSink = isSinkList(st, check);
 	pendingListHeapPush(st.pendingListHeap, check);
 }
 
 /**
  * Attaches an independent per-candidate dirty-list hook for every surviving
- * partial-title candidate inside a canonical trailing item, so distinct
- * candidates invalidated in different waves each re-dirty the enclosing list.
+ * partial-title candidate inside a canonical item, so distinct candidates
+ * invalidated in different waves each re-dirty the enclosing list.
  */
 function attachCanonicalCandidateDirtyHooks(
 	st: LivenessState,
@@ -156,7 +142,7 @@ function attachCanonicalCandidateDirtyHooks(
 	itemNode: ProseMirrorNode,
 	selfLabels: ReadonlySet<string>,
 ): void {
-	if (check.firstTask === undefined || !check.needsFirstValidation) return;
+	if (!check.tracksValidation) return;
 	forEachCandidateIn(st, itemNode, (cand) => {
 		if (
 			!isLivePartialLabel(st, cand.label) ||
@@ -198,102 +184,29 @@ function attachCanonicalCandidateDirtyHooks(
 }
 
 /**
- * Mirrors `resolveAuthoritativeListPreservation` during Pass 2: when item
- * `changedIdx` flips from verbatim to canonical, re-check any immediately
- * following reusable indented sibling items to verify whether each stays
- * reusable (safely left-shifted) or falls back to canonical serialization.
+ * Transitions reused item `itemIdx` to canonical. Canonical evaluation and
+ * new dirty hooks run BEFORE the item's verbatim upstream labels are dropped,
+ * so `liveUpstreamCount` never falsely dips to `0` and bounces back.
  */
-function recheckFollowingIndentedItems(
-	st: LivenessState,
-	check: PendingListCheck,
-	changedIdx: number,
-	tail: TailSource,
-): void {
-	const { listNode, prepared } = check;
-	if (!prepared.hasIndentedTrailingItem) return;
-	const itemCount = listNode.childCount;
-	const nextIdx = changedIdx + 1;
-	if (
-		nextIdx >= itemCount ||
-		check.itemReusable[nextIdx] !== true ||
-		(prepared.itemLeadCols[prepared.matched[nextIdx] ?? -1] ?? 0) <= 0
-	) {
-		return;
-	}
-	const loose = isLooseList(listNode);
-	const changedPaired = prepared.paired[changedIdx] ?? -1;
-	const changedPairedSlice =
-		changedPaired >= 0 ? prepared.slices.items[changedPaired] : undefined;
-	const canonicalChanged = serializeListItemAt(
-		listNode,
-		changedIdx,
-		loose,
-		createLiveBlockSerializer(st),
-		changedPairedSlice !== undefined &&
-			BLANK_BEFORE_NESTED_LIST.test(changedPairedSlice),
-		undefined,
-		(node) => st.partialTitleRefNodes.has(node),
-	);
-	let prevIndent = listItemContentIndent(canonicalChanged);
-	const lastIdx = itemCount - 1;
-	for (let k = nextIdx; k < itemCount; k += 1) {
-		if (check.itemReusable[k] !== true) break;
-		const matchedIdx = prepared.matched[k] ?? -1;
-		const leadCols =
-			matchedIdx >= 0 ? (prepared.itemLeadCols[matchedIdx] ?? 0) : 0;
-		if (leadCols <= 0 || prevIndent <= 0 || leadCols < prevIndent) break;
-		const rawSlice = prepared.slices.items[matchedIdx];
-		const shifted =
-			rawSlice !== undefined
-				? tryLeftShiftReusableItem(
-						rawSlice,
-						leadCols,
-						listNode,
-						k,
-						st.parsed.envReferences,
-					)
-				: null;
-		if (shifted !== null) {
-			prevIndent = listItemContentIndent(shifted);
-			if (k === lastIdx) tail.onChange?.();
-			continue;
-		}
-		fireTask(check.itemTasks[k]);
-		break;
-	}
-}
-
-function createListItemTask(
+function downgradeListItem(
 	st: LivenessState,
 	check: PendingListCheck,
 	itemIdx: number,
-	itemNode: ProseMirrorNode,
 	itemUpstreamLabels: ReadonlyArray<string>,
 	selfLabels: ReadonlySet<string>,
-	tail: TailSource,
-): InvalidationTask {
-	return {
-		fired: false,
-		run: () => {
-			check.itemReusable[itemIdx] = false;
-			if (itemIdx === 0) check.firstEmittedSlice = null;
-			for (let i = 0; i < itemUpstreamLabels.length; i += 1) {
-				const label = itemUpstreamLabels[i];
-				if (label !== undefined) dropListUpstreamLabel(st, check, label);
-			}
-			if (st.subtreeHasCandidates.has(itemNode)) {
-				walkSubtree(st, itemNode, "canonical", false, false);
-				if (itemIdx > 0) {
-					attachCanonicalCandidateDirtyHooks(st, check, itemNode, selfLabels);
-				}
-			}
-			recheckFollowingIndentedItems(st, check, itemIdx, tail);
-			// O(1): defer whole-list first-marker re-validation to prioritized
-			// topological drain instead of re-parsing per item.
-			if (itemIdx > 0) markListDirty(st, check);
-			if (itemIdx === check.listNode.childCount - 1) tail.onChange?.();
-		},
-	};
+): void {
+	check.itemReusable[itemIdx] = false;
+	if (itemIdx === 0) check.firstEmittedSlice = null;
+	const itemNode = check.listNode.child(itemIdx);
+	if (st.subtreeHasCandidates.has(itemNode)) {
+		walkSubtree(st, itemNode, "canonical", false, false);
+		attachCanonicalCandidateDirtyHooks(st, check, itemNode, selfLabels);
+	}
+	for (let i = 0; i < itemUpstreamLabels.length; i += 1) {
+		const label = itemUpstreamLabels[i];
+		if (label !== undefined) dropListUpstreamLabel(st, check, label);
+	}
+	if (itemIdx === check.listNode.childCount - 1) check.notifyTailChange();
 }
 
 export function openList(
@@ -362,23 +275,47 @@ export function openList(
 	}
 
 	const resolution = resolveListReuse(st, listNode, prepared, false);
+	// One unified Pass-2 re-validation trigger: a reused first ordered item
+	// with candidates needing whole-list marker validation, or ANY indented
+	// trailing item whose left-shift (and the whole-list `allowShift = false`
+	// fallback) depends on every preceding item's emitted form.
+	const tracksValidation =
+		prepared.hasIndentedTrailingItem ||
+		(resolution.needsFirstOrderedValidation &&
+			resolution.itemReusable[0] === true &&
+			itemHasCands[0] === true);
+	const selfLabels = new Set<string>();
+	if (tracksValidation) {
+		forEachCandidateIn(st, listNode, (cand) => {
+			selfLabels.add(cand.label);
+		});
+	}
+	const tail: TailSource = {
+		onChange: null,
+		read: () => resolveListReuse(st, listNode, prepared, true).output ?? "",
+	};
+	const itemUpstream = new Array<ReadonlyArray<string>>(itemCount);
 	const check: PendingListCheck = {
+		downgradeItem: (itemIdx) =>
+			downgradeListItem(
+				st,
+				check,
+				itemIdx,
+				itemUpstream[itemIdx] ?? [],
+				selfLabels,
+			),
 		firstEmittedSlice: resolution.firstEmittedSlice,
-		firstLabels: [],
-		firstTask: undefined,
 		heapIndex: -1,
 		isSink: false,
 		itemReusable: resolution.itemReusable,
 		itemTasks: new Array<InvalidationTask | undefined>(itemCount),
 		listNode,
 		liveUpstreamCount: 0,
-		needsFirstValidation: resolution.needsFirstOrderedValidation,
+		notifyTailChange: () => tail.onChange?.(),
+		ownLabels: [...selfLabels],
 		prepared,
 		refCountByUpstreamLabel: new Map<string, number>(),
-	};
-	const tail: TailSource = {
-		onChange: null,
-		read: () => resolveListReuse(st, listNode, prepared, true).output ?? "",
+		tracksValidation,
 	};
 	const head = (): string => {
 		const innerFirst =
@@ -403,96 +340,60 @@ export function openList(
 			: `${"> ".repeat(depth - 1)}>`;
 	};
 
-	const tracksFirstItem =
-		check.itemReusable[0] === true &&
-		check.needsFirstValidation &&
-		itemHasCands[0] === true;
-	const selfLabels = new Set<string>();
-	if (tracksFirstItem) {
-		forEachCandidateIn(st, listNode, (cand) => {
-			selfLabels.add(cand.label);
-		});
-	}
-
 	const lastIdx = itemCount - 1;
 	for (let itemIdx = 0; itemIdx < itemCount; itemIdx += 1) {
 		const itemNode = listNode.child(itemIdx);
-		const hasCands = itemHasCands[itemIdx] === true;
-		const reusable = check.itemReusable[itemIdx] === true;
-		if (!reusable) {
+		if (check.itemReusable[itemIdx] !== true) {
 			if (!preEvaluatedCanonical[itemIdx]) {
 				walkSubtree(st, itemNode, "canonical", false, deferInvalidation);
+			}
+			if (itemHasCands[itemIdx] === true) {
+				attachCanonicalCandidateDirtyHooks(st, check, itemNode, selfLabels);
 			}
 			continue;
 		}
 		if (discover) {
 			walkSubtree(st, itemNode, "verbatim", false, deferInvalidation);
 		}
-		if (itemIdx === 0 && hasCands) {
-			forEachCandidateIn(st, itemNode, (cand) => {
-				check.firstLabels.push(cand.label);
-			});
-		}
 		const origIdx = prepared.matched[itemIdx] ?? -1;
-		const nextIndented =
-			prepared.hasIndentedTrailingItem &&
-			itemIdx + 1 < itemCount &&
-			check.itemReusable[itemIdx + 1] === true &&
-			(prepared.itemLeadCols[prepared.matched[itemIdx + 1] ?? -1] ?? 0) > 0;
-		const selfIndented =
-			itemIdx > 0 && origIdx >= 0 && (prepared.itemLeadCols[origIdx] ?? 0) > 0;
 		if (
 			origIdx < 0 ||
-			!(
-				hasCands ||
-				(itemIdx > 0 && tracksFirstItem) ||
-				itemIdx === lastIdx ||
-				nextIndented ||
-				selfIndented
-			)
+			!(tracksValidation || itemHasCands[itemIdx] || itemIdx === lastIdx)
 		) {
 			continue;
 		}
 		const itemUpstreamLabels: string[] = [];
-		if (tracksFirstItem && itemIdx > 0) {
+		if (tracksValidation) {
 			const seen = new Set<string>();
-			visitReferencedLabels(prepared.orig.child(origIdx), st.parsed, (label) => {
-				if (
-					!seen.has(label) &&
-					!selfLabels.has(label) &&
-					isLivePartialLabel(st, label)
-				) {
-					seen.add(label);
-					itemUpstreamLabels.push(label);
-					addListUpstreamLabel(st, check, label);
-				}
-				return false;
-			});
+			visitReferencedLabels(
+				prepared.orig.child(origIdx),
+				st.parsed,
+				(label) => {
+					if (
+						!seen.has(label) &&
+						!selfLabels.has(label) &&
+						isLivePartialLabel(st, label)
+					) {
+						seen.add(label);
+						itemUpstreamLabels.push(label);
+						addListUpstreamLabel(st, check, label);
+					}
+					return false;
+				},
+			);
 		}
-		const task = createListItemTask(
-			st,
-			check,
-			itemIdx,
-			itemNode,
-			itemUpstreamLabels,
-			selfLabels,
-			tail,
-		);
+		itemUpstream[itemIdx] = itemUpstreamLabels;
+		const task: InvalidationTask = {
+			fired: false,
+			run: () => {
+				check.downgradeItem(itemIdx);
+				// O(1): defer whole-list re-validation (first ordered marker and
+				// indented-item left-shifts) to the prioritized topological drain.
+				markListDirty(st, check);
+			},
+		};
 		check.itemTasks[itemIdx] = task;
-		if (itemIdx === 0) check.firstTask = task;
 		registerNodeDependency(st, prepared.orig.child(origIdx), task);
-	}
-	if (tracksFirstItem) {
-		for (let itemIdx = 1; itemIdx < itemCount; itemIdx += 1) {
-			if (check.itemReusable[itemIdx] !== true && itemHasCands[itemIdx]) {
-				attachCanonicalCandidateDirtyHooks(
-					st,
-					check,
-					listNode.child(itemIdx),
-					selfLabels,
-				);
-			}
-		}
 	}
 	if (hasAny) st.subtreeHasCandidates.add(listNode);
 	return { hasAny, head, preserved: true, tail };
@@ -500,9 +401,11 @@ export function openList(
 
 /**
  * Pops ONE dirty list in topological priority order (`liveUpstreamCount` first,
- * non-sink before sink, smallest `listNode.nodeSize` first) and re-validates
- * its reused first ordered item in O(list). Returns `false` once no list is
- * dirty.
+ * non-sink before sink, smallest `listNode.nodeSize` first) and re-runs the
+ * single authoritative `resolveAuthoritativeListPreservation` (first ordered
+ * marker, indented-item left-shifts, and the whole-list `allowShift = false`
+ * fallback) ONCE, downgrading every newly non-reusable item. Returns `false`
+ * once no list is dirty.
  */
 export function drainNextPendingList(st: LivenessState): boolean {
 	const heap = st.pendingListHeap;
@@ -514,21 +417,25 @@ export function drainNextPendingList(st: LivenessState): boolean {
 			pendingListHeapPush(heap, check);
 			continue;
 		}
-		if (!check.needsFirstValidation || check.itemReusable[0] !== true) {
-			return true;
-		}
+		const prevFirst = check.firstEmittedSlice;
 		const recheck = resolveListReuse(st, check.listNode, check.prepared, false);
-		check.needsFirstValidation = recheck.needsFirstOrderedValidation;
-		check.firstEmittedSlice = recheck.firstEmittedSlice;
-		for (let idx = 1; idx < check.listNode.childCount; idx += 1) {
-			if (
-				check.itemReusable[idx] === true &&
-				recheck.itemReusable[idx] !== true
-			) {
-				fireTask(check.itemTasks[idx]);
+		check.firstEmittedSlice =
+			check.itemReusable[0] === true ? recheck.firstEmittedSlice : null;
+		let changed = prevFirst !== check.firstEmittedSlice;
+		for (let idx = 0; idx < check.listNode.childCount; idx += 1) {
+			if (check.itemReusable[idx] !== true || recheck.itemReusable[idx]) {
+				continue;
 			}
+			changed = true;
+			// Drain-driven downgrades reuse the item transition WITHOUT
+			// re-dirtying this list: `recheck` already reflects them.
+			const task = check.itemTasks[idx];
+			if (task) task.fired = true;
+			check.downgradeItem(idx);
 		}
-		if (recheck.itemReusable[0] !== true) fireTask(check.firstTask);
+		if (changed || check.prepared.hasIndentedTrailingItem) {
+			check.notifyTailChange();
+		}
 		return true;
 	}
 	return false;

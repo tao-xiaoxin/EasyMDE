@@ -2,17 +2,11 @@ import type { Node as ProseMirrorNode } from "prosemirror-model";
 import {
 	alignContainerChildren,
 	canPreserveContainerHeadStructurally,
-	checkRawPreservationRisks,
 	createTightSharedGroupChecker,
-	leadingIndentAtDepth,
-	needsPrevInnerForRiskCheck,
 	sharedGroupHasInvalidatedRef,
 	stripAtDepth,
 } from "./markdown-container-preservation";
-import {
-	blankSeparatorAtDepth,
-	resolveContainerSlotJoin,
-} from "./markdown-container-slot-separator";
+import { blankSeparatorAtDepth } from "./markdown-container-slot-separator";
 import { isNestedList } from "./markdown-list-serialization";
 import type {
 	BuiltVisualBlockSources,
@@ -26,9 +20,19 @@ import {
 	type TailSource,
 } from "./markdown-refdef-liveness-lists";
 import {
+	baselineHeadRisk,
+	type ContainerState,
+	evaluateSlotJoin,
+	isBrokenTightLeft,
+	preservedSlotHasRisk,
+	type SlotState,
+	uneditedHeadBase,
+} from "./markdown-refdef-liveness-slot-risk";
+import {
 	type CandidatePartialRefDef,
 	evaluateCandidateCanonical,
 	fireTask,
+	firstLineOf,
 	type InvalidationTask,
 	isBlockContainerForRefDefs,
 	isPartialTitleFollowerType,
@@ -51,54 +55,7 @@ import {
  * final serialized output.
  */
 
-type SlotState = "verbatim" | "preserved-container" | "canonical";
-
-type SlotRisks = Readonly<{
-	indentedRisk: boolean;
-	separator: string;
-	swallowRisk: boolean;
-}>;
-
 type SharedGroupChecker = ReturnType<typeof createTightSharedGroupChecker>;
-
-type ContainerState = {
-	readonly container: ProseMirrorNode;
-	readonly defaultBlankSep: string;
-	readonly deferInvalidation: boolean;
-	readonly depth: number;
-	readonly discover: boolean;
-	readonly effectiveOrigIndex: number[];
-	readonly groupReverseLinks: Map<number, InvalidationTask[]>;
-	readonly groupStartAt: number[];
-	readonly groupTasks: Map<number, InvalidationTask>;
-	/**
-	 * Lazily computes line 0 at `cs.depth` for verbatim or preserved-container
-	 * slots (used for `swallowRisk` / `indentedRisk` re-checks); `null` = canonical.
-	 */
-	readonly headAt: Array<(() => string) | null>;
-	/**
-	 * Lazily computes the depth-stripped text the serializer emits for each
-	 * slot when it is verbatim or a preserved nested container (its tail
-	 * decides list-swallow / lazy-continuation joins); `null` = canonical.
-	 */
-	readonly innerAt: Array<(() => string) | null>;
-	readonly keepsTrailingSuffix: boolean;
-	readonly matchedOrigIndex: ReadonlyArray<number>;
-	readonly pairedOrigIndex: ReadonlyArray<number>;
-	readonly slotCandidates: Map<number, CandidatePartialRefDef[]>;
-	readonly slotState: SlotState[];
-	readonly slotTasks: Map<number, InvalidationTask>;
-	readonly source: BuiltVisualBlockSources;
-	/** This container's own tail as seen by its parent container slot. */
-	readonly tail: TailSource;
-	readonly tailAt: Array<TailSource | null>;
-	hasAny: boolean;
-};
-
-function firstLineOf(text: string): string {
-	const nl = text.indexOf("\n");
-	return nl === -1 ? text : text.slice(0, nl);
-}
 
 function prefixOneLevel(text: string): string {
 	return text
@@ -129,99 +86,6 @@ function isNextVerbatimTightInContainer(
 		nextSep === "\n" ||
 		(refOrig?.sharedGroup !== undefined &&
 			refOrig.sharedGroup === nextOrig?.sharedGroup)
-	);
-}
-
-/**
- * Predicts the serializer's separator and raw-preservation risks for emitting
- * `rawCandidate` at slot `idx`.
- */
-function evaluateSlotJoin(
-	st: LivenessState,
-	cs: ContainerState,
-	idx: number,
-	rawCandidate: string,
-	effIdx: number,
-	groupSep: string | undefined,
-): SlotRisks {
-	const child = cs.container.child(idx);
-	const prevNode = idx > 0 ? cs.container.child(idx - 1) : null;
-	const origIdx = cs.matchedOrigIndex[idx] ?? -1;
-	const prevMatched = idx > 0 ? (cs.matchedOrigIndex[idx - 1] ?? -1) : -1;
-	// Mirrors the serializer: only a previous slot actually emitted verbatim
-	// from its own baseline raw proves the original adjacency still parses.
-	const prevWasVerbatimAdjacent =
-		idx > 0 &&
-		cs.slotState[idx - 1] === "verbatim" &&
-		prevMatched >= 0 &&
-		origIdx >= 0 &&
-		origIdx === prevMatched + 1;
-	const prevInnerSource = idx > 0 ? (cs.innerAt[idx - 1] ?? null) : null;
-	let prevInner: string | null = null;
-	const readPrevInner = (): string => {
-		if (prevInner === null) {
-			prevInner =
-				prevInnerSource !== null
-					? prevInnerSource()
-					: prevNode !== null
-						? st.serializeBlock(prevNode)
-						: "";
-		}
-		return prevInner;
-	};
-	const rawInner = stripAtDepth(rawCandidate, cs.depth);
-	const { separator } = resolveContainerSlotJoin({
-		baselineBlocks: cs.source.blocks,
-		child,
-		defaultBlankSep: cs.defaultBlankSep,
-		effIdx,
-		groupSep,
-		innerText: rawInner,
-		// A tight partial-title join depends on final liveness, which a later
-		// invalidation may withdraw; predicting the blank join is conservative.
-		isPartialTitleRefDef: null,
-		prevEffIdx: idx > 0 ? (cs.effectiveOrigIndex[idx - 1] ?? -1) : -1,
-		prevInnerText: readPrevInner,
-		prevNode,
-		prevWasVerbatimAdjacent,
-		serializedIsNull: false,
-	});
-	const leadIndent = leadingIndentAtDepth(rawCandidate, cs.depth);
-	if (leadIndent <= 0) {
-		return { indentedRisk: false, separator, swallowRisk: false };
-	}
-	const prevInnerForRisk = needsPrevInnerForRiskCheck(
-		child,
-		leadIndent,
-		separator,
-		prevNode,
-		prevWasVerbatimAdjacent,
-	)
-		? readPrevInner()
-		: "";
-	const { indentedRisk, swallowRisk } = checkRawPreservationRisks(
-		child,
-		cs.depth,
-		rawCandidate,
-		rawInner,
-		separator,
-		prevNode,
-		prevInnerForRisk,
-		prevWasVerbatimAdjacent,
-	);
-	return { indentedRisk, separator, swallowRisk };
-}
-
-function isBrokenTightLeft(
-	cs: ContainerState,
-	idx: number,
-	group: ParsedVisualSharedGroup,
-	separator: string,
-): boolean {
-	const prevEffIdx = idx > 0 ? (cs.effectiveOrigIndex[idx - 1] ?? -1) : -1;
-	return (
-		group.separatorBefore === "\n" &&
-		(separator !== "\n" || prevEffIdx !== group.startIndex - 1)
 	);
 }
 
@@ -287,18 +151,9 @@ function recheckFollowingIndentRisks(
 	const nextState = cs.slotState[nextIdx];
 	if (nextState === "canonical") return;
 	if (nextState === "preserved-container") {
-		const headReader = cs.headAt[nextIdx];
-		if (!headReader) return;
-		const effIdx = cs.effectiveOrigIndex[nextIdx] ?? -1;
-		const { indentedRisk, swallowRisk } = evaluateSlotJoin(
-			st,
-			cs,
-			nextIdx,
-			headReader(),
-			effIdx,
-			undefined,
-		);
-		if (indentedRisk || swallowRisk) fireTask(cs.slotTasks.get(nextIdx));
+		if (preservedSlotHasRisk(st, cs, nextIdx)) {
+			fireTask(cs.slotTasks.get(nextIdx));
+		}
 		return;
 	}
 	const nextGroupStart = cs.groupStartAt[nextIdx] ?? -1;
@@ -408,7 +263,9 @@ function descendNonVerbatimChild(
  * Transitions a slot whose nested `blockquote`/`list` returned `preserved: true`
  * into either `"preserved-container"` (with a Pass-2 risk-downgrade task) or
  * immediately into `"canonical"` when `swallowRisk || indentedRisk` already
- * triggers — matching `markdown-block-preservation.ts:468-499`.
+ * triggers — matching `serializeContainerPreservingChildren`. Callers have
+ * already rejected an unedited-head baseline (`riskBase`) whose raw leading
+ * line is risky.
  */
 function installPreservedContainerSlot(
 	st: LivenessState,
@@ -417,31 +274,24 @@ function installPreservedContainerSlot(
 	effIdx: number,
 	result: DescendResult,
 	deferInvalidation: boolean,
+	riskBase: ParsedVisualBlockSource | null,
 ): void {
 	const child = cs.container.child(idx);
-	if (result.head !== null) {
-		const { indentedRisk, swallowRisk } = evaluateSlotJoin(
-			st,
-			cs,
-			idx,
-			result.head(),
-			effIdx,
-			undefined,
-		);
-		if (indentedRisk || swallowRisk) {
-			cs.slotState[idx] = "canonical";
-			cs.innerAt[idx] = null;
-			cs.headAt[idx] = null;
-			cs.tailAt[idx] = null;
-			if (result.tail) result.tail.onChange = null;
-			if (st.subtreeHasCandidates.has(child)) {
-				walkSubtree(st, child, "canonical", false, deferInvalidation);
-			}
-			return;
+	cs.headAt[idx] = result.head;
+	cs.riskBaseAt[idx] = riskBase;
+	cs.effectiveOrigIndex[idx] = effIdx;
+	if (riskBase === null && preservedSlotHasRisk(st, cs, idx)) {
+		cs.slotState[idx] = "canonical";
+		cs.innerAt[idx] = null;
+		cs.headAt[idx] = null;
+		cs.tailAt[idx] = null;
+		if (result.tail) result.tail.onChange = null;
+		if (st.subtreeHasCandidates.has(child)) {
+			walkSubtree(st, child, "canonical", false, deferInvalidation);
 		}
+		return;
 	}
 	cs.slotState[idx] = "preserved-container";
-	cs.headAt[idx] = result.head;
 	bindNestedTail(st, cs, idx, result.tail);
 	const downgradeTask: InvalidationTask = {
 		fired: false,
@@ -453,6 +303,7 @@ function installPreservedContainerSlot(
 			cs.innerAt[idx] = null;
 			cs.headAt[idx] = null;
 			cs.tailAt[idx] = null;
+			cs.riskBaseAt[idx] = null;
 			if (st.subtreeHasCandidates.has(child)) {
 				walkSubtree(st, child, "canonical", false, false);
 			}
@@ -578,15 +429,14 @@ function processMatchedSlot(
 			cs.innerAt[idx] = null;
 			cs.headAt[idx] = null;
 			// An invalidated match is re-preserved as a nested container by the
-			// serializer unless swallow/indent risks force canonical fallback; a
-			// risk break ALWAYS emits canonically.
-			const invalidated = nodeHasCurrentInvalidatedRef(st, origBlock.node);
+			// serializer unless its unedited baseline head or its emitted head
+			// is risky; a risk break ALWAYS emits canonically (monotonic).
 			if (child.childCount > 0 && isBlockContainerForRefDefs(child)) {
-				if (!invalidated) {
-					if (st.subtreeHasCandidates.has(child)) {
-						walkSubtree(st, child, "canonical", false, false);
-					}
-				} else {
+				const riskBase = uneditedHeadBase(st, child, origBlock);
+				if (
+					nodeHasCurrentInvalidatedRef(st, origBlock.node) &&
+					!baselineHeadRisk(st, cs, idx, riskBase, origIdx)
+				) {
 					const result = descendNonVerbatimChild(
 						st,
 						child,
@@ -596,8 +446,18 @@ function processMatchedSlot(
 						false,
 					);
 					if (result.preserved) {
-						installPreservedContainerSlot(st, cs, idx, origIdx, result, false);
+						installPreservedContainerSlot(
+							st,
+							cs,
+							idx,
+							origIdx,
+							result,
+							false,
+							riskBase,
+						);
 					}
+				} else if (st.subtreeHasCandidates.has(child)) {
+					walkSubtree(st, child, "canonical", false, false);
 				}
 			}
 			reevaluateAttachedCandidates(st, cs, idx);
@@ -637,6 +497,19 @@ function processUnmatchedSlot(
 	const baseIdx =
 		origBlock !== undefined ? origIdx : (cs.pairedOrigIndex[idx] ?? -1);
 	const baseBlock = baseIdx >= 0 ? cs.source.blocks[baseIdx] : undefined;
+	const riskBase = uneditedHeadBase(st, child, baseBlock);
+	if (baselineHeadRisk(st, cs, idx, riskBase, baseIdx)) {
+		if (origBlock !== undefined && origBlock.sharedGroup === undefined) {
+			cs.effectiveOrigIndex[idx] = baseIdx;
+		}
+		cs.slotState[idx] = "canonical";
+		if (
+			walkSubtree(st, child, "canonical", cs.discover, cs.deferInvalidation)
+		) {
+			cs.hasAny = true;
+		}
+		return;
+	}
 	const result = descendNonVerbatimChild(
 		st,
 		child,
@@ -647,7 +520,6 @@ function processUnmatchedSlot(
 	);
 	if (result.hasAny) cs.hasAny = true;
 	if (result.preserved) {
-		cs.effectiveOrigIndex[idx] = baseIdx;
 		installPreservedContainerSlot(
 			st,
 			cs,
@@ -655,6 +527,7 @@ function processUnmatchedSlot(
 			baseIdx,
 			result,
 			cs.deferInvalidation,
+			riskBase,
 		);
 		return;
 	}
@@ -846,6 +719,7 @@ export function openContainer(
 		keepsTrailingSuffix,
 		matchedOrigIndex,
 		pairedOrigIndex,
+		riskBaseAt: new Array<ParsedVisualBlockSource | null>(newLen).fill(null),
 		slotCandidates: new Map<number, CandidatePartialRefDef[]>(),
 		slotState: new Array<SlotState>(newLen).fill("canonical"),
 		slotTasks: new Map<number, InvalidationTask>(),

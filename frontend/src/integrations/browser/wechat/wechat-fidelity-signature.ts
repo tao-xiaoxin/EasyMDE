@@ -777,7 +777,6 @@ export async function preparedLayoutSignatureWithYield(
 			styles.push(
 				`${property}=${normalizeSignatureStyleValue(property, computed.getPropertyValue(property))}`,
 			);
-			if (yieldToBrowser.shouldYield()) await yieldToBrowser();
 		}
 		const pseudoEntries = PREPARED_PSEUDO_ELEMENTS.map((pseudoElement) =>
 			preparedPseudoStyleAndMarginSignature(
@@ -867,7 +866,7 @@ export async function preparedLayoutSignatureWithYield(
 				auxiliarySignature,
 			),
 		);
-		await yieldToBrowser();
+		if (yieldToBrowser.shouldYield()) await yieldToBrowser();
 		throwIfBackgroundPreparationAborted(signal);
 	}
 

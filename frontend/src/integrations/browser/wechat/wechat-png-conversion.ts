@@ -122,16 +122,17 @@ export async function nativeVisualStyleDeclarations(
   const declarations: string[] = [];
   for (const property of nativeVisualStyleProperties(source, computed)) {
     const value = computed.getPropertyValue(property);
-    const materializedValue =
-      ('background' === property || 'background-image' === property) && value.includes('url(')
-        ? await materializeBackgroundValue(property, value, runtime, cache)
-        : value;
+    const hasBackgroundUrl = ('background' === property || 'background-image' === property) && value.includes('url(');
+    const materializedValue = hasBackgroundUrl
+      ? await materializeBackgroundValue(property, value, runtime, cache)
+      : value;
     if (null === materializedValue) continue;
     if (keepStyle(property, materializedValue, source, false, false, value, false)) {
       declarations.push(`${property}:${materializedValue}`);
     }
-    if (yieldToBrowser?.shouldYield()) await yieldToBrowser();
+    if (hasBackgroundUrl && yieldToBrowser?.shouldYield()) await yieldToBrowser();
   }
+  if (yieldToBrowser?.shouldYield()) await yieldToBrowser();
   return declarations;
 }
 
@@ -172,9 +173,6 @@ export async function createNativeVisualCaptureClone(
   });
   clone.querySelectorAll('script, style').forEach((element) => {
     element.remove();
-  });
-  clone.querySelectorAll('*').forEach((element) => {
-    removeTransientAttributes(element);
   });
   assertPngConversionCurrent(context);
   const mathCaptureSnapshot: WechatMathCaptureSnapshot | null = mathOwner

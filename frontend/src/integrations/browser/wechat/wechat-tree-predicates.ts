@@ -49,6 +49,10 @@ export function isSvgElement(source: Element): boolean {
 	return hasAncestorWithLocalName(source, "svg");
 }
 
+export function isInsideTable(source: Element): boolean {
+	return hasAncestorWithLocalName(source, "table");
+}
+
 export function isSvgDefinition(source: Element): boolean {
 	const localName = source.localName.toLowerCase();
 	return (
@@ -131,6 +135,7 @@ export function isMermaidForeignObject(source: Element): boolean {
 export type WechatTreePredicateCache = Readonly<{
 	hasSpecialLayoutAncestor: (source: Element) => boolean;
 	hasVisualRasterizationAncestor: (source: Element) => boolean;
+	isInsideTable: (source: Element) => boolean;
 	isKaTeXVisualNode: (source: Element) => boolean;
 	isMermaidForeignObject: (source: Element) => boolean;
 	isMermaidSvgRoot: (source: Element) => boolean;
@@ -205,6 +210,7 @@ function memoizeStrictAncestor(
  */
 export function createWechatTreePredicateCache(): WechatTreePredicateCache {
 	const svgAncestorMap = new Map<Element, boolean>();
+	const tableAncestorMap = new Map<Element, boolean>();
 	const defsAncestorMap = new Map<Element, boolean>();
 	const katexHtmlAncestorMap = new Map<Element, boolean>();
 	const mermaidClassAncestorMap = new Map<Element, boolean>();
@@ -254,6 +260,12 @@ export function createWechatTreePredicateCache(): WechatTreePredicateCache {
 				visualAncestorMap,
 				element,
 				(node) => null !== getVisualKind(node),
+			),
+		isInsideTable: (element) =>
+			memoizeSelfOrAncestor(
+				tableAncestorMap,
+				element,
+				(node) => "table" === node.localName.toLowerCase(),
 			),
 		isKaTeXVisualNode: (element) =>
 			(element.hasAttribute("class") && element.classList.contains("katex")) ||

@@ -20,28 +20,65 @@ export const RAW_DIMENSION_CONTEXT_IDENTITY_ATTRIBUTES = new Set([
   'data-easymde-preview-refreshing'
 ]);
 
+const RAW_DIMENSION_CONTEXT_IDENTITY_SELECTOR = Array.from(
+  RAW_DIMENSION_CONTEXT_IDENTITY_ATTRIBUTES,
+  (attribute) => `[${attribute}]`
+).join(',');
+
 export function stripRawDimensionContextIdentityAttributes(root: Element): void {
-  RAW_DIMENSION_CONTEXT_IDENTITY_ATTRIBUTES.forEach((attribute) => {
-    root.querySelectorAll(`[${attribute}]`).forEach((node) => {
-      node.removeAttribute(attribute);
+  const removeIdentityAttributes = (element: Element): void => {
+    RAW_DIMENSION_CONTEXT_IDENTITY_ATTRIBUTES.forEach((attribute) => {
+      if (element.hasAttribute(attribute)) element.removeAttribute(attribute);
     });
-    if (root.hasAttribute(attribute)) root.removeAttribute(attribute);
-  });
+  };
+  root.querySelectorAll(RAW_DIMENSION_CONTEXT_IDENTITY_SELECTOR).forEach(removeIdentityAttributes);
+  removeIdentityAttributes(root);
 }
 
 export function syncRawContextAttributes(source: Element, mirror: Element, suppressPreviewSinkIdentity = false): void {
-  const sourceAttributes = new Map(Array.from(source.attributes, (attribute) => [attribute.name, attribute.value]));
-  for (const attribute of Array.from(mirror.attributes)) {
-    if (
-      !sourceAttributes.has(attribute.name) ||
-      (suppressPreviewSinkIdentity && RAW_DIMENSION_CONTEXT_IDENTITY_ATTRIBUTES.has(attribute.name))
-    )
-      mirror.removeAttribute(attribute.name);
+  const sourceAttrs = source.attributes;
+  const mirrorAttrs = mirror.attributes;
+  const sourceLength = sourceAttrs.length;
+  const mirrorLength = mirrorAttrs.length;
+  if (0 === sourceLength && 0 === mirrorLength) return;
+  if (sourceLength === mirrorLength) {
+    let identical = true;
+    for (let index = 0; index < sourceLength; index += 1) {
+      const sourceAttr = sourceAttrs[index];
+      const mirrorAttr = mirrorAttrs[index];
+      if (
+        !sourceAttr ||
+        !mirrorAttr ||
+        sourceAttr.name !== mirrorAttr.name ||
+        sourceAttr.value !== mirrorAttr.value ||
+        (suppressPreviewSinkIdentity && RAW_DIMENSION_CONTEXT_IDENTITY_ATTRIBUTES.has(sourceAttr.name))
+      ) {
+        identical = false;
+        break;
+      }
+    }
+    if (identical) return;
   }
-  sourceAttributes.forEach((value, name) => {
-    if (suppressPreviewSinkIdentity && RAW_DIMENSION_CONTEXT_IDENTITY_ATTRIBUTES.has(name)) return;
-    if (mirror.getAttribute(name) !== value) mirror.setAttribute(name, value);
-  });
+  for (let index = mirrorAttrs.length - 1; index >= 0; index -= 1) {
+    const mirrorAttr = mirrorAttrs[index];
+    if (!mirrorAttr) continue;
+    const name = mirrorAttr.name;
+    if (
+      !source.hasAttribute(name) ||
+      (suppressPreviewSinkIdentity && RAW_DIMENSION_CONTEXT_IDENTITY_ATTRIBUTES.has(name))
+    ) {
+      mirror.removeAttribute(name);
+    }
+  }
+  for (let index = 0; index < sourceLength; index += 1) {
+    const sourceAttr = sourceAttrs[index];
+    if (!sourceAttr) continue;
+    const name = sourceAttr.name;
+    if (suppressPreviewSinkIdentity && RAW_DIMENSION_CONTEXT_IDENTITY_ATTRIBUTES.has(name)) continue;
+    if (mirror.getAttribute(name) !== sourceAttr.value) {
+      mirror.setAttribute(name, sourceAttr.value);
+    }
+  }
 }
 
 export function createRawDimensionContextMirror(
@@ -134,12 +171,13 @@ export function createDimensionSemanticsContext(
   const rawElements = contextElements(rawRoot);
   const rawElementByLayout = new WeakMap<Element, Element>();
   let formattingOwnerDisplayCache = new WeakMap<Element, string>();
-  let refreshGeneration = 0;
+  let refreshGeneration = 1;
   const refresh = (): void => {
     refreshGeneration += 1;
     formattingOwnerDisplayCache = new WeakMap<Element, string>();
     if (!rawMirror) return;
     rawMirror.pairs.forEach(({ mirror, source }) => {
+      if (mirror === rawMirror.root) return;
       syncRawContextAttributes(source, mirror, true);
     });
     const sourceElements = contextElements(sourceRoot);
@@ -154,7 +192,9 @@ export function createDimensionSemanticsContext(
     const rawElement = rawElements[index];
     if (rawElement) rawElementByLayout.set(element, rawElement);
   });
-  refresh();
+  if (rawMirror) {
+    rawMirror.root.setAttribute(WECHAT_EXPORT_STYLE_CONTEXT_ATTRIBUTE, '1');
+  }
   const getFormattingOwnerDisplay = (source: Element): string | null => {
     let ancestor = source.parentElement;
     while (ancestor) {

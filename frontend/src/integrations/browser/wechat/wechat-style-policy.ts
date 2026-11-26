@@ -4,6 +4,7 @@ import type { WechatDimensionSemanticsContext } from "./wechat-dimension-semanti
 import { pseudoContent } from "./wechat-pseudo-content";
 import {
 	CONTENT_BOX_PROMOTED_PROPERTIES,
+	CONTENT_BOX_REPLACED_ELEMENTS,
 	COPY_STYLE_PROPERTIES,
 	DEFAULT_STYLE_VALUES,
 	hasOnlySafeDataImageUrls,
@@ -42,7 +43,10 @@ import {
 	fontWithoutZeroLineHeight,
 	shouldOmitZeroLineHeight,
 } from "./wechat-task-checkbox-style";
-import type { WechatTreePredicateCache } from "./wechat-tree-predicates";
+import {
+	isInsideTable,
+	type WechatTreePredicateCache,
+} from "./wechat-tree-predicates";
 
 export { splitSelectorList } from "../../../shared/css/selector-list";
 export {
@@ -122,6 +126,245 @@ const ORDINARY_DIMENSION_PROPERTY_SET: ReadonlySet<string> = new Set(
 const SEMANTIC_MARGIN_PROPERTY_SET: ReadonlySet<string> = new Set(
 	SEMANTIC_MARGIN_PROPERTIES,
 );
+const NOOP_BACKGROUND_SHORTHAND_TOKENS: ReadonlySet<string> = new Set([
+	"transparent",
+	"none",
+	"repeat",
+	"scroll",
+	"0%",
+	"0px",
+	"0",
+	"/",
+	"auto",
+	"padding-box",
+	"border-box",
+]);
+const DEFAULT_BACKGROUND_POSITION_VALUES: ReadonlySet<string> = new Set([
+	"0% 0%",
+	"0px 0px",
+	"0 0",
+]);
+const DEFAULT_BACKGROUND_REPEAT_VALUES: ReadonlySet<string> = new Set([
+	"repeat",
+	"repeat repeat",
+]);
+const DEFAULT_BACKGROUND_SIZE_VALUES: ReadonlySet<string> = new Set([
+	"auto",
+	"auto auto",
+]);
+const BORDER_PRUNE_EXCLUDED_TAGS: ReadonlySet<string> = new Set([
+	"table",
+	"thead",
+	"tbody",
+	"tfoot",
+	"tr",
+	"th",
+	"td",
+	"caption",
+	"colgroup",
+	"col",
+	"hr",
+	"blockquote",
+	"input",
+	"fieldset",
+	"button",
+	"textarea",
+	"select",
+	"iframe",
+]);
+const BORDER_EDGE_PROPERTY =
+	/^border-(top|right|bottom|left)-(width|style|color)$/;
+const TABLE_DISPLAY_VALUES: ReadonlySet<string> = new Set([
+	"table",
+	"inline-table",
+	"table-caption",
+	"table-cell",
+	"table-column",
+	"table-column-group",
+	"table-footer-group",
+	"table-header-group",
+	"table-row",
+	"table-row-group",
+]);
+const OVERFLOW_PROPERTIES: ReadonlySet<string> = new Set([
+	"overflow",
+	"overflow-x",
+	"overflow-y",
+]);
+const TASK_CHECKBOX_PRESERVED_DEFAULT_PROPERTIES: ReadonlySet<string> = new Set(
+	["position", "transform"],
+);
+const SVG_PRESENTATION_ATTRIBUTE_OVERRIDE_PROPERTIES: ReadonlySet<string> =
+	new Set([
+		"clip-path",
+		"filter",
+		"marker-end",
+		"marker-mid",
+		"marker-start",
+		"mask",
+		"paint-order",
+		"transform",
+		"vector-effect",
+	]);
+
+function isNoopTransparentBackgroundShorthand(value: string): boolean {
+	const normalized = value.trim().toLowerCase();
+	if (
+		!normalized ||
+		normalized.includes("url(") ||
+		normalized.includes("gradient(")
+	) {
+		return false;
+	}
+	let hasTransparentColor = false;
+	const withoutTransparentRgba = normalized
+		.replace(/rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0(?:\.0+)?\s*\)/g, () => {
+			hasTransparentColor = true;
+			return " transparent ";
+		})
+		.replace(/rgba?\(\s*0\s+0\s+0\s*\/\s*0(?:\.0+)?%?\s*\)/g, () => {
+			hasTransparentColor = true;
+			return " transparent ";
+		});
+	if (withoutTransparentRgba.includes(",")) return false;
+	const tokens = withoutTransparentRgba.trim().split(/\s+/);
+	if (!tokens.length) return false;
+	for (const token of tokens) {
+		if ("transparent" === token) hasTransparentColor = true;
+		if (!NOOP_BACKGROUND_SHORTHAND_TOKENS.has(token)) return false;
+	}
+	return hasTransparentColor;
+}
+
+function hasPaintedBackgroundImage(computed: CSSStyleDeclaration): boolean {
+	const backgroundImage = computed
+		.getPropertyValue("background-image")
+		.trim()
+		.toLowerCase();
+	if (backgroundImage && "none" !== backgroundImage) return true;
+	const background = computed
+		.getPropertyValue("background")
+		.trim()
+		.toLowerCase();
+	return (
+		Boolean(background) &&
+		(background.includes("url(") ||
+			background.includes("gradient(") ||
+			WECHAT_GRADIENT_FUNCTION.test(background))
+	);
+}
+
+function isBorderPruneEligible(
+	source: Element,
+	pseudoElement: boolean,
+	root: boolean,
+	localName: string,
+): boolean {
+	if (root || pseudoElement) return false;
+	if (BORDER_PRUNE_EXCLUDED_TAGS.has(localName)) return false;
+	return !isTaskListCheckbox(source);
+}
+
+function shouldOmitDefaultBackgroundProperty(
+	property: string,
+	value: string,
+	computed: CSSStyleDeclaration | undefined,
+): boolean {
+	if ("background" === property) {
+		return isNoopTransparentBackgroundShorthand(value);
+	}
+	if ("background-image" === property) {
+		return (
+			"none" === value.trim().toLowerCase() &&
+			(!computed || !hasPaintedBackgroundImage(computed))
+		);
+	}
+	if (!computed || hasPaintedBackgroundImage(computed)) return false;
+	const normalized = value.trim().toLowerCase();
+	if ("background-position" === property) {
+		return DEFAULT_BACKGROUND_POSITION_VALUES.has(normalized);
+	}
+	if ("background-repeat" === property) {
+		return DEFAULT_BACKGROUND_REPEAT_VALUES.has(normalized);
+	}
+	if ("background-size" === property) {
+		return DEFAULT_BACKGROUND_SIZE_VALUES.has(normalized);
+	}
+	return false;
+}
+
+function shouldOmitBorderlessProperty(
+	property: string,
+	value: string,
+	source: Element,
+	pseudoElement: boolean,
+	root: boolean,
+	localName: string,
+	computed: CSSStyleDeclaration | undefined,
+): boolean {
+	if ("border-radius" === property) {
+		return (
+			("0px" === value || "0" === value) &&
+			isBorderPruneEligible(source, pseudoElement, root, localName)
+		);
+	}
+	if (!computed || !property.startsWith("border-")) return false;
+	const edgeMatch = BORDER_EDGE_PROPERTY.exec(property);
+	if (
+		!edgeMatch ||
+		!isBorderPruneEligible(source, pseudoElement, root, localName)
+	) {
+		return false;
+	}
+	const side = edgeMatch[1];
+	const edgeStyle = computed
+		.getPropertyValue(`border-${side}-style`)
+		.trim()
+		.toLowerCase();
+	if ("none" !== edgeStyle) return false;
+	const edgeWidth = computed
+		.getPropertyValue(`border-${side}-width`)
+		.trim()
+		.toLowerCase();
+	return "0px" === edgeWidth || "0" === edgeWidth;
+}
+
+function shouldOmitNonTableBorderModel(
+	property: string,
+	value: string,
+	source: Element,
+	isSvg: boolean,
+	computed: CSSStyleDeclaration | undefined,
+	predicates: WechatTreePredicateCache | undefined,
+): boolean {
+	const isDefaultBorderModel =
+		("border-collapse" === property &&
+			"separate" === value.trim().toLowerCase()) ||
+		("border-spacing" === property &&
+			("0px" === value || "0px 0px" === value || "0" === value));
+	if (!isDefaultBorderModel) return false;
+	if (isSvg) return true;
+	const display = computed
+		? computed.getPropertyValue("display").trim().toLowerCase()
+		: "";
+	if (TABLE_DISPLAY_VALUES.has(display)) return false;
+	const insideTable = predicates
+		? predicates.isInsideTable(source)
+		: isInsideTable(source);
+	return !insideTable;
+}
+
+function preservesSvgPresentationAttributeOverride(
+	property: string,
+	source: Element,
+	isSvg: boolean,
+): boolean {
+	if (!isSvg || !SVG_PRESENTATION_ATTRIBUTE_OVERRIDE_PROPERTIES.has(property)) {
+		return false;
+	}
+	if (source.hasAttribute(property)) return true;
+	return property.startsWith("marker-") && source.hasAttribute("marker");
+}
 
 function taskCheckboxPseudoHasTextContent(
 	pseudoElement: boolean,
@@ -182,6 +425,8 @@ export function keepStyle(
 	omitDefaultValues = true,
 	pseudoElementContent = "",
 	svgElement?: boolean,
+	computed?: CSSStyleDeclaration,
+	predicates?: WechatTreePredicateCache,
 ): boolean {
 	if (
 		omitDefaultValues &&
@@ -211,10 +456,10 @@ export function keepStyle(
 		!["block", "inline", "table"].includes(value)
 	)
 		return false;
+	const isSvg = svgElement ?? isSvgElement(source);
 	if (UNSAFE_STYLE_VALUE.test(value)) {
 		const svgFragmentUrl =
-			(svgElement ?? isSvgElement(source)) &&
-			/^url\(\s*["']?#[a-z\d:_.-]+["']?\s*\)$/i.test(value);
+			isSvg && /^url\(\s*["']?#[a-z\d:_.-]+["']?\s*\)$/i.test(value);
 		const safeDataImageStyle =
 			("background" === property || "background-image" === property) &&
 			hasOnlySafeDataImageUrls(value);
@@ -246,12 +491,57 @@ export function keepStyle(
 		return false;
 	const preservesInheritedDefault =
 		PRESERVE_INHERITED_DEFAULT_STYLE_PROPERTIES.has(property);
-	if (
-		omitDefaultValues &&
-		!preservesInheritedDefault &&
-		DEFAULT_STYLE_VALUES[property]?.has(value)
-	)
-		return false;
+	if (omitDefaultValues && !preservesInheritedDefault) {
+		const localName = source.localName.toLowerCase();
+		if (
+			("stop-color" === property || "stop-opacity" === property) &&
+			"stop" !== localName
+		) {
+			return false;
+		}
+		if (shouldOmitDefaultBackgroundProperty(property, value, computed)) {
+			return false;
+		}
+		if (
+			shouldOmitBorderlessProperty(
+				property,
+				value,
+				source,
+				pseudoElement,
+				root,
+				localName,
+				computed,
+			)
+		) {
+			return false;
+		}
+		if (
+			shouldOmitNonTableBorderModel(
+				property,
+				value,
+				source,
+				isSvg,
+				computed,
+				predicates,
+			)
+		) {
+			return false;
+		}
+		if (
+			DEFAULT_STYLE_VALUES[property]?.has(value) &&
+			!(
+				OVERFLOW_PROPERTIES.has(property) &&
+				(isSvg || CONTENT_BOX_REPLACED_ELEMENTS.has(localName))
+			) &&
+			!(
+				TASK_CHECKBOX_PRESERVED_DEFAULT_PROPERTIES.has(property) &&
+				isTaskListCheckbox(source)
+			) &&
+			!preservesSvgPresentationAttributeOverride(property, source, isSvg)
+		) {
+			return false;
+		}
+	}
 	if (pseudoElement && ["width", "height"].includes(property)) {
 		const sourceMatch =
 			/^(\d+(?:\.\d+)?)(?:px|em|rem|%|cqi|cqw|cqb|cqh|cqmin|cqmax)$/.exec(
@@ -277,21 +567,28 @@ export function portableStyleDeclaration(
 }
 
 export function removeTransientAttributes(clone: Element): void {
-	for (const attribute of Array.from(clone.attributes)) {
+	const attributes = clone.attributes;
+	for (let index = attributes.length - 1; index >= 0; index -= 1) {
+		const attribute = attributes[index];
+		if (!attribute) continue;
 		const name = attribute.name.toLowerCase();
-		const value = attribute.value.trim().replace(/\s+/g, "");
-		const unsafeUrl =
-			UNSAFE_URL.test(value) &&
-			!(
-				"data:" === value.slice(0, 5).toLowerCase() &&
-				value.length <= MAX_DATA_IMAGE_LENGTH &&
-				SAFE_DATA_IMAGE.test(value)
-			);
-		if (
-			TRANSIENT_ATTRIBUTE.test(name) ||
-			(URL_ATTRIBUTES.has(name) && unsafeUrl)
-		) {
+		if (TRANSIENT_ATTRIBUTE.test(name)) {
 			clone.removeAttribute(attribute.name);
+			continue;
+		}
+		if (URL_ATTRIBUTES.has(name)) {
+			const value = attribute.value.trim().replace(/\s+/g, "");
+			const unsafeUrl =
+				UNSAFE_URL.test(value) &&
+				!(
+					"data:" === value.slice(0, 5).toLowerCase() &&
+					value.length <= MAX_DATA_IMAGE_LENGTH &&
+					SAFE_DATA_IMAGE.test(value)
+				);
+			if (unsafeUrl) {
+				clone.removeAttribute(attribute.name);
+			}
+			continue;
 		}
 		if ("srcset" === name) {
 			const candidates: string[] = [];
@@ -468,6 +765,10 @@ const PORTABLE_SVG_SPECIAL_PROPERTIES = uniqueStyleProperties(
 	SVG_STYLE_PROPERTIES,
 	SPECIAL_LAYOUT_PROPERTIES,
 );
+const PORTABLE_SVG_NON_STOP_SPECIAL_PROPERTIES =
+	PORTABLE_SVG_SPECIAL_PROPERTIES.filter(
+		(property) => "stop-color" !== property && "stop-opacity" !== property,
+	);
 
 export function portableStyleProperties(
 	source: Element,
@@ -491,16 +792,27 @@ export function portableStyleProperties(
 			? PORTABLE_ORDINARY_ROOT_PSEUDO_PROPERTIES
 			: PORTABLE_ORDINARY_ROOT_PROPERTIES;
 	}
+	const isStop = svg && "stop" === source.localName.toLowerCase();
 	if (svg && specialLayout && !taskCheckbox) {
-		return PORTABLE_SVG_SPECIAL_PROPERTIES;
+		return isStop
+			? PORTABLE_SVG_SPECIAL_PROPERTIES
+			: PORTABLE_SVG_NON_STOP_SPECIAL_PROPERTIES;
 	}
 	if (taskCheckbox && !svg && !specialLayout && !root) {
 		return PORTABLE_ORDINARY_TASK_CHECKBOX_PROPERTIES;
 	}
+	const svgProperties = svg
+		? isStop
+			? SVG_STYLE_PROPERTIES
+			: SVG_STYLE_PROPERTIES.filter(
+					(property) =>
+						"stop-color" !== property && "stop-opacity" !== property,
+				)
+		: [];
 	return uniqueStyleProperties(
 		COPY_STYLE_PROPERTIES,
 		taskCheckbox ? TASK_LIST_CHECKBOX_STYLE_PROPERTIES : [],
-		svg ? SVG_STYLE_PROPERTIES : [],
+		svgProperties,
 		specialLayout
 			? SPECIAL_LAYOUT_PROPERTIES
 			: root
@@ -662,9 +974,11 @@ export function appendPortableStyleDeclaration(
 			context.pseudoElement,
 			context.root,
 			value,
-			true,
+			!preserveRawContentBoxTuple,
 			pseudoElementContent,
 			context.svg,
+			context.style,
+			context.predicates,
 		)
 	) {
 		declarations.push(

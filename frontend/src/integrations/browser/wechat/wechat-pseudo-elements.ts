@@ -318,16 +318,26 @@ export async function styleDeclarations(
     taskCheckbox: context.taskCheckbox
   });
   const declarations: string[] = [];
+  throwIfBackgroundPreparationAborted(signal);
   for (const property of properties) {
-    throwIfBackgroundPreparationAborted(signal);
     const value = context.style.getPropertyValue(property);
-    const materializedValue =
-      ('background' === property || 'background-image' === property) && value.includes('url(')
-        ? await materializeBackgroundValue(property, value, runtime, cache, signal)
-        : value;
-    throwIfBackgroundPreparationAborted(signal);
+    const hasBackgroundUrl = ('background' === property || 'background-image' === property) && value.includes('url(');
+    const materializedValue = hasBackgroundUrl
+      ? await materializeBackgroundValue(property, value, runtime, cache, signal)
+      : value;
+    if (hasBackgroundUrl) {
+      throwIfBackgroundPreparationAborted(signal);
+    }
     appendPortableStyleDeclaration(context, property, value, materializedValue, declarations);
-    if (yieldToBrowser?.shouldYield()) await yieldToBrowser();
+    if (hasBackgroundUrl && yieldToBrowser?.shouldYield()) {
+      await yieldToBrowser();
+      throwIfBackgroundPreparationAborted(signal);
+    }
+  }
+  throwIfBackgroundPreparationAborted(signal);
+  if (yieldToBrowser?.shouldYield()) {
+    await yieldToBrowser();
+    throwIfBackgroundPreparationAborted(signal);
   }
   return declarations;
 }

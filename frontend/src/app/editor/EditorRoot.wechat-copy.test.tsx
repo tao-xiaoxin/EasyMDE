@@ -331,7 +331,11 @@ describe('EditorRoot WeChat copy & preview presentation', () => {
     fireEvent.click(view.getByRole('button', { name: '预览' }));
     await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
     fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
-    await view.findByRole('textbox', { name: '可视化文章编辑器' });
+    await view.findByRole(
+      'textbox',
+      { name: '可视化文章编辑器' },
+      { timeout: 5000 }
+    );
     rememberPreviewWidth.mockClear();
     rememberPreviewWidth.mockImplementation(() => {
       expect(

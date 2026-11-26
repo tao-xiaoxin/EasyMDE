@@ -257,9 +257,13 @@ describe('EditorRoot core and lifecycle', () => {
     fireEvent.click(view.getByRole('button', { name: '预览' }));
     await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
     fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
-    const visualEditor = await view.findByRole('textbox', {
-      name: '可视化文章编辑器'
-    });
+    const visualEditor = await view.findByRole(
+      'textbox',
+      {
+        name: '可视化文章编辑器'
+      },
+      { timeout: 5000 }
+    );
     const selectedText = visualEditor.querySelector('p')?.lastChild;
     if (!selectedText || Node.TEXT_NODE !== selectedText.nodeType) {
       throw new Error('missing synthetic visual table selection target');

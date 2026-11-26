@@ -1,9 +1,7 @@
 import {
-	type ContainerStep,
 	isCommonMarkBlankLine,
 	type LineAnalysis,
 	stripBlockContainerPrefix,
-	stripContainers,
 } from "./markdown-prescanner-blocks";
 import type { ProtectedInlineEntry } from "./markdown-prescanner-inline";
 import type { ProtectedBlockKind } from "./visual-schema";
@@ -135,28 +133,6 @@ export function createPrescanOutput(
 		});
 	};
 
-	/**
-	 * Protected block whose first line content is already peeled; every
-	 * continuation line strips the exact `containers`.
-	 */
-	const pushContainerStrippedProtectedBlock = (
-		kind: ProtectedBlockKind,
-		linePrefix: string,
-		firstLineContent: string,
-		containers: ReadonlyArray<ContainerStep>,
-		origStart: number,
-		lastLine: number,
-	): void => {
-		const rawBlockLines: string[] = [firstLineContent];
-		for (let k = origStart + 1; k <= lastLine; k += 1) {
-			rawBlockLines.push(stripContainers(lines[k] ?? "", containers) ?? "");
-		}
-		pushOutputLine(
-			`${linePrefix}${addProtectedBlock(kind, rawBlockLines.join("\n"))}`,
-			{ end: lastLine + 1, start: origStart },
-		);
-	};
-
 	return {
 		addProtectedBlock,
 		addTableAlignMarker,
@@ -165,7 +141,6 @@ export function createPrescanOutput(
 		outputLineSharedRanges,
 		outputLines,
 		protectedBlocks,
-		pushContainerStrippedProtectedBlock,
 		pushOutputLine,
 		pushProtectedBlock,
 		tableAlignMarkers,

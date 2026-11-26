@@ -615,7 +615,7 @@ describe("PR-R51-A list-marker padding, trailing-item scan, depth-aware list val
 				"multi.tab",
 				"-   first ``\n-    second \\(x\n- fake\ny\\)\n\ndrop\n\n  * item ``\n  \tcode",
 				deleteParagraph("drop"),
-				"-   first ``\n-    second \\(x\n- fake\ny\\)\n\n* item ``\n\tcode",
+				"-   first ``\n-    second \\(x\n- fake\ny\\)\n\n* item ``\n  code",
 				[],
 			],
 			[
@@ -796,6 +796,47 @@ describe("PR-R51-A list-marker padding, trailing-item scan, depth-aware list val
 			expect(docShape("- > aa\n  > $$x$$\n  > bb")).toBe(
 				'doc(bullet_list(list_item(paragraph, blockquote(paragraph("aa")))), protected_block, blockquote(paragraph("bb")))',
 			);
+			const multilineInterleaved = parser.parseMarkdownWithBlockSources(
+				"- > aa\n  > $$\nx\n$$\n  > bb",
+			);
+			expect(multilineInterleaved.doc.child(1).attrs.rawMarkdown).toBe(
+				"$$\nx\n$$",
+			);
+		});
+
+		it("rejects unsafe multi-line swallow dedents that would alter fenced code, lazy continuations, tabs, or math", () => {
+			expect(
+				dedentSwallowedBlockAtDepth("   ```\n    ```\n   ```", 0, "code_block"),
+			).toBeNull();
+			expect(
+				dedentSwallowedBlockAtDepth("   > a\n    > b", 0, "blockquote"),
+			).toBeNull();
+			expect(
+				dedentSwallowedBlockAtDepth("   > a\n    # h1", 0, "blockquote"),
+			).toBeNull();
+			expect(
+				dedentSwallowedBlockAtDepth("   head\n    ---\n   ===", 0, "heading"),
+			).toBeNull();
+			expect(
+				dedentSwallowedBlockAtDepth(
+					"   * item1\n* item2\n\n   sub",
+					0,
+					"bullet_list",
+				),
+			).toBeNull();
+			expect(
+				dedentSwallowedBlockAtDepth("  +\tab\n    - tail", 0, "bullet_list"),
+			).toBeNull();
+			expect(
+				dedentSwallowedBlockAtDepth("  * \\(a\n    b\\)", 0, "bullet_list"),
+			).toBeNull();
+			expect(
+				dedentSwallowedBlockAtDepth(
+					"  * item\n\n  \t  para",
+					0,
+					"bullet_list",
+				),
+			).toBe("* item\n\n    para");
 		});
 	});
 

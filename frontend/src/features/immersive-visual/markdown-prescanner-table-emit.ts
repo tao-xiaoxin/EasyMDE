@@ -45,7 +45,6 @@ import {
 export type {
 	BeforeHtmlContext,
 	DisplayMathEmitEnv,
-	TableEmitCallbacks,
 } from "./markdown-prescanner-display-math";
 
 /**

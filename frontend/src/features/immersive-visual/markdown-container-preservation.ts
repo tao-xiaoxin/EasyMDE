@@ -26,7 +26,6 @@ import {
 	measureIndentColumns,
 	stripBlockquoteDepth,
 	stripBlockquoteDepthWithColumn,
-	stripUpToIndentColumns,
 } from "./markdown-prescanner-containers";
 import { wouldRawHtmlInterruptParagraph } from "./markdown-prescanner-inline";
 import { sanitizeBulletMarker } from "./visual-schema";
@@ -226,16 +225,44 @@ export function dedentSwallowedBlockAtDepth(
 	) {
 		return `${out}${rawEmitted.slice(nl)}`;
 	}
+	// Never blindly dedent multi-line fenced code blocks, line-0 tabs,
+	// multiline math spans, heterogeneous indents, or 4-column lazy/indented
+	// lines (which would cross CommonMark's 4-space boundary); expand leading
+	// tabs to exact columns on shifted continuation lines so tab stops never
+	// jump. Fall back to canonical serialization for rejected cases.
+	if (
+		nodeTypeName === "code_block" ||
+		head.rest.includes("\t") ||
+		rawEmitted.includes("\\(") ||
+		rawEmitted.includes("\\[") ||
+		rawEmitted.includes("$$")
+	) {
+		return null;
+	}
+	const isListBlock =
+		nodeTypeName === "bullet_list" || nodeTypeName === "ordered_list";
+	const listItemIndent = isListBlock
+		? (matchListMarker(head.rest, head.column)?.contentIndent ?? 0)
+		: 0;
 	const lines = rawEmitted.slice(nl + 1).split("\n");
 	for (let i = 0; i < lines.length; i += 1) {
 		const line = lines[i] ?? "";
 		const stripped = stripBlockquoteDepthWithColumn(line, quoteDepth);
-		if (stripped.matched === quoteDepth && !isCommonMarkBlankLine(stripped.rest)) {
-			lines[i] = `${quotePrefix}${stripUpToIndentColumns(
-				stripped.rest,
-				leadCols,
-				stripped.column,
-			)}`;
+		if (stripped.matched !== quoteDepth) {
+			return null;
+		}
+		if (!isCommonMarkBlankLine(stripped.rest)) {
+			const lineIndent = measureIndentColumns(stripped.rest, stripped.column);
+			if (isListBlock) {
+				if (lineIndent < leadCols) return null;
+				if (lineIndent >= 4 && lineIndent < listItemIndent) return null;
+			} else {
+				if (lineIndent >= 4) return null;
+				if (lineIndent === 0) continue;
+				if (lineIndent < leadCols) return null;
+			}
+			const content = stripped.rest.replace(/^[ \t]+/, "");
+			lines[i] = `${quotePrefix}${" ".repeat(lineIndent - leadCols)}${content}`;
 		}
 	}
 	return `${out}\n${lines.join("\n")}`;

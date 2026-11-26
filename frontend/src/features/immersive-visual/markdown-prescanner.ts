@@ -51,27 +51,13 @@ import {
 	matchTableAlignmentMarkerLine,
 	resolveGfmTableMatch,
 } from "./markdown-prescanner-tables";
-import {
-	TABLE_ALIGN_PREFIX,
-	TABLE_ALIGN_SUFFIX,
-} from "./table-alignment-codec";
 
 export {
-	ATX_HEADING,
-	analyzeLine,
-	type DetectableFence,
-	detectFence,
 	isCommonMarkBlankLine,
-	isFenceCloser,
-	type LineAnalysis,
 	readBlockquotePrefix,
-	SETEXT_UNDERLINE,
 	stripBlockquoteDepth,
-	THEMATIC_BREAK,
 } from "./markdown-prescanner-blocks";
 export { restoreProtectedInlineSentinels } from "./markdown-prescanner-output";
-export type { ProtectedInlineEntry };
-export { TABLE_ALIGN_PREFIX, TABLE_ALIGN_SUFFIX };
 
 export type PreScanResult = Readonly<{
 	lineEnding: "\n" | "\r\n";
@@ -528,22 +514,14 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		//    replaces it with `"\n\nTOKEN\n\n"`: inside any list item or
 		//    `list -> blockquote` container the token sits at column 0 behind
 		//    a blank line, closing every enclosing container.
-		const blockMathEnd = php.standaloneDisplayMathEnd(analysis.content, i);
-		if (blockMathEnd >= i) {
+		const blockMath = php.standaloneDisplayMath(analysis.content, i);
+		if (blockMath !== null) {
 			if (activeInterleavedContainers !== null || effectiveContainer > 0) {
 				if (displayMathEnv.hasPrecedingContent()) pushOutputLine("", null);
-				if (activeInterleavedContainers !== null) {
-					output.pushContainerStrippedProtectedBlock(
-						"math",
-						"",
-						analysis.content,
-						activeInterleavedContainers,
-						i,
-						blockMathEnd,
-					);
-				} else {
-					pushProtectedBlock("math", analysis, i, blockMathEnd, 0, "");
-				}
+				pushOutputLine(output.addProtectedBlock("math", blockMath.raw), {
+					end: blockMath.end + 1,
+					start: i,
+				});
 				pushOutputLine("", null);
 				php.closeContainersForDisplayMath(
 					line.slice(0, line.length - analysis.content.length),
@@ -553,12 +531,12 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			} else {
 				const mathSentinelIndent =
 					relativeIndent >= 4 ? effectiveContainer : analysis.indent;
-				pushProtectedBlock("math", analysis, i, blockMathEnd, mathSentinelIndent);
+				pushProtectedBlock("math", analysis, i, blockMath.end, mathSentinelIndent);
 				advancePhpStateClosedBlock(analysis.prefix, effectiveContainer);
 			}
 			clearDroppedList(droppedOutOfList);
 			closeParagraph();
-			i = blockMathEnd + 1;
+			i = blockMath.end + 1;
 			continue;
 		}
 

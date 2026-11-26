@@ -301,11 +301,6 @@ function isFenceCloserStripped(
 	return Boolean(match?.[1] && match[1].length >= fence.fenceLength);
 }
 
-export function isFenceCloser(line: string, fence: DetectableFence): boolean {
-	const stripped = stripContainersWithColumn(line, fenceContainersOf(fence));
-	return stripped !== null && isFenceCloserStripped(stripped, fence);
-}
-
 export function findContainerBoundedFenceEnd(
 	lines: ReadonlyArray<string>,
 	startIndex: number,
@@ -593,11 +588,6 @@ export function resolveLineContainerContext(
 	};
 }
 
-export {
-	COMMONMARK_ATX_HEADING_OPEN as ATX_HEADING,
-	COMMONMARK_SETEXT_UNDERLINE as SETEXT_UNDERLINE,
-	COMMONMARK_THEMATIC_BREAK_LINE as THEMATIC_BREAK,
-} from "../../shared/markdown/php-commonmark-block-helpers";
 const CONTAINER_QUOTE = /^ {0,3}>[ \t]?/;
 const CONTAINER_LIST_MARKER = /^ {0,3}(?:[-+*]|(\d{1,9})[.)])(?=[ \t]|$)/;
 const leadingColumns = (text: string): number => measureIndentColumns(text, 0);

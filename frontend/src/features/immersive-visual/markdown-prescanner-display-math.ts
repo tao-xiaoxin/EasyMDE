@@ -50,7 +50,7 @@ export {
  * trailing paragraph/container state restoration for the prescanner.
  */
 
-export type TableEmitCallbacks = Readonly<{
+type TableEmitCallbacks = Readonly<{
 	addProtectedBlock: (kind: ProtectedBlockKind, rawMarkdown: string) => string;
 	addTableAlignMarker: (markerText: string) => string;
 	pushOutputLine: (
@@ -755,16 +755,22 @@ export function createPrescanPhpTracker(
 		return range?.from === lineEnd - content.length ? range : null;
 	};
 	/**
-	 * Last line of the standalone display math (nothing but blanks after its
-	 * closing delimiter) starting at `content`, as found by the authoritative
-	 * math index; `-1` when PHP does not see display math there.
+	 * Last line and exact PHP-extracted raw slice of standalone display math
+	 * (nothing but blanks after its closing delimiter) starting at `content`,
+	 * as found by the authoritative math index; `null` when PHP does not see
+	 * display math there.
 	 */
-	const standaloneDisplayMathEnd = (content: string, lineIdx: number): number => {
+	const standaloneDisplayMath = (
+		content: string,
+		lineIdx: number,
+	): Readonly<{ end: number; raw: string }> | null => {
 		const range = displayMathAt(content, lineIdx);
-		if (range === null) return -1;
+		if (range === null) return null;
 		const end = findLineIndexForOffset(mathIndex, range.to - 1);
 		const tail = normalized.slice(range.to, mathIndex.lineEnds[end] ?? range.to);
-		return isCommonMarkBlankLine(tail) ? end : -1;
+		return isCommonMarkBlankLine(tail)
+			? { end, raw: normalized.slice(range.from, range.to) }
+			: null;
 	};
 	/**
 	 * PHP `extract_math()` replaces standalone display math with
@@ -796,7 +802,7 @@ export function createPrescanPhpTracker(
 		closeContainersForDisplayMath,
 		listIndentAfterBlank,
 		mathIndex,
-		standaloneDisplayMathEnd,
+		standaloneDisplayMath,
 		startsDisplayMath: (content: string, lineIdx: number): boolean =>
 			displayMathAt(content, lineIdx) !== null,
 		state,

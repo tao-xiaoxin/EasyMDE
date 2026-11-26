@@ -80,6 +80,10 @@ import {
 import { findKaTeXMathMl } from './wechat-portable-content';
 import { replaceCompletedVisuals } from './wechat-png-replacement';
 import { resolveMermaidInheritedBackground } from './wechat-mermaid-background';
+import {
+  createWechatTreePredicateCache,
+  type WechatTreePredicateCache,
+} from './wechat-tree-predicates';
 
 const NATIVE_ORDINARY_PROPERTIES: readonly string[] = Object.freeze([
   ...new Set([...COPY_STYLE_PROPERTIES, ...ORDINARY_LAYOUT_PROPERTIES, ...NATIVE_LAYOUT_PROPERTIES])
@@ -104,9 +108,14 @@ const NATIVE_SVG_SPECIAL_PROPERTIES: readonly string[] = Object.freeze([
   ])
 ]);
 
-export function nativeVisualStyleProperties(source: Element, _computed: CSSStyleDeclaration): readonly string[] {
-  const special = supportsSpecialLayout(source);
-  if (isSvgElement(source)) {
+export function nativeVisualStyleProperties(
+  source: Element,
+  _computed: CSSStyleDeclaration,
+  precomputed?: Readonly<{ specialLayout?: boolean; svg?: boolean }>
+): readonly string[] {
+  const special = precomputed?.specialLayout ?? supportsSpecialLayout(source);
+  const svg = precomputed?.svg ?? isSvgElement(source);
+  if (svg) {
     return special ? NATIVE_SVG_SPECIAL_PROPERTIES : NATIVE_SVG_ORDINARY_PROPERTIES;
   }
   return special ? NATIVE_SPECIAL_PROPERTIES : NATIVE_ORDINARY_PROPERTIES;
@@ -117,17 +126,20 @@ export async function nativeVisualStyleDeclarations(
   computed: CSSStyleDeclaration,
   runtime: BrowserWechatClipboardRuntime,
   cache: BackgroundAssetCache,
-  yieldToBrowser: SerializationYield | null
+  yieldToBrowser: SerializationYield | null,
+  predicates?: WechatTreePredicateCache
 ): Promise<string[]> {
+  const svg = predicates ? predicates.isSvgElement(source) : isSvgElement(source);
+  const specialLayout = predicates ? predicates.supportsSpecialLayout(source) : supportsSpecialLayout(source);
   const declarations: string[] = [];
-  for (const property of nativeVisualStyleProperties(source, computed)) {
+  for (const property of nativeVisualStyleProperties(source, computed, { specialLayout, svg })) {
     const value = computed.getPropertyValue(property);
     const hasBackgroundUrl = ('background' === property || 'background-image' === property) && value.includes('url(');
     const materializedValue = hasBackgroundUrl
       ? await materializeBackgroundValue(property, value, runtime, cache)
       : value;
     if (null === materializedValue) continue;
-    if (keepStyle(property, materializedValue, source, false, false, value, false)) {
+    if (keepStyle(property, materializedValue, source, false, false, value, false, '', svg)) {
       declarations.push(`${property}:${materializedValue}`);
     }
     if (hasBackgroundUrl && yieldToBrowser?.shouldYield()) await yieldToBrowser();
@@ -144,6 +156,7 @@ export async function createNativeVisualCaptureClone(
   context: WechatPngConversionContext
 ): Promise<Readonly<{ cleanup: () => void; element: Element; mathCaptureSnapshot: WechatMathCaptureSnapshot | null }>> {
   const clone = source.cloneNode(true) as Element;
+  const predicates = createWechatTreePredicateCache();
   const mathOwner = source.matches('.easymde-math-block') ? source : null;
   const mathNodes = mathOwner
     ? new Set<Element>([mathOwner, ...Array.from(mathOwner.querySelectorAll('.katex-display, .katex, .katex-html'))])
@@ -156,7 +169,14 @@ export async function createNativeVisualCaptureClone(
     if (mathNodes?.has(sourceNode)) {
       mathSnapshots.set(sourceNode, snapshotMathCaptureNode(sourceNode, computed));
     }
-    const declarations = await nativeVisualStyleDeclarations(sourceNode, computed, runtime, cache, yieldToBrowser);
+    const declarations = await nativeVisualStyleDeclarations(
+      sourceNode,
+      computed,
+      runtime,
+      cache,
+      yieldToBrowser,
+      predicates
+    );
     if (declarations.length) cloneNode.setAttribute('style', declarations.join(';'));
     else cloneNode.removeAttribute('style');
     removeTransientAttributes(cloneNode);

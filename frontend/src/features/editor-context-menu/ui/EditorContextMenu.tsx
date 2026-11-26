@@ -1,6 +1,7 @@
 import {
   createElement,
   createPortal,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -12,26 +13,31 @@ import type {
   EditorContextMenuModel
 } from '../editor-context-menu-model';
 import {
-  positionEditorContextSubmenu,
-  type EditorContextMenuBoundary
-} from './editor-context-menu-position';
-import {
   captureEditorContextMenuScrollBaseline,
   editorContextMenuScrollMoved
 } from '../editor-context-menu-scroll';
-import { MenuLayer, firstEnabled } from './EditorContextMenuLayer';
+import {
+  firstEnabled,
+  handleEditorContextMenuKeyDown,
+  parentLayerPath
+} from './editor-context-menu-keyboard';
+import {
+  computeOpenSubmenuPositions,
+  computeRootMenuPosition,
+  measureRootLayout,
+  readBoundary,
+  sameMeasuredLayout,
+  sameRootMenuPosition,
+  sameSubmenuPositions,
+  type EditorContextMenuMeasuredLayout,
+  type EditorContextMenuPosition,
+  type EditorContextMenuRootPosition
+} from './editor-context-menu-position';
+import { MenuLayer } from './EditorContextMenuLayer';
 
+export type { EditorContextMenuPosition } from './editor-context-menu-position';
 export type EditorContextMenuDirection = 'ltr' | 'rtl';
-
-export type EditorContextMenuPosition = Readonly<{
-  clipPath?: string;
-  left: number;
-  maxBlockSize?: number;
-  top: number;
-  placement?: 'left' | 'right';
-  pointerLeft?: number;
-  pointerTop?: number;
-}>;
+export type EditorContextMenuSubmenuActivation = 'keyboard' | 'pointer';
 
 export type EditorContextMenuDismiss = Readonly<{
   restoreFocus: boolean;
@@ -52,63 +58,9 @@ export type EditorContextMenuProps = Readonly<{
   surfaceElement?: HTMLElement;
 }>;
 
-type MenuPosition = Readonly<{
-  clipPath?: string;
-  left: number;
-  maxBlockSize?: number;
-  top: number;
-}>;
-
-const VIEWPORT_GUTTER = 8;
-
-function visibleBoundary(
-  boundary: EditorContextMenuBoundary,
-  viewport: Readonly<{ height: number; width: number }>
-): EditorContextMenuBoundary {
-  const left = Math.max(VIEWPORT_GUTTER, boundary.left);
-  const right = Math.max(
-    left,
-    Math.min(viewport.width - VIEWPORT_GUTTER, boundary.right)
-  );
-  const top = Math.max(VIEWPORT_GUTTER, boundary.top);
-  const bottom = Math.max(
-    top,
-    Math.min(viewport.height - VIEWPORT_GUTTER, boundary.bottom)
-  );
-  return { bottom, left, right, top };
-}
-
-function availableBlockSize(
-  boundary: EditorContextMenuBoundary,
-  viewport: Readonly<{ height: number; width: number }>,
-  fromTop?: number
-): number {
-  const visible = visibleBoundary(boundary, viewport);
-  const top = Math.max(visible.top, fromTop ?? visible.top);
-  const bottom = visible.bottom;
-  return Math.max(1, bottom - top);
-}
-
-function panelClipPath(
-  left: number,
-  top: number,
-  width: number,
-  height: number,
-  boundary: EditorContextMenuBoundary,
-  viewport: Readonly<{ height: number; width: number }>
-): string | undefined {
-  const visibleLeft = Math.max(VIEWPORT_GUTTER, boundary.left);
-  const visibleRight = Math.min(viewport.width - VIEWPORT_GUTTER, boundary.right);
-  const visibleTop = Math.max(VIEWPORT_GUTTER, boundary.top);
-  const visibleBottom = Math.min(viewport.height - VIEWPORT_GUTTER, boundary.bottom);
-  const insetTop = Math.max(0, visibleTop - top);
-  const insetRight = Math.max(0, left + width - visibleRight);
-  const insetBottom = Math.max(0, top + height - visibleBottom);
-  const insetLeft = Math.max(0, visibleLeft - left);
-  if (0 === insetTop && 0 === insetRight && 0 === insetBottom && 0 === insetLeft) {
-    return undefined;
-  }
-  return `inset(${insetTop}px ${insetRight}px ${insetBottom}px ${insetLeft}px)`;
+function isMenuTarget(target: EventTarget | null): boolean {
+  return target instanceof Element
+    && Boolean(target.closest('[data-easymde-context-menu-layer], [data-easymde-context-menu-pointer]'));
 }
 
 /**
@@ -138,288 +90,204 @@ export function EditorContextMenu({
   const pendingParentFocus = useRef<string | null>(null);
   const pendingSubmenuFocus = useRef<string | null>(null);
   const openPathRef = useRef<string | null>(null);
+  const hoverPathRef = useRef<string | null>(null);
+  const submenuPositionsRef = useRef<Record<string, EditorContextMenuPosition>>({});
+  const latestRef = useRef({ direction, model, onAction, onDismiss, onMenuPointerDown });
+  latestRef.current = { direction, model, onAction, onDismiss, onMenuPointerDown };
+  const lastMeasuredLayoutRef = useRef<EditorContextMenuMeasuredLayout | null>(null);
+  const lastClipModelRef = useRef<EditorContextMenuModel | null>(null);
+  const scrollBaselineRef = useRef<
+    ReturnType<typeof captureEditorContextMenuScrollBaseline> | null
+  >(null);
+  const positionOpenSubmenusRef = useRef<(closeScrolledDescendants?: boolean) => void>(
+    () => undefined
+  );
   const initialFocusCancelledRef = useRef(false);
   const [focusPath, setFocusPath] = useState<string | null>(null);
   const [hoverPath, setHoverPath] = useState<string | null>(null);
+  const [pointerHovering, setPointerHovering] = useState(false);
   const [openPath, setOpenPath] = useState<string | null>(null);
-  const [position, setPosition] = useState<MenuPosition>({ left: anchor.x, top: anchor.y });
-  const [submenuPositions, setSubmenuPositions] = useState<Record<string, EditorContextMenuPosition>>({});
-
-  const readBoundary = (
-    element: HTMLElement | undefined,
-    windowRef: Window
-  ): EditorContextMenuBoundary | null => {
-    if (!element) {
-      return {
-        bottom: windowRef.innerHeight - VIEWPORT_GUTTER,
-        left: VIEWPORT_GUTTER,
-        right: windowRef.innerWidth - VIEWPORT_GUTTER,
-        top: VIEWPORT_GUTTER
-      };
-    }
-    if (!element.isConnected) return null;
-    const rect = element.getBoundingClientRect();
-    if (
-      rect.right <= VIEWPORT_GUTTER
-      || rect.left >= windowRef.innerWidth - VIEWPORT_GUTTER
-      || rect.bottom <= VIEWPORT_GUTTER
-      || rect.top >= windowRef.innerHeight - VIEWPORT_GUTTER
-    ) return null;
-    return {
-      bottom: rect.bottom,
-      left: rect.left,
-      right: rect.right,
-      top: rect.top
-    };
-  };
-
-  const surfaceBoundary = (windowRef: Window): EditorContextMenuBoundary | null =>
-    readBoundary(boundaryElement, windowRef);
-
-  const viewportBoundary = (windowRef: Window): EditorContextMenuBoundary => ({
-    bottom: windowRef.innerHeight - VIEWPORT_GUTTER,
-    left: VIEWPORT_GUTTER,
-    right: windowRef.innerWidth - VIEWPORT_GUTTER,
-    top: VIEWPORT_GUTTER
+  const [position, setPosition] = useState<EditorContextMenuRootPosition>({
+    left: anchor.x,
+    top: anchor.y
   });
+  const [submenuPositions, setSubmenuPositions] = useState<
+    Record<string, EditorContextMenuPosition>
+  >({});
 
-  const clampPosition = (): boolean => {
+  const ensureMenuContainerFocus = useCallback((): void => {
     const root = rootRef.current;
-    const windowRef = root?.ownerDocument.defaultView;
-    if (!root || !windowRef) throw new Error('editor-context-menu-window-unavailable');
-    const boundary = surfaceBoundary(windowRef);
-    if (!boundary) {
-      onDismiss({ restoreFocus: true });
-      return false;
+    const overlay = overlayRef.current;
+    if (!root || !overlay) return;
+    if (overlay.contains(root.ownerDocument.activeElement)) return;
+    root.focus({ preventScroll: true });
+  }, []);
+
+  const preserveFocusBeforeSubmenuClose = useCallback(
+    (nextOpenPath: string | null): void => {
+      const root = rootRef.current;
+      const activeElement = root?.ownerDocument.activeElement;
+      if (!root || !activeElement) return;
+      for (const [layerPath, submenuElement] of submenuRefs.current.entries()) {
+        const staysMounted = null !== nextOpenPath
+          && (nextOpenPath === layerPath || nextOpenPath.startsWith(`${layerPath}.`));
+        if (!staysMounted && submenuElement.contains(activeElement)) {
+          root.focus({ preventScroll: true });
+          return;
+        }
+      }
+    },
+    []
+  );
+
+  const handleInteraction = useCallback((): void => {
+    initialFocusCancelledRef.current = true;
+    ensureMenuContainerFocus();
+  }, [ensureMenuContainerFocus]);
+
+  const handleAction = useCallback((id: string): void => {
+    latestRef.current.onAction(id);
+  }, []);
+
+  const handleDismiss = useCallback((dismiss: EditorContextMenuDismiss): void => {
+    latestRef.current.onDismiss(dismiss);
+  }, []);
+
+  const handleMenuPointerDown = useCallback((): void => {
+    latestRef.current.onMenuPointerDown?.();
+  }, []);
+
+  const handleHoverPath = useCallback((nextPath: string | null): void => {
+    hoverPathRef.current = nextPath;
+    setHoverPath(nextPath);
+    if (null !== nextPath) {
+      setPointerHovering(true);
+      ensureMenuContainerFocus();
     }
-    const viewport = { height: windowRef.innerHeight, width: windowRef.innerWidth };
-    const bounds = visibleBoundary(boundary, viewport);
-    const width = root.offsetWidth || root.getBoundingClientRect().width || 240;
-    const measuredHeight = root.offsetHeight || root.getBoundingClientRect().height || 180;
-    const height = Math.min(
-      measuredHeight,
-      availableBlockSize(boundary, viewport)
-    );
-    const nextLeft = Math.max(
-      bounds.left,
-      Math.min(anchor.x, Math.max(bounds.left, bounds.right - width))
-    );
-    const nextTop = Math.max(
-      bounds.top,
-      Math.min(anchor.y, Math.max(bounds.top, bounds.bottom - height))
-    );
-    const maxBlockSize = availableBlockSize(boundary, viewport, nextTop);
-    const effectiveHeight = Math.min(measuredHeight, maxBlockSize);
-    const panelClip = panelClipPath(
-      nextLeft,
-      nextTop,
-      width,
-      effectiveHeight,
-      boundary,
-      viewport
-    );
-    setPosition({
-      ...(panelClip ? { clipPath: panelClip } : {}),
-      left: nextLeft,
-      maxBlockSize,
-      top: nextTop
-    });
-    return true;
-  };
+  }, [ensureMenuContainerFocus]);
 
-  const updateClip = (): void => {
+  const clearPointerHover = useCallback((): void => {
+    hoverPathRef.current = null;
+    setHoverPath(null);
+    setPointerHovering(false);
+  }, []);
+
+  const syncRootPosition = (mode: 'anchor' | 'reclamp'): void => {
     const root = rootRef.current;
     const windowRef = root?.ownerDocument.defaultView;
-    if (!root || !windowRef) return;
-    const boundary = surfaceBoundary(windowRef);
+    if (!root || !windowRef) {
+      if ('anchor' === mode) throw new Error('editor-context-menu-window-unavailable');
+      return;
+    }
+    const boundary = readBoundary(boundaryElement, windowRef);
     if (!boundary) {
-      onDismiss({ restoreFocus: true });
+      latestRef.current.onDismiss({ restoreFocus: true });
       return;
     }
     const viewport = { height: windowRef.innerHeight, width: windowRef.innerWidth };
-    const bounds = visibleBoundary(boundary, viewport);
-    const width = root.offsetWidth || root.getBoundingClientRect().width || 240;
-    const measuredHeight = root.offsetHeight || root.getBoundingClientRect().height || 180;
-    setPosition((current) => {
-      const nextLeft = Math.max(
-        bounds.left,
-        Math.min(current.left, Math.max(bounds.left, bounds.right - width))
-      );
-      const fullBoundaryHeight = availableBlockSize(boundary, viewport);
-      const nextTop = current.top < bounds.top
-        ? bounds.top
-        : current.top > bounds.bottom
-          ? Math.max(bounds.top, bounds.bottom - Math.min(measuredHeight, fullBoundaryHeight))
-          : current.top;
-      const maxBlockSize = availableBlockSize(boundary, viewport, nextTop);
-      const effectiveHeight = Math.min(measuredHeight, maxBlockSize);
-      const panelClip = panelClipPath(
-        nextLeft,
-        nextTop,
-        width,
-        effectiveHeight,
+    const layout = measureRootLayout(root, boundary);
+    lastMeasuredLayoutRef.current = layout;
+    if ('anchor' === mode) {
+      setPosition(computeRootMenuPosition({
         boundary,
+        layout,
+        mode: 'anchor',
+        origin: { left: anchor.x, top: anchor.y },
         viewport
-      );
-      const next = {
-        ...(panelClip ? { clipPath: panelClip } : {}),
-        left: nextLeft,
-        maxBlockSize,
-        top: nextTop
-      };
-      if (
-        current.left === next.left
-        && current.top === next.top
-        && current.maxBlockSize === next.maxBlockSize
-        && current.clipPath === next.clipPath
-      ) return current;
-      return next;
+      }));
+      return;
+    }
+    setPosition((current) => {
+      const next = computeRootMenuPosition({
+        boundary,
+        layout,
+        mode: 'reclamp',
+        origin: current,
+        viewport
+      });
+      return sameRootMenuPosition(current, next) ? current : next;
     });
     if (openPathRef.current) positionOpenSubmenus();
   };
 
-  const openSubmenu = (
+  const openSubmenu = useCallback((
     path: string,
-    button?: HTMLButtonElement,
-    children?: ReadonlyArray<EditorContextMenuItem>
+    children?: ReadonlyArray<EditorContextMenuItem>,
+    activation: EditorContextMenuSubmenuActivation = 'keyboard'
   ): void => {
     initialFocusCancelledRef.current = true;
+    pendingParentFocus.current = null;
+    if ('pointer' === activation) {
+      preserveFocusBeforeSubmenuClose(path);
+      openPathRef.current = path;
+      setOpenPath(path);
+      pendingSubmenuFocus.current = null;
+      ensureMenuContainerFocus();
+      return;
+    }
     openPathRef.current = path;
-    setFocusPath(path);
     setOpenPath(path);
     const first = children ? firstEnabled(children, false) : null;
-    pendingSubmenuFocus.current = null === first ? null : `${path}.${first}`;
-    if (!button) return;
-  };
+    const firstPath = null === first ? null : `${path}.${first}`;
+    if (null !== firstPath) {
+      const existingChild = submenuPositionsRef.current[path]
+        ? refs.current.get(firstPath)
+        : undefined;
+      if (existingChild) {
+        pendingSubmenuFocus.current = null;
+        setFocusPath(firstPath);
+        existingChild.focus();
+      } else {
+        setFocusPath(path);
+        pendingSubmenuFocus.current = firstPath;
+      }
+    } else {
+      setFocusPath(path);
+      pendingSubmenuFocus.current = null;
+    }
+  }, [ensureMenuContainerFocus, preserveFocusBeforeSubmenuClose]);
 
-  const closeSubmenusToLayer = (path: string): void => {
+  const closeSubmenusToLayer = useCallback((
+    path: string,
+    updateFocusPath = true
+  ): void => {
     pendingSubmenuFocus.current = null;
     pendingParentFocus.current = null;
-    const layerPath = path.slice(0, path.lastIndexOf('.'));
+    const layerPath = parentLayerPath(path);
     const currentOpenPath = openPathRef.current;
     const nextOpenPath = currentOpenPath
       && (currentOpenPath === layerPath || currentOpenPath.startsWith(`${layerPath}.`))
       ? (layerPath || null)
       : null;
+    if (!updateFocusPath) preserveFocusBeforeSubmenuClose(nextOpenPath);
     openPathRef.current = nextOpenPath;
     setOpenPath(nextOpenPath);
-    setFocusPath(path);
-  };
+    if (updateFocusPath) setFocusPath(path);
+  }, [preserveFocusBeforeSubmenuClose]);
 
-  const registerSubmenuRef = (path: string, element: HTMLDivElement | null): void => {
+  const registerSubmenuRef = useCallback((path: string, element: HTMLDivElement | null): void => {
     if (element) submenuRefs.current.set(path, element);
     else submenuRefs.current.delete(path);
-  };
+  }, []);
 
   const positionOpenSubmenus = (closeScrolledDescendants = false): void => {
     const root = rootRef.current;
     const windowRef = root?.ownerDocument.defaultView;
     if (!root || !windowRef) throw new Error('editor-context-menu-window-unavailable');
-    const boundary = surfaceBoundary(windowRef);
-    if (!boundary) {
-      onDismiss({ restoreFocus: true });
+    if (!readBoundary(boundaryElement, windowRef)) {
+      latestRef.current.onDismiss({ restoreFocus: true });
       return;
     }
-    const childBoundary = viewportBoundary(windowRef);
-    const viewportSize = {
-      height: windowRef.innerHeight,
-      width: windowRef.innerWidth
-    };
-    const nextPositions: Record<string, EditorContextMenuPosition> = {};
-    const positionDeltas = new Map<string, Readonly<{ x: number; y: number }>>();
     const currentOpenPath = openPathRef.current;
-    let nextOpenPath = currentOpenPath;
-    let focusPathAfterClose: string | null = null;
-    const entries = Array.from(submenuRefs.current.entries()).sort(
-      ([left], [right]) => left.split('.').length - right.split('.').length
-    );
-    for (const [path, submenu] of entries) {
-      const trigger = refs.current.get(path);
-      if (!trigger) continue;
-      const triggerRect = trigger.getBoundingClientRect();
-      const submenuRect = submenu.getBoundingClientRect();
-      const adjustedTrigger = {
-        bottom: triggerRect.bottom,
-        height: triggerRect.height,
-        left: triggerRect.left,
-        right: triggerRect.right,
-        top: triggerRect.top,
-        width: triggerRect.width
-      };
-      const parentPath = path.slice(0, path.lastIndexOf('.'));
-      const parentDelta = positionDeltas.get(parentPath);
-      if (parentDelta) {
-        adjustedTrigger.left += parentDelta.x;
-        adjustedTrigger.right += parentDelta.x;
-        adjustedTrigger.top += parentDelta.y;
-        adjustedTrigger.bottom += parentDelta.y;
-      }
-      const submenuWidth = submenuRect.width || submenu.offsetWidth || 240;
-      const submenuHeight = submenuRect.height || submenu.offsetHeight || 180;
-      const nextPosition = positionEditorContextSubmenu({
-        boundary: childBoundary,
-        direction,
-        menu: {
-          height: submenuHeight,
-          width: submenuWidth
-        },
-        trigger: adjustedTrigger,
-        viewport: viewportSize
-      });
-      const maxBlockSize = availableBlockSize(
-        childBoundary,
-        viewportSize,
-        nextPosition.top
-      );
-      const effectiveHeight = Math.min(submenuHeight, maxBlockSize);
-      const clipPath = panelClipPath(
-        nextPosition.left,
-        nextPosition.top,
-        submenuWidth,
-        effectiveHeight,
-        childBoundary,
-        viewportSize
-      );
-      nextPositions[path] = {
-        ...nextPosition,
-        ...(clipPath ? { clipPath } : {}),
-        maxBlockSize,
-        pointerLeft: 'right' === nextPosition.placement
-          ? nextPosition.left
-          : nextPosition.left + submenuWidth
-      };
-      const currentLeft = Number.parseFloat(submenu.style.left);
-      const currentTop = Number.parseFloat(submenu.style.top);
-      positionDeltas.set(path, {
-        x: nextPosition.left - (Number.isFinite(currentLeft) ? currentLeft : submenuRect.left),
-        y: nextPosition.top - (Number.isFinite(currentTop) ? currentTop : submenuRect.top)
-      });
-      if (
-        closeScrolledDescendants
-        && (nextOpenPath === path || nextOpenPath?.startsWith(`${path}.`))
-      ) {
-        const parentPosition = nextPositions[parentPath];
-        const parentElement = parentPath
-          ? submenuRefs.current.get(parentPath)
-          : root;
-        const parentRect = parentElement?.getBoundingClientRect();
-        if (parentRect) {
-          const parentLeft = parentPosition?.left ?? parentRect.left;
-          const parentTop = parentPosition?.top ?? parentRect.top;
-          const parentRight = parentLeft + (parentRect.width || parentElement?.offsetWidth || 240);
-          const parentBottom = parentTop + (parentRect.height || parentElement?.offsetHeight || 180);
-          if (
-            adjustedTrigger.bottom <= parentTop
-            || adjustedTrigger.top >= parentBottom
-            || adjustedTrigger.right <= parentLeft
-            || adjustedTrigger.left >= parentRight
-          ) {
-            nextOpenPath = parentPath || null;
-            focusPathAfterClose = path;
-          }
-        }
-      }
-    }
+    const { focusPathAfterClose, nextOpenPath, nextPositions } = computeOpenSubmenuPositions({
+      closeScrolledDescendants,
+      direction: latestRef.current.direction,
+      openPath: currentOpenPath,
+      root,
+      submenuRefs: submenuRefs.current,
+      triggerRefs: refs.current,
+      viewport: { height: windowRef.innerHeight, width: windowRef.innerWidth }
+    });
     if (nextOpenPath !== currentOpenPath) {
       const nextFocusPath = focusPathAfterClose ?? nextOpenPath;
       pendingParentFocus.current = focusPathAfterClose ?? (nextFocusPath ?? '');
@@ -430,33 +298,59 @@ export function EditorContextMenu({
       setFocusPath(nextFocusPath);
       setOpenPath(nextOpenPath);
     }
-    setSubmenuPositions(nextPositions);
+    if (!sameSubmenuPositions(submenuPositionsRef.current, nextPositions)) {
+      submenuPositionsRef.current = nextPositions;
+      setSubmenuPositions(nextPositions);
+    }
   };
+  positionOpenSubmenusRef.current = positionOpenSubmenus;
 
-  const closeSubmenu = (parentPath: string): void => {
+  const handleSubmenuScroll = useCallback((): void => {
+    positionOpenSubmenusRef.current(true);
+  }, []);
+
+  const closeSubmenu = useCallback((parentPath: string): void => {
     initialFocusCancelledRef.current = true;
     pendingSubmenuFocus.current = null;
     pendingParentFocus.current = parentPath;
-    const ancestorPath = parentPath.split('.').slice(0, -1).join('.');
+    const ancestorPath = parentLayerPath(parentPath);
     openPathRef.current = '' === ancestorPath ? null : ancestorPath;
     refs.current.get(parentPath)?.focus({ preventScroll: true });
     setOpenPath('' === ancestorPath ? null : ancestorPath);
     setFocusPath('' === parentPath ? null : parentPath);
-  };
+  }, []);
 
   useLayoutEffect(() => {
     if (!open) {
       pendingSubmenuFocus.current = null;
       pendingParentFocus.current = null;
       openPathRef.current = null;
+      hoverPathRef.current = null;
+      submenuPositionsRef.current = {};
+      lastMeasuredLayoutRef.current = null;
+      lastClipModelRef.current = null;
+      scrollBaselineRef.current = null;
       initialFocusCancelledRef.current = false;
       return;
     }
     initialFocusCancelledRef.current = false;
-    clampPosition();
+    syncRootPosition('anchor');
+    lastClipModelRef.current = model;
+    if (scrollBaselineRef.current) {
+      const windowRef = rootRef.current?.ownerDocument.defaultView;
+      if (windowRef) {
+        scrollBaselineRef.current = captureEditorContextMenuScrollBaseline(
+          surfaceElement,
+          windowRef
+        );
+      }
+    }
     const first = firstEnabled(model.items, 'last' === initialFocus);
+    hoverPathRef.current = null;
+    submenuPositionsRef.current = {};
     setOpenPath(null);
     setHoverPath(null);
+    setPointerHovering(false);
     setSubmenuPositions({});
     setFocusPath(null);
     const frame = requestAnimationFrame(() => {
@@ -477,38 +371,47 @@ export function EditorContextMenu({
   }, [direction, openPath, position.left, position.top]);
 
   useLayoutEffect(() => {
-    if (open) updateClip();
+    if (!open || lastClipModelRef.current === model) return;
+    lastClipModelRef.current = model;
+    syncRootPosition('reclamp');
   }, [model, open]);
 
   useEffect(() => {
     if (!open) return;
     const root = rootRef.current;
     if (!root || 'undefined' === typeof ResizeObserver) return;
-    const observer = new ResizeObserver(() => updateClip());
+    const observer = new ResizeObserver(() => {
+      const windowRef = root.ownerDocument.defaultView;
+      if (!windowRef) return;
+      const boundary = readBoundary(boundaryElement, windowRef);
+      if (boundary && sameMeasuredLayout(lastMeasuredLayoutRef.current, measureRootLayout(root, boundary))) {
+        return;
+      }
+      syncRootPosition('reclamp');
+    });
     observer.observe(root);
     if (boundaryElement && boundaryElement !== root) observer.observe(boundaryElement);
     return () => observer.disconnect();
-  }, [boundaryElement, onDismiss, open, openPath]);
+  }, [boundaryElement, open]);
 
   useLayoutEffect(() => {
-    const path = pendingSubmenuFocus.current;
-    if (!path || !focusPath) return;
-    const parentPath = path.slice(0, path.lastIndexOf('.'));
-    if (!submenuPositions[parentPath]) return;
-    const child = refs.current.get(path);
-    if (!child) return;
-    pendingSubmenuFocus.current = null;
-    child.focus();
+    const childPath = pendingSubmenuFocus.current;
+    if (childPath && focusPath && submenuPositions[parentLayerPath(childPath)]) {
+      const child = refs.current.get(childPath);
+      if (child) {
+        pendingSubmenuFocus.current = null;
+        child.focus();
+      }
+    }
+    const parentPath = pendingParentFocus.current;
+    if (parentPath && focusPath === parentPath) {
+      const parent = refs.current.get(parentPath);
+      if (parent) {
+        pendingParentFocus.current = null;
+        parent.focus();
+      }
+    }
   }, [focusPath, submenuPositions]);
-
-  useLayoutEffect(() => {
-    const path = pendingParentFocus.current;
-    if (!path || focusPath !== path) return;
-    const parent = refs.current.get(path);
-    if (!parent) return;
-    pendingParentFocus.current = null;
-    parent.focus();
-  }, [focusPath]);
 
   useLayoutEffect(() => {
     if (!open) {
@@ -530,71 +433,52 @@ export function EditorContextMenu({
     // Preview acceptance can restore an ancestor's scroll position before this
     // menu mounts, while its queued native scroll event arrives afterwards.
     // Only movement relative to this listener's opening snapshot dismisses a
-    // known container. When a surface ancestor chain was captured, scroll
-    // events from unrelated external elements (for example a synchronized
-    // sibling Preview pane) are ignored so they cannot dismiss the menu.
-    const scrollBaseline = captureEditorContextMenuScrollBaseline(
-      surfaceElement,
-      windowRef
-    );
-    const isMenuTarget = (target: EventTarget | null): boolean =>
-      target instanceof Element
-      && Boolean(target.closest(
-        '[data-easymde-context-menu-layer], [data-easymde-context-menu-pointer]'
-      ));
+    // known container; unrelated external scroll targets are ignored.
+    scrollBaselineRef.current = captureEditorContextMenuScrollBaseline(surfaceElement, windowRef);
     const dismissOutside = (event: PointerEvent): void => {
-      if (
-        event.target instanceof Node
-        && !root.contains(event.target)
-        && !isMenuTarget(event.target)
-      ) {
-        onDismiss({ restoreFocus: true });
+      if (event.target instanceof Node && !root.contains(event.target) && !isMenuTarget(event.target)) {
+        latestRef.current.onDismiss({ restoreFocus: true });
       }
     };
     const dismissOutsideContextMenu = (event: MouseEvent): void => {
       if (!(event.target instanceof Node)) return;
-      if (
-        root.contains(event.target)
-        || isMenuTarget(event.target)
-        || surfaceElement?.contains(event.target)
-      ) return;
-      onDismiss({ restoreFocus: true });
-    };
-    documentRef.addEventListener('pointerdown', dismissOutside);
-    documentRef.addEventListener('contextmenu', dismissOutsideContextMenu, true);
-    const handleResize = (): void => updateClip();
-    const handleDocumentKeyDown = (event: globalThis.KeyboardEvent): void => {
-      if ('Escape' !== event.key || event.defaultPrevented) return;
-      event.preventDefault();
-      event.stopPropagation();
-      const currentOpenPath = openPathRef.current;
-      if (currentOpenPath) {
-        closeSubmenu(currentOpenPath);
+      if (root.contains(event.target) || isMenuTarget(event.target) || surfaceElement?.contains(event.target)) {
         return;
       }
-      onDismiss({ restoreFocus: true });
+      latestRef.current.onDismiss({ restoreFocus: true });
+    };
+    const handleResize = (): void => syncRootPosition('reclamp');
+    const handleDocumentKeyDown = (event: globalThis.KeyboardEvent): void => {
+      handleEditorContextMenuKeyDown(event, {
+        activeElement: documentRef.activeElement,
+        clearPointerHover,
+        closeSubmenu,
+        closeSubmenusToLayer,
+        direction: latestRef.current.direction,
+        focusItem: (path) => refs.current.get(path)?.focus(),
+        hoverPath: hoverPathRef.current,
+        items: latestRef.current.model.items,
+        onAction: (id) => latestRef.current.onAction(id),
+        onDismiss: (dismiss) => latestRef.current.onDismiss(dismiss),
+        openPath: openPathRef.current,
+        openSubmenu,
+        overlay: overlayRef.current
+      });
     };
     const handleScroll = (event: Event): void => {
-      if (
-        event.target instanceof Node
-        && overlayRef.current?.contains(event.target)
-      ) {
+      if (event.target instanceof Node && overlayRef.current?.contains(event.target)) {
         const target = event.target instanceof Element
           ? event.target.closest<HTMLElement>('.easymde-editor-context-menu__submenu')
           : null;
         if (target) positionOpenSubmenus(true);
         return;
       }
-      if (
-        !editorContextMenuScrollMoved(
-          event,
-          scrollBaseline,
-          documentRef,
-          windowRef
-        )
-      ) return;
-      onDismiss({ restoreFocus: true });
+      const baseline = scrollBaselineRef.current;
+      if (!baseline || !editorContextMenuScrollMoved(event, baseline, documentRef, windowRef)) return;
+      latestRef.current.onDismiss({ restoreFocus: true });
     };
+    documentRef.addEventListener('pointerdown', dismissOutside);
+    documentRef.addEventListener('contextmenu', dismissOutsideContextMenu, true);
     windowRef.addEventListener('resize', handleResize);
     documentRef.addEventListener('keydown', handleDocumentKeyDown, true);
     windowRef.addEventListener('scroll', handleScroll, true);
@@ -605,16 +489,7 @@ export function EditorContextMenu({
       documentRef.removeEventListener('keydown', handleDocumentKeyDown, true);
       windowRef.removeEventListener('scroll', handleScroll, true);
     };
-  }, [
-    open,
-    direction,
-    openPath,
-    anchor.x,
-    anchor.y,
-    boundaryElement,
-    onDismiss,
-    surfaceElement
-  ]);
+  }, [open, boundaryElement, surfaceElement]);
 
   if (!open) return null;
 
@@ -635,13 +510,12 @@ export function EditorContextMenu({
         data-easymde-context-menu="true"
         dir={direction}
         ref={rootRef}
-        onScroll={() => positionOpenSubmenus(true)}
+        tabIndex={-1}
+        onScroll={handleSubmenuScroll}
         style={{
           clipPath: position.clipPath,
           left: `${position.left}px`,
-          maxBlockSize: position.maxBlockSize
-            ? `${position.maxBlockSize}px`
-            : undefined,
+          maxBlockSize: position.maxBlockSize ? `${position.maxBlockSize}px` : undefined,
           top: `${position.top}px`
         }}
       >
@@ -650,20 +524,18 @@ export function EditorContextMenu({
           focusPath={focusPath}
           hoverPath={hoverPath}
           items={model.items}
-          onInteraction={() => {
-            initialFocusCancelledRef.current = true;
-          }}
-          {...(onMenuPointerDown ? { onMenuPointerDown } : {})}
+          onInteraction={handleInteraction}
+          {...(onMenuPointerDown ? { onMenuPointerDown: handleMenuPointerDown } : {})}
           openPath={openPath}
-          onAction={onAction}
-          onDismiss={onDismiss}
+          onAction={handleAction}
+          onDismiss={handleDismiss}
           onFocusPath={setFocusPath}
-          onHoverPath={setHoverPath}
+          onHoverPath={handleHoverPath}
           onCloseSubmenusToLayer={closeSubmenusToLayer}
           onOpenSubmenu={openSubmenu}
-          onCloseSubmenu={closeSubmenu}
-          onSubmenuScroll={() => positionOpenSubmenus(true)}
+          onSubmenuScroll={handleSubmenuScroll}
           path=""
+          pointerHovering={pointerHovering}
           portalTarget={overlayRef.current}
           refs={refs}
           registerSubmenuRef={registerSubmenuRef}

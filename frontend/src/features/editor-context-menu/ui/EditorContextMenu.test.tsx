@@ -54,6 +54,92 @@ const fourLevelModel: EditorContextMenuModel = {
 	}]
 };
 
+const multiLevelTableModel: EditorContextMenuModel = {
+  items: [
+    { disabled: false, id: 'copy', kind: 'item', label: 'Copy' },
+    {
+      children: [
+        { disabled: false, id: 'insert-row-above', kind: 'item', label: 'Insert row above' },
+        { disabled: false, id: 'insert-row-below', kind: 'item', label: 'Insert row below' },
+        {
+          children: [
+            { disabled: false, id: 'align-left', kind: 'item', label: 'Align left' },
+            { disabled: false, id: 'align-center', kind: 'item', label: 'Align center' },
+            { disabled: false, id: 'align-right', kind: 'item', label: 'Align right' }
+          ],
+          id: 'table-alignment',
+          kind: 'submenu',
+          label: 'Alignment'
+        }
+      ],
+      id: 'table',
+      kind: 'submenu',
+      label: 'Table'
+    }
+  ]
+};
+
+const siblingSubmenusModel: EditorContextMenuModel = {
+  items: [
+    { disabled: false, id: 'copy', kind: 'item', label: 'Copy' },
+    {
+      children: [
+        { disabled: false, id: 'table', kind: 'item', label: 'Table' },
+        { disabled: false, id: 'image', kind: 'item', label: 'Image' }
+      ],
+      id: 'insert',
+      kind: 'submenu',
+      label: 'Insert'
+    },
+    {
+      children: [
+        { disabled: false, id: 'bold', kind: 'item', label: 'Bold' },
+        { disabled: false, id: 'cut', kind: 'item', label: 'Cut' }
+      ],
+      id: 'format',
+      kind: 'submenu',
+      label: 'Format'
+    }
+  ]
+};
+
+async function withManualRafAndExternalFocus(
+  run: (context: Readonly<{
+    external: HTMLButtonElement;
+    flushFrame: () => void;
+  }>) => void | Promise<void>
+): Promise<void> {
+  const external = document.createElement('button');
+  external.type = 'button';
+  external.textContent = 'External editor';
+  document.body.append(external);
+  external.focus();
+
+  let frame: FrameRequestCallback | null = null;
+  const rafSpy = vi
+    .spyOn(window, 'requestAnimationFrame')
+    .mockImplementation((callback: FrameRequestCallback) => {
+      frame = callback;
+      return 1;
+    });
+
+  try {
+    await run({
+      external,
+      flushFrame: () => {
+        act(() => {
+          const pending = frame;
+          frame = null;
+          pending?.(0);
+        });
+      }
+    });
+  } finally {
+    rafSpy.mockRestore();
+    external.remove();
+  }
+}
+
 const iconCoverageModel: EditorContextMenuModel = {
   items: [
     { disabled: false, id: 'bold', kind: 'item', label: 'Bold' },
@@ -1382,5 +1468,520 @@ describe('EditorContextMenu', () => {
     expect(resizeCallbacks.length).toBeGreaterThan(0);
     boundary.remove();
     vi.unstubAllGlobals();
+  });
+
+  it('opens nested submenus on pointer hover without focusing child item 0 and tracks hover cleanly across levels', async () => {
+    await withManualRafAndExternalFocus(async ({ flushFrame }) => {
+      render(
+        <EditorContextMenu
+          anchor={{ x: 12, y: 18 }}
+          direction="ltr"
+          model={multiLevelTableModel}
+          onAction={vi.fn()}
+          onDismiss={vi.fn()}
+          open
+        />
+      );
+
+      const copy = screen.getByRole('menuitem', { name: 'Copy' });
+      const table = screen.getByRole('menuitem', { name: 'Table' });
+      const rootLayer = copy.closest<HTMLElement>('[data-easymde-context-menu-layer="root"]');
+      if (!rootLayer) throw new Error('context-menu-root-layer-missing');
+
+      flushFrame();
+      expect(document.activeElement).toBe(copy);
+
+      fireEvent.mouseEnter(table);
+      const rowAbove = await screen.findByRole('menuitem', { name: 'Insert row above' });
+      const rowBelow = screen.getByRole('menuitem', { name: 'Insert row below' });
+      const alignment = screen.getByRole('menuitem', { name: 'Alignment' });
+      const level1Layer = rowAbove.closest<HTMLElement>('[data-easymde-context-menu-layer]');
+      if (!level1Layer) throw new Error('context-menu-level1-layer-missing');
+
+      expect(document.activeElement).toBe(copy);
+      expect(document.activeElement).not.toBe(rowAbove);
+      expect(rootLayer.classList.contains('is-pointer-hovering')).toBe(true);
+      expect(level1Layer.classList.contains('is-pointer-hovering')).toBe(true);
+      expect(table.classList.contains('is-hovered')).toBe(true);
+      expect(table.parentElement?.classList.contains('is-expanded')).toBe(true);
+      expect(copy.classList.contains('is-hovered')).toBe(false);
+      expect(rowAbove.classList.contains('is-hovered')).toBe(false);
+
+      // Crossing the gap between root menu and submenu keeps pointer-hovering
+      // mode active so root item 0 does not flash its focus ring.
+      fireEvent.mouseLeave(table, { relatedTarget: document.body });
+      expect(table.classList.contains('is-hovered')).toBe(false);
+      expect(table.parentElement?.classList.contains('is-expanded')).toBe(true);
+      expect(rootLayer.classList.contains('is-pointer-hovering')).toBe(true);
+
+      // Move pointer item 0 -> item 1 -> item 2 inside 2nd-level submenu.
+      fireEvent.mouseEnter(rowAbove);
+      expect(rowAbove.classList.contains('is-hovered')).toBe(true);
+      expect(rowBelow.classList.contains('is-hovered')).toBe(false);
+      expect(alignment.classList.contains('is-hovered')).toBe(false);
+      expect(document.activeElement).toBe(copy);
+
+      fireEvent.mouseEnter(rowBelow);
+      expect(rowAbove.classList.contains('is-hovered')).toBe(false);
+      expect(rowBelow.classList.contains('is-hovered')).toBe(true);
+      expect(alignment.classList.contains('is-hovered')).toBe(false);
+      expect(document.activeElement).toBe(copy);
+
+      fireEvent.mouseEnter(alignment);
+      const alignLeft = await screen.findByRole('menuitem', { name: 'Align left' });
+      const alignCenter = screen.getByRole('menuitem', { name: 'Align center' });
+      const alignRight = screen.getByRole('menuitem', { name: 'Align right' });
+
+      expect(document.activeElement).toBe(copy);
+      expect(document.activeElement).not.toBe(alignLeft);
+      expect(rowBelow.classList.contains('is-hovered')).toBe(false);
+      expect(alignment.classList.contains('is-hovered')).toBe(true);
+      expect(alignment.parentElement?.classList.contains('is-expanded')).toBe(true);
+      expect(table.parentElement?.classList.contains('is-expanded')).toBe(true);
+      expect(alignLeft.classList.contains('is-hovered')).toBe(false);
+
+      // Move pointer item 0 -> item 1 -> item 2 inside 3rd-level submenu.
+      fireEvent.mouseEnter(alignLeft);
+      expect(alignLeft.classList.contains('is-hovered')).toBe(true);
+      expect(alignCenter.classList.contains('is-hovered')).toBe(false);
+      expect(alignRight.classList.contains('is-hovered')).toBe(false);
+      expect(document.activeElement).toBe(copy);
+
+      fireEvent.mouseEnter(alignCenter);
+      expect(alignLeft.classList.contains('is-hovered')).toBe(false);
+      expect(alignCenter.classList.contains('is-hovered')).toBe(true);
+      expect(alignRight.classList.contains('is-hovered')).toBe(false);
+      expect(document.activeElement).toBe(copy);
+
+      fireEvent.mouseEnter(alignRight);
+      expect(alignLeft.classList.contains('is-hovered')).toBe(false);
+      expect(alignCenter.classList.contains('is-hovered')).toBe(false);
+      expect(alignRight.classList.contains('is-hovered')).toBe(true);
+      expect(table.parentElement?.classList.contains('is-expanded')).toBe(true);
+      expect(alignment.parentElement?.classList.contains('is-expanded')).toBe(true);
+      expect(document.activeElement).toBe(copy);
+    });
+  });
+
+  it.each([
+    ['ArrowRight', 'ArrowLeft', (trigger: HTMLElement) => fireEvent.keyDown(trigger, { key: 'ArrowRight' })],
+    ['Enter', 'Escape', (trigger: HTMLElement) => fireEvent.keyDown(trigger, { key: 'Enter' })],
+    ['Space', 'Escape', (trigger: HTMLElement) => fireEvent.keyDown(trigger, { key: ' ' })],
+    ['click', 'Escape', (trigger: HTMLElement) => fireEvent.click(trigger)]
+  ] as const)(
+    'focuses child item 0 when opening a submenu via %s and returns focus on %s',
+    (_activation, closeKey, activate) => {
+      const onDismiss = vi.fn();
+      render(
+        <EditorContextMenu
+          anchor={{ x: 12, y: 18 }}
+          direction="ltr"
+          model={model}
+          onAction={vi.fn()}
+          onDismiss={onDismiss}
+          open
+        />
+      );
+
+      const insert = screen.getByRole('menuitem', { name: 'Insert' });
+      insert.focus();
+      activate(insert);
+
+      const table = screen.getByRole('menuitem', { name: 'Table' });
+      expect(document.activeElement).toBe(table);
+
+      fireEvent.keyDown(table, { key: closeKey });
+      expect(document.activeElement).toBe(insert);
+      expect(insert.getAttribute('aria-expanded')).toBe('false');
+      expect(onDismiss).not.toHaveBeenCalled();
+    }
+  );
+
+  it('focuses child item 0 when clicking a submenu trigger that was already hovered open', async () => {
+    render(
+      <EditorContextMenu
+        anchor={{ x: 12, y: 18 }}
+        direction="ltr"
+        model={model}
+        onAction={vi.fn()}
+        onDismiss={vi.fn()}
+        open
+      />
+    );
+
+    const copy = screen.getByRole('menuitem', { name: 'Copy' });
+    const insert = screen.getByRole('menuitem', { name: 'Insert' });
+    copy.focus();
+
+    fireEvent.mouseEnter(insert);
+    const table = await screen.findByRole('menuitem', { name: 'Table' });
+    expect(document.activeElement).toBe(copy);
+
+    fireEvent.click(insert);
+    expect(document.activeElement).toBe(table);
+  });
+
+  it('closes only one hovered submenu layer at a time on Escape and supports keyboard takeover after hover', async () => {
+    const onDismiss = vi.fn();
+    render(
+      <EditorContextMenu
+        anchor={{ x: 12, y: 18 }}
+        direction="ltr"
+        model={multiLevelTableModel}
+        onAction={vi.fn()}
+        onDismiss={onDismiss}
+        open
+      />
+    );
+
+    const copy = screen.getByRole('menuitem', { name: 'Copy' });
+    const table = screen.getByRole('menuitem', { name: 'Table' });
+    const rootLayer = copy.closest<HTMLElement>('[data-easymde-context-menu-layer="root"]');
+    if (!rootLayer) throw new Error('context-menu-root-layer-missing');
+    copy.focus();
+
+    // Hover 1st-level -> 2nd-level -> item inside 2nd-level submenu.
+    fireEvent.mouseEnter(table);
+    const alignment = await screen.findByRole('menuitem', { name: 'Alignment' });
+    fireEvent.mouseEnter(alignment);
+    const alignCenter = await screen.findByRole('menuitem', { name: 'Align center' });
+    const alignRight = screen.getByRole('menuitem', { name: 'Align right' });
+    fireEvent.mouseEnter(alignCenter);
+
+    // ArrowDown from hovered item in 2nd-level submenu moves focus inside that
+    // submenu (not the root menu) and exits pointer-hovering mode.
+    fireEvent.keyDown(document, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(alignRight);
+    expect(rootLayer.classList.contains('is-pointer-hovering')).toBe(false);
+
+    // Re-hover alignment to verify Escape closes only one submenu layer at a time.
+    fireEvent.mouseEnter(alignment);
+    await screen.findByRole('menuitem', { name: 'Align left' });
+    expect(rootLayer.classList.contains('is-pointer-hovering')).toBe(true);
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('menuitem', { name: 'Align left' })).toBeNull();
+    expect(screen.getByRole('menuitem', { name: 'Alignment' })).toBeTruthy();
+    expect(document.activeElement).toBe(alignment);
+    expect(rootLayer.classList.contains('is-pointer-hovering')).toBe(false);
+    expect(onDismiss).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('menuitem', { name: 'Alignment' })).toBeNull();
+    expect(document.activeElement).toBe(table);
+    expect(onDismiss).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onDismiss).toHaveBeenCalledExactlyOnceWith({ restoreFocus: true });
+  });
+
+  it('transitions ArrowRight from a hovered submenu trigger directly into its first enabled child', async () => {
+    render(
+      <EditorContextMenu
+        anchor={{ x: 12, y: 18 }}
+        direction="ltr"
+        model={model}
+        onAction={vi.fn()}
+        onDismiss={vi.fn()}
+        open
+      />
+    );
+
+    const copy = screen.getByRole('menuitem', { name: 'Copy' });
+    const insert = screen.getByRole('menuitem', { name: 'Insert' });
+    copy.focus();
+
+    fireEvent.mouseEnter(insert);
+    const table = await screen.findByRole('menuitem', { name: 'Table' });
+    expect(document.activeElement).toBe(copy);
+
+    fireEvent.keyDown(document, { key: 'ArrowRight' });
+    expect(document.activeElement).toBe(table);
+  });
+
+  it('keeps focus contained on the menu container when pointer hover opens a submenu before rAF and preserves keyboard takeover', async () => {
+    const onDismiss = vi.fn();
+    await withManualRafAndExternalFocus(async ({ external, flushFrame }) => {
+      expect(document.activeElement).toBe(external);
+
+      render(
+        <EditorContextMenu
+          anchor={{ x: 12, y: 18 }}
+          direction="ltr"
+          model={model}
+          onAction={vi.fn()}
+          onDismiss={onDismiss}
+          open
+        />
+      );
+
+      const viewport = document.body.querySelector<HTMLElement>('[data-easymde-context-menu-viewport="true"]');
+      const rootContainer = document.body.querySelector<HTMLElement>('[data-easymde-context-menu="true"]');
+      if (!viewport || !rootContainer) throw new Error('context-menu-container-missing');
+
+      const insert = screen.getByRole('menuitem', { name: 'Insert' });
+      fireEvent.mouseEnter(insert);
+      const table = await screen.findByRole('menuitem', { name: 'Table' });
+
+      expect(viewport.contains(document.activeElement)).toBe(true);
+      expect(document.activeElement).toBe(rootContainer);
+      expect(document.activeElement).not.toBe(external);
+      expect(document.activeElement).not.toBe(table);
+
+      flushFrame();
+      expect(viewport.contains(document.activeElement)).toBe(true);
+      expect(document.activeElement).toBe(rootContainer);
+      expect(document.activeElement).not.toBe(table);
+
+      // Moving the pointer out clears hoverPath while focus stays on rootContainer;
+      // ArrowDown must still take over keyboard navigation into the open submenu layer.
+      fireEvent.mouseLeave(insert, { relatedTarget: document.body });
+      expect(insert.classList.contains('is-hovered')).toBe(false);
+      expect(document.activeElement).toBe(rootContainer);
+
+      fireEvent.keyDown(rootContainer, { key: 'ArrowDown' });
+      expect(document.activeElement).toBe(table);
+
+      fireEvent.keyDown(table, { key: 'Escape' });
+      expect(screen.queryByRole('menuitem', { name: 'Table' })).toBeNull();
+      expect(document.activeElement).toBe(insert);
+      expect(onDismiss).not.toHaveBeenCalled();
+
+      fireEvent.keyDown(insert, { key: 'Escape' });
+      expect(onDismiss).toHaveBeenCalledExactlyOnceWith({ restoreFocus: true });
+    });
+  });
+
+  it('closes an open hovered submenu on Escape and dismisses on second Escape directly from menu container focus', async () => {
+    const onDismiss = vi.fn();
+    await withManualRafAndExternalFocus(async ({ flushFrame }) => {
+      render(
+        <EditorContextMenu
+          anchor={{ x: 12, y: 18 }}
+          direction="ltr"
+          model={model}
+          onAction={vi.fn()}
+          onDismiss={onDismiss}
+          open
+        />
+      );
+
+      const viewport = document.body.querySelector<HTMLElement>('[data-easymde-context-menu-viewport="true"]');
+      const rootContainer = document.body.querySelector<HTMLElement>('[data-easymde-context-menu="true"]');
+      if (!viewport || !rootContainer) throw new Error('context-menu-container-missing');
+
+      const insert = screen.getByRole('menuitem', { name: 'Insert' });
+      fireEvent.mouseEnter(insert);
+      await screen.findByRole('menuitem', { name: 'Table' });
+      flushFrame();
+
+      expect(viewport.contains(document.activeElement)).toBe(true);
+      expect(document.activeElement).toBe(rootContainer);
+
+      fireEvent.keyDown(rootContainer, { key: 'Escape' });
+      expect(screen.queryByRole('menuitem', { name: 'Table' })).toBeNull();
+      expect(document.activeElement).toBe(insert);
+      expect(onDismiss).not.toHaveBeenCalled();
+
+      fireEvent.keyDown(insert, { key: 'Escape' });
+      expect(onDismiss).toHaveBeenCalledExactlyOnceWith({ restoreFocus: true });
+    });
+  });
+
+  it('still focuses root item 0 after rAF when opened without early pointer hover', async () => {
+    await withManualRafAndExternalFocus(({ external, flushFrame }) => {
+      expect(document.activeElement).toBe(external);
+
+      render(
+        <EditorContextMenu
+          anchor={{ x: 12, y: 18 }}
+          direction="ltr"
+          model={model}
+          onAction={vi.fn()}
+          onDismiss={vi.fn()}
+          open
+        />
+      );
+
+      const copy = screen.getByRole('menuitem', { name: 'Copy' });
+      flushFrame();
+      expect(document.activeElement).toBe(copy);
+    });
+  });
+
+  it('preserves focus inside the menu container without focusing the new child when hovering a sibling submenu while focus is in an open submenu', async () => {
+    const onDismiss = vi.fn();
+    render(
+      <EditorContextMenu
+        anchor={{ x: 12, y: 18 }}
+        direction="ltr"
+        model={siblingSubmenusModel}
+        onAction={vi.fn()}
+        onDismiss={onDismiss}
+        open
+      />
+    );
+
+    const viewport = document.body.querySelector<HTMLElement>('[data-easymde-context-menu-viewport="true"]');
+    const rootContainer = document.body.querySelector<HTMLElement>('[data-easymde-context-menu="true"]');
+    if (!viewport || !rootContainer) throw new Error('context-menu-container-missing');
+
+    const insert = screen.getByRole('menuitem', { name: 'Insert' });
+    const format = screen.getByRole('menuitem', { name: 'Format' });
+    insert.focus();
+    fireEvent.keyDown(insert, { key: 'ArrowRight' });
+
+    const table = screen.getByRole('menuitem', { name: 'Table' });
+    expect(document.activeElement).toBe(table);
+
+    fireEvent.mouseEnter(format);
+    const bold = await screen.findByRole('menuitem', { name: 'Bold' });
+    expect(screen.queryByRole('menuitem', { name: 'Table' })).toBeNull();
+    expect(viewport.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toBe(rootContainer);
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement).not.toBe(bold);
+    expect(bold.classList.contains('is-hovered')).toBe(false);
+    expect(bold.tabIndex).toBe(-1);
+
+    fireEvent.keyDown(rootContainer, { key: 'Escape' });
+    expect(screen.queryByRole('menuitem', { name: 'Bold' })).toBeNull();
+    expect(document.activeElement).toBe(format);
+    expect(onDismiss).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(format, { key: 'Escape' });
+    expect(onDismiss).toHaveBeenCalledExactlyOnceWith({ restoreFocus: true });
+  });
+
+  it('preserves focus inside the menu container when hovering a non-submenu root sibling while focus is in an open submenu', async () => {
+    const onDismiss = vi.fn();
+    render(
+      <EditorContextMenu
+        anchor={{ x: 12, y: 18 }}
+        direction="ltr"
+        model={siblingSubmenusModel}
+        onAction={vi.fn()}
+        onDismiss={onDismiss}
+        open
+      />
+    );
+
+    const viewport = document.body.querySelector<HTMLElement>('[data-easymde-context-menu-viewport="true"]');
+    const rootContainer = document.body.querySelector<HTMLElement>('[data-easymde-context-menu="true"]');
+    if (!viewport || !rootContainer) throw new Error('context-menu-container-missing');
+
+    const copy = screen.getByRole('menuitem', { name: 'Copy' });
+    const insert = screen.getByRole('menuitem', { name: 'Insert' });
+    insert.focus();
+    fireEvent.keyDown(insert, { key: 'ArrowRight' });
+
+    const table = screen.getByRole('menuitem', { name: 'Table' });
+    expect(document.activeElement).toBe(table);
+
+    fireEvent.mouseEnter(copy);
+    await waitFor(() => expect(screen.queryByRole('menuitem', { name: 'Table' })).toBeNull());
+    expect(viewport.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toBe(rootContainer);
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement).not.toBe(copy);
+    expect(copy.classList.contains('is-hovered')).toBe(true);
+
+    fireEvent.keyDown(rootContainer, { key: 'Escape' });
+    expect(onDismiss).toHaveBeenCalledExactlyOnceWith({ restoreFocus: true });
+  });
+
+  it('keeps ResizeObserver and global listeners stable across submenu open, switch, and close transitions', async () => {
+    const observe = vi.fn();
+    const disconnect = vi.fn();
+    vi.stubGlobal('ResizeObserver', class {
+      observe = observe;
+      disconnect = disconnect;
+    });
+    const docAddSpy = vi.spyOn(document, 'addEventListener');
+    const docRemoveSpy = vi.spyOn(document, 'removeEventListener');
+    const winAddSpy = vi.spyOn(window, 'addEventListener');
+    const winRemoveSpy = vi.spyOn(window, 'removeEventListener');
+    const boundary = document.createElement('div');
+    Object.defineProperty(boundary, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        bottom: 500,
+        height: 500,
+        left: 0,
+        right: 600,
+        top: 0,
+        width: 600,
+        x: 0,
+        y: 0,
+        toJSON: () => ({})
+      })
+    });
+    document.body.append(boundary);
+
+    try {
+      const view = render(
+        <EditorContextMenu
+          anchor={{ x: 20, y: 20 }}
+          boundaryElement={boundary}
+          direction="ltr"
+          model={fourLevelModel}
+          onAction={vi.fn()}
+          onDismiss={vi.fn()}
+          open
+          surfaceElement={boundary}
+        />
+      );
+
+      const menuDocEvents = new Set(['pointerdown', 'contextmenu', 'keydown']);
+      const menuWinEvents = new Set(['resize', 'scroll']);
+      const countEvents = (
+        spy: { mock: { calls: ReadonlyArray<ReadonlyArray<unknown>> } },
+        types: ReadonlySet<string>
+      ): number =>
+        spy.mock.calls.filter(([type]) => 'string' === typeof type && types.has(type)).length;
+
+      const initialObserveCount = observe.mock.calls.length;
+      const initialDisconnectCount = disconnect.mock.calls.length;
+      const initialDocAddCount = countEvents(docAddSpy, menuDocEvents);
+      const initialDocRemoveCount = countEvents(docRemoveSpy, menuDocEvents);
+      const initialWinAddCount = countEvents(winAddSpy, menuWinEvents);
+      const initialWinRemoveCount = countEvents(winRemoveSpy, menuWinEvents);
+      expect(initialObserveCount).toBe(2);
+      expect(initialDisconnectCount).toBe(0);
+      expect(initialDocAddCount).toBe(3);
+      expect(initialWinAddCount).toBe(2);
+
+      const insert = screen.getByRole('menuitem', { name: 'Insert' });
+      fireEvent.mouseEnter(insert);
+      const more = await screen.findByRole('menuitem', { name: 'More' });
+      fireEvent.mouseEnter(more);
+      const deep = await screen.findByRole('menuitem', { name: 'Deep' });
+      fireEvent.mouseEnter(deep);
+      await screen.findByRole('menuitem', { name: 'Leaf' });
+
+      // Collapse nested layers via Escape back to root
+      fireEvent.keyDown(document, { key: 'Escape' });
+      fireEvent.keyDown(document, { key: 'Escape' });
+      fireEvent.keyDown(document, { key: 'Escape' });
+
+      expect(observe).toHaveBeenCalledTimes(initialObserveCount);
+      expect(disconnect).toHaveBeenCalledTimes(initialDisconnectCount);
+      expect(countEvents(docAddSpy, menuDocEvents)).toBe(initialDocAddCount);
+      expect(countEvents(docRemoveSpy, menuDocEvents)).toBe(initialDocRemoveCount);
+      expect(countEvents(winAddSpy, menuWinEvents)).toBe(initialWinAddCount);
+      expect(countEvents(winRemoveSpy, menuWinEvents)).toBe(initialWinRemoveCount);
+
+      view.unmount();
+      expect(disconnect).toHaveBeenCalledTimes(1);
+      expect(countEvents(docRemoveSpy, menuDocEvents)).toBe(3);
+      expect(countEvents(winRemoveSpy, menuWinEvents)).toBe(2);
+    } finally {
+      docAddSpy.mockRestore();
+      docRemoveSpy.mockRestore();
+      winAddSpy.mockRestore();
+      winRemoveSpy.mockRestore();
+      boundary.remove();
+      vi.unstubAllGlobals();
+    }
   });
 });

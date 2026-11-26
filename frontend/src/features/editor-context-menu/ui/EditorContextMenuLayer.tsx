@@ -1,13 +1,14 @@
 import {
   Fragment,
   createElement,
-  createPortal
+  createPortal,
+  memo,
+  useCallback,
+  useRef
 } from '@wordpress/element';
 import type {
   CSSProperties,
-  KeyboardEvent,
-  MutableRefObject,
-  MouseEvent as ReactMouseEvent
+  MutableRefObject
 } from 'react';
 
 import {
@@ -42,13 +43,14 @@ import {
 } from '../../../generated/lucide-icons';
 
 import type {
-  EditorContextMenuItem,
+  EditorContextMenuItem
 } from '../editor-context-menu-model';
 import type {
   EditorContextMenuDirection,
   EditorContextMenuDismiss,
-  EditorContextMenuPosition
+  EditorContextMenuSubmenuActivation
 } from './EditorContextMenu';
+import type { EditorContextMenuPosition } from './editor-context-menu-position';
 
 type MenuLayerProps = Readonly<{
   direction: EditorContextMenuDirection;
@@ -62,15 +64,15 @@ type MenuLayerProps = Readonly<{
   onDismiss: (dismiss: EditorContextMenuDismiss) => void;
   onFocusPath: (path: string) => void;
   onHoverPath: (path: string | null) => void;
-  onCloseSubmenusToLayer: (path: string) => void;
+  onCloseSubmenusToLayer: (path: string, updateFocusPath?: boolean) => void;
   onOpenSubmenu: (
     path: string,
-    button?: HTMLButtonElement,
-    children?: ReadonlyArray<EditorContextMenuItem>
+    children?: ReadonlyArray<EditorContextMenuItem>,
+    activation?: EditorContextMenuSubmenuActivation
   ) => void;
-  onCloseSubmenu: (path: string) => void;
   onSubmenuScroll: () => void;
   path: string;
+  pointerHovering: boolean;
   portalTarget: HTMLElement | null;
   refs: MutableRefObject<Map<string, HTMLButtonElement>>;
   registerSubmenuRef: (path: string, element: HTMLDivElement | null) => void;
@@ -145,40 +147,17 @@ const CONTEXT_MENU_ICONS: Readonly<Record<string, LucideIcon>> = {
   'copy-link-address': Link2
 };
 
-function enabledIndices(items: ReadonlyArray<EditorContextMenuItem>): number[] {
-  return items.flatMap((item, index) => item.disabled ? [] : [index]);
-}
-
-export function firstEnabled(
-  items: ReadonlyArray<EditorContextMenuItem>,
-  last: boolean
-): number | null {
-  const indexes = enabledIndices(items);
-  return indexes.length ? indexes[last ? indexes.length - 1 : 0] ?? null : null;
-}
-
-function nextEnabled(
-  items: ReadonlyArray<EditorContextMenuItem>,
-  current: number,
-  delta: number
-): number | null {
-  const indexes = enabledIndices(items);
-  if (!indexes.length) return null;
-  const currentIndex = Math.max(0, indexes.indexOf(current));
-  const nextIndex = (currentIndex + delta + indexes.length) % indexes.length;
-  return indexes[nextIndex] ?? null;
-}
-
 function itemPath(path: string, index: number): string {
   return '' === path ? String(index) : `${path}.${index}`;
 }
 
 /**
  * One recursive menu layer. The outer EditorContextMenu owns the single
- * portal host, positioning, dismissal, and focus restoration; this component
- * only renders the current layer and its submenu layers into that host.
+ * portal host, positioning, keyboard navigation, dismissal, and focus
+ * restoration; this component only renders the current layer and its submenu
+ * layers into that host.
  */
-export function MenuLayer({
+function MenuLayerComponent({
   direction,
   focusPath,
   hoverPath,
@@ -192,9 +171,9 @@ export function MenuLayer({
   onHoverPath,
   onCloseSubmenusToLayer,
   onOpenSubmenu,
-  onCloseSubmenu,
   onSubmenuScroll,
   path,
+  pointerHovering,
   portalTarget,
   refs,
   registerSubmenuRef,
@@ -202,86 +181,38 @@ export function MenuLayer({
   submenuPosition,
   ariaLabel
 }: MenuLayerProps) {
-  const focusItem = (index: number | null): void => {
-    if (null === index) return;
-    const target = refs.current.get(itemPath(path, index));
-    target?.focus();
-  };
-
-  const handleKeyDown = (
-    event: KeyboardEvent<HTMLButtonElement>,
-    index: number,
-    item: EditorContextMenuItem,
+  const buttonRefCallbacks = useRef<
+    Map<string, (button: HTMLButtonElement | null) => void>
+  >(new Map());
+  const submenuLayerRef = useCallback(
+    (element: HTMLDivElement | null): void => {
+      registerSubmenuRef(path, element);
+    },
+    [path, registerSubmenuRef]
+  );
+  const getButtonRefCallback = (
     currentPath: string
-  ): void => {
-    onHoverPath(null);
-    const forward = 'rtl' === direction ? 'ArrowLeft' : 'ArrowRight';
-    const backward = 'rtl' === direction ? 'ArrowRight' : 'ArrowLeft';
-    switch (event.key) {
-      case 'ArrowDown':
-        event.preventDefault();
-        focusItem(nextEnabled(items, index, 1));
-        return;
-      case 'ArrowUp':
-        event.preventDefault();
-        focusItem(nextEnabled(items, index, -1));
-        return;
-      case 'Home':
-        event.preventDefault();
-        focusItem(firstEnabled(items, false));
-        return;
-      case 'End':
-        event.preventDefault();
-        focusItem(firstEnabled(items, true));
-        return;
-      case 'Escape':
-        event.preventDefault();
-        event.stopPropagation();
-        if ('' !== path) {
-          onCloseSubmenu(path);
-          return;
-        }
-        onDismiss({ restoreFocus: true });
-        return;
-      case 'Tab':
-        event.preventDefault();
-        onDismiss({ restoreFocus: true });
-        return;
-      case 'Enter':
-      case ' ':
-        event.preventDefault();
-        if (item.disabled) return;
-        if ('submenu' === item.kind) {
-          onOpenSubmenu(currentPath, event.currentTarget, item.children);
-        } else {
-          onAction(item.id);
-          onDismiss({ restoreFocus: true });
-        }
-        return;
-      default:
-        break;
+  ): ((button: HTMLButtonElement | null) => void) => {
+    let callback = buttonRefCallbacks.current.get(currentPath);
+    if (!callback) {
+      callback = (button: HTMLButtonElement | null): void => {
+        if (button) refs.current.set(currentPath, button);
+        else refs.current.delete(currentPath);
+      };
+      buttonRefCallbacks.current.set(currentPath, callback);
     }
-
-    if (event.key === forward && 'submenu' === item.kind && !item.disabled) {
-      event.preventDefault();
-      onOpenSubmenu(currentPath, event.currentTarget, item.children);
-      return;
-    }
-    if (event.key === backward && '' !== path) {
-      event.preventDefault();
-      onCloseSubmenu(path);
-    }
+    return callback;
   };
 
   const layer = (
     <div
       aria-label={ariaLabel}
-      className={`easymde-editor-context-menu__layer${'' === path ? '' : ' easymde-editor-context-menu__submenu'}${null === hoverPath ? '' : ' is-pointer-hovering'}`}
+      className={`easymde-editor-context-menu__layer${'' === path ? '' : ' easymde-editor-context-menu__submenu'}${pointerHovering ? ' is-pointer-hovering' : ''}`}
       data-easymde-context-menu-layer={path || 'root'}
       data-easymde-context-menu-placement={'' === path ? undefined : submenuPosition?.placement}
       dir={direction}
       role="menu"
-      ref={'' === path ? undefined : (element) => registerSubmenuRef(path, element)}
+      ref={'' === path ? undefined : submenuLayerRef}
       onMouseLeave={(event) => {
         const related = event.relatedTarget;
         if (!(related instanceof Node) || !portalTarget?.contains(related)) {
@@ -318,6 +249,7 @@ export function MenuLayer({
               aria-haspopup={'submenu' === item.kind ? 'menu' : undefined}
               className={`easymde-editor-context-menu__button${hovered ? ' is-hovered' : ''}`}
               data-easymde-context-menu-item={item.id}
+              data-easymde-context-menu-path={currentPath}
               data-easymde-context-menu-checked={
                 'item' === item.kind && item.checked ? 'true' : undefined
               }
@@ -325,7 +257,7 @@ export function MenuLayer({
               onClick={() => {
                 if (item.disabled) return;
                 if ('submenu' === item.kind) {
-                  onOpenSubmenu(currentPath, refs.current.get(currentPath), item.children);
+                  onOpenSubmenu(currentPath, item.children, 'keyboard');
                   return;
                 }
                 onAction(item.id);
@@ -335,10 +267,9 @@ export function MenuLayer({
                 onInteraction();
                 onFocusPath(currentPath);
                 if ('submenu' !== item.kind || item.disabled) {
-                  onCloseSubmenusToLayer(currentPath);
+                  onCloseSubmenusToLayer(currentPath, true);
                 }
               }}
-              onKeyDown={(event) => handleKeyDown(event, index, item, currentPath)}
               onMouseDown={(event) => {
                 onInteraction();
                 event.preventDefault();
@@ -348,18 +279,15 @@ export function MenuLayer({
                 event.preventDefault();
                 onMenuPointerDown?.();
               }}
-              onMouseEnter={(event: ReactMouseEvent<HTMLButtonElement>) => {
+              onMouseEnter={() => {
                 onHoverPath(currentPath);
                 if ('submenu' === item.kind && !item.disabled) {
-                  onOpenSubmenu(currentPath, event.currentTarget, item.children);
+                  onOpenSubmenu(currentPath, item.children, 'pointer');
                 } else {
-                  onCloseSubmenusToLayer(currentPath);
+                  onCloseSubmenusToLayer(currentPath, false);
                 }
               }}
-              ref={(button) => {
-                if (button) refs.current.set(currentPath, button);
-                else refs.current.delete(currentPath);
-              }}
+              ref={getButtonRefCallback(currentPath)}
               role="menuitem"
               tabIndex={focusPath === currentPath || ('' === path && null === focusPath && 0 === index) ? 0 : -1}
               type="button"
@@ -417,9 +345,9 @@ export function MenuLayer({
                       onHoverPath={onHoverPath}
                       onCloseSubmenusToLayer={onCloseSubmenusToLayer}
                       onOpenSubmenu={onOpenSubmenu}
-                      onCloseSubmenu={onCloseSubmenu}
                       onSubmenuScroll={onSubmenuScroll}
                       path={currentPath}
+                      pointerHovering={pointerHovering}
                       portalTarget={portalTarget}
                       refs={refs}
                       registerSubmenuRef={registerSubmenuRef}
@@ -461,3 +389,5 @@ export function MenuLayer({
     </div>
   );
 }
+
+export const MenuLayer = memo(MenuLayerComponent);

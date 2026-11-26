@@ -1324,6 +1324,261 @@ describe("empty absolute heading after decoration", () => {
 		).toBeCloseTo(0.8, 4);
 	});
 
+	it("preserves margin collapse across pass-through list/block ancestors and declines unsafe crossed ancestors", async () => {
+		const bloomH2 = cases[3];
+		if (!bloomH2) throw new Error("bloom h2 fixture missing");
+
+		const copyStructuredHeading = async (
+			innerHTML: string,
+			plainText: string,
+			styleFor: (element: Element, pseudo?: string | null) => Record<string, string>,
+			wrapperTypedOverrides?: Record<string, unknown>,
+		) => {
+			const preview = document.createElement("article");
+			preview.setAttribute("data-easymde-preview-html-sink", "1");
+			preview.innerHTML = innerHTML;
+			const source = preview.querySelector("h2");
+			if (!source) throw new Error("h2 missing");
+			const wrap = preview.querySelector(".wrap");
+			if (wrap && wrapperTypedOverrides) {
+				const wrapTyped: Record<string, unknown> = {
+					height: { value: "auto" },
+					"block-size": { value: "auto" },
+					"min-height": { value: "auto" },
+					"min-block-size": { value: "auto" },
+					"max-height": { value: "none" },
+					"max-block-size": { value: "none" },
+					"writing-mode": { value: "horizontal-tb" },
+					...wrapperTypedOverrides,
+				};
+				Object.defineProperty(wrap, "computedStyleMap", {
+					configurable: true,
+					value: () => ({ get: (property: string) => wrapTyped[property] }),
+				});
+			}
+			Object.defineProperty(source, "computedStyleMap", {
+				configurable: true,
+				value: () => ({
+					get: (property: string) =>
+						({
+							height: { value: "auto" },
+							"block-size": { value: "auto" },
+							"min-height": { value: "auto" },
+							"min-block-size": { value: "auto" },
+							"max-height": { value: "none" },
+							"max-block-size": { value: "none" },
+							"writing-mode": { value: "horizontal-tb" },
+						})[property],
+				}),
+			});
+			Object.defineProperty(source, "getBoundingClientRect", {
+				configurable: true,
+				value: () => ({
+					bottom: bloomH2.height,
+					height: bloomH2.height,
+					left: 0,
+					right: headingWidth,
+					top: 0,
+					width: headingWidth,
+					x: 0,
+					y: 0,
+				}),
+			});
+			Object.defineProperty(preview, "innerText", {
+				configurable: true,
+				value: plainText,
+			});
+			let html = "";
+			const clipboard = createBrowserWechatClipboard({
+				blob: Blob,
+				clipboardItem: ClipboardItemStub,
+				document,
+				getComputedStyle: (element, pseudo) => {
+					if (element.tagName === "H2" && pseudo === "::after") {
+						return declaration({
+							background: gradient,
+							"background-color": "rgba(0, 0, 0, 0)",
+							"background-image": gradient,
+							"border-radius": "999px",
+							"border-bottom-style": "none",
+							"border-bottom-width": "0px",
+							"border-left-style": "none",
+							"border-left-width": "0px",
+							"border-right-style": "none",
+							"border-right-width": "0px",
+							"border-top-style": "none",
+							"border-top-width": "0px",
+							bottom: `${bloomH2.bottom}px`,
+							"box-shadow": "none",
+							"box-sizing": "content-box",
+							content: '""',
+							display: "block",
+							filter: "none",
+							float: "none",
+							height: `${bloomH2.paintHeight}px`,
+							left: `${bloomH2.left}px`,
+							"margin-bottom": "0px",
+							"margin-left": "0px",
+							"margin-right": "0px",
+							"margin-top": "0px",
+							opacity: "1",
+							"padding-bottom": "0px",
+							"padding-left": "0px",
+							"padding-right": "0px",
+							"padding-top": "0px",
+							position: "absolute",
+							right: `${headingWidth - bloomH2.left - bloomH2.paintWidth}px`,
+							top: `${bloomH2.observedTop}px`,
+							transform: "none",
+							visibility: "visible",
+							width: `${bloomH2.paintWidth}px`,
+						});
+					}
+					if (pseudo) return declaration({ content: "none" });
+					if (element.tagName === "H2") {
+						return declaration({
+							"border-bottom-style": "solid",
+							"border-bottom-width": `${bloomH2.borderBottom}px`,
+							"border-left-width": "0px",
+							"border-right-width": "0px",
+							"border-top-width": `${bloomH2.borderTop}px`,
+							display: "block",
+							float: "none",
+							"margin-bottom": "17.59375px",
+							opacity: "1",
+							overflow: "visible",
+							"padding-bottom": `${bloomH2.paddingBottom}px`,
+							"padding-left": `${bloomH2.paddingLeft}px`,
+							"padding-right": "0px",
+							"padding-top": "0px",
+							position: "relative",
+							transform: "none",
+							visibility: "visible",
+							"writing-mode": "horizontal-tb",
+							...styleFor(element, pseudo),
+						});
+					}
+					return declaration({
+						display: element.tagName === "LI" ? "list-item" : "block",
+						visibility: "visible",
+						...styleFor(element, pseudo),
+					});
+				},
+				getSelection: window.getSelection.bind(window),
+				pageOffset: () => ({ x: 0, y: 0 }),
+				scrollTo: vi.fn(),
+				write: async (items) => {
+					const item = items[0] as ClipboardItemStub;
+					const htmlBlob = item.payload["text/html"];
+					if (!htmlBlob) throw new Error("html blob missing");
+					html = await blobText(htmlBlob);
+				},
+			});
+			const result = await clipboard.copy(preview);
+			expect(result).toEqual({ method: "clipboard", status: "copied" });
+			const holder = document.createElement("div");
+			holder.innerHTML = html;
+			return holder;
+		};
+
+		// 1. Loose list heading (`- ## Heading\n\n- Next`): crosses li[0] -> li[1] > p.
+		const listHolder = await copyStructuredHeading(
+			"<ul><li><h2>Heading</h2></li><li><p>Next</p></li></ul>",
+			"Heading\nNext",
+			(element) => {
+				if (element.tagName === "LI") return { "margin-top": "8px", "margin-bottom": "8px" };
+				if (element.tagName === "P") return { "margin-top": "17.59375px" };
+				return {};
+			},
+		);
+		const listBar = listHolder.querySelector("h2")?.nextElementSibling;
+		expect(listBar?.tagName).toBe("SECTION");
+		expect(pixels(listBar as Element, "margin-bottom")).toBeCloseTo(-12.44, 4);
+		expect(
+			pixels(listBar as Element, "margin-top") +
+				pixels(listBar as Element, "height") +
+				(17.59375 + pixels(listBar as Element, "margin-bottom")),
+		).toBeCloseTo(17.59375, 4);
+
+		// 2. Multi-level ancestor crossing (`ul` margin-bottom 24px > h2 17.59375px and p 10px).
+		const multiLevelHolder = await copyStructuredHeading(
+			"<ul><li><h2>Heading</h2></li></ul><p>After</p>",
+			"Heading\nAfter",
+			(element) => {
+				if (element.tagName === "LI") return { "margin-bottom": "8px" };
+				if (element.tagName === "UL") return { "margin-bottom": "24px" };
+				if (element.tagName === "P") return { "margin-top": "10px" };
+				return {};
+			},
+		);
+		const multiBar = multiLevelHolder.querySelector("h2")?.nextElementSibling;
+		expect(multiBar?.tagName).toBe("SECTION");
+		expect(pixels(multiBar as Element, "margin-bottom")).toBeCloseTo(-12.44, 4);
+		expect(
+			pixels(multiBar as Element, "margin-top") +
+				pixels(multiBar as Element, "height") +
+				(24 + pixels(multiBar as Element, "margin-bottom")),
+		).toBeCloseTo(24, 4);
+
+		// 3. Padded / BFC ancestor stops margin collapse cleanly inside wrapper.
+		const paddedHolder = await copyStructuredHeading(
+			'<div class="wrap"><h2>Heading</h2></div><p>After</p>',
+			"Heading\nAfter",
+			(element) => {
+				if (element.classList.contains("wrap")) {
+					return { "padding-bottom": "10px", "margin-bottom": "24px" };
+				}
+				if (element.tagName === "P") return { "margin-top": "30px" };
+				return {};
+			},
+		);
+		const paddedBar = paddedHolder.querySelector("h2")?.nextElementSibling;
+		expect(paddedBar?.tagName).toBe("SECTION");
+		expect(pixels(paddedBar as Element, "margin-bottom")).toBeCloseTo(5.15375, 4);
+
+		// 4. Unsafe pass-through ancestors (painted, bordered, negative margin, fixed height, overflow clip)
+		//    and cleared following siblings decline promotion cleanly.
+		const unsafeAncestors: ReadonlyArray<
+			Readonly<{ style: Record<string, string>; typed?: Record<string, unknown> }>
+		> = [
+			{ style: { "background-color": "rgb(255, 240, 240)" } },
+			{ style: { "border-left-width": "4px", "border-left-style": "solid" } },
+			{ style: { "margin-bottom": "-8px" } },
+			{
+				style: { height: "120px" },
+				typed: {
+					height: { value: 120, unit: "px" },
+					"block-size": { value: 120, unit: "px" },
+				},
+			},
+			{ style: { "overflow-y": "clip" } },
+		];
+		for (const { style: wrapperStyle, typed: wrapperTyped } of unsafeAncestors) {
+			const declined = await copyStructuredHeading(
+				'<div class="wrap"><h2>Heading</h2></div><p>After</p>',
+				"Heading\nAfter",
+				(element) => {
+					if (element.classList.contains("wrap")) return wrapperStyle;
+					if (element.tagName === "P") return { "margin-top": "17.59375px" };
+					return {};
+				},
+				wrapperTyped,
+			);
+			const fallback = declined.querySelector('h2 > span[aria-hidden="true"]');
+			expect(fallback).not.toBeNull();
+			expect(declaredStyleValue(fallback as Element, "position")).toBe("absolute");
+		}
+
+		const clearedSibling = await copyStructuredHeading(
+			"<h2>Heading</h2><p>Cleared</p>",
+			"Heading\nCleared",
+			(element) => (element.tagName === "P" ? { clear: "both", "margin-top": "17.59375px" } : {}),
+		);
+		const clearedFallback = clearedSibling.querySelector('h2 > span[aria-hidden="true"]');
+		expect(clearedFallback).not.toBeNull();
+		expect(declaredStyleValue(clearedFallback as Element, "position")).toBe("absolute");
+	});
+
 	it("does not convert a rotated decoration into the supported flow model", async () => {
 		const fixture = cases[0];
 		if (!fixture) throw new Error("heading fixture missing");

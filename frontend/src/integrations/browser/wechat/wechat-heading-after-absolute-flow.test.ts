@@ -211,6 +211,7 @@ async function copyHeading(
 	parentOverrides: Record<string, string> = {},
 	wrapParentInContents = false,
 	wrapInBlockquote = false,
+	followingOverrides: Record<string, string> = {},
 ) {
 	const preview = document.createElement("article");
 	preview.setAttribute("data-easymde-preview-html-sink", "1");
@@ -343,6 +344,13 @@ async function copyHeading(
 					display: "block",
 					visibility: "visible",
 					...parentOverrides,
+				});
+			}
+			if (element.tagName === "P") {
+				return declaration({
+					display: "block",
+					visibility: "visible",
+					...followingOverrides,
 				});
 			}
 			return declaration({ display: "block", visibility: "visible" });
@@ -498,6 +506,7 @@ describe("empty absolute heading after decoration", () => {
 			expect(sibling.childNodes).toHaveLength(1);
 			expect(sibling.firstChild?.nodeType).toBe(Node.TEXT_NODE);
 			expect(declaredStyleValue(sibling, "display")).toBe("block");
+			expect(declaredStyleValue(sibling, "direction")).toBe("ltr");
 			expect(declaredStyleValue(sibling, "position")).toBe("static");
 			expect(declaredStyleValue(sibling, "float")).toBe("none");
 			expect(declaredStyleValue(sibling, "transform")).toBe("none");
@@ -508,7 +517,7 @@ describe("empty absolute heading after decoration", () => {
 			expect(pixels(sibling, "font-size")).toBe(
 				Math.max(1, Math.round(fixture.paintHeight)),
 			);
-			expect(pixels(sibling, "margin-right")).toBe(0);
+			expect(declaredStyleValue(sibling, "margin-right")).toBe("auto");
 			for (const side of ["top", "right", "bottom", "left"]) {
 				expect(pixels(sibling, `padding-${side}`)).toBe(0);
 				expect(pixels(sibling, `border-${side}-width`)).toBe(0);
@@ -528,10 +537,8 @@ describe("empty absolute heading after decoration", () => {
 				0,
 				-fixture.bottom - fixture.borderBottom - fixture.paintHeight,
 			);
-			const expectedRemainingMarginBottom = Math.max(
-				0,
-				16 - expectedGap - fixture.paintHeight,
-			);
+			const expectedRemainingMarginBottom =
+				16 - expectedGap - fixture.paintHeight;
 			expect(pixels(sibling, "margin-top")).toBeCloseTo(expectedGap, 4);
 			expect(pixels(sibling, "margin-bottom")).toBeCloseTo(
 				expectedRemainingMarginBottom,
@@ -576,6 +583,7 @@ describe("empty absolute heading after decoration", () => {
 			expect(paint.childNodes).toHaveLength(1);
 			expect(paint.firstChild?.nodeType).toBe(Node.TEXT_NODE);
 			expect(declaredStyleValue(paint, "display")).toBe("block");
+			expect(declaredStyleValue(paint, "direction")).toBe("ltr");
 			expect(declaredStyleValue(paint, "position")).toBe("static");
 			expect(declaredStyleValue(paint, "float")).toBe("none");
 			expect(declaredStyleValue(paint, "transform")).toBe("none");
@@ -586,7 +594,7 @@ describe("empty absolute heading after decoration", () => {
 			expect(pixels(paint, "font-size")).toBe(
 				Math.max(1, Math.round(fixture.paintHeight)),
 			);
-			expect(pixels(paint, "margin-right")).toBe(0);
+			expect(declaredStyleValue(paint, "margin-right")).toBe("auto");
 			expect(pixels(paint, "margin-bottom")).toBe(0);
 			for (const side of ["top", "right", "bottom", "left"]) {
 				expect(pixels(paint, `padding-${side}`)).toBe(0);
@@ -1211,6 +1219,109 @@ describe("empty absolute heading after decoration", () => {
 		expect(check).toThrow("wechat-heading-pseudo-flow-paint-mismatch");
 		marker.setAttribute("data-ignore-dm", "text-bg-gradient");
 		expect(check).not.toThrow();
+	});
+
+	it("preserves collapsed heading-to-paragraph spacing, horizontal offset, RTL alignment, and composed heading opacity for promoted below-border bars", async () => {
+		const bloomH2 = cases[3];
+		const inBoxH2 = inBoxCases[0];
+		if (!bloomH2 || !inBoxH2) throw new Error("heading fixtures missing");
+
+		// C2: Bloom Spring h2 (margin-bottom: 17.59375px, bar footprint 9.44 + 3 = 12.44px)
+		// followed by <p> (margin-top: 17.59375px). Original collapsed gap is 17.59375px.
+		const collapsed = await copyHeading(
+			bloomH2,
+			"none",
+			"clipboard",
+			{},
+			{},
+			{ "margin-bottom": "17.59375px" },
+			{},
+			false,
+			false,
+			{ "margin-top": "17.59375px" },
+		);
+		const collapsedHeading = collapsed.holder.querySelector("h2");
+		const collapsedBar = collapsedHeading?.nextElementSibling;
+		if (!collapsedHeading || !collapsedBar) throw new Error("collapsed bar missing");
+		expect(collapsedBar.tagName).toBe("SECTION");
+		const barTop = pixels(collapsedBar, "margin-top");
+		const barHeight = pixels(collapsedBar, "height");
+		const barBottom = pixels(collapsedBar, "margin-bottom");
+		expect(barBottom).toBeCloseTo(-12.44, 4);
+		// CSS 2.1 §8.3.1: positive 17.59375px + negative -12.44px = 5.15375px; plus 9.44 + 3 = 17.59375px
+		expect(barTop + barHeight + (17.59375 + barBottom)).toBeCloseTo(17.59375, 4);
+
+		// Ambiguous following sibling (floated or negative margin-top) declines promotion cleanly.
+		for (const badFollowing of [{ float: "left" }, { "margin-top": "-8px" }]) {
+			const declined = await copyHeading(
+				bloomH2,
+				"none",
+				"clipboard",
+				{},
+				{},
+				{},
+				{},
+				false,
+				false,
+				badFollowing,
+			);
+			const fallbackMarker = declined.holder.querySelector(
+				'h2 > span[aria-hidden="true"]',
+			);
+			expect(fallbackMarker).not.toBeNull();
+			expect(declaredStyleValue(fallbackMarker as Element, "position")).toBe(
+				"absolute",
+			);
+		}
+
+		// C3: Heading with margin-left: 40px + dir="rtl" parent preserves horizontal offset and left anchor.
+		const shifted = await copyHeading(
+			bloomH2,
+			"none",
+			"clipboard",
+			{},
+			{},
+			{ "margin-left": "40px", direction: "rtl" },
+			{ direction: "rtl" },
+		);
+		const shiftedBar = shifted.holder.querySelector("h2")?.nextElementSibling;
+		if (!shiftedBar) throw new Error("shifted bar missing");
+		expect(shiftedBar.tagName).toBe("SECTION");
+		expect(pixels(shiftedBar, "margin-left")).toBeCloseTo(40 + bloomH2.left, 4);
+		expect(declaredStyleValue(shiftedBar, "margin-right")).toBe("auto");
+		expect(declaredStyleValue(shiftedBar, "direction")).toBe("ltr");
+
+		// C4: Heading opacity < 1 composes onto promoted sibling, while in-box retains pseudo opacity only.
+		const fadedBelow = await copyHeading(
+			bloomH2,
+			"none",
+			"clipboard",
+			{ opacity: "0.8" },
+			{},
+			{ opacity: "0.5" },
+		);
+		const fadedSibling = fadedBelow.holder.querySelector("h2")?.nextElementSibling;
+		if (!fadedSibling) throw new Error("faded sibling missing");
+		expect(Number.parseFloat(declaredStyleValue(fadedSibling, "opacity"))).toBeCloseTo(
+			0.4,
+			4,
+		);
+
+		const fadedInBox = await copyHeading(
+			inBoxH2,
+			"none",
+			"clipboard",
+			{ opacity: "0.8" },
+			{},
+			{ opacity: "0.5" },
+		);
+		const fadedInBoxPaint = fadedInBox.holder.querySelector(
+			'h2 > span[aria-hidden="true"]',
+		);
+		if (!fadedInBoxPaint) throw new Error("faded in-box paint missing");
+		expect(
+			Number.parseFloat(declaredStyleValue(fadedInBoxPaint, "opacity")),
+		).toBeCloseTo(0.8, 4);
 	});
 
 	it("does not convert a rotated decoration into the supported flow model", async () => {

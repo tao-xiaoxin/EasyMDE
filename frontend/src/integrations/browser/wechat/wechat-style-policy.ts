@@ -499,7 +499,10 @@ export function keepStyle(
 		) {
 			return false;
 		}
-		if (shouldOmitDefaultBackgroundProperty(property, value, computed)) {
+		if (
+			!isTaskListCheckbox(source) &&
+			shouldOmitDefaultBackgroundProperty(property, value, computed)
+		) {
 			return false;
 		}
 		if (

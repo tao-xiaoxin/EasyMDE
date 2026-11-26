@@ -183,6 +183,37 @@ export function leadingIndentAtDepth(
 		: measureIndentColumns(head);
 }
 
+/**
+ * Single authoritative swallow-risk fallback for a clean, matched,
+ * non-shared-group `paragraph` whose raw source would otherwise be swallowed
+ * into a preceding list, shared by the serializer and refdef liveness.
+ * Instead of canonical re-serialization (whose inline escaping, e.g. ``a ``
+ * -> `a \`\``, can unbalance PHP code-span / math scanning across blocks), the
+ * baseline raw is kept byte-for-byte except line 0's 1-3 column leading
+ * indent, which is removed and re-prefixed with exactly `depth` clean quote
+ * markers. A paragraph already recognized at 1-3 columns stays a paragraph at
+ * column 0, and its continuation lines are untouched. Returns `null` when
+ * line 0 does not carry all `depth` markers or its indent is outside 1-3.
+ */
+export function dedentParagraphFirstLineAtDepth(
+	rawEmitted: string,
+	depth: number,
+): string | null {
+	const nl = rawEmitted.indexOf("\n");
+	const line0 = nl === -1 ? rawEmitted : rawEmitted.slice(0, nl);
+	const stripped =
+		depth > 0
+			? stripBlockquoteDepthWithColumn(line0, depth)
+			: { column: 0, matched: 0, rest: line0 };
+	if (stripped.matched !== Math.max(depth, 0)) return null;
+	const lead = measureIndentColumns(stripped.rest, stripped.column);
+	if (lead < 1 || lead > 3) return null;
+	const trimmed = stripped.rest.replace(/^[ \t]+/, "");
+	if (trimmed.length === 0) return null;
+	const tail = nl === -1 ? "" : rawEmitted.slice(nl);
+	return `${"> ".repeat(Math.max(depth, 0))}${trimmed}${tail}`;
+}
+
 const PHP_INLINE_MATH_PLACEHOLDER = "EASYMDEMATHINLINE";
 const PHP_BLOCK_MATH_PLACEHOLDER = "\n\nEASYMDEMATHBLOCK\n\n";
 

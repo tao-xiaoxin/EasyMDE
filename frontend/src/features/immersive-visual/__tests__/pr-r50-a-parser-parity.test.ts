@@ -1,7 +1,10 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { EditorState } from "prosemirror-state";
 import { describe, expect, it } from "vitest";
-import { isListSwallowingFollowingBlock } from "../markdown-container-preservation";
+import {
+	dedentParagraphFirstLineAtDepth,
+	isListSwallowingFollowingBlock,
+} from "../markdown-container-preservation";
 import * as parser from "../markdown-parser";
 import {
 	matchListMarker,
@@ -48,6 +51,32 @@ function deleteNodeWithText(typeName: string, text: string): Edit {
 
 function deleteParagraph(text: string): Edit {
 	return deleteNodeWithText("paragraph", text);
+}
+
+function deleteRefDef(label: string): Edit {
+	return (doc) => {
+		let from = -1;
+		let to = -1;
+		doc.descendants((node, pos) => {
+			if (from >= 0) return false;
+			if (
+				node.type.name === "protected_block" &&
+				String(node.attrs.rawMarkdown ?? "").startsWith(`[${label}]:`)
+			) {
+				from = pos;
+				to = pos + node.nodeSize;
+				return false;
+			}
+			return true;
+		});
+		expect(from, `Could not find refdef [${label}]`).toBeGreaterThanOrEqual(0);
+		const state = EditorState.create({ doc, schema: visualEditorSchema });
+		return state.apply(state.tr.delete(from, to)).doc;
+	};
+}
+
+function chain(...edits: ReadonlyArray<Edit>): Edit {
+	return (doc) => edits.reduce((acc, edit) => edit(acc), doc);
 }
 
 function deleteListItem(text: string): Edit {
@@ -294,49 +323,49 @@ describe("PR-R50-A PHP list content indent primitive, cross-block code spans, em
 				"F2 1 del",
 				"-   first `\n-    second \\(x\n- fake\ny\\)\n\ndrop\n\n  para `",
 				deleteParagraph("drop"),
-				"-   first `\n-    second \\(x\n- fake\ny\\)\n\npara \\`",
+				"-   first `\n-    second \\(x\n- fake\ny\\)\n\npara `",
 				[],
 			],
 			[
 				"F2 2 del",
 				"-   first `\n-    second $$x\n- fake\ny$$\n\ndrop\n\n  para `",
 				deleteParagraph("drop"),
-				"-   first `\n-    second $$x\n- fake\ny$$\n\npara \\`",
+				"-   first `\n-    second $$x\n- fake\ny$$\n\npara `",
 				[],
 			],
 			[
 				"F2 3 del",
 				"-   first `\n-    second \\[x\n- fake\ny\\]\n\ndrop\n\n  para `",
 				deleteParagraph("drop"),
-				"-   first `\n-    second \\[x\n- fake\ny\\]\n\npara \\`",
+				"-   first `\n-    second \\[x\n- fake\ny\\]\n\npara `",
 				[],
 			],
 			[
 				"F2 4 del",
 				"> -   first `\n> -    second \\(x\n> - fake\n> y\\)\n>\n> drop\n>\n>   para `",
 				deleteParagraph("drop"),
-				"> -   first `\n> -    second \\(x\n> - fake\n> y\\)\n>\n> para \\`",
+				"> -   first `\n> -    second \\(x\n> - fake\n> y\\)\n>\n> para `",
 				[],
 			],
 			[
 				"F2 5 del",
 				"> > -   first `\n> > -    second \\(x\n> > - fake\n> > y\\)\n> >\n> > drop\n> >\n> >   para `",
 				deleteParagraph("drop"),
-				"> > -   first `\n> > -    second \\(x\n> > - fake\n> > y\\)\n> >\n> > para \\`",
+				"> > -   first `\n> > -    second \\(x\n> > - fake\n> > y\\)\n> >\n> > para `",
 				[],
 			],
 			[
 				"F2 6 del",
 				"intro `\n\n-    first \\(x\n- fake\ny\\)\n\ndrop\n\n  para `",
 				deleteParagraph("drop"),
-				"intro `\n\n-    first \\(x\n- fake\ny\\)\n\npara \\`",
+				"intro `\n\n-    first \\(x\n- fake\ny\\)\n\npara `",
 				[],
 			],
 			[
 				"F2 7 del",
 				"intro `\n\n-    first $$x\n- fake\ny$$\n\ndrop\n\n  para `",
 				deleteParagraph("drop"),
-				"intro `\n\n-    first $$x\n- fake\ny$$\n\npara \\`",
+				"intro `\n\n-    first $$x\n- fake\ny$$\n\npara `",
 				[],
 			],
 			[
@@ -405,7 +434,7 @@ describe("PR-R50-A PHP list content indent primitive, cross-block code spans, em
 				"F3 5 del",
 				"-   a \\(x\n-    big\ny\\)\n-    b `\\(x\n- fake\ny\\)\n\ndrop\n\n  para `",
 				deleteParagraph("drop"),
-				"-   a \\(x\n-    big\ny\\)\n-    b `\\(x\n- fake\ny\\)\n\npara \\`",
+				"-   a \\(x\n-    big\ny\\)\n-    b `\\(x\n- fake\ny\\)\n\npara `",
 				[],
 			],
 			[
@@ -659,6 +688,119 @@ describe("PR-R50-A PHP list content indent primitive, cross-block code spans, em
 			// Top-level 4-column math stays indented code (PHP `block_ranges()`
 			// sees the line-leading indent).
 			expect(docShape("    $$x$$")).toBe('doc(code_block("$$x$$"))');
+		});
+	});
+
+	describe("PR-R50-B: a clean paragraph downgraded solely for swallowRisk keeps its raw inline bytes", () => {
+		// Canonical fallback would escape ``para ````` to ``para \`\```, which
+		// fails to close the open `````` span in PHP
+		// `MarkdownCodeRegionScanner::find_closing_backticks()` and exposes
+		// `\(x ... y\)` to PHP inline math.
+		const cases: ReadonlyArray<Case> = [
+			[
+				"B1 depth 0 double backticks",
+				"-   first ``\n-    second \\(x\n- fake\ny\\)\n\ndrop\n\n  para ``",
+				deleteParagraph("drop"),
+				"-   first ``\n-    second \\(x\n- fake\ny\\)\n\npara ``",
+				[],
+			],
+			[
+				"B2 depth 1 double backticks",
+				"> -   first ``\n> -    second \\(x\n> - fake\n> y\\)\n>\n> drop\n>\n>   para ``",
+				deleteParagraph("drop"),
+				"> -   first ``\n> -    second \\(x\n> - fake\n> y\\)\n>\n> para ``",
+				[],
+			],
+			[
+				"B3 depth 1 tab indent",
+				"> -   first ``\n> -    second \\(x\n> - fake\n> y\\)\n>\n> drop\n>\n> \tpara ``",
+				deleteParagraph("drop"),
+				"> -   first ``\n> -    second \\(x\n> - fake\n> y\\)\n>\n> para ``",
+				[],
+			],
+			[
+				"B4 depth 2 double backticks",
+				"> > -   first ``\n> > -    second \\(x\n> > - fake\n> > y\\)\n> >\n> > drop\n> >\n> >   para ``",
+				deleteParagraph("drop"),
+				"> > -   first ``\n> > -    second \\(x\n> > - fake\n> > y\\)\n> >\n> > para ``",
+				[],
+			],
+			[
+				"B5 depth 0 triple backticks",
+				"-   first ```\n-    second \\(x\n- fake\ny\\)\n\ndrop\n\n  para ```",
+				deleteParagraph("drop"),
+				"-   first ```\n-    second \\(x\n- fake\ny\\)\n\npara ```",
+				[],
+			],
+			[
+				"B6 continuation lines stay byte-for-byte",
+				"- a\n\ndrop\n\n  para ``\n  more `` x",
+				deleteParagraph("drop"),
+				"- a\n\npara ``\n  more `` x",
+				[],
+			],
+			[
+				"B7 live reference stays a raw reference",
+				"-   first ``\n-    second \\(x\n- fake\ny\\)\n\ndrop\n\n  [dead] ``\n\n[dead]: /d",
+				deleteParagraph("drop"),
+				"-   first ``\n-    second \\(x\n- fake\ny\\)\n\n[dead] ``\n\n[dead]: /d",
+				[],
+			],
+			[
+				"B8 control: invalidated reference still canonicalizes (depth 0)",
+				"- a\n\ndrop\n\n  [dead] tail\n\n[dead]: /d",
+				chain(deleteParagraph("drop"), deleteRefDef("dead")),
+				"- a\n\n[dead](/d) tail",
+				[],
+			],
+			[
+				"B9 control: invalidated reference still canonicalizes (depth 1)",
+				"> - a\n>\n> drop\n>\n>   [dead] tail\n\n[dead]: /d",
+				chain(deleteParagraph("drop"), deleteRefDef("dead")),
+				"> - a\n>\n> [dead](/d) tail",
+				[],
+			],
+			[
+				"B10 control: swallowed paragraph before a tight math / partial-title refdef run",
+				'-   first ``\n-    second \\(x\n- fake\ny\\)\n\ndrop\n\n  para ``\n$$y$$ [q]: /q\n"tq\n===\n\n[link][q]',
+				deleteParagraph("drop"),
+				'-   first ``\n-    second \\(x\n- fake\ny\\)\n\npara ``\n\n$$y$$\n\n[q]: /q\n\n"tq\n===\n\n[link](/q "tq&#10;")',
+				[],
+			],
+		];
+		runCases(cases);
+
+		it("keeps an invalidated-reference paragraph canonical, never raw-dedented", () => {
+			const md =
+				"-   first ``\n-    second \\(x\n- fake\ny\\)\n\ndrop\n\n  [dead] ``\n\n[dead]: /d";
+			const parsed = parser.parseMarkdownWithBlockSources(md);
+			const guard = createMarkdownRoundTripGuard(md, parsed);
+			const edited = chain(
+				deleteParagraph("drop"),
+				deleteRefDef("dead"),
+			)(guard.initialDoc);
+			const serialized = guard.serialize(edited);
+			expect(serialized).toContain("\n\n[dead](/d) ");
+			expect(serialized).not.toContain("[dead] ``");
+		});
+
+		it("dedents only a 1-3 column line 0 carrying every quote marker", () => {
+			expect(dedentParagraphFirstLineAtDepth("  para ``\n  more", 0)).toBe(
+				"para ``\n  more",
+			);
+			expect(dedentParagraphFirstLineAtDepth("   >   para ``", 1)).toBe(
+				"> para ``",
+			);
+			expect(dedentParagraphFirstLineAtDepth("> \tpara ``\n> y", 1)).toBe(
+				"> para ``\n> y",
+			);
+			expect(dedentParagraphFirstLineAtDepth(">\tpara", 1)).toBe("> para");
+			expect(dedentParagraphFirstLineAtDepth("> >   para", 2)).toBe("> > para");
+			expect(dedentParagraphFirstLineAtDepth("para", 0)).toBeNull();
+			expect(dedentParagraphFirstLineAtDepth("    para", 0)).toBeNull();
+			expect(dedentParagraphFirstLineAtDepth(">     para", 1)).toBeNull();
+			expect(dedentParagraphFirstLineAtDepth("  para", 1)).toBeNull();
+			expect(dedentParagraphFirstLineAtDepth(">   para", 2)).toBeNull();
 		});
 	});
 });

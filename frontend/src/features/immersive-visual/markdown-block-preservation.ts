@@ -7,6 +7,7 @@ import {
 	alignContainerChildren,
 	checkRawPreservationRisks,
 	createTightSharedGroupChecker,
+	dedentParagraphFirstLineAtDepth,
 	emitWithMathSentinelAtDepth,
 	isListSwallowingFollowingBlock,
 	leadingIndentAtDepth,
@@ -529,9 +530,26 @@ function serializeContainerPreservingChildren(
 					));
 				}
 			} else {
-				const canonical = ensureGenerated();
-				blockEmitted = canonical.emitted;
-				blockInner = canonical.inner;
+				// A clean matched paragraph at risk ONLY of being swallowed
+				// into a preceding list keeps its raw inline bytes (line 0
+				// dedented, see `dedentParagraphFirstLineAtDepth`); the
+				// separator and `effectiveOrigIndex` stay as for canonical.
+				const dedented =
+					child.type.name === "paragraph" &&
+					swallowRisk &&
+					!indentedRisk &&
+					serializedFromRaw &&
+					!sharedGroup
+						? dedentParagraphFirstLineAtDepth(serialized, depth)
+						: null;
+				if (dedented !== null) {
+					blockEmitted = dedented;
+					blockInner = stripAtDepth(dedented, depth);
+				} else {
+					const canonical = ensureGenerated();
+					blockEmitted = canonical.emitted;
+					blockInner = canonical.inner;
+				}
 			}
 		} else if (
 			!intactGroup &&

@@ -18,6 +18,7 @@ import {
 	type DescendResult,
 	type InvalidCheck,
 	openList,
+	type TailSource,
 } from "./markdown-refdef-liveness-lists";
 import type {
 	BuiltVisualBlockSources,
@@ -67,15 +68,29 @@ type ContainerState = {
 	readonly groupStartAt: number[];
 	readonly groupTasks: Map<number, InvalidationTask>;
 	readonly isChildVerbatim: boolean[];
+	/**
+	 * Lazily computes the depth-stripped text the serializer emits for each
+	 * slot when it is verbatim or a preserved nested container (its tail
+	 * decides list-swallow / lazy-continuation joins); `null` = canonical.
+	 */
+	readonly innerAt: Array<(() => string) | null>;
+	readonly keepsTrailingSuffix: boolean;
 	readonly matchedOrigIndex: ReadonlyArray<number>;
 	readonly pairedOrigIndex: ReadonlyArray<number>;
-	readonly rawEmitted: Array<string | null>;
 	readonly slotCandidates: Map<number, CandidatePartialRefDef[]>;
 	readonly slotTasks: Map<number, InvalidationTask>;
 	readonly source: BuiltVisualBlockSources;
+	/** This container's own tail as seen by its parent container slot. */
+	readonly tail: TailSource;
 	hasAny: boolean;
-	prevRawEmitted: string | null;
 };
+
+function prefixOneLevel(text: string): string {
+	return text
+		.split("\n")
+		.map((line) => (line.length > 0 ? `> ${line}` : ">"))
+		.join("\n");
+}
 
 function isNextVerbatimTightInContainer(
 	cs: ContainerState,
@@ -113,20 +128,26 @@ function evaluateSlotJoin(
 	rawCandidate: string,
 	effIdx: number,
 	groupSep: string | undefined,
-	prevRawEmitted: string | null,
 ): SlotRisks {
 	const child = cs.container.child(idx);
 	const prevNode = idx > 0 ? cs.container.child(idx - 1) : null;
 	const origIdx = cs.matchedOrigIndex[idx] ?? -1;
 	const prevMatched = idx > 0 ? (cs.matchedOrigIndex[idx - 1] ?? -1) : -1;
-	const prevWasMatchedAdjacent =
-		prevMatched >= 0 && origIdx >= 0 && origIdx === prevMatched + 1;
+	// Mirrors the serializer: only a previous slot actually emitted verbatim
+	// from its own baseline raw proves the original adjacency still parses.
+	const prevWasVerbatimAdjacent =
+		idx > 0 &&
+		cs.isChildVerbatim[idx - 1] === true &&
+		prevMatched >= 0 &&
+		origIdx >= 0 &&
+		origIdx === prevMatched + 1;
+	const prevInnerSource = idx > 0 ? (cs.innerAt[idx - 1] ?? null) : null;
 	let prevInner: string | null = null;
 	const readPrevInner = (): string => {
 		if (prevInner === null) {
 			prevInner =
-				prevRawEmitted !== null
-					? stripAtDepth(prevRawEmitted, cs.depth)
+				prevInnerSource !== null
+					? prevInnerSource()
 					: prevNode !== null
 						? st.serializeBlock(prevNode)
 						: "";
@@ -148,7 +169,7 @@ function evaluateSlotJoin(
 		prevInnerText: readPrevInner,
 		prevMatchedIdx: prevMatched,
 		prevNode,
-		prevWasMatchedAdjacent,
+		prevWasVerbatimAdjacent,
 		serializedIsNull: false,
 	});
 	const leadIndent = leadingIndentAtDepth(rawCandidate, cs.depth);
@@ -160,7 +181,7 @@ function evaluateSlotJoin(
 		leadIndent,
 		separator,
 		prevNode,
-		prevWasMatchedAdjacent,
+		prevWasVerbatimAdjacent,
 	)
 		? readPrevInner()
 		: "";
@@ -172,7 +193,7 @@ function evaluateSlotJoin(
 		separator,
 		prevNode,
 		prevInnerForRisk,
-		prevWasMatchedAdjacent,
+		prevWasVerbatimAdjacent,
 	);
 	return { indentedRisk, separator, swallowRisk };
 }
@@ -267,7 +288,6 @@ function recheckFollowingIndentRisks(
 		rawCandidate,
 		nextOrigIdx,
 		nextGroup?.separatorBefore,
-		cs.rawEmitted[changedIdx] ?? null,
 	);
 	if (nextGroup) {
 		if (
@@ -282,6 +302,37 @@ function recheckFollowingIndentRisks(
 	if (indentedRisk || swallowRisk) fireTask(cs.slotTasks.get(nextIdx));
 }
 
+/**
+ * Slot `idx`'s emitted text changed (verbatim -> canonical, or its preserved
+ * nested container's tail flipped): re-evaluate the following slot and, when
+ * `idx` is this container's tail, propagate to the parent container slot.
+ */
+function onSlotInnerChanged(
+	st: LivenessState,
+	cs: ContainerState,
+	idx: number,
+): void {
+	recheckFollowingIndentRisks(st, cs, idx);
+	if (idx === cs.container.childCount - 1 && !cs.keepsTrailingSuffix) {
+		cs.tail.onChange?.();
+	}
+}
+
+/** Records a nested container's preserved tail for slot `idx`. */
+function bindNestedTail(
+	st: LivenessState,
+	cs: ContainerState,
+	idx: number,
+	tail: TailSource | null,
+): void {
+	cs.innerAt[idx] = tail ? tail.read : null;
+	if (tail) tail.onChange = () => onSlotInnerChanged(st, cs, idx);
+}
+
+function verbatimInner(raw: string, depth: number): () => string {
+	return () => stripAtDepth(raw, depth);
+}
+
 function descendNonVerbatimChild(
 	st: LivenessState,
 	child: ProseMirrorNode,
@@ -291,7 +342,7 @@ function descendNonVerbatimChild(
 	deferInvalidation: boolean,
 ): DescendResult {
 	if (child.childCount === 0 || !isBlockContainerForRefDefs(child)) {
-		return { hasAny: false, preserved: false };
+		return { hasAny: false, preserved: false, tail: null };
 	}
 	if (
 		child.type.name === "blockquote" &&
@@ -315,6 +366,7 @@ function descendNonVerbatimChild(
 	return {
 		hasAny: walkSubtree(st, child, "canonical", discover, deferInvalidation),
 		preserved: false,
+		tail: null,
 	};
 }
 
@@ -350,8 +402,8 @@ function processIntactGroup(
 		cs.groupStartAt[slot] = groupStart;
 		discoverVerbatimChild(st, cs, slot, cs.container.child(slot));
 	}
-	cs.rawEmitted[groupStart + groupLen - 1] = group.raw;
-	cs.prevRawEmitted = group.raw;
+	const lastSlot = groupStart + groupLen - 1;
+	cs.innerAt[lastSlot] = verbatimInner(group.raw, cs.depth);
 
 	const breakGroupTask: InvalidationTask = {
 		fired: false,
@@ -360,7 +412,7 @@ function processIntactGroup(
 				const slot = groupStart + offset;
 				cs.isChildVerbatim[slot] = false;
 				cs.effectiveOrigIndex[slot] = -1;
-				cs.rawEmitted[slot] = null;
+				cs.innerAt[slot] = null;
 				const memberChild = cs.container.child(slot);
 				if (
 					memberChild.childCount > 0 &&
@@ -375,7 +427,7 @@ function processIntactGroup(
 			if (linked) {
 				for (const dep of linked) fireTask(dep);
 			}
-			recheckFollowingIndentRisks(st, cs, groupStart + groupLen - 1);
+			onSlotInnerChanged(st, cs, lastSlot);
 		},
 	};
 	cs.groupTasks.set(groupStart, breakGroupTask);
@@ -384,7 +436,7 @@ function processIntactGroup(
 		if (memberBlock)
 			registerNodeDependency(st, memberBlock.node, breakGroupTask);
 	}
-	return groupStart + groupLen - 1;
+	return lastSlot;
 }
 
 function processMatchedSlot(
@@ -396,8 +448,10 @@ function processMatchedSlot(
 ): void {
 	const child = cs.container.child(idx);
 	cs.isChildVerbatim[idx] = verbatim;
-	cs.rawEmitted[idx] = verbatim ? origBlock.raw : null;
-	cs.prevRawEmitted = verbatim ? origBlock.raw : null;
+	cs.innerAt[idx] =
+		verbatim && origBlock.raw !== null
+			? verbatimInner(origBlock.raw, cs.depth)
+			: null;
 	if (!verbatim) {
 		const result = descendNonVerbatimChild(
 			st,
@@ -422,16 +476,30 @@ function processMatchedSlot(
 		fired: false,
 		run: () => {
 			cs.isChildVerbatim[idx] = false;
-			cs.rawEmitted[idx] = null;
+			cs.innerAt[idx] = null;
+			// An invalidated match is re-preserved as a nested container by
+			// the serializer (its tail then follows that container); a risk
+			// break is emitted canonically.
+			const invalidated = nodeHasCurrentInvalidatedRef(st, origBlock.node);
 			if (
 				child.childCount > 0 &&
 				isBlockContainerForRefDefs(child) &&
-				st.subtreeHasCandidates.has(child)
+				(invalidated || st.subtreeHasCandidates.has(child))
 			) {
-				descendNonVerbatimChild(st, child, origBlock, cs.depth, false, false);
+				const result = descendNonVerbatimChild(
+					st,
+					child,
+					origBlock,
+					cs.depth,
+					false,
+					false,
+				);
+				if (invalidated && result.preserved) {
+					bindNestedTail(st, cs, idx, result.tail);
+				}
 			}
 			reevaluateAttachedCandidates(st, cs, idx);
-			recheckFollowingIndentRisks(st, cs, idx);
+			onSlotInnerChanged(st, cs, idx);
 		},
 	};
 	cs.slotTasks.set(idx, breakChildTask);
@@ -451,7 +519,6 @@ function processUnmatchedSlot(
 	origBlock: ParsedVisualBlockSource | undefined,
 	origInvalidated: boolean,
 ): void {
-	cs.prevRawEmitted = null;
 	const origIdx = cs.matchedOrigIndex[idx] ?? -1;
 	const baseIdx =
 		origBlock !== undefined ? origIdx : (cs.pairedOrigIndex[idx] ?? -1);
@@ -472,6 +539,11 @@ function processUnmatchedSlot(
 		(origBlock === undefined && result.preserved)
 	) {
 		cs.effectiveOrigIndex[idx] = baseIdx;
+	}
+	// The serializer re-preserves a nested container only for an invalidated
+	// match or an unmatched (paired) slot; its emitted tail is that output.
+	if (result.preserved && (origBlock === undefined || origInvalidated)) {
+		bindNestedTail(st, cs, idx, result.tail);
 	}
 }
 
@@ -513,7 +585,6 @@ function processSlot(
 			rawCandidate,
 			origIdx,
 			intactGroup?.separatorBefore,
-			cs.prevRawEmitted,
 		);
 		verbatimRisk = join.indentedRisk || join.swallowRisk;
 		if (
@@ -629,6 +700,12 @@ export function openContainer(
 		st.parsed.blockquoteSources,
 		invalidCheck,
 	);
+	const keepsTrailingSuffix =
+		newLen > 0 &&
+		source.trailingSuffix.length > 0 &&
+		(baselineBlocks.length === 1 ||
+			matchedOrigIndex.some((origIdx) => origIdx >= 0));
+	const innerAt = new Array<(() => string) | null>(newLen).fill(null);
 	const cs: ContainerState = {
 		container,
 		defaultBlankSep: blankSeparatorAtDepth(depth),
@@ -640,14 +717,30 @@ export function openContainer(
 		groupStartAt: new Array<number>(newLen).fill(-1),
 		groupTasks: new Map<number, InvalidationTask>(),
 		hasAny: false,
+		innerAt,
 		isChildVerbatim: new Array<boolean>(newLen).fill(false),
+		keepsTrailingSuffix,
 		matchedOrigIndex,
 		pairedOrigIndex,
-		prevRawEmitted: null,
-		rawEmitted: new Array<string | null>(newLen).fill(null),
 		slotCandidates: new Map<number, CandidatePartialRefDef[]>(),
 		slotTasks: new Map<number, InvalidationTask>(),
 		source,
+		tail: {
+			onChange: null,
+			// Parent-depth view of this blockquote's emitted tail: a kept
+			// trailing suffix (e.g. a blank `>` line) or its last slot.
+			read: () => {
+				if (keepsTrailingSuffix) {
+					return stripAtDepth(source.trailingSuffix, depth - 1);
+				}
+				const last = newLen - 1;
+				if (last < 0) return "";
+				const lastInner = innerAt[last];
+				return prefixOneLevel(
+					lastInner ? lastInner() : st.serializeBlock(container.child(last)),
+				);
+			},
+		},
 	};
 	for (let idx = 0; idx < newLen; idx += 1) {
 		idx = processSlot(st, cs, idx, sharedChecker, invalidCheck);
@@ -660,5 +753,5 @@ export function openContainer(
 		}
 	}
 	if (cs.hasAny) st.subtreeHasCandidates.add(container);
-	return { hasAny: cs.hasAny, preserved: true };
+	return { hasAny: cs.hasAny, preserved: true, tail: cs.tail };
 }

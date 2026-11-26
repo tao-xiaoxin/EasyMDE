@@ -45,7 +45,7 @@ type ContainerSlotJoinInput = Readonly<{
 	prevInnerText: () => string;
 	prevMatchedIdx: number;
 	prevNode: ProseMirrorNode | null;
-	prevWasMatchedAdjacent: boolean;
+	prevWasVerbatimAdjacent: boolean;
 	/** Whether `child` is emitted from canonical serialization. */
 	serializedIsNull: boolean;
 }>;
@@ -116,7 +116,7 @@ export function resolveContainerSlotJoin(
 			prevNode,
 			input.prevInnerText(),
 			innerText,
-			input.prevWasMatchedAdjacent,
+			input.prevWasVerbatimAdjacent,
 		) ||
 		shouldEscalateLazyContinuation(input, prevNode);
 	return {

@@ -22,6 +22,7 @@ import {
 	serializeVisualDocToMarkdown,
 } from "./markdown-serializer";
 import { PROTECTED_CARD_COMMIT_META } from "./node-views/protected-atom-node-view";
+import { remapLinkBoundaryKeys } from "./visual-link-boundary-remap";
 import {
 	createVisualSourceIndex,
 	deriveVisualSourceIndex,
@@ -264,6 +265,13 @@ export function createVisualCanonicalSync(
 		initialParsed,
 	);
 
+	/**
+	 * Single accepted-doc identity check: non-semantic link `boundaryKey`
+	 * shifts are not edits, so every accepted-state comparison agrees.
+	 */
+	const isSameAcceptedDoc = (doc: ProseMirrorNode): boolean =>
+		nodesSemanticallyEqual(doc, acceptedDoc);
+
 	const runWithEchoSuppressed = <T>(fn: () => T): T => {
 		const previous = echoSuppressed;
 		echoSuppressed = true;
@@ -276,8 +284,7 @@ export function createVisualCanonicalSync(
 
 	const mapSelection = (selection: Selection): VisualEditorSelection => {
 		const doc = view?.state.doc ?? acceptedDoc;
-		if (doc !== acceptedDoc && !doc.eq(acceptedDoc))
-			return canonical.getSelection();
+		if (!isSameAcceptedDoc(doc)) return canonical.getSelection();
 		return computeVisualSelectionToMarkdownSelection(
 			acceptedDoc,
 			selection,
@@ -344,7 +351,15 @@ export function createVisualCanonicalSync(
 				let nextTo = nextDoc.content.size;
 				for (let i = 0; i < suffix; i += 1)
 					nextTo -= nextDoc.child(newCount - 1 - i).nodeSize;
-				tr.replaceWith(from, to, nextDoc.content.cut(nextFrom, nextTo));
+				const spliced = nextDoc.content.cut(nextFrom, nextTo);
+				// Freshly parsed link keys are document-local (often `null`) and
+				// would merge with a preserved neighbouring link once their
+				// paragraphs join; a full replacement keeps its own distinct keys.
+				tr.replaceWith(
+					from,
+					to,
+					prefix > 0 || suffix > 0 ? remapLinkBoundaryKeys(spliced) : spliced,
+				);
 			}
 			const reconciledDoc = tr.doc;
 			const reconciledIndex = createVisualSourceIndex(
@@ -469,7 +484,7 @@ export function createVisualCanonicalSync(
 		if (disposed) return { code: VISUAL_SYNC_FAILED_CODE, ok: false };
 		// Zero-write-on-read invariant: untouched documents never write back.
 		// Non-semantic link `boundaryKey` shifts are not edits.
-		if (nodesSemanticallyEqual(nextState.doc, acceptedDoc)) {
+		if (isSameAcceptedDoc(nextState.doc)) {
 			return { ok: true, revision: acceptedRevision };
 		}
 		try {
@@ -496,15 +511,14 @@ export function createVisualCanonicalSync(
 			) {
 				return fail();
 			}
-			const historySelectionBefore =
-				previousState.doc === acceptedDoc || previousState.doc.eq(acceptedDoc)
-					? computeVisualSelectionToMarkdownSelection(
-							acceptedDoc,
-							previousState.selection,
-							acceptedMarkdown,
-							sourceIndex,
-						)
-					: canonical.getSelection();
+			const historySelectionBefore = isSameAcceptedDoc(previousState.doc)
+				? computeVisualSelectionToMarkdownSelection(
+						acceptedDoc,
+						previousState.selection,
+						acceptedMarkdown,
+						sourceIndex,
+					)
+				: canonical.getSelection();
 			const nextIndex = deriveVisualSourceIndex(
 				sourceIndex,
 				nextState.doc,
@@ -571,10 +585,7 @@ export function createVisualCanonicalSync(
 				? transaction
 				: undefined;
 		if (!base) {
-			if (
-				activeView.state.doc !== acceptedDoc &&
-				!activeView.state.doc.eq(acceptedDoc)
-			) {
+			if (!isSameAcceptedDoc(activeView.state.doc)) {
 				return commit(activeView.state, activeView.state).ok && !lastSyncFailed;
 			}
 			return !lastSyncFailed;

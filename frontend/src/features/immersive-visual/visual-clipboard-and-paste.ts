@@ -1,6 +1,5 @@
 import {
 	Fragment,
-	type Mark,
 	type Node as ProseMirrorNode,
 	Slice,
 } from "prosemirror-model";
@@ -14,10 +13,8 @@ import {
 import type { EditorView } from "prosemirror-view";
 import { parseMarkdownToVisualDoc } from "./markdown-parser";
 import { serializeVisualDocToMarkdown } from "./markdown-serializer";
-import {
-	createInternalLinkBoundaryKey,
-	visualEditorSchema,
-} from "./visual-schema";
+import { remapLinkBoundaryKeys } from "./visual-link-boundary-remap";
+import { visualEditorSchema } from "./visual-schema";
 
 export type VisualClipboardPluginOptions = Readonly<{
 	imagePasteUploadEnabled?: boolean | (() => boolean);
@@ -219,47 +216,6 @@ function serializeClipboardSliceToText(slice: Slice): string {
 	return slice.content.textBetween(0, slice.content.size, "\n\n", "\uFFFC");
 }
 
-/**
- * A pasted Markdown fragment is parsed as its own document, so its link
- * `boundaryKey`s are document-local counters that can collide with an
- * adjacent existing link (`[b](/u)` + existing `[c](/u)` both keyed `"1"`)
- * and merge them. Re-key every distinct source link identity
- * `(href, title, boundaryKey)` in this paste to ONE fresh session key: a
- * single link spanning formatted runs stays one link, while distinct pasted
- * links never merge with each other or with links already in the document.
- */
-function remapPastedLinkBoundaryKeys(doc: ProseMirrorNode): ProseMirrorNode {
-	const linkType = visualEditorSchema.marks.link;
-	const freshKeys = new Map<string, string>();
-	const remapMarks = (marks: readonly Mark[]): readonly Mark[] =>
-		marks.map((mark) => {
-			if (mark.type !== linkType) return mark;
-			const identity = JSON.stringify([
-				mark.attrs.href,
-				mark.attrs.title,
-				mark.attrs.boundaryKey,
-			]);
-			let boundaryKey = freshKeys.get(identity);
-			if (boundaryKey === undefined) {
-				boundaryKey = createInternalLinkBoundaryKey();
-				freshKeys.set(identity, boundaryKey);
-			}
-			return linkType.create({ ...mark.attrs, boundaryKey });
-		});
-	const remapNode = (node: ProseMirrorNode): ProseMirrorNode => {
-		let next = node;
-		if (!node.isLeaf && node.childCount > 0) {
-			const children: ProseMirrorNode[] = [];
-			node.forEach((child) => {
-				children.push(remapNode(child));
-			});
-			next = node.copy(Fragment.from(children));
-		}
-		return next.marks.length > 0 ? next.mark(remapMarks(next.marks)) : next;
-	};
-	return remapNode(doc);
-}
-
 function insertParsedMarkdownDoc(
 	view: EditorView,
 	markdownText: string,
@@ -275,9 +231,10 @@ function insertParsedMarkdownDoc(
 		);
 		return true;
 	}
-	const parsedDoc = remapPastedLinkBoundaryKeys(
-		parseMarkdownToVisualDoc(normalized),
-	);
+	// A pasted fragment is parsed as its own document: re-key its links so
+	// they never merge with an adjacent existing link.
+	const freshDoc = parseMarkdownToVisualDoc(normalized);
+	const parsedDoc = freshDoc.copy(remapLinkBoundaryKeys(freshDoc.content));
 
 	if (isSelectionInsideTableCell(view)) {
 		const cellFragment = flattenDocToTableCellFragment(parsedDoc);

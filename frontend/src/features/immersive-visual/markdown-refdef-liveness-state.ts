@@ -46,12 +46,20 @@ export type CandidatePartialRefDef = Readonly<{
  * coordinator drains each dirty list once after the invalidation queue empties.
  */
 export type PendingListCheck = {
+	/** Partial-title candidate labels declared inside reused item 0. */
+	readonly firstLabels: string[];
 	firstTask: InvalidationTask | undefined;
 	readonly itemReusable: boolean[];
 	readonly listNode: ProseMirrorNode;
 	needsFirstValidation: boolean;
 	readonly prepared: PreparedListPreservation;
 };
+
+/** Dirty-list heap entry; `sink` = item 0's labels have no dependents. */
+export type PendingListEntry = Readonly<{
+	check: PendingListCheck;
+	sink: boolean;
+}>;
 
 export type LivenessState = Readonly<{
 	allIntact: Set<string>;
@@ -67,6 +75,7 @@ export type LivenessState = Readonly<{
 	partialTitleIntact: Set<string>;
 	partialTitleRefNodes: Set<ProseMirrorNode>;
 	pendingListChecks: Set<PendingListCheck>;
+	pendingListHeap: PendingListEntry[];
 	plan: PreservationPlan;
 	seenLabels: Set<string>;
 	serializeBlock: BlockSerializer;
@@ -284,9 +293,36 @@ export function evaluateCandidateCanonical(
 }
 
 /**
+ * Registers every refdef inside `parent` in document order (first pass only)
+ * and marks subtrees holding partial-title candidates. Returns whether any
+ * candidate was added.
+ */
+export function discoverSubtree(
+	st: LivenessState,
+	parent: ProseMirrorNode,
+): boolean {
+	let hasAny = false;
+	for (let i = 0; i < parent.childCount; i += 1) {
+		const child = parent.child(i);
+		if (isRawProtectedBlock(child)) {
+			if (registerRefDefNode(st, parent, i, child)) hasAny = true;
+		} else if (
+			child.childCount > 0 &&
+			isBlockContainerForRefDefs(child) &&
+			discoverSubtree(st, child)
+		) {
+			hasAny = true;
+		}
+	}
+	if (hasAny) st.subtreeHasCandidates.add(parent);
+	return hasAny;
+}
+
+/**
  * Walks a subtree that is emitted entirely verbatim or entirely canonically.
- * `discover` registers refdefs (first pass); otherwise only subtrees already
- * known to hold candidates are revisited, keeping every revisit O(subtree).
+ * `discover` registers refdefs first (first pass); candidate evaluation only
+ * revisits subtrees known to hold candidates, keeping every revisit
+ * O(subtree).
  */
 export function walkSubtree(
 	st: LivenessState,
@@ -295,26 +331,22 @@ export function walkSubtree(
 	discover: boolean,
 	deferInvalidation: boolean,
 ): boolean {
-	let hasAny = false;
-	if (discover) {
-		for (let i = 0; i < parent.childCount; i += 1) {
-			const child = parent.child(i);
-			if (isRawProtectedBlock(child)) {
-				if (registerRefDefNode(st, parent, i, child)) hasAny = true;
-			} else if (child.childCount > 0 && isBlockContainerForRefDefs(child)) {
-				if (walkSubtree(st, child, mode, true, deferInvalidation)) {
-					hasAny = true;
-				}
-			}
-		}
-		if (hasAny) st.subtreeHasCandidates.add(parent);
-	} else {
-		if (!st.subtreeHasCandidates.has(parent)) return false;
-		for (let i = 0; i < parent.childCount; i += 1) {
-			const child = parent.child(i);
-			if (child.childCount > 0 && isBlockContainerForRefDefs(child)) {
-				walkSubtree(st, child, mode, false, deferInvalidation);
-			}
+	const hasAny = discover ? discoverSubtree(st, parent) : false;
+	evaluateSubtree(st, parent, mode, deferInvalidation);
+	return hasAny;
+}
+
+function evaluateSubtree(
+	st: LivenessState,
+	parent: ProseMirrorNode,
+	mode: "verbatim" | "canonical",
+	deferInvalidation: boolean,
+): void {
+	if (!st.subtreeHasCandidates.has(parent)) return;
+	for (let i = 0; i < parent.childCount; i += 1) {
+		const child = parent.child(i);
+		if (child.childCount > 0 && isBlockContainerForRefDefs(child)) {
+			evaluateSubtree(st, child, mode, deferInvalidation);
 		}
 	}
 	const directCandidates = st.candidatesByParent.get(parent);
@@ -333,5 +365,4 @@ export function walkSubtree(
 			}
 		}
 	}
-	return hasAny;
 }

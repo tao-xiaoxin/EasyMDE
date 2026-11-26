@@ -306,6 +306,10 @@ function serializeContainerPreservingChildren(
 	};
 
 	let prevInnerText = "";
+	// Whether slot `idx - 1` was emitted byte-for-byte from its own baseline
+	// raw (a plain match or intact shared group), never rewritten after refdef
+	// invalidation or partial nested-container preservation.
+	let prevEmittedVerbatim = false;
 	for (let idx = 0; idx < newLen; idx += 1) {
 		const child = container.child(idx);
 		const origIdx = matchedOrigIndex[idx] ?? -1;
@@ -333,6 +337,7 @@ function serializeContainerPreservingChildren(
 			: origBlock && origBlock.raw !== null && !origInvalidated
 				? origBlock.raw
 				: null;
+		let serializedFromRaw = serialized !== null;
 
 		if (intactGroup || (origBlock && !sharedGroup && !origInvalidated)) {
 			effectiveOrigIndex[idx] = origIdx;
@@ -340,6 +345,7 @@ function serializeContainerPreservingChildren(
 			const nested = tryPreserveContainerChild(child, origBlock);
 			if (nested !== null) {
 				serialized = nested;
+				serializedFromRaw = false;
 				effectiveOrigIndex[idx] = origIdx;
 			} else if (!sharedGroup) {
 				effectiveOrigIndex[idx] = origIdx;
@@ -351,14 +357,18 @@ function serializeContainerPreservingChildren(
 			const nested = tryPreserveContainerChild(child, pairedBlock);
 			if (nested !== null) {
 				serialized = nested;
+				serializedFromRaw = false;
 				effectiveOrigIndex[idx] = pairedIdx;
 			}
 		}
 
 		const prevNode = idx > 0 ? container.child(idx - 1) : null;
 		const prevMatched = idx > 0 ? (matchedOrigIndex[idx - 1] ?? -1) : -1;
-		const prevWasMatchedAdjacent =
-			prevMatched >= 0 && origIdx >= 0 && origIdx === prevMatched + 1;
+		const prevWasVerbatimAdjacent =
+			prevEmittedVerbatim &&
+			prevMatched >= 0 &&
+			origIdx >= 0 &&
+			origIdx === prevMatched + 1;
 
 		let generated: RenderedChild | null = null;
 		const ensureGenerated = (): RenderedChild => {
@@ -390,7 +400,7 @@ function serializeContainerPreservingChildren(
 				prevInnerText: () => prevInnerText,
 				prevMatchedIdx: prevMatched,
 				prevNode,
-				prevWasMatchedAdjacent,
+				prevWasVerbatimAdjacent,
 				serializedIsNull: serialized === null,
 			});
 
@@ -410,7 +420,7 @@ function serializeContainerPreservingChildren(
 				prevNode,
 				prevInnerText,
 				innerText,
-				prevWasMatchedAdjacent,
+				prevWasVerbatimAdjacent,
 			);
 		let { indentedRisk, swallowRisk } = checkRawPreservationRisks(
 			child,
@@ -420,7 +430,7 @@ function serializeContainerPreservingChildren(
 			separator,
 			prevNode,
 			prevInnerText,
-			prevWasMatchedAdjacent,
+			prevWasVerbatimAdjacent,
 		);
 		const brokenTightLeft =
 			intactGroup !== undefined &&
@@ -433,6 +443,7 @@ function serializeContainerPreservingChildren(
 			// swallowed into a preceding list falls back to canonical blocks.
 			intactGroup = undefined;
 			serialized = null;
+			serializedFromRaw = false;
 			effectiveOrigIndex[idx] = -1;
 			const canonical = ensureGenerated();
 			candidateEmitted = canonical.emitted;
@@ -446,7 +457,7 @@ function serializeContainerPreservingChildren(
 				separator,
 				prevNode,
 				prevInnerText,
-				prevWasMatchedAdjacent,
+				prevWasVerbatimAdjacent,
 			));
 		}
 
@@ -509,6 +520,8 @@ function serializeContainerPreservingChildren(
 
 		parts.push(blockEmitted);
 		prevInnerText = blockInner;
+		prevEmittedVerbatim =
+			serializedFromRaw && serialized !== null && blockEmitted === serialized;
 		if (intactGroup) {
 			const groupLen = intactGroup.endIndex - intactGroup.startIndex;
 			for (let offset = 1; offset < groupLen; offset += 1) {

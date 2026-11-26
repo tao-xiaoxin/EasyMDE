@@ -215,9 +215,9 @@ export function isListSwallowingFollowingBlock(
 	prevNode: ProseMirrorNode | null,
 	prevBlockText: string,
 	nextText: string,
-	prevWasMatchedAdjacent: boolean,
+	prevWasVerbatimAdjacent: boolean,
 ): boolean {
-	if (!prevNode || prevWasMatchedAdjacent || !isNestedList(prevNode)) {
+	if (!prevNode || prevWasVerbatimAdjacent || !isNestedList(prevNode)) {
 		return false;
 	}
 	const nl = nextText.indexOf("\n");
@@ -260,7 +260,7 @@ export function needsPrevInnerForRiskCheck(
 	leadIndent: number,
 	sep: string,
 	prevNode: ProseMirrorNode | null,
-	prevWasMatchedAdjacent: boolean,
+	prevWasVerbatimAdjacent: boolean,
 ): boolean {
 	if (leadIndent <= 0 || prevNode === null) return false;
 	return (
@@ -268,7 +268,7 @@ export function needsPrevInnerForRiskCheck(
 			child.type.name !== "code_block" &&
 			sep === "\n" &&
 			nodePreventsFollowingIndentedCode(prevNode)) ||
-		(!prevWasMatchedAdjacent && isNestedList(prevNode))
+		(!prevWasVerbatimAdjacent && isNestedList(prevNode))
 	);
 }
 
@@ -284,7 +284,7 @@ export function checkRawPreservationRisks(
 	sep: string,
 	prevNode: ProseMirrorNode | null,
 	prevInner: string,
-	prevWasMatchedAdjacent: boolean,
+	prevWasVerbatimAdjacent: boolean,
 ): Readonly<{ indentedRisk: boolean; swallowRisk: boolean }> {
 	const leadIndent = leadingIndentAtDepth(rawEmitted, depth);
 	const indentedRisk =
@@ -300,7 +300,7 @@ export function checkRawPreservationRisks(
 			prevNode,
 			prevInner,
 			rawInner,
-			prevWasMatchedAdjacent,
+			prevWasVerbatimAdjacent,
 		);
 	return { indentedRisk, swallowRisk };
 }

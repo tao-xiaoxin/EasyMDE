@@ -10,7 +10,7 @@ import type {
 	ReferenceLinkOrigin,
 } from "./markdown-parser";
 import { openContainer } from "./markdown-refdef-liveness-containers";
-import { drainPendingListChecks } from "./markdown-refdef-liveness-lists";
+import { drainNextPendingList } from "./markdown-refdef-liveness-lists";
 import {
 	type CandidatePartialRefDef,
 	fireTask,
@@ -94,6 +94,7 @@ export function computeIntactRefDefLabels(
 		partialTitleIntact: new Set<string>(),
 		partialTitleRefNodes: new Set<ProseMirrorNode>(),
 		pendingListChecks: new Set<PendingListCheck>(),
+		pendingListHeap: [],
 		plan,
 		seenLabels: new Set<string>(),
 		serializeBlock,
@@ -134,9 +135,11 @@ export function computeIntactRefDefLabels(
 		if (label !== undefined) scheduleInvalidation(st, label, false);
 	}
 
-	// Pass 2: O(N + E) worklist propagation. Every task fires at most once;
-	// dirty lists re-validate their first ordered item once per drain, and any
-	// labels that invalidates re-enter the FIFO queue until both are empty.
+	// Pass 2: O(N + E) worklist propagation. Every task fires at most once.
+	// After the FIFO queue empties, exactly ONE dirty list (smallest non-sink
+	// first; sinks last) re-validates its first ordered item, and any labels
+	// that invalidates are drained before another list is popped, so a large
+	// list is never re-validated once per cascading wave.
 	let queueHead = 0;
 	while (true) {
 		while (queueHead < st.invalidQueue.length) {
@@ -148,8 +151,7 @@ export function computeIntactRefDefLabels(
 			st.dependentsByLabel.delete(label);
 			for (const task of deps) fireTask(task);
 		}
-		if (st.pendingListChecks.size === 0) break;
-		drainPendingListChecks(st);
+		if (!drainNextPendingList(st)) break;
 	}
 
 	return result;

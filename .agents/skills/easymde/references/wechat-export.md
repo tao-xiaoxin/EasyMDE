@@ -710,6 +710,13 @@ alone preserves its computed source value with
 `!important` to outrank WeChat's global `word-wrap:break-word!important`
 alias; there is no blanket `!important`, platform-value hardcoding, extra
 computed read, or native PNG capture change.
+For non-SVG, non-pseudo inline `<sub>` and `<sup>` elements (alongside task
+checkbox owners and empty decoration pseudos), portable style serialization
+strips any zero line-height segment from the `font` shorthand and omits zero
+`line-height` declarations so Normalize-style `line-height: 0` rules do not
+trigger WeChat's `#1.3 line-height` structure warning; non-zero line heights,
+ordinary elements, task checkbox text pseudos, SVG nodes, and native PNG
+capture remain unchanged.
 
 For ordinary flow elements and generated pseudo-elements, map computed logical
 `text-align:start` and `text-align:end` to physical `left` or `right` using the

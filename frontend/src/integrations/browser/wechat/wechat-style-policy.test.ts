@@ -9,8 +9,10 @@ import {
 	COPY_STYLE_PROPERTIES,
 	createStyleDeclarationContext,
 	hasFinalizedBackgroundGradient,
+	keepStyle,
 	markWechatGradientDarkmodeExemptions,
 	portableStyleProperties,
+	portableStyleValue,
 	removeTransientAttributes,
 	semanticPaddingValue,
 	semanticTransformOriginSignature,
@@ -1193,5 +1195,248 @@ describe("WeChat gradient darkmode exemption metadata", () => {
 		expect(root.querySelector("div")?.hasAttribute("data-ignore-dm")).toBe(
 			false,
 		);
+	});
+});
+
+describe("zero line-height normalization for inline script elements and task checkboxes", () => {
+	async function serializeBothPaths(
+		source: Element,
+		measured: CSSStyleDeclaration,
+		pseudoElement = false,
+	): Promise<Readonly<{ modern: string[]; legacy: string[] }>> {
+		const modern = await styleDeclarations(
+			source,
+			measured,
+			pseudoElement,
+			false,
+			runtime(measured),
+			new Map(),
+		);
+		const legacy = styleDeclarationsSynchronously(
+			source,
+			measured,
+			pseudoElement,
+			false,
+			runtime(measured),
+		);
+		if (null === legacy) {
+			throw new Error("synchronous style serialization failed");
+		}
+		return { legacy, modern };
+	}
+
+	function createTaskCheckbox(): HTMLInputElement {
+		const item = document.createElement("li");
+		item.className = "task-list-item";
+		const input = document.createElement("input");
+		input.type = "checkbox";
+		item.append(input);
+		return input;
+	}
+
+	it.each(["sup", "sub"] as const)(
+		"strips zero line-height from font shorthand and omits zero line-height on <%s> in modern and legacy serialization",
+		async (tag) => {
+			const source = document.createElement(tag);
+			const measured = style({
+				display: "inline",
+				font: '700 12px / 0px "Optima", sans-serif',
+				"line-height": "0px",
+				"vertical-align": "sup" === tag ? "super" : "sub",
+			});
+
+			const { modern, legacy } = await serializeBothPaths(source, measured);
+
+			expect(legacy).toEqual(modern);
+			expect(modern).toContain('font:700 12px "Optima", sans-serif');
+			expect(modern.some((entry) => entry.startsWith("line-height:"))).toBe(
+				false,
+			);
+		},
+	);
+
+	it.each(["0", "0px", "0.0px", "0.00", ".0px", "0em", "0rem", "0%", "0PX"])(
+		"normalizes zero line-height token %s on inline script elements",
+		async (zeroToken) => {
+			const source = document.createElement("sup");
+			const measured = style({
+				display: "inline",
+				font: `700 12px / ${zeroToken} Inter, sans-serif`,
+				"line-height": zeroToken,
+			});
+
+			const { modern, legacy } = await serializeBothPaths(source, measured);
+
+			expect(legacy).toEqual(modern);
+			expect(modern).toContain("font:700 12px Inter, sans-serif");
+			expect(modern.some((entry) => entry.startsWith("line-height:"))).toBe(
+				false,
+			);
+		},
+	);
+
+	it("respects quoted font names containing slashes when stripping zero line-height", () => {
+		const sup = document.createElement("sup");
+		const computed = style({});
+
+		expect(
+			portableStyleValue(
+				"font",
+				'700 12px / 0px "Optima / Pro", sans-serif',
+				sup,
+				computed,
+			),
+		).toBe('700 12px "Optima / Pro", sans-serif');
+
+		expect(
+			portableStyleValue(
+				"font",
+				'700 12px "Optima / 0px Pro", sans-serif',
+				sup,
+				computed,
+			),
+		).toBe('700 12px "Optima / 0px Pro", sans-serif');
+	});
+
+	it.each([
+		["sup", "18px"],
+		["sup", "1.2"],
+		["sub", "18px"],
+		["sub", "0.5"],
+		["sub", "0.1px"],
+	] as const)(
+		"preserves non-zero line-height %s on <%s> verbatim in modern and legacy serialization",
+		async (tag, lineHeight) => {
+			const source = document.createElement(tag);
+			const font = `700 12px / ${lineHeight} "Optima", sans-serif`;
+			const measured = style({
+				display: "inline",
+				font,
+				"line-height": lineHeight,
+			});
+
+			const { modern, legacy } = await serializeBothPaths(source, measured);
+
+			expect(legacy).toEqual(modern);
+			expect(modern).toContain(`font:${font}`);
+			expect(modern).toContain(`line-height:${lineHeight}`);
+		},
+	);
+
+	it.each(["p", "span"] as const)(
+		"leaves zero line-height unchanged on ordinary <%s> elements in modern and legacy serialization",
+		async (tag) => {
+			const source = document.createElement(tag);
+			const font = '400 16px / 0px "Optima", sans-serif';
+			const measured = style({
+				display: "p" === tag ? "block" : "inline",
+				font,
+				"line-height": "0px",
+			});
+
+			const { modern, legacy } = await serializeBothPaths(source, measured);
+
+			expect(legacy).toEqual(modern);
+			expect(modern).toContain(`font:${font}`);
+			expect(modern).toContain("line-height:0px");
+		},
+	);
+
+	it("preserves existing task checkbox zero line-height behavior for owners, empty pseudos, and text pseudos", async () => {
+		const checkbox = createTaskCheckbox();
+		const font = "16px / 0px Arial";
+
+		const ownerMeasured = style({
+			display: "inline-block",
+			font,
+			"line-height": "0px",
+		});
+		const owner = await serializeBothPaths(checkbox, ownerMeasured, false);
+		expect(owner.legacy).toEqual(owner.modern);
+		expect(owner.modern).toContain("font:16px Arial");
+		expect(owner.modern.some((entry) => entry.startsWith("line-height:"))).toBe(
+			false,
+		);
+
+		const emptyPseudoMeasured = style({
+			content: '""',
+			display: "inline-block",
+			font,
+			"line-height": "0em",
+		});
+		const emptyPseudo = await serializeBothPaths(
+			checkbox,
+			emptyPseudoMeasured,
+			true,
+		);
+		expect(emptyPseudo.legacy).toEqual(emptyPseudo.modern);
+		expect(emptyPseudo.modern).toContain("font:16px Arial");
+		expect(
+			emptyPseudo.modern.some((entry) => entry.startsWith("line-height:")),
+		).toBe(false);
+
+		const textPseudoMeasured = style({
+			content: '"✓"',
+			display: "inline-block",
+			font,
+			"line-height": "0px",
+		});
+		const textPseudo = await serializeBothPaths(
+			checkbox,
+			textPseudoMeasured,
+			true,
+		);
+		expect(textPseudo.legacy).toEqual(textPseudo.modern);
+		expect(textPseudo.modern).toContain(`font:${font}`);
+		expect(textPseudo.modern).toContain("line-height:0px");
+	});
+
+	it("leaves SVG elements and pseudo-elements unaffected", async () => {
+		const font = '700 12px / 0px "Optima", sans-serif';
+		const measured = style({
+			content: '"*"',
+			display: "inline",
+			font,
+			"line-height": "0px",
+		});
+
+		const sup = document.createElement("sup");
+		const supPseudo = await serializeBothPaths(sup, measured, true);
+		expect(supPseudo.legacy).toEqual(supPseudo.modern);
+		expect(supPseudo.modern).toContain(`font:${font}`);
+		expect(supPseudo.modern).toContain("line-height:0px");
+
+		const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+		const svgText = document.createElementNS(
+			"http://www.w3.org/2000/svg",
+			"text",
+		);
+		const foreignObject = document.createElementNS(
+			"http://www.w3.org/2000/svg",
+			"foreignObject",
+		);
+		const svgSup = document.createElement("sup");
+		foreignObject.append(svgSup);
+		svg.append(svgText, foreignObject);
+
+		const svgTextResult = await serializeBothPaths(svgText, measured, false);
+		expect(svgTextResult.legacy).toEqual(svgTextResult.modern);
+		expect(svgTextResult.modern).toContain(`font:${font}`);
+		expect(svgTextResult.modern).toContain("line-height:0px");
+
+		const svgSupResult = await serializeBothPaths(svgSup, measured, false);
+		expect(svgSupResult.legacy).toEqual(svgSupResult.modern);
+		expect(svgSupResult.modern).toContain(`font:${font}`);
+		expect(svgSupResult.modern).toContain("line-height:0px");
+	});
+
+	it("does not omit zero line-height on <sup> when omitDefaultValues is false", () => {
+		const sup = document.createElement("sup");
+		expect(keepStyle("line-height", "0px", sup, false, false, "0px", true)).toBe(
+			false,
+		);
+		expect(
+			keepStyle("line-height", "0px", sup, false, false, "0px", false),
+		).toBe(true);
 	});
 });

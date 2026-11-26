@@ -39,8 +39,8 @@ import {
 	transportableTransformOriginSemantics,
 } from "./wechat-style-policy-semantics";
 import {
-	taskCheckboxFontWithoutZeroLineHeight,
-	taskCheckboxLineHeightIsZero,
+	fontWithoutZeroLineHeight,
+	shouldOmitZeroLineHeight,
 } from "./wechat-task-checkbox-style";
 
 export { splitSelectorList } from "../../../shared/css/selector-list";
@@ -139,9 +139,10 @@ export function portableStyleValue(
 	specialLayout?: boolean,
 ): string {
 	if ("font" === property)
-		return taskCheckboxFontWithoutZeroLineHeight(
+		return fontWithoutZeroLineHeight(
 			source,
 			value,
+			pseudoElement,
 			taskCheckboxPseudoHasTextContent(pseudoElement, computedContent),
 		);
 	if (
@@ -179,10 +180,12 @@ export function keepStyle(
 	pseudoElementContent = "",
 ): boolean {
 	if (
-		taskCheckboxLineHeightIsZero(
+		omitDefaultValues &&
+		shouldOmitZeroLineHeight(
 			source,
 			property,
 			value,
+			pseudoElement,
 			taskCheckboxPseudoHasTextContent(pseudoElement, pseudoElementContent),
 		)
 	)

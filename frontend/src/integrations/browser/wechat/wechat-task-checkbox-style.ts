@@ -1,16 +1,36 @@
-import { isTaskListCheckbox } from './wechat-clone-metadata';
+import { isSvgElement, isTaskListCheckbox } from './wechat-clone-metadata';
+
+const ZERO_LINE_HEIGHT_TOKEN =
+  '(?:0+(?:\\.0+)?|\\.0+)(?:px|em|rem|ex|ch|cap|ic|lh|rlh|vw|vh|vi|vb|vmin|vmax|svw|svh|lvw|lvh|dvw|dvh|cqw|cqh|cqi|cqb|cqmin|cqmax|cm|mm|q|in|pt|pc|%)?';
+const FONT_SHORTHAND_ZERO_LINE_HEIGHT = new RegExp(`^\\s*${ZERO_LINE_HEIGHT_TOKEN}(?=\\s|$)`, 'iu');
+const ZERO_LINE_HEIGHT_VALUE = new RegExp(`^${ZERO_LINE_HEIGHT_TOKEN}$`, 'iu');
+
+function isInlineScriptElement(source: Element, pseudoElement: boolean): boolean {
+  return !pseudoElement && !isSvgElement(source) && ('SUB' === source.tagName || 'SUP' === source.tagName);
+}
 
 /**
- * Remove a zero line-height component from a task checkbox font shorthand when
- * the declaration paints an owner or an empty decoration. Text pseudos keep the
- * shorthand because Chromium uses its zero line-height paint box for the glyph.
+ * Determine whether zero line-height declarations should be stripped from an
+ * element's portable WeChat styles:
+ * - Task checkbox owners and empty decoration pseudos (text pseudos keep their
+ *   zero line-height paint box because Chromium uses it for glyph alignment).
+ * - Non-SVG, non-pseudo inline `<sub>` and `<sup>` elements, whose Normalize-style
+ *   `line-height: 0` otherwise triggers WeChat's `#1.3 line-height` check.
  */
-export function taskCheckboxFontWithoutZeroLineHeight(
+function shouldStripZeroLineHeight(
   source: Element,
-  value: string,
+  pseudoElement = false,
   pseudoHasTextContent = false
-): string {
-  if (!isTaskListCheckbox(source) || pseudoHasTextContent) return value;
+): boolean {
+  if (isTaskListCheckbox(source)) return !pseudoHasTextContent;
+  return isInlineScriptElement(source, pseudoElement);
+}
+
+/**
+ * Strip a zero line-height segment (e.g. `/ 0px`, `/ 0`, `/ 0em`, `/ 0%`) from a
+ * CSS `font` shorthand value while respecting quoted font names and parentheses.
+ */
+export function stripZeroLineHeightFromFontShorthand(value: string): string {
   let quote: '"' | "'" | null = null;
   let parentheses = 0;
   let escaped = false;
@@ -48,21 +68,44 @@ export function taskCheckboxFontWithoutZeroLineHeight(
   }
   if (slashIndex < 0) return value;
   const afterSlash = value.slice(slashIndex + 1);
-  const zeroLineHeight = /^\s*0(?:\.0+)?(?:px|em|rem|ex|ch|cap|ic|lh|rlh|vw|vh|vi|vb|vmin|vmax|cm|mm|q|in|pt|pc|%)?(?=\s|$)/iu.exec(
-    afterSlash
-  );
+  const zeroLineHeight = FONT_SHORTHAND_ZERO_LINE_HEIGHT.exec(afterSlash);
   if (!zeroLineHeight) return value;
   const fontFamily = afterSlash.slice(zeroLineHeight[0].length).trimStart();
   if (!fontFamily) return value;
   return `${value.slice(0, slashIndex).trimEnd()} ${fontFamily}`.trim();
 }
 
-export function taskCheckboxLineHeightIsZero(
+export function isZeroLineHeightValue(value: string): boolean {
+  return ZERO_LINE_HEIGHT_VALUE.test(value.trim());
+}
+
+/**
+ * Remove a zero line-height component from a `font` shorthand when the
+ * declaration belongs to a task checkbox owner/empty decoration pseudo or a
+ * non-SVG, non-pseudo inline `<sub>`/`<sup>` element.
+ */
+export function fontWithoutZeroLineHeight(
+  source: Element,
+  value: string,
+  pseudoElement = false,
+  pseudoHasTextContent = false
+): string {
+  if (!shouldStripZeroLineHeight(source, pseudoElement, pseudoHasTextContent)) return value;
+  return stripZeroLineHeightFromFontShorthand(value);
+}
+
+/**
+ * Return true when a `line-height` declaration has a zero value on an element
+ * whose zero line-height must be omitted for WeChat compatibility.
+ */
+export function shouldOmitZeroLineHeight(
   source: Element,
   property: string,
   value: string,
+  pseudoElement = false,
   pseudoHasTextContent = false
 ): boolean {
-  if (!isTaskListCheckbox(source) || 'line-height' !== property || pseudoHasTextContent) return false;
-  return /^0(?:\.0+)?(?:px)?$/u.test(value.trim().toLowerCase());
+  if ('line-height' !== property) return false;
+  if (!shouldStripZeroLineHeight(source, pseudoElement, pseudoHasTextContent)) return false;
+  return isZeroLineHeightValue(value);
 }

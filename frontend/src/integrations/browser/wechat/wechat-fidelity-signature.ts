@@ -43,9 +43,14 @@ import {
 	signatureStyleProperties,
 	supportsSpecialLayout,
 } from "./wechat-style-policy";
+import {
+	type AuthorPseudoWidthRulesScan,
+	scanAuthorPseudoWidthRules,
+} from "./wechat-table-native-grid";
 import { wechatTableNativeGridAuxiliarySignature } from "./wechat-table-native-grid-integration";
 import { taskListCheckboxFreshnessSignature } from "./wechat-task-geometry";
 import { isTaskSvgPseudoContent } from "./wechat-task-paint";
+import { hasSpecialLayoutAncestor } from "./wechat-tree-predicates";
 
 const XHTML_NAMESPACE = "http://www.w3.org/1999/xhtml" as const;
 
@@ -70,7 +75,7 @@ function preparedPseudoStyleAndMarginSignature(
 	dimensionSemantics: WechatDimensionSemanticsContext | null,
 	projectRoot: boolean,
 	predicates?: WechatTreePredicateCache,
-): Readonly<{ childMargin: string; style: string }> {
+): Readonly<{ childMargin: string; rawContent: string; style: string }> {
 	const computed = runtime.getComputedStyle(element, pseudoElement);
 	const exported = projectRoot
 		? rootExportComputedStyle(
@@ -87,6 +92,7 @@ function preparedPseudoStyleAndMarginSignature(
 	if (null === emittedContent && !isTaskSvg) {
 		return {
 			childMargin: "",
+			rawContent,
 			style: `${pseudoElement}:content=${rawContent}`,
 		};
 	}
@@ -99,20 +105,20 @@ function preparedPseudoStyleAndMarginSignature(
 				? exported
 				: dimensionSemantics.getComputedStyle(element, pseudoElement)
 			: null;
-	const signature = `${pseudoElement}:${signatureStyleProperties(
-		element,
-		root,
-		true,
-		predicates,
-	)
-		.map((property) => {
-			const rawValue =
-				(marginEligible && SEMANTIC_MARGIN_PROPERTY_SET.has(property)
-					? semanticMarginValueForEligibleStyle(property, semanticComputed)
-					: null) ?? exported.getPropertyValue(property);
-			return `${property}=${normalizeSignatureStyleValue(property, rawValue)}`;
-		})
-		.join(";")}`;
+	const pseudoProps = signatureStyleProperties(element, root, true, predicates);
+	let pseudoBody = "";
+	for (const property of pseudoProps) {
+		const rawValue =
+			(marginEligible && SEMANTIC_MARGIN_PROPERTY_SET.has(property)
+				? semanticMarginValueForEligibleStyle(property, semanticComputed)
+				: null) ?? exported.getPropertyValue(property);
+		const value =
+			"text-indent" === property
+				? normalizeSignatureStyleValue(property, rawValue)
+				: rawValue;
+		pseudoBody += pseudoBody ? `;${property}=${value}` : `${property}=${value}`;
+	}
+	const signature = `${pseudoElement}:${pseudoBody}`;
 	const generatedHeadingVisibility =
 		!root &&
 		"::after" === pseudoElement &&
@@ -133,6 +139,7 @@ function preparedPseudoStyleAndMarginSignature(
 	}
 	return {
 		childMargin,
+		rawContent,
 		style: `${signature}${generatedHeadingVisibility}`,
 	};
 }
@@ -293,8 +300,6 @@ export function ordinaryDimensionSemanticsSignature(
 	predicates?: WechatTreePredicateCache,
 ): string {
 	if (!dimensionSemantics) return "";
-	const computed = dimensionSemantics.getComputedStyle(element);
-	if (!computed) return "";
 	const role = mathCloneRole(element);
 	const svg = predicates
 		? predicates.isSvgElement(element)
@@ -302,6 +307,24 @@ export function ordinaryDimensionSemanticsSignature(
 	const special = predicates
 		? predicates.supportsSpecialLayout(element)
 		: supportsSpecialLayout(element);
+	const needsDimensions = !svg && ("katex" === role || (!role && !special));
+	const needsOuterAllocation = "html" === role;
+	const needsTransformOrigin = !svg && !special;
+	const needsMarginOrPadding =
+		("svg" === element.localName.toLowerCase() || (!svg && !special)) &&
+		!(predicates
+			? predicates.hasSpecialLayoutAncestor(element)
+			: hasSpecialLayoutAncestor(element));
+	if (
+		!needsDimensions &&
+		!needsOuterAllocation &&
+		!needsTransformOrigin &&
+		!needsMarginOrPadding
+	) {
+		return "";
+	}
+	const computed = dimensionSemantics.getComputedStyle(element);
+	if (!computed) return "";
 	const dimensions = svg
 		? ""
 		: "katex" === role
@@ -443,6 +466,9 @@ function auxiliaryFidelitySignature(
 	computed?: CSSStyleDeclaration,
 	contentBoxInputsOnly = false,
 	predicates?: WechatTreePredicateCache,
+	beforeRawContent?: string,
+	getTableNativeGridRulesScan?: () => AuthorPseudoWidthRulesScan,
+	contentBoxInputAuxiliaryOut?: { value: string },
 ): string {
 	const activeConversion =
 		conversionActive || Boolean(dimensionSemantics?.rasterizesVisualRoots);
@@ -457,11 +483,11 @@ function auxiliaryFidelitySignature(
 	) {
 		return "";
 	}
-	const inlinePseudoPaint = inlinePseudoPaintSignature(
-		element,
-		runtime,
-		computed,
-	);
+	const normalizedBeforeContent = beforeRawContent?.trim().toLowerCase();
+	const inlinePseudoPaint =
+		"none" === normalizedBeforeContent || "normal" === normalizedBeforeContent
+			? ""
+			: inlinePseudoPaintSignature(element, runtime, computed);
 	const markerSignature = ["OL", "UL"].includes(element.tagName)
 		? listMarkerSignature(
 				element,
@@ -499,6 +525,7 @@ function auxiliaryFidelitySignature(
 		element,
 		runtime,
 		computed,
+		getTableNativeGridRulesScan,
 	);
 	const mermaidAdmission = dimensionSemantics?.rasterizesVisualRoots
 		? ""
@@ -521,7 +548,21 @@ function auxiliaryFidelitySignature(
 					dimensionSemantics,
 				)
 			: "";
-	return `${markerSignature}:${inlineMarkerSignature}:${quotePseudoSignature}:${headingAfterPseudoSignature}:${taskCheckboxSignature}:${tableHeaderSignature}:${tableScrollSignature}:${tableNativeGridSignature}:${mermaidAdmission}:${markerDecisions}:${inlinePseudoPaint}:${nestedListProjectionSignature}`;
+	const result = `${markerSignature}:${inlineMarkerSignature}:${quotePseudoSignature}:${headingAfterPseudoSignature}:${taskCheckboxSignature}:${tableHeaderSignature}:${tableScrollSignature}:${tableNativeGridSignature}:${mermaidAdmission}:${markerDecisions}:${inlinePseudoPaint}:${nestedListProjectionSignature}`;
+	if (contentBoxInputAuxiliaryOut) {
+		const mermaidInputsOnly =
+			!contentBoxInputsOnly &&
+			!dimensionSemantics?.rasterizesVisualRoots &&
+			(mermaidAdmission ||
+				element.hasAttribute("data-easymde-mermaid-layout"))
+				? mermaidAdmissionFreshnessSignature(element, runtime, true)
+				: mermaidAdmission;
+		contentBoxInputAuxiliaryOut.value =
+			mermaidInputsOnly === mermaidAdmission
+				? result
+				: `${markerSignature}:${inlineMarkerSignature}:${quotePseudoSignature}:${headingAfterPseudoSignature}:${taskCheckboxSignature}:${tableHeaderSignature}:${tableScrollSignature}:${tableNativeGridSignature}:${mermaidInputsOnly}:${markerDecisions}:${inlinePseudoPaint}:${nestedListProjectionSignature}`;
+	}
+	return result;
 }
 
 function previewElements(root: HTMLElement): Element[] {
@@ -539,6 +580,7 @@ function dimensionEntrySignature(
 }
 
 export type PreparedSignatureBundle = Readonly<{
+	contentBoxInputLayout: string;
 	dimension: string;
 	dimensionGeometry: string;
 	layout: string;
@@ -550,6 +592,7 @@ export type CollectPreparedSignaturesOptions = Readonly<{
 	dimensionSemantics?: WechatDimensionSemanticsContext | null | undefined;
 	conversionActive?: boolean | undefined;
 	contentBoxInputsOnly?: boolean | undefined;
+	includeContentBoxInputLayout?: boolean | undefined;
 	includeDimension?: boolean | undefined;
 	includeDimensionGeometry?: boolean | undefined;
 }>;
@@ -566,12 +609,15 @@ type LayoutSignatureContext = Readonly<{
 	dimensionSemantics: WechatDimensionSemanticsContext | null;
 	conversionActive: boolean;
 	contentBoxInputsOnly: boolean;
+	includeContentBoxInputLayout: boolean;
 	includeDimension: boolean;
 	includeDimensionGeometry: boolean;
 	predicates: WechatTreePredicateCache;
+	getTableNativeGridRulesScan: () => AuthorPseudoWidthRulesScan;
 }>;
 
 type LayoutElementSignatureResult = Readonly<{
+	contentBoxInputEntry: string | null;
 	dimensionEntry: string | null;
 	dimensionGeometryEntry: string | null;
 	layoutEntry: string;
@@ -587,12 +633,16 @@ function collectLayoutElementSignatures(
 	const rect = element.getBoundingClientRect?.();
 	const computed = runtime.getComputedStyle(element);
 	const root = 0 === index;
-	const styles = signatureStyleProperties(element, root, false, predicates)
-		.map(
-			(property) =>
-				`${property}=${normalizeSignatureStyleValue(property, computed.getPropertyValue(property))}`,
-		)
-		.join(";");
+	const styleProps = signatureStyleProperties(element, root, false, predicates);
+	let styles = "";
+	for (const property of styleProps) {
+		const raw = computed.getPropertyValue(property);
+		const value =
+			"text-indent" === property
+				? normalizeSignatureStyleValue(property, raw)
+				: raw;
+		styles += styles ? `;${property}=${value}` : `${property}=${value}`;
+	}
 	const pseudoEntries = PREPARED_PSEUDO_ELEMENTS.map((pseudo) =>
 		preparedPseudoStyleAndMarginSignature(
 			element,
@@ -610,6 +660,10 @@ function collectLayoutElementSignatures(
 		dimensionSemantics,
 		predicates,
 	);
+	const beforeRawContent = root ? undefined : pseudoEntries[0]?.rawContent;
+	const contentBoxInputAuxiliaryOut = ctx.includeContentBoxInputLayout
+		? { value: "" }
+		: undefined;
 	const auxiliary = auxiliaryFidelitySignature(
 		element,
 		runtime,
@@ -618,6 +672,9 @@ function collectLayoutElementSignatures(
 		computed,
 		ctx.contentBoxInputsOnly,
 		predicates,
+		beforeRawContent,
+		ctx.getTableNativeGridRulesScan,
+		contentBoxInputAuxiliaryOut,
 	);
 	const childPseudoMargin =
 		root || !dimensionSemantics
@@ -667,7 +724,17 @@ function collectLayoutElementSignatures(
 	// Only retain dimensions here; they can affect wrapping and image/text
 	// geometry without invalidating a prepared payload on ordinary scroll.
 	const layoutEntry = `${index}:${width},${height}:${styles}:${pseudoStyles}:${dimensions}:${rootExportStyle}:${auxiliary}`;
-	return { dimensionEntry, dimensionGeometryEntry, layoutEntry };
+	const contentBoxInputEntry = contentBoxInputAuxiliaryOut
+		? contentBoxInputAuxiliaryOut.value === auxiliary
+			? layoutEntry
+			: `${index}:${width},${height}:${styles}:${pseudoStyles}:${dimensions}:${rootExportStyle}:${contentBoxInputAuxiliaryOut.value}`
+		: null;
+	return {
+		contentBoxInputEntry,
+		dimensionEntry,
+		dimensionGeometryEntry,
+		layoutEntry,
+	};
 }
 
 function collectDimensionGeometryElementSignature(
@@ -730,18 +797,25 @@ function collectDimensionGeometryElementSignature(
 function createPreparedSignatureCollector(
 	options: CollectPreparedSignaturesOptions,
 ) {
+	let tableNativeGridRulesScan: AuthorPseudoWidthRulesScan | null = null;
 	const ctx: LayoutSignatureContext = {
 		runtime: options.runtime,
 		dimensionSemantics: options.dimensionSemantics ?? null,
 		conversionActive: options.conversionActive ?? false,
 		contentBoxInputsOnly: options.contentBoxInputsOnly ?? false,
+		includeContentBoxInputLayout: options.includeContentBoxInputLayout ?? false,
 		includeDimension: options.includeDimension ?? true,
 		includeDimensionGeometry: options.includeDimensionGeometry ?? false,
 		predicates: createWechatTreePredicateCache(),
+		getTableNativeGridRulesScan: () => {
+			tableNativeGridRulesScan ??= scanAuthorPseudoWidthRules(options.runtime);
+			return tableNativeGridRulesScan;
+		},
 	};
 	const viewportSignature = layoutViewportSignature(options.preview);
 	const elements = previewElements(options.preview);
 	const entries: string[] = [];
+	const contentBoxInputEntries: string[] = [];
 	const dimensionEntries: string[] = [];
 	const dimensionGeometryEntries: string[] = [];
 	let layoutIndex = 0;
@@ -765,9 +839,15 @@ function createPreparedSignatureCollector(
 			if (null !== result.dimensionGeometryEntry) {
 				dimensionGeometryEntries.push(result.dimensionGeometryEntry);
 			}
+			if (null !== result.contentBoxInputEntry) {
+				contentBoxInputEntries.push(result.contentBoxInputEntry);
+			}
 			entries.push(result.layoutEntry);
 		},
 		finish: (): PreparedSignatureBundle => ({
+			contentBoxInputLayout: ctx.includeContentBoxInputLayout
+				? [viewportSignature, ...contentBoxInputEntries].join("\u0001")
+				: "",
 			dimension: ctx.includeDimension ? dimensionEntries.join("\u0001") : "",
 			dimensionGeometry: ctx.includeDimensionGeometry
 				? [viewportSignature, ...dimensionGeometryEntries].join("\u0001")

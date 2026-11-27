@@ -429,12 +429,13 @@
 
 .easymde-rendered-content.easymde-markdown-theme-fullstack-blue h2 .prefix {
   display: flex;
+  box-sizing: border-box;
   width: 20px;
-  height: 20px;
+  height: 25px;
   background-image: url("../../images/fullstack-blue-h2.png");
   background-repeat: no-repeat;
   background-size: 20px 20px;
-  background-position: 0 0;
+  background-position: 0 5px;
   margin-bottom: -25px;
 }
 

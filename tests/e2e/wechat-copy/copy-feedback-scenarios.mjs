@@ -15,6 +15,7 @@ import { installControlledPngUploadRoute } from "./editor-session.mjs";
 import { installEditorBootstrapOverride } from "./editor-session.mjs";
 import { installNoReplyPngWorkerRoute } from "./page-diagnostics.mjs";
 import { installPngWorkerLifecycleProbe } from "./page-diagnostics.mjs";
+import { installWechatConsoleDiagnostics } from "./page-diagnostics.mjs";
 import { openEasyMdeNewPost } from "./editor-session.mjs";
 import { pngWorkerResourcePattern } from "./environment.mjs";
 import { readSystemClipboardPayload } from "./mermaid-geometry.mjs";
@@ -62,6 +63,7 @@ export async function runCopyFeedbackScenario1({ baseURL, context, login, page, 
     const origin = new URL(page.url()).origin;
     await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
     await installClipboardInstrumentation(page);
+    await installWechatConsoleDiagnostics(page);
     await installEditorBootstrapOverride(page, true);
     await page.route('**/easymde-e2e-fixtures/markdown-full-capability-image.png', (route) =>
       route.fulfill({ body: fullCapabilityImage, contentType: 'image/png', status: 200 }));

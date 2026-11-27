@@ -140,11 +140,17 @@ export async function decodeTaskMarkerPixelEvidence(page, screenshot, markerRect
           const interiorHeight = centerWindowSize(bottom - top, region.bottom - region.top);
           const interiorLeft = Math.max(
             left,
-            Math.min(right - interiorWidth, Math.floor((left + right - interiorWidth) / 2))
+            Math.min(
+              right - interiorWidth,
+              Math.round(((region.left + region.right) * scale - interiorWidth) / 2)
+            )
           );
           const interiorTop = Math.max(
             top,
-            Math.min(bottom - interiorHeight, Math.floor((top + bottom - interiorHeight) / 2))
+            Math.min(
+              bottom - interiorHeight,
+              Math.round(((region.top + region.bottom) * scale - interiorHeight) / 2)
+            )
           );
           const interiorRight = interiorLeft + interiorWidth;
           const interiorBottom = interiorTop + interiorHeight;

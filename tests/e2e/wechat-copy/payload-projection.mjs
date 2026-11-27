@@ -294,7 +294,7 @@ export async function readProjectedPreviewBoundary(page, destinationWidth = null
       const clone = source.cloneNode(false);
       if (!(clone instanceof HTMLElement)) throw new Error('wechat-preview-projection-clone-invalid');
       identityAttributes.forEach((attribute) => clone.removeAttribute(attribute));
-      clone.removeAttribute('id');
+      if ('easymde-editor-root' !== clone.id) clone.removeAttribute('id');
       clone.removeAttribute('aria-hidden');
       clone.removeAttribute('inert');
       if (source !== sourceRoot) {

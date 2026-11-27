@@ -123,12 +123,8 @@ export async function copyFromSourceAndAssertZeroWrite(page, button, { png }) {
   expect(metrics.clickCount).toBe(1);
   expect(metrics.writeCount).toBe(1);
   expect(metrics.writeActivation).toBe(true);
-  if (png) {
-    await expect.poll(() => page.locator('.easymde-wechat-preview-measurement').count())
-      .toBe(1);
-  } else {
-    await expect(page.locator('.easymde-wechat-preview-measurement')).toHaveCount(0);
-  }
+  await expect.poll(() => page.locator('.easymde-wechat-preview-measurement').count())
+    .toBe(1);
   await page.evaluate(() => globalThis.__easymdeWechatCopyTrace.releaseCopy());
   await waitForWechatStatusEvent(page, 'wechat-success');
   await expect.poll(() => page.evaluate((writeIndex) => (
@@ -142,9 +138,7 @@ export async function copyFromSourceAndAssertZeroWrite(page, button, { png }) {
     sourceMutations: 0
   });
   await stopZeroWriteProbe(page);
-  if (png) {
-    await expect(page.locator('.easymde-wechat-preview-measurement')).toHaveCount(0);
-  }
+  await expect(page.locator('.easymde-wechat-preview-measurement')).toHaveCount(0);
   await stopPreviewFreshnessProbe(page);
   await expect(button).toBeFocused();
   await dismissEditorStatus(page);

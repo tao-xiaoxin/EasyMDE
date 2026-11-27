@@ -64,11 +64,49 @@ final class ContentFilter {
 			return $content;
 		}
 
+		$html = self::protect_math_from_wptexturize( $html );
+
 		return sprintf(
 			'<div class="%s"%s>%s</div>',
 			esc_attr( implode( ' ', $classes ) ),
 			'' !== $style ? ' style="' . esc_attr( $style ) . '"' : '',
 			$html
 		);
+	}
+
+	/**
+	 * Keep WordPress block-template `wptexturize()` from rewriting math syntax
+	 * (such as ` - ` -> `&#8211;`) inside `.easymde-math` wrappers before KaTeX
+	 * reads `textContent` on public posts.
+	 *
+	 * @param string $html Rendered Markdown HTML.
+	 * @return string
+	 */
+	private static function protect_math_from_wptexturize( $html ) {
+		if ( false === strpos( $html, 'easymde-math' ) ) {
+			return $html;
+		}
+
+		$protected = preg_replace_callback(
+			'/(<(?:div|span)\s+class="easymde-math(?:\s+[^"]*)?">)(.*?)(<\/(?:div|span)>)/s',
+			static function ( $matches ) {
+				$body = strtr(
+					$matches[2],
+					array(
+						'-' => '&#45;',
+						'.' => '&#46;',
+						"'" => '&#39;',
+						'"' => '&#34;',
+						'`' => '&#96;',
+					)
+				);
+				$body = (string) preg_replace( '/(?<=\d)x(?=\d)/', '&#120;', $body );
+
+				return $matches[1] . $body . $matches[3];
+			},
+			$html
+		);
+
+		return null === $protected ? $html : $protected;
 	}
 }

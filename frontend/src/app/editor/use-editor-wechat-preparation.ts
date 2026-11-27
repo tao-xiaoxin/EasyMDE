@@ -26,6 +26,7 @@ export type UseEditorWechatPreparationOptions = Readonly<{
   visualPreviewLockingRef: SharedRef<boolean>;
   visualPreviewUnlockingRef: SharedRef<boolean>;
   wechatClipboard: WechatClipboardPort;
+  wechatCopyPendingRef: SharedRef<boolean>;
   wechatExportEnabled: boolean;
   wechatPngConversionEnabled: boolean;
 }>;
@@ -43,6 +44,7 @@ export function useEditorWechatPreparation({
   visualPreviewLockingRef,
   visualPreviewUnlockingRef,
   wechatClipboard,
+  wechatCopyPendingRef,
   wechatExportEnabled,
   wechatPngConversionEnabled
 }: UseEditorWechatPreparationOptions) {
@@ -104,6 +106,7 @@ export function useEditorWechatPreparation({
       const prepare = wechatClipboard.prepare;
       if (
         !rootActiveRef.current
+        || wechatCopyPendingRef.current
         || visualPreviewEditingRef.current
         || visualPreviewUnlockingRef.current
         || visualPreviewLockingRef.current
@@ -172,6 +175,7 @@ export function useEditorWechatPreparation({
       visualPreviewLockingRef,
       visualPreviewUnlockingRef,
       wechatClipboard,
+      wechatCopyPendingRef,
       wechatExportEnabled,
       wechatPngConversionEnabled
     ]
@@ -181,6 +185,10 @@ export function useEditorWechatPreparation({
     (surface: HTMLElement | null) => {
       const prepare = wechatClipboard.prepare;
       if (!wechatExportEnabled || !surface || !prepare) return;
+      if (wechatCopyPendingRef.current) {
+        clearScheduledWechatPreparation();
+        return;
+      }
       if (wechatPngConversionEnabled) {
         rememberWechatPreviewWidth(surface);
       }
@@ -197,6 +205,7 @@ export function useEditorWechatPreparation({
       prepareWechatPreview,
       rememberWechatPreviewWidth,
       wechatClipboard,
+      wechatCopyPendingRef,
       wechatExportEnabled,
       wechatPngConversionEnabled
     ]
@@ -279,6 +288,7 @@ export function useEditorWechatPreparation({
 
   return {
     cancelWechatBackgroundPreparation,
+    clearScheduledWechatPreparation,
     rememberWechatPreviewWidth,
     scheduleCurrentWechatPreviewPreparation,
     scheduleWechatPreviewPreparation

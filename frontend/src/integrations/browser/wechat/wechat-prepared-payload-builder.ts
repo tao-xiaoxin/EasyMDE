@@ -381,6 +381,12 @@ export function createPreparedClipboardPayload(
 					await taskGeometryLease?.wait();
 					let hiddenContentBoxEvidence: PreparedMermaidContentBoxEvidence | null =
 						null;
+					let pendingHiddenContentBox: Readonly<{
+						boxes: Map<Element, MermaidContentBox>;
+						fontReady: Promise<FontFaceSet> | null;
+						fonts: FontFaceSet | null;
+						sourceWidthKey: number | null;
+					}> | null = null;
 					if (measurement && contentBoxes) {
 						const fonts = runtime.document.fonts ?? null;
 						const fontReady = fonts?.ready ?? null;
@@ -411,37 +417,10 @@ export function createPreparedClipboardPayload(
 							}
 							boxes.set(source, box);
 						}
-						const inputSignature = (
-							background && yieldToBrowser
-								? await collectPreparedSignaturesWithYield({
-										preview: serializationPreview,
-										runtime,
-										yieldToBrowser,
-										signal,
-										dimensionSemantics,
-										contentBoxInputsOnly: true,
-										includeDimension: false,
-									})
-								: collectPreparedSignatures({
-										preview: serializationPreview,
-										runtime,
-										dimensionSemantics,
-										contentBoxInputsOnly: true,
-										includeDimension: false,
-									})
-						).layout;
-						if (
-							!contentBoxes.isCurrent() ||
-							(fonts && ("loaded" !== fonts.status || fonts.ready !== fontReady))
-						) {
-							throw new Error("wechat-copy-stale");
-						}
-						hiddenContentBoxEvidence = {
+						pendingHiddenContentBox = {
 							boxes,
 							fontReady,
-							fontSet: fonts,
-							inputSignature,
-							sourceRoot: preview,
+							fonts,
 							sourceWidthKey: measurement.sourceWidthKey,
 						};
 					}
@@ -468,18 +447,38 @@ export function createPreparedClipboardPayload(
 									yieldToBrowser: yieldToBrowser as SerializationYield,
 									signal,
 									dimensionSemantics,
+									includeContentBoxInputLayout: null !== pendingHiddenContentBox,
 									includeDimensionGeometry: needsFinalDimensionGeometry,
 								})
 							: collectPreparedSignatures({
 									preview: serializationPreview,
 									runtime,
 									dimensionSemantics,
+									includeContentBoxInputLayout: null !== pendingHiddenContentBox,
 									includeDimensionGeometry: needsFinalDimensionGeometry,
 								});
 						finalGeometryTiming.finish("success");
 					} catch (error: unknown) {
 						finalGeometryTiming.finish("error");
 						throw error;
+					}
+					if (pendingHiddenContentBox && contentBoxes) {
+						const { boxes, fontReady, fonts, sourceWidthKey } =
+							pendingHiddenContentBox;
+						if (
+							!contentBoxes.isCurrent() ||
+							(fonts && ("loaded" !== fonts.status || fonts.ready !== fontReady))
+						) {
+							throw new Error("wechat-copy-stale");
+						}
+						hiddenContentBoxEvidence = {
+							boxes,
+							fontReady,
+							fontSet: fonts,
+							inputSignature: finalSignatures.contentBoxInputLayout,
+							sourceRoot: preview,
+							sourceWidthKey,
+						};
 					}
 					const finalSignature = finalSignatures.layout;
 					const finalDimensionSignature = finalSignatures.dimension;

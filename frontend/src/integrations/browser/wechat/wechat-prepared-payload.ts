@@ -203,9 +203,64 @@ export async function preparedClipboardPayloadAfterWrite(
 			hasWechatMathStaticFlowCandidate(serializationPreview);
 		let mathSourceCaptureResult: WechatMathSourceCaptureResult | null = null;
 
+		const existingHiddenEvidence =
+			existing?.payload &&
+			existing.contentBoxes &&
+			!existing.contentBoxes.isCurrent() &&
+			measurement &&
+			contentBoxes?.isCurrent() &&
+			existing.contentBoxEvidence
+				? (() => {
+						const evidence = existing.contentBoxEvidence;
+						const fonts = runtime.document.fonts ?? null;
+						if (
+							!measurement.isReady() ||
+							measurement.sourceRoot !== preview ||
+							evidence.sourceRoot !== preview ||
+							measurement.sourceWidthKey !== evidence.sourceWidthKey ||
+							(runtime.document.fonts ?? null) !== evidence.fontSet ||
+							(fonts &&
+								("loaded" !== fonts.status ||
+									fonts.ready !== evidence.fontReady))
+						) {
+							return null;
+						}
+						const owners = [
+							...(serializationPreview.matches(
+								".easymde-mermaid[data-easymde-mermaid-layout]",
+							)
+								? [serializationPreview]
+								: []),
+							...serializationPreview.querySelectorAll(
+								".easymde-mermaid[data-easymde-mermaid-layout]",
+							),
+						];
+						if (owners.length !== evidence.boxes.size) return null;
+						for (const owner of owners) {
+							const source = measurement.sourceFor(owner);
+							const expected = source ? evidence.boxes.get(source) : null;
+							const actual = contentBoxes.get(owner);
+							if (
+								!source ||
+								!preview.contains(source) ||
+								measurement.measurementFor(source) !== owner ||
+								!expected ||
+								!actual ||
+								actual.width !== expected.width ||
+								actual.height !== expected.height
+							) {
+								return null;
+							}
+						}
+						return evidence;
+					})()
+				: null;
+
 		if (
 			existing?.payload &&
-			(!existing.contentBoxes || existing.contentBoxes.isCurrent())
+			(!existing.contentBoxes ||
+				existing.contentBoxes.isCurrent() ||
+				null !== existingHiddenEvidence)
 		) {
 			assertPortableCopyCurrent(preview, guard, sourceFreshness);
 			const sourceMarkup = clipboardSourceMarkup(preview);
@@ -215,6 +270,7 @@ export async function preparedClipboardPayloadAfterWrite(
 				yieldToBrowser,
 				signal: guard.signal,
 				dimensionSemantics,
+				includeContentBoxInputLayout: null !== existingHiddenEvidence,
 				includeDimensionGeometry: hasMathCandidate,
 			});
 			const layoutSignature = currentSignatures.layout;
@@ -231,8 +287,15 @@ export async function preparedClipboardPayloadAfterWrite(
 			assertPortableCopyCurrent(preview, guard, sourceFreshness);
 			const liveSourceMarkup = clipboardSourceMarkup(preview);
 			const current = preparedPayloads.get(preview);
+			const hiddenEvidenceMatches =
+				null === existingHiddenEvidence ||
+				(current?.contentBoxEvidence === existingHiddenEvidence &&
+					Boolean(contentBoxes?.isCurrent()) &&
+					currentSignatures.contentBoxInputLayout ===
+						existingHiddenEvidence.inputSignature);
 			if (
 				current?.payload &&
+				hiddenEvidenceMatches &&
 				current.mathSourceAdmission.sourceFingerprint ===
 					mathSourceCaptureResult.sourceFingerprint &&
 				current.mathSourceAdmission.rawDimensionGeometrySignature ===
@@ -249,7 +312,9 @@ export async function preparedClipboardPayloadAfterWrite(
 				}
 				measurement = null;
 				transition = null;
-				return current;
+				return null !== existingHiddenEvidence
+					? { ...current, contentBoxes }
+					: current;
 			}
 		}
 

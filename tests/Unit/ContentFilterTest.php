@@ -61,8 +61,31 @@ final class ContentFilterTest extends WP_UnitTestCase
         $this->assertStringContainsString('easymde-code-theme-atom-one-dark', $html);
         $this->assertStringNotContainsString('easymde-markdown-theme-orange-heart', $html);
         $this->assertStringNotContainsString('<section class="h1">', $html);
-        $this->assertStringNotContainsString(' style=', $html);
-    }
+		$this->assertStringNotContainsString( ' style=', $html );
+	}
+
+	public function test_math_wrappers_survive_wptexturize_without_en_dash_corruption() {
+		$post_id = self::factory()->post->create( array( 'post_type' => 'post' ) );
+		update_post_meta( $post_id, PostDocument::META_ENABLED, '1' );
+		update_post_meta( $post_id, PostDocument::META_MARKDOWN, "Inline \$a - b\$ and block:\n\n\$\$\nf(x) = x^2 - 1\n\$\$" );
+
+		$settings = new SettingsCenterRepository( new Options(), new ToolbarRegistry() );
+		$this->go_to( get_permalink( $post_id ) );
+		$filter = new ContentFilter(
+			new PostDocument(),
+			new ThemeStateRepository( new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy() ),
+			$settings
+		);
+
+		$html       = $filter->render_markdown_content( 'Stored compatibility output' );
+		$texturized = wptexturize( $html );
+
+		$this->assertStringContainsString( 'easymde-math', $texturized );
+		$this->assertStringNotContainsString( '&#8211;', $texturized );
+		$this->assertStringContainsString( '&#45;', $texturized );
+		$this->assertStringContainsString( 'a - b', html_entity_decode( $texturized, ENT_QUOTES, 'UTF-8' ) );
+		$this->assertStringContainsString( 'x^2 - 1', html_entity_decode( $texturized, ENT_QUOTES, 'UTF-8' ) );
+	}
 
 	private function render_published_markdown_with_settings( array $markdown_settings = array() )
 	{

@@ -307,7 +307,11 @@ export function usePreviewRequestLifecycle(
 				}
 				return current;
 			}
-			if ("html" !== current.kind || !current.paperPlaceholder) {
+			if (
+				"html" !== current.kind ||
+				!current.paperPlaceholder ||
+				"" !== current.html.trim()
+			) {
 				return current;
 			}
 			if ("ready" === current.phase) {

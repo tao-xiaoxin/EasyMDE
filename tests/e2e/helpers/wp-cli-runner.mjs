@@ -3,14 +3,14 @@ import { randomUUID } from 'node:crypto';
 
 const PHP_CREATE_USER_FROM_STDIN = [
   '$payload = json_decode( stream_get_contents( STDIN ), true );',
-  'if ( ! is_array( $payload ) || empty( $payload["username"] ) || empty( $payload["email"] ) || ! isset( $payload["password"] ) ) {',
+  'if ( ! is_array( $payload ) || empty( $payload["username"] ) || empty( $payload["email"] ) || ! is_string( $payload["password"] ) || "" === $payload["password"] ) {',
   '  fwrite( STDERR, "invalid-user-payload" );',
   '  exit( 1 );',
   '}',
   '$user_id = wp_insert_user( array(',
   '  "user_login" => (string) $payload["username"],',
   '  "user_email" => (string) $payload["email"],',
-  '  "user_pass"  => (string) $payload["password"],',
+  '  "user_pass"  => $payload["password"],',
   '  "role"       => (string) ( $payload["role"] ?? "administrator" ),',
   ') );',
   'if ( is_wp_error( $user_id ) ) {',
@@ -20,17 +20,22 @@ const PHP_CREATE_USER_FROM_STDIN = [
   'echo (int) $user_id;'
 ].join(' ');
 
+const KNOWN_WP_COMMANDS = new Map([
+  ['core', new Set(['is-installed', 'version'])],
+  ['eval', new Set()],
+  ['option', new Set(['delete', 'get', 'update'])],
+  ['post', new Set(['create', 'delete', 'get', 'list', 'meta', 'term', 'update'])],
+  ['term', new Set(['create', 'delete', 'list'])],
+  ['user', new Set(['create', 'delete', 'get', 'list', 'update'])]
+]);
+
 function deriveOperationName(args) {
-  const tokens = [];
-  for (const arg of args) {
-    if (tokens.length >= 2) break;
-    if ('string' === typeof arg && /^[a-z0-9][a-z0-9_-]*$/iu.test(arg)) {
-      tokens.push(arg.toLowerCase());
-    } else {
-      break;
-    }
-  }
-  return tokens.length > 0 ? tokens.join('-') : 'command';
+  const command = 'string' === typeof args[0] ? args[0].toLowerCase() : '';
+  const subcommands = KNOWN_WP_COMMANDS.get(command);
+  if (!subcommands) return 'command';
+  if (subcommands.size === 0) return command;
+  const subcommand = 'string' === typeof args[1] ? args[1].toLowerCase() : '';
+  return subcommands.has(subcommand) ? `${command}-${subcommand}` : command;
 }
 
 export function runWpCommand(args, options = {}) {
@@ -46,22 +51,31 @@ export function runWpCommand(args, options = {}) {
     throw new Error('EASYMDE_E2E_WP_PATH must point to the WordPress install under test.');
   }
 
-  const resolvedOperation = operation || deriveOperationName(args);
-  const result = spawnSyncRef(
-    wpCli,
-    [...args, `--path=${wpPath}`, '--allow-root'],
-    {
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        WP_CLI_CACHE_DIR: process.env.WP_CLI_CACHE_DIR || '/tmp/easymde-wp-cli-cache'
-      },
-      ...spawnOptions
-    }
-  );
+  const resolvedOperation =
+    'string' === typeof operation && /^[a-z0-9-]+$/u.test(operation)
+      ? operation
+      : deriveOperationName(args);
 
-  if (result.error || result.status !== 0) {
-    const exitLabel = 'number' === typeof result.status ? String(result.status) : 'error';
+  let result;
+  try {
+    result = spawnSyncRef(
+      wpCli,
+      [...args, `--path=${wpPath}`, '--allow-root'],
+      {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          WP_CLI_CACHE_DIR: process.env.WP_CLI_CACHE_DIR || '/tmp/easymde-wp-cli-cache'
+        },
+        ...spawnOptions
+      }
+    );
+  } catch {
+    throw new Error(`wp-cli-failed:${resolvedOperation}:exit-error`);
+  }
+
+  if (!result || result.error || result.status !== 0) {
+    const exitLabel = 'number' === typeof result?.status ? String(result.status) : 'error';
     throw new Error(`wp-cli-failed:${resolvedOperation}:exit-${exitLabel}`);
   }
 

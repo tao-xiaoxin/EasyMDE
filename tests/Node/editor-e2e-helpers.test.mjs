@@ -54,8 +54,9 @@ test('createWpFixtureUser delivers password via stdin and never leaks secrets on
   assert.equal(parsedInput.role, 'administrator');
 });
 
-test('runWpCommand reports only stable operation name and exit status on failure', () => {
+test('runWpCommand reports only allowlisted operation labels and exit status on failure', () => {
   const syntheticSecret = 'synthetic-arg-secret-7a6b5c4d';
+  const syntheticWordOperand = 'SecretWordOperand99';
 
   assert.throws(
     () => runWpCommand(['post', 'meta', 'update', '12', '_secret', syntheticSecret], {
@@ -75,6 +76,35 @@ test('runWpCommand reports only stable operation name and exit status on failure
     }
   );
 
+  // Word-shaped operands to `eval` or unknown commands must never appear in error labels.
+  assert.throws(
+    () => runWpCommand(['eval', syntheticWordOperand], {
+      spawnSyncRef: () => ({ status: 1, stderr: '', stdout: '' }),
+      wpCli: 'wp-stand-in',
+      wpPath: '/tmp/synthetic-wp-path'
+    }),
+    (error) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.message, 'wp-cli-failed:eval:exit-1');
+      assert.doesNotMatch(error.message, new RegExp(syntheticWordOperand, 'i'));
+      return true;
+    }
+  );
+
+  assert.throws(
+    () => runWpCommand([syntheticWordOperand, 'other'], {
+      spawnSyncRef: () => ({ status: 1, stderr: '', stdout: '' }),
+      wpCli: 'wp-stand-in',
+      wpPath: '/tmp/synthetic-wp-path'
+    }),
+    (error) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.message, 'wp-cli-failed:command:exit-1');
+      assert.doesNotMatch(error.message, new RegExp(syntheticWordOperand, 'i'));
+      return true;
+    }
+  );
+
   assert.throws(
     () => runWpCommand(['post', 'list'], {
       spawnSyncRef: () => ({
@@ -90,6 +120,26 @@ test('runWpCommand reports only stable operation name and exit status on failure
       assert.ok(error instanceof Error);
       assert.equal(error.message, 'wp-cli-failed:post-list:exit-error');
       assert.doesNotMatch(error.message, new RegExp(syntheticSecret));
+      return true;
+    }
+  );
+});
+
+test('runWpCommand catches synchronous spawnSync throws such as NUL-byte arguments without leaking operands', () => {
+  const syntheticNulSecret = 'synthetic-nul-secret-marker\0tail';
+
+  // Exercise Node's real spawnSync synchronous TypeError on NUL-byte argv values.
+  assert.throws(
+    () => runWpCommand(['eval', syntheticNulSecret], {
+      wpCli: 'wp-stand-in',
+      wpPath: '/tmp/synthetic-wp-path'
+    }),
+    (error) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.message, 'wp-cli-failed:eval:exit-error');
+      assert.equal(error.cause, undefined);
+      assert.doesNotMatch(error.message, /synthetic-nul-secret-marker/i);
+      assert.doesNotMatch(error.message, /synthetic-wp-path/);
       return true;
     }
   );

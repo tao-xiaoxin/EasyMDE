@@ -1,53 +1,45 @@
 import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
-import { scanPhpMarkdownMathRanges } from "../../shared/markdown/php-markdown-math-mask";
+import { appendAll } from "../../shared/markdown/markdown-source-projection";
 import {
-	createMathNewlineSentinelForNode,
 	createPreservingRoundTripGuard,
-	joinSerializedBlocks,
+	joinSerializedLines,
 	type MarkdownRoundTripGuard,
 	type MarkdownSerializers,
-	type ReferencePreserveResolver,
-	restoreMathNewlineSentinel,
-	serializeList,
+	type SerializedLine,
+	serializeListLines,
 } from "./markdown-block-preservation";
 import {
-	chooseTitleQuoteDelimiter,
 	escapeCodeSpanTableContent,
 	escapeInlineMarkdownText,
-	escapeParagraphTableDelimiters,
-	escapeRawTablePipes,
-	formatQuotedTitle,
-	formatReferenceLinkClose,
-	isShortcutLinkHijackChar,
+	escapeTablePipes,
 } from "./markdown-escape";
+import type { ParsedVisualDocument } from "./markdown-parser";
 import {
-	formatLinkDestination,
-	serializeImageNode,
-} from "./markdown-image-serialization";
-import type {
-	ParsedVisualDocument,
-	ReferenceLinkOrigin,
-} from "./markdown-parser";
-import { wouldRawHtmlInterruptParagraph } from "./markdown-prescanner-inline";
+	appendContainerSignature,
+	trimAsciiSpaceTab,
+} from "./markdown-prescanner-containers";
 import {
 	reconcileTableAlignComment,
 	type TableAlignSnapshot,
 } from "./table-alignment-codec";
 import {
+	containsAsciiControlCharacter,
+	getProtectedInlineContinuationHint,
 	isValidTableTextAlign,
+	isValidVisualImageScale,
 	normalizeHeadingLevel,
 	sanitizeFenceChar,
 	sanitizeFenceLength,
+	stripAsciiControlCharacters,
 	type TableTextAlign,
 } from "./visual-schema";
 
 export type { MarkdownRoundTripGuard } from "./markdown-block-preservation";
 
 type InlineSerializeOptions = Readonly<{
+	containerSignature?: string;
 	inHeading?: boolean;
 	inTableCell?: boolean;
-	mathNewlineToken?: string | null;
-	resolveReferences?: ReferencePreserveResolver | null;
 }>;
 
 const MARK_PRIORITY: Readonly<Record<string, number>> = {
@@ -64,20 +56,8 @@ const EMPHASIS_MARK_NAMES: ReadonlySet<string> = new Set([
 	"strike",
 ]);
 
-type InlinePiece = Readonly<{
-	linkOrigin: ReferenceLinkOrigin | null;
-	node: ProseMirrorNode;
-}>;
-
-type ActiveMarkEntry = Readonly<{
-	linkOrigin: ReferenceLinkOrigin | null;
-	mark: Mark;
-}>;
-
 type MarkSpan = {
 	end: number;
-	key: string;
-	linkOrigin: ReferenceLinkOrigin | null;
 	mark: Mark;
 	start: number;
 };
@@ -86,63 +66,25 @@ function markKey(mark: Mark): string {
 	return `${mark.type.name}:${JSON.stringify(mark.attrs)}`;
 }
 
-function sameActiveMark(
-	left: ActiveMarkEntry,
-	right: ActiveMarkEntry,
-): boolean {
-	return (
-		left.mark.eq(right.mark) &&
-		(left.mark.type.name !== "link" || left.linkOrigin === right.linkOrigin)
-	);
-}
-
-function createEffectiveMarkKeyFn(): (
-	mark: Mark,
-	linkOrigin: ReferenceLinkOrigin | null,
-) => string {
-	const originIds = new Map<ReferenceLinkOrigin, number>();
-	return (mark, linkOrigin) => {
-		if (mark.type.name === "link" && linkOrigin !== null) {
-			let id = originIds.get(linkOrigin);
-			if (id === undefined) {
-				id = originIds.size + 1;
-				originIds.set(linkOrigin, id);
-			}
-			return `link-ref:${id}:${JSON.stringify(mark.attrs)}`;
-		}
-		return markKey(mark);
-	};
-}
-
 /**
  * Compute the contiguous child range of every mark so the serializer can nest
- * marks by span (longest-running mark outermost) instead of a fixed order,
- * while keeping adjacent reference/inline link marks with distinct origins
- * strictly separate.
+ * marks by span (longest-running mark outermost) instead of a fixed order.
  */
-function computeMarkSpans(
-	pieces: ReadonlyArray<InlinePiece>,
-	effectiveMarkKey: (
-		mark: Mark,
-		linkOrigin: ReferenceLinkOrigin | null,
-	) => string,
-): MarkSpan[][] {
+function computeMarkSpans(parent: ProseMirrorNode): MarkSpan[][] {
 	const spans: MarkSpan[][] = [];
-	for (let i = 0; i < pieces.length; i += 1) {
+	for (let i = 0; i < parent.childCount; i += 1) {
 		spans.push([]);
 	}
 	const active = new Map<string, MarkSpan>();
-	for (let i = 0; i < pieces.length; i += 1) {
-		const piece = pieces[i];
-		if (!piece) continue;
+	for (let i = 0; i < parent.childCount; i += 1) {
+		const child = parent.child(i);
 		const present = new Set<string>();
-		for (const mark of piece.node.marks) {
-			const linkOrigin = mark.type.name === "link" ? piece.linkOrigin : null;
-			const key = effectiveMarkKey(mark, linkOrigin);
+		for (const mark of child.marks) {
+			const key = markKey(mark);
 			present.add(key);
 			let span = active.get(key);
 			if (!span) {
-				span = { end: i, key, linkOrigin, mark, start: i };
+				span = { end: i, mark, start: i };
 				active.set(key, span);
 			}
 			span.end = i;
@@ -170,7 +112,7 @@ function compareMarkSpans(left: MarkSpan, right: MarkSpan): number {
 	if (priorityDiff !== 0) {
 		return priorityDiff;
 	}
-	return left.key.localeCompare(right.key);
+	return markKey(left.mark).localeCompare(markKey(right.mark));
 }
 
 function longestCharRun(text: string, ch: string): number {
@@ -202,6 +144,95 @@ function formatCodeSpan(content: string, inTableCell: boolean): string {
 		: `${fence}${body}${fence}`;
 }
 
+// Union of CommonMark §2.5 / League 2.8.2 (`#\d{1,7}`, `#x[0-9a-f]{1,6}`) and
+// markdown-it 15 (`#\d{1,8}`, `#x[0-9a-f]{1,8}`) entity grammars so neither
+// parser double-decodes literal entity-like text on round-trip.
+const COMMONMARK_ENTITY_AMP_RE =
+	/&(?=(?:#\d{1,8}|#[xX][0-9a-fA-F]{1,8}|[a-zA-Z][a-zA-Z0-9]{1,31});)/g;
+
+function escapeQuotedTitle(title: string): string {
+	return title
+		.replace(COMMONMARK_ENTITY_AMP_RE, "&amp;")
+		.replace(/\\/g, "\\\\")
+		.replace(/"/g, '\\"')
+		.replace(/\0/g, "&#00;")
+		.replace(/\r/g, "&#13;")
+		.replace(/\n/g, "&#10;");
+}
+
+function formatLinkDestination(href: string, inTableCell: boolean): string {
+	const trimmed = href.replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, "");
+	if (trimmed.length === 0) {
+		return "";
+	}
+	let destination = trimmed
+		.replace(/\\/g, "%5C")
+		.replace(COMMONMARK_ENTITY_AMP_RE, "&amp;");
+	if (
+		/[ \t\r\n()<>]/.test(destination) ||
+		containsAsciiControlCharacter(destination)
+	) {
+		// Angle-bracketed destinations may not contain raw `<`, `>` or ASCII
+		// whitespace; encode only ASCII spaces/tabs/newlines so NBSP survives.
+		const encoded = stripAsciiControlCharacters(destination)
+			.replace(/</g, "%3C")
+			.replace(/>/g, "%3E")
+			.replace(/[ \t\r\n]/g, "%20");
+		destination = `<${encoded}>`;
+	}
+	return inTableCell ? escapeTablePipes(destination) : destination;
+}
+
+function formatImageAlt(alt: string, inTableCell: boolean): string {
+	const escaped = alt
+		.replace(/\r?\n/g, " ")
+		.replace(/\\/g, "\\\\")
+		.replace(/\]/g, "\\]");
+	return inTableCell ? escapeTablePipes(escaped) : escaped;
+}
+
+/**
+ * A title is a reserved `{width=N%}` slot. Strip any pre-existing marker so
+ * PHP never sees two markers (or an invalid percentage) and throws.
+ */
+function stripReservedScaleMarkers(title: string): string {
+	return title.replace(/(?:^|\s+)\{width=[^}]*\}/g, "").trim();
+}
+
+function serializeImageNode(
+	node: ProseMirrorNode,
+	inTableCell: boolean,
+): string {
+	const src = typeof node.attrs.src === "string" ? node.attrs.src : "";
+	const alt = typeof node.attrs.alt === "string" ? node.attrs.alt : "";
+	const baseTitle =
+		typeof node.attrs.title === "string" && node.attrs.title.length > 0
+			? stripReservedScaleMarkers(node.attrs.title)
+			: "";
+	const scale = isValidVisualImageScale(node.attrs.scale)
+		? node.attrs.scale
+		: null;
+
+	let effectiveTitle: string | null = baseTitle.length > 0 ? baseTitle : null;
+	if (scale !== null) {
+		effectiveTitle =
+			effectiveTitle !== null
+				? `${effectiveTitle} {width=${scale}%}`
+				: `{width=${scale}%}`;
+	}
+
+	const altText = formatImageAlt(alt, inTableCell);
+	const destination = formatLinkDestination(src, inTableCell);
+	let titleSegment = "";
+	if (effectiveTitle !== null) {
+		const escapedTitle = escapeQuotedTitle(effectiveTitle);
+		titleSegment = inTableCell
+			? ` "${escapeTablePipes(escapedTitle)}"`
+			: ` "${escapedTitle}"`;
+	}
+	return `![${altText}](${destination}${titleSegment})`;
+}
+
 function markOpenSyntax(mark: Mark): string {
 	switch (mark.type.name) {
 		case "strong":
@@ -217,11 +248,7 @@ function markOpenSyntax(mark: Mark): string {
 	}
 }
 
-function markCloseSyntax(
-	mark: Mark,
-	inTableCell: boolean,
-	mathNewlineToken: string | null,
-): string {
+function markCloseSyntax(mark: Mark, inTableCell: boolean): string {
 	switch (mark.type.name) {
 		case "strong":
 			return "**";
@@ -231,24 +258,15 @@ function markCloseSyntax(
 			return "~~";
 		case "link": {
 			const href = typeof mark.attrs.href === "string" ? mark.attrs.href : "";
-			const rawTitle =
+			const title =
 				typeof mark.attrs.title === "string" && mark.attrs.title.length > 0
-					? mark.attrs.title
+					? escapeQuotedTitle(mark.attrs.title)
 					: null;
 			const destination = formatLinkDestination(href, inTableCell);
-			const quoteChar =
-				rawTitle === null ? '"' : chooseTitleQuoteDelimiter(rawTitle);
 			const safeTitle =
-				rawTitle === null
-					? null
-					: formatQuotedTitle(
-							rawTitle,
-							inTableCell,
-							mathNewlineToken,
-							quoteChar,
-						);
+				title === null ? null : inTableCell ? escapeTablePipes(title) : title;
 			return safeTitle !== null
-				? `](${destination} ${quoteChar}${safeTitle}${quoteChar})`
+				? `](${destination} "${safeTitle}")`
 				: `](${destination})`;
 		}
 		default:
@@ -256,34 +274,98 @@ function markCloseSyntax(
 	}
 }
 
-function collectInlinePieces(
-	parent: ProseMirrorNode,
-	endIndex: number,
-	resolveReferences: ReferencePreserveResolver | null,
-): InlinePiece[] {
-	const pieces: InlinePiece[] = [];
-	for (let i = 0; i < endIndex; i += 1) {
-		const child = parent.child(i);
-		let linkOrigin: ReferenceLinkOrigin | null = null;
-		if (resolveReferences !== null && child.marks.length > 0) {
-			const linkMark = child.marks.find((mark) => mark.type.name === "link");
-			if (linkMark) {
-				linkOrigin = resolveReferences.resolveLink(linkMark);
-			}
-		}
-		pieces.push({ linkOrigin, node: child });
+function readMatchingContinuationPrefixes(
+	node: ProseMirrorNode,
+	rawLineCount: number,
+	containerSignature: string,
+): ReadonlyArray<string> | null {
+	if (containerSignature.length === 0 || rawLineCount < 2) {
+		return null;
 	}
-	return pieces;
+	const hint = getProtectedInlineContinuationHint(node);
+	if (
+		!hint ||
+		hint.containerSignature !== containerSignature ||
+		hint.continuationPrefixes.length !== rawLineCount - 1
+	) {
+		return null;
+	}
+	return hint.continuationPrefixes;
 }
 
-function serializeInlineContent(
+function serializeInlineContentLines(
 	parent: ProseMirrorNode,
 	options: InlineSerializeOptions = {},
-): string {
+): SerializedLine[] {
 	const inTableCell = options.inTableCell ?? false;
 	const inHeading = options.inHeading ?? false;
-	const mathNewlineToken = options.mathNewlineToken ?? null;
-	const resolveReferences = options.resolveReferences ?? null;
+	const containerSignature = options.containerSignature ?? "";
+	const markSpans = computeMarkSpans(parent);
+	const markKeysAt = (index: number): Set<string> => {
+		const set = new Set<string>();
+		const child =
+			index >= 0 && index < parent.childCount ? parent.child(index) : null;
+		for (const mark of child?.marks ?? []) {
+			set.add(markKey(mark));
+		}
+		return set;
+	};
+	const sortedMarksAt = (index: number): Mark[] =>
+		[...(markSpans[index] ?? [])]
+			.sort(compareMarkSpans)
+			.map((span) => span.mark);
+
+	const lines: Array<{ fixedPrefix: string | null; text: string }> = [
+		{ fixedPrefix: null, text: "" },
+	];
+	const appendText = (value: string): void => {
+		if (value.length === 0) return;
+		const last = lines[lines.length - 1] as {
+			fixedPrefix: string | null;
+			text: string;
+		};
+		if (!value.includes("\n")) {
+			last.text += value;
+			return;
+		}
+		const parts = value.split("\n");
+		last.text += parts[0] ?? "";
+		for (let k = 1; k < parts.length; k += 1) {
+			lines.push({ fixedPrefix: null, text: parts[k] ?? "" });
+		}
+	};
+	const isAtLineStart = (): boolean =>
+		(lines[lines.length - 1]?.text.length ?? 0) === 0;
+
+	const activeMarks: Mark[] = [];
+
+	const closeMarksTo = (targetDepth: number): void => {
+		while (activeMarks.length > targetDepth) {
+			const popped = activeMarks.pop();
+			if (popped) {
+				appendText(markCloseSyntax(popped, inTableCell));
+			}
+		}
+	};
+
+	const syncMarks = (nextMarks: readonly Mark[]): void => {
+		let sharedDepth = 0;
+		while (
+			sharedDepth < activeMarks.length &&
+			sharedDepth < nextMarks.length &&
+			activeMarks[sharedDepth]?.eq(nextMarks[sharedDepth] as Mark)
+		) {
+			sharedDepth += 1;
+		}
+		closeMarksTo(sharedDepth);
+		for (let i = sharedDepth; i < nextMarks.length; i += 1) {
+			const mark = nextMarks[i];
+			if (mark) {
+				appendText(markOpenSyntax(mark));
+				activeMarks.push(mark);
+			}
+		}
+	};
 
 	let endIndex = parent.childCount;
 	// Outside a table cell a trailing break is unrepresentable, so it is
@@ -296,142 +378,8 @@ function serializeInlineContent(
 		endIndex -= 1;
 	}
 
-	const pieces = collectInlinePieces(parent, endIndex, resolveReferences);
-	const effectiveMarkKey = createEffectiveMarkKeyFn();
-	const markSpans = computeMarkSpans(pieces, effectiveMarkKey);
-	const markKeysAt = (index: number): Set<string> => {
-		const set = new Set<string>();
-		const spans = markSpans[index];
-		if (!spans) return set;
-		for (const span of spans) {
-			set.add(span.key);
-		}
-		return set;
-	};
-	const sortedMarksAt = (index: number): ActiveMarkEntry[] =>
-		[...(markSpans[index] ?? [])]
-			.sort(compareMarkSpans)
-			.map((span) => ({ linkOrigin: span.linkOrigin, mark: span.mark }));
-
-	let output = "";
-	const activeMarks: ActiveMarkEntry[] = [];
-	const activeMarkOpenOffsets: number[] = [];
-
-	const closeMarksTo = (
-		targetDepth: number,
-		nextCharMayHijackShortcut = false,
-	): void => {
-		while (activeMarks.length > targetDepth) {
-			const popped = activeMarks.pop();
-			const openOffset = activeMarkOpenOffsets.pop() ?? output.length;
-			if (popped) {
-				if (popped.mark.type.name === "link" && popped.linkOrigin !== null) {
-					const href =
-						typeof popped.mark.attrs.href === "string"
-							? popped.mark.attrs.href
-							: "";
-					const title =
-						typeof popped.mark.attrs.title === "string" &&
-						popped.mark.attrs.title.length > 0
-							? popped.mark.attrs.title
-							: null;
-					const refClose = formatReferenceLinkClose(
-						href,
-						title,
-						popped.linkOrigin,
-						output.slice(openOffset),
-						inTableCell,
-						activeMarks.length === targetDepth && nextCharMayHijackShortcut,
-					);
-					if (refClose !== null) {
-						output += refClose;
-						continue;
-					}
-				}
-				output += markCloseSyntax(popped.mark, inTableCell, mathNewlineToken);
-			}
-		}
-	};
-
-	const syncMarks = (
-		nextMarks: readonly ActiveMarkEntry[],
-		nextLeafMayHijackShortcut = false,
-	): void => {
-		let sharedDepth = 0;
-		while (
-			sharedDepth < activeMarks.length &&
-			sharedDepth < nextMarks.length &&
-			sameActiveMark(
-				activeMarks[sharedDepth] as ActiveMarkEntry,
-				nextMarks[sharedDepth] as ActiveMarkEntry,
-			)
-		) {
-			sharedDepth += 1;
-		}
-		const nextCharMayHijack =
-			sharedDepth < nextMarks.length
-				? nextMarks[sharedDepth]?.mark.type.name === "link"
-				: nextLeafMayHijackShortcut;
-		closeMarksTo(sharedDepth, nextCharMayHijack);
-		for (let i = sharedDepth; i < nextMarks.length; i += 1) {
-			const entry = nextMarks[i];
-			if (entry) {
-				output += markOpenSyntax(entry.mark);
-				activeMarks.push(entry);
-				activeMarkOpenOffsets.push(output.length);
-			}
-		}
-	};
-
-	const nextPieceMayHijackShortcutImage = (
-		imageIndex: number,
-		currentMarks: readonly ActiveMarkEntry[],
-	): boolean => {
-		const nextIndex = imageIndex + 1;
-		if (nextIndex >= pieces.length) return false;
-		const nextPiece = pieces[nextIndex];
-		if (!nextPiece) return false;
-		const nextNode = nextPiece.node;
-		const nextHasCode =
-			nextNode.isText && nextNode.marks.some((m) => m.type.name === "code");
-		const nextMarks =
-			nextNode.type.name === "image" || nextHasCode
-				? sortedMarksAt(nextIndex).filter((e) => e.mark.type.name !== "code")
-				: sortedMarksAt(nextIndex);
-		let sharedDepth = 0;
-		while (
-			sharedDepth < currentMarks.length &&
-			sharedDepth < nextMarks.length &&
-			sameActiveMark(
-				currentMarks[sharedDepth] as ActiveMarkEntry,
-				nextMarks[sharedDepth] as ActiveMarkEntry,
-			)
-		) {
-			sharedDepth += 1;
-		}
-		if (sharedDepth < currentMarks.length) {
-			return false;
-		}
-		if (sharedDepth < nextMarks.length) {
-			return nextMarks[sharedDepth]?.mark.type.name === "link";
-		}
-		if (nextNode.type.name === "protected_inline") {
-			const raw =
-				typeof nextNode.attrs.rawMarkdown === "string"
-					? nextNode.attrs.rawMarkdown
-					: "";
-			return isShortcutLinkHijackChar(raw[0]);
-		}
-		if (nextNode.isText && !nextHasCode) {
-			return isShortcutLinkHijackChar((nextNode.text ?? "")[0]);
-		}
-		return false;
-	};
-
-	for (let i = 0; i < pieces.length; i += 1) {
-		const piece = pieces[i];
-		if (!piece) continue;
-		const child = piece.node;
+	for (let i = 0; i < endIndex; i += 1) {
+		const child = parent.child(i);
 		const spans = markSpans[i] ?? [];
 		const sortedMarks = sortedMarksAt(i);
 		const previousKeys = markKeysAt(i - 1);
@@ -439,56 +387,49 @@ function serializeInlineContent(
 
 		if (child.type.name === "hard_break") {
 			syncMarks(sortedMarks);
-			output += inTableCell ? "<br>" : inHeading ? " " : "\\\n";
+			appendText(inTableCell ? "<br>" : inHeading ? " " : "\\\n");
 			continue;
 		}
 
 		if (child.type.name === "protected_inline") {
+			syncMarks(sortedMarks);
 			const raw =
 				typeof child.attrs.rawMarkdown === "string"
 					? child.attrs.rawMarkdown
 					: "";
-			syncMarks(sortedMarks, isShortcutLinkHijackChar(raw[0]));
-			const isInlineMath = child.attrs.kind === "math-inline";
-			const encodedRaw =
-				mathNewlineToken !== null && raw.includes("\n")
-					? raw.split("\n").join(mathNewlineToken)
-					: raw;
 			if (inTableCell) {
-				const cellRaw = isInlineMath ? raw : escapeRawTablePipes(raw);
-				output +=
-					mathNewlineToken !== null && cellRaw.includes("\n")
-						? cellRaw.split("\n").join(mathNewlineToken)
-						: cellRaw;
-			} else {
-				const continuationMatch =
-					!inHeading &&
-					child.attrs.kind === "raw-inline" &&
-					child.attrs.continuationIndent === true &&
-					wouldRawHtmlInterruptParagraph(raw)
-						? /\n( {0,3})$/.exec(output)
-						: null;
-				const pad = continuationMatch
-					? " ".repeat(4 - (continuationMatch[1]?.length ?? 0))
-					: "";
-				output += `${pad}${encodedRaw}`;
+				appendText(escapeTablePipes(raw));
+				continue;
 			}
+			if (raw.includes("\n")) {
+				const rawParts = raw.split("\n");
+				const prefixes = readMatchingContinuationPrefixes(
+					child,
+					rawParts.length,
+					containerSignature,
+				);
+				if (prefixes) {
+					const last = lines[lines.length - 1] as {
+						fixedPrefix: string | null;
+						text: string;
+					};
+					last.text += rawParts[0] ?? "";
+					for (let k = 1; k < rawParts.length; k += 1) {
+						lines.push({
+							fixedPrefix: prefixes[k - 1] ?? "",
+							text: rawParts[k] ?? "",
+						});
+					}
+					continue;
+				}
+			}
+			appendText(raw);
 			continue;
 		}
 
 		if (child.type.name === "image") {
-			const imageMarks = sortedMarks.filter(
-				(entry) => entry.mark.type.name !== "code",
-			);
-			syncMarks(imageMarks);
-			const imageOrigin = resolveReferences?.resolveImage(child) ?? null;
-			output += serializeImageNode(
-				child,
-				inTableCell,
-				mathNewlineToken,
-				imageOrigin,
-				imageOrigin !== null && nextPieceMayHijackShortcutImage(i, imageMarks),
-			);
+			syncMarks(sortedMarks.filter((mark) => mark.type.name !== "code"));
+			appendText(serializeImageNode(child, inTableCell));
 			continue;
 		}
 
@@ -497,23 +438,24 @@ function serializeInlineContent(
 		}
 
 		const text = child.text ?? "";
-		const hasCodeMark = sortedMarks.some(
-			(entry) => entry.mark.type.name === "code",
-		);
+		const hasCodeMark = sortedMarks.some((mark) => mark.type.name === "code");
 		if (hasCodeMark) {
-			syncMarks(sortedMarks.filter((entry) => entry.mark.type.name !== "code"));
-			output += formatCodeSpan(text, inTableCell);
+			syncMarks(sortedMarks.filter((mark) => mark.type.name !== "code"));
+			appendText(formatCodeSpan(text, inTableCell));
 			continue;
 		}
 
+		// Only an opening emphasis delimiter must not be followed by a space;
+		// link labels may legally start with whitespace.
 		const isOpening = sortedMarks.some(
-			(entry) =>
-				EMPHASIS_MARK_NAMES.has(entry.mark.type.name) &&
-				!previousKeys.has(effectiveMarkKey(entry.mark, entry.linkOrigin)),
+			(mark) =>
+				EMPHASIS_MARK_NAMES.has(mark.type.name) &&
+				!previousKeys.has(markKey(mark)),
 		);
 		const closesEmphasis = spans.some(
 			(span) =>
-				EMPHASIS_MARK_NAMES.has(span.mark.type.name) && !nextKeys.has(span.key),
+				EMPHASIS_MARK_NAMES.has(span.mark.type.name) &&
+				!nextKeys.has(markKey(span.mark)),
 		);
 
 		let core = text;
@@ -529,80 +471,96 @@ function serializeInlineContent(
 		}
 
 		if (core.length === 0) {
-			const keptMarks: ActiveMarkEntry[] = [];
+			// Whitespace-only runs never open or close emphasis next to the
+			// space (`**a **`), but marks that continue into the next run stay
+			// open: non-emphasis marks (links) always, emphasis only when it is
+			// already active, so one outer span is never split in two.
+			const keptMarks: Mark[] = [];
 			for (let k = 0; k < sortedMarks.length; k += 1) {
-				const entry = sortedMarks[k] as ActiveMarkEntry;
-				const continues = nextKeys.has(
-					effectiveMarkKey(entry.mark, entry.linkOrigin),
-				);
-				const allowed = EMPHASIS_MARK_NAMES.has(entry.mark.type.name)
-					? activeMarks[k] !== undefined &&
-						sameActiveMark(activeMarks[k] as ActiveMarkEntry, entry)
+				const mark = sortedMarks[k] as Mark;
+				const continues = nextKeys.has(markKey(mark));
+				const allowed = EMPHASIS_MARK_NAMES.has(mark.type.name)
+					? activeMarks[k]?.eq(mark) === true
 					: true;
 				if (!continues || !allowed) {
 					break;
 				}
-				keptMarks.push(entry);
+				keptMarks.push(mark);
 			}
 			syncMarks(keptMarks);
-			output += escapeInlineMarkdownText(text, {
-				atLineStart: output.length === 0 || output.endsWith("\n"),
-				inHeading,
-				inLinkLabel: keptMarks.some((entry) => entry.mark.type.name === "link"),
-				inTableCell,
-			});
+			appendText(
+				escapeInlineMarkdownText(text, {
+					atLineStart: isAtLineStart(),
+					inHeading,
+					inLinkLabel: keptMarks.some((mark) => mark.type.name === "link"),
+					inTableCell,
+				}),
+			);
 			continue;
 		}
 
 		if (leadingSpace.length > 0) {
+			// Close only marks that do not continue into this run, so an
+			// outer link or emphasis span is not split around the space.
 			let keepDepth = 0;
 			while (
 				keepDepth < activeMarks.length &&
 				keepDepth < sortedMarks.length &&
-				sameActiveMark(
-					activeMarks[keepDepth] as ActiveMarkEntry,
-					sortedMarks[keepDepth] as ActiveMarkEntry,
-				)
+				activeMarks[keepDepth]?.eq(sortedMarks[keepDepth] as Mark)
 			) {
 				keepDepth += 1;
 			}
 			closeMarksTo(keepDepth);
-			output += leadingSpace;
+			appendText(leadingSpace);
 		}
-		syncMarks(sortedMarks, isShortcutLinkHijackChar(core[0]));
-		output += escapeInlineMarkdownText(core, {
-			atLineStart: output.length === 0 || output.endsWith("\n"),
-			inHeading,
-			inLinkLabel: sortedMarks.some((entry) => entry.mark.type.name === "link"),
-			inTableCell,
-		});
+		syncMarks(sortedMarks);
+		appendText(
+			escapeInlineMarkdownText(core, {
+				atLineStart: isAtLineStart(),
+				inHeading,
+				inLinkLabel: sortedMarks.some((mark) => mark.type.name === "link"),
+				inTableCell,
+			}),
+		);
 		if (trailingSpace.length > 0) {
 			let keepDepth = 0;
 			while (
 				keepDepth < activeMarks.length &&
-				nextKeys.has(
-					effectiveMarkKey(
-						(activeMarks[keepDepth] as ActiveMarkEntry).mark,
-						(activeMarks[keepDepth] as ActiveMarkEntry).linkOrigin,
-					),
-				)
+				nextKeys.has(markKey(activeMarks[keepDepth] as Mark))
 			) {
 				keepDepth += 1;
 			}
 			closeMarksTo(keepDepth);
-			output += trailingSpace;
+			appendText(trailingSpace);
 		}
 	}
 
 	closeMarksTo(0);
-	return output;
+	return lines;
 }
 
-function prefixBlockquote(text: string): string {
-	return text
-		.split("\n")
-		.map((line) => (line.length > 0 ? `> ${line}` : ">"))
-		.join("\n");
+function serializeInlineContent(
+	parent: ProseMirrorNode,
+	options: InlineSerializeOptions = {},
+): string {
+	return joinSerializedLines(serializeInlineContentLines(parent, options));
+}
+
+function prefixBlockquoteLines(
+	lines: ReadonlyArray<SerializedLine>,
+): SerializedLine[] {
+	return lines.map((line) =>
+		line.fixedPrefix !== null
+			? line
+			: {
+					fixedPrefix: null,
+					text: line.text.length > 0 ? `> ${line.text}` : ">",
+				},
+	);
+}
+
+function toPlainSerializedLines(text: string): SerializedLine[] {
+	return text.split("\n").map((line) => ({ fixedPrefix: null, text: line }));
 }
 
 function serializeCodeBlock(node: ProseMirrorNode): string {
@@ -613,14 +571,19 @@ function serializeCodeBlock(node: ProseMirrorNode): string {
 	const fenceLength = Math.max(minFenceLen, bodyMaxRun + 1);
 	const fence = fenceChar.repeat(fenceLength);
 	const rawInfo =
-		typeof node.attrs.info === "string" ? node.attrs.info.trim() : "";
+		typeof node.attrs.info === "string" ? trimAsciiSpaceTab(node.attrs.info) : "";
 	const rawLang =
-		typeof node.attrs.language === "string" ? node.attrs.language.trim() : "";
+		typeof node.attrs.language === "string"
+			? trimAsciiSpaceTab(node.attrs.language)
+			: "";
 	const info = rawInfo.length > 0 ? rawInfo : rawLang;
 
 	if (body.length === 0) {
 		return `${fence}${info}\n${fence}`;
 	}
+	// Bijection with `mapCodeToken`: a body of only blank lines already carries
+	// its own terminators; any other body (including one ending in `\n` after
+	// Enter) gains exactly one terminator before the closing fence.
 	return /^\n+$/.test(body)
 		? `${fence}${info}\n${body}${fence}`
 		: `${fence}${info}\n${body}\n${fence}`;
@@ -639,29 +602,17 @@ function formatAlignmentDelimiter(align: TableTextAlign): string {
 	}
 }
 
-function serializeTableCell(
-	cellNode: ProseMirrorNode,
-	mathNewlineToken: string | null,
-	resolveReferences: ReferencePreserveResolver | null,
-): string {
+function serializeTableCell(cellNode: ProseMirrorNode): string {
 	const parts: string[] = [];
 	for (let i = 0; i < cellNode.childCount; i += 1) {
 		parts.push(
-			serializeInlineContent(cellNode.child(i), {
-				inTableCell: true,
-				mathNewlineToken,
-				resolveReferences,
-			}),
+			serializeInlineContent(cellNode.child(i), { inTableCell: true }),
 		);
 	}
 	return parts.join("<br>").trim();
 }
 
-function serializeTable(
-	tableNode: ProseMirrorNode,
-	mathNewlineToken: string | null,
-	resolveReferences: ReferencePreserveResolver | null,
-): string {
+function serializeTable(tableNode: ProseMirrorNode): string {
 	if (tableNode.childCount === 0) {
 		return "";
 	}
@@ -724,13 +675,7 @@ function serializeTable(
 		const cells: string[] = [];
 		for (let c = 0; c < columnCount; c += 1) {
 			cells.push(
-				c < rowNode.childCount
-					? serializeTableCell(
-							rowNode.child(c),
-							mathNewlineToken,
-							resolveReferences,
-						)
-					: "",
+				c < rowNode.childCount ? serializeTableCell(rowNode.child(c)) : "",
 			);
 		}
 		return `| ${cells.join(" | ")} |`;
@@ -752,124 +697,62 @@ function serializeTable(
 	return lines.join("\n");
 }
 
-function serializeBlockNodeInternal(
+function serializeBlockLines(
 	node: ProseMirrorNode,
-	mathNewlineToken: string | null,
-	resolveReferences: ReferencePreserveResolver | null,
-): string {
-	const childSerializer =
-		mathNewlineToken !== null || resolveReferences !== null
-			? (child: ProseMirrorNode, nestedToken?: string): string =>
-					serializeBlockNodeInternal(
-						child,
-						nestedToken ?? mathNewlineToken,
-						resolveReferences,
-					)
-			: serializeBlockNode;
+	containerSignature: string,
+): SerializedLine[] {
 	switch (node.type.name) {
 		case "paragraph":
-			return escapeParagraphTableDelimiters(
-				serializeInlineContent(node, {
-					mathNewlineToken,
-					resolveReferences,
-				}),
-				mathNewlineToken,
-			);
+			return serializeInlineContentLines(node, { containerSignature });
 		case "heading": {
 			const level = normalizeHeadingLevel(node.attrs.level);
-			const content = serializeInlineContent(node, {
-				inHeading: true,
-				mathNewlineToken,
-				resolveReferences,
-			}).replace(/#+$/, (run) => run.replace(/#/g, "\\#"));
-			return content.length > 0
-				? `${"#".repeat(level)} ${content}`
-				: "#".repeat(level);
-		}
-		case "blockquote":
-			return prefixBlockquote(
-				joinSerializedBlocks(
-					node,
-					childSerializer,
-					resolveReferences?.isPartialTitleRefDef ?? null,
-				),
+			const content = serializeInlineContent(node, { inHeading: true }).replace(
+				/#+$/,
+				(run) => run.replace(/#/g, "\\#"),
 			);
+			return toPlainSerializedLines(
+				content.length > 0
+					? `${"#".repeat(level)} ${content}`
+					: "#".repeat(level),
+			);
+		}
+		case "blockquote": {
+			const childSignature = appendContainerSignature(containerSignature, {
+				kind: "quote",
+			});
+			const innerLines: SerializedLine[] = [];
+			for (let i = 0; i < node.childCount; i += 1) {
+				if (i > 0) innerLines.push({ fixedPrefix: null, text: "" });
+				appendAll(
+					innerLines,
+					serializeBlockLines(node.child(i), childSignature),
+				);
+			}
+			return prefixBlockquoteLines(innerLines);
+		}
 		case "bullet_list":
 		case "ordered_list":
 		case "task_list":
-			return serializeList(
-				node,
-				childSerializer,
-				mathNewlineToken ?? undefined,
-				resolveReferences?.isPartialTitleRefDef ?? null,
-			);
+			return serializeListLines(node, serializeBlockLines, containerSignature);
 		case "code_block":
-			return serializeCodeBlock(node);
+			return toPlainSerializedLines(serializeCodeBlock(node));
 		case "horizontal_rule":
-			return "---";
+			return [{ fixedPrefix: null, text: "---" }];
 		case "table":
-			return serializeTable(node, mathNewlineToken, resolveReferences);
-		case "protected_block": {
-			const raw =
+			return toPlainSerializedLines(serializeTable(node));
+		case "protected_block":
+			return toPlainSerializedLines(
 				typeof node.attrs.rawMarkdown === "string"
 					? node.attrs.rawMarkdown
-					: "";
-			if (
-				mathNewlineToken === null ||
-				(node.attrs.kind !== "raw" && node.attrs.kind !== "math") ||
-				!raw.includes("\n") ||
-				(!raw.includes("\\(") && !raw.includes("\\[") && !raw.includes("$$"))
-			) {
-				return raw;
-			}
-			const ranges = scanPhpMarkdownMathRanges(raw);
-			if (ranges.length === 0) return raw;
-			let masked = "";
-			let cursor = 0;
-			for (const range of ranges) {
-				if (range.from < cursor) continue;
-				if (range.from > cursor) masked += raw.slice(cursor, range.from);
-				const piece = raw.slice(range.from, range.to);
-				masked += piece.includes("\n")
-					? piece.split("\n").join(mathNewlineToken)
-					: piece;
-				cursor = range.to;
-			}
-			if (cursor < raw.length) masked += raw.slice(cursor);
-			return masked;
-		}
+					: "",
+			);
 		default:
-			return node.textContent;
+			return toPlainSerializedLines(node.textContent);
 	}
 }
 
-function serializeBlockNodeWithRefs(
-	node: ProseMirrorNode,
-	resolveReferences: ReferencePreserveResolver | null,
-	mathNewlineToken?: string,
-): string {
-	if (mathNewlineToken !== undefined) {
-		return serializeBlockNodeInternal(
-			node,
-			mathNewlineToken,
-			resolveReferences,
-		);
-	}
-	const token = createMathNewlineSentinelForNode(node);
-	if (token === null) {
-		return serializeBlockNodeInternal(node, null, resolveReferences);
-	}
-	return restoreMathNewlineSentinel(
-		serializeBlockNodeInternal(node, token, resolveReferences),
-		token,
-	);
-}
-
-function serializeBlockNode(
-	node: ProseMirrorNode,
-	mathNewlineToken?: string,
-): string {
-	return serializeBlockNodeWithRefs(node, null, mathNewlineToken);
+function serializeBlockNode(node: ProseMirrorNode): string {
+	return joinSerializedLines(serializeBlockLines(node, ""));
 }
 
 export function serializeVisualDocToMarkdown(doc: ProseMirrorNode): string {
@@ -881,25 +764,23 @@ export function serializeVisualDocToMarkdown(doc: ProseMirrorNode): string {
 		return "";
 	}
 
-	return joinSerializedBlocks(doc, serializeBlockNode);
+	const blocks: string[] = [];
+	for (let i = 0; i < doc.childCount; i += 1) {
+		blocks.push(serializeBlockNode(doc.child(i)));
+	}
+	return blocks.join("\n\n");
 }
 
-/**
- * The single production serializer bundle injected into block preservation
- * and refdef liveness (`computeIntactRefDefLabels`), so parity tests drive
- * liveness with exactly the serializers `guard.serialize()` uses.
- */
-export const MARKDOWN_SERIALIZERS: MarkdownSerializers = {
+const MARKDOWN_SERIALIZERS: MarkdownSerializers = {
 	serializeBlock: serializeBlockNode,
-	serializeBlockWithRefs: serializeBlockNodeWithRefs,
+	serializeBlockLines,
 	serializeDoc: serializeVisualDocToMarkdown,
 };
 
 /**
  * Round-trip guard: an unmodified document returns its exact original bytes,
- * and an edited one preserves every untouched block, untouched list item of an
- * edited list, and untouched child of an edited blockquote (at any nesting
- * depth) byte-identically.
+ * and an edited one preserves every untouched block (and untouched list item
+ * of an edited top-level list) byte-identically.
  */
 export function createMarkdownRoundTripGuard(
 	initialMarkdown: string,

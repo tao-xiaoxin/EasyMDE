@@ -12,9 +12,12 @@ import {
 	MAX_EDITOR_BLOCK_INDEX_LINKS,
 	MAX_EDITOR_BLOCK_INDEX_SOURCE_BYTES,
 } from "../../../contracts/ports/editor-block-index-port";
-import { createEditorBlockIndexWorkerHandler } from "../../../entrypoints/editor-block-index-worker";
-import { createEditorMarkdownBlockIndex } from "../../../features/editor-context-menu/editor-markdown-block-index";
 import { createBrowserEditorBlockIndexWorker } from "./create-browser-editor-block-index-worker";
+import {
+	responseCode,
+	validateBuildInput,
+	validateData,
+} from "./editor-block-index-worker-protocol";
 
 type WorkerListener = (event: Event | MessageEvent<unknown>) => void;
 
@@ -261,9 +264,9 @@ describe("createBrowserEditorBlockIndexWorker", () => {
 		await pending;
 		adapter.dispose();
 	});
-	it("posts the exact source request and returns data without echoing source", async () => {
+	it("posts the exact source request, returns data without echoing source, and reuses the clean worker across sequential builds", async () => {
 		const adapter = createAdapter();
-		const pending = adapter.build(
+		const firstPending = adapter.build(
 			{
 				generation: 4,
 				revision: 8,
@@ -283,9 +286,99 @@ describe("createBrowserEditorBlockIndexWorker", () => {
 			type: "result",
 		});
 
-		await expect(pending).resolves.toEqual(data());
-		expect(worker.terminated).toBe(true);
+		await expect(firstPending).resolves.toEqual(data());
+		expect(worker.terminated).toBe(false);
+		expect(FakeWorker.instances).toHaveLength(1);
+
+		const secondPending = adapter.build(
+			{
+				generation: 4,
+				revision: 9,
+				source: "xyz",
+			},
+			signal(),
+		);
+		expect(FakeWorker.instances).toHaveLength(1);
+		expect(worker.posted).toHaveLength(2);
+		expect(worker.posted[1]).toEqual({
+			generation: 4,
+			revision: 9,
+			source: "xyz",
+			type: "build",
+			referenceLabelCaseFoldProfile: 14,
+		});
+		worker.emit({
+			data: packedData(1, 3),
+			generation: 4,
+			revision: 9,
+			type: "result",
+		});
+
+		await expect(secondPending).resolves.toEqual(data());
+		expect(worker.terminated).toBe(false);
 		adapter.dispose();
+		expect(worker.terminated).toBe(true);
+	});
+
+	it("terminates and replaces an idle worker that crashes or emits an unexpected message", async () => {
+		const adapter = createAdapter();
+		const first = adapter.build(
+			{ generation: 1, revision: 1, source: "abc" },
+			signal(),
+		);
+		const worker1 = await firstWorker();
+		worker1.emit({
+			data: packedData(1, 3),
+			generation: 1,
+			revision: 1,
+			type: "result",
+		});
+		await expect(first).resolves.toEqual(data());
+		expect(worker1.terminated).toBe(false);
+
+		worker1.emitError("error");
+		expect(worker1.terminated).toBe(true);
+
+		const second = adapter.build(
+			{ generation: 1, revision: 2, source: "abc" },
+			signal(),
+		);
+		expect(FakeWorker.instances).toHaveLength(2);
+		const worker2 = FakeWorker.instances[1];
+		if (!worker2) throw new Error("test-worker-missing");
+		worker2.emit({
+			data: packedData(1, 3),
+			generation: 1,
+			revision: 2,
+			type: "result",
+		});
+		await expect(second).resolves.toEqual(data());
+		expect(worker2.terminated).toBe(false);
+
+		worker2.emit({
+			data: packedData(1, 3),
+			generation: 1,
+			revision: 2,
+			type: "result",
+		});
+		expect(worker2.terminated).toBe(true);
+
+		const third = adapter.build(
+			{ generation: 1, revision: 3, source: "abc" },
+			signal(),
+		);
+		expect(FakeWorker.instances).toHaveLength(3);
+		const worker3 = FakeWorker.instances[2];
+		if (!worker3) throw new Error("test-worker-missing");
+		worker3.emit({
+			data: packedData(1, 3),
+			generation: 1,
+			revision: 3,
+			type: "result",
+		});
+		await expect(third).resolves.toEqual(data());
+		adapter.dispose();
+		expect(worker3.terminated).toBe(true);
 	});
 
 	it("bounds source-byte validation before constructing a worker", async () => {
@@ -775,317 +868,6 @@ describe("createBrowserEditorBlockIndexWorker", () => {
 		},
 	);
 
-	it("unpacks textless 3-int table-cell link context locally and rejects tampered or stale-text payloads", async () => {
-		const source = "| [a](/x\\|y) $m$ | [b](/u\\|v) |\n| - | - |";
-		const messages: EditorBlockIndexWorkerResponse[] = [];
-		createEditorBlockIndexWorkerHandler((message) => messages.push(message))({
-			data: { generation: 1, revision: 1, source, type: "build", referenceLabelCaseFoldProfile: 14 },
-		});
-		const packed = messages[0];
-		if ("result" !== packed?.type) throw new Error("result-missing");
-		const wire = packed.data;
-		expect(wire.linkTableCellCount).toBe(2);
-		expect(Object.keys(wire)).toHaveLength(12);
-		if (!wire.linkTableCells) throw new Error("table-cells-missing");
-		expect(wire.linkTableCells.byteLength).toBe(2 * 3 * 4);
-		const run = async (payload: unknown) => {
-			const adapter = createAdapter();
-			const pending = adapter.build({ generation: 1, revision: 1, source }, signal());
-			const worker = await firstWorker();
-			worker.emit({
-				data: payload as EditorMarkdownBlockIndexPackedData,
-				generation: 1,
-				revision: 1,
-				type: "result",
-			});
-			try {
-				return await pending;
-			} finally {
-				adapter.dispose();
-			}
-		};
-		const direct = createEditorMarkdownBlockIndex(source, { referenceLabelCaseFoldProfile: 14 });
-		const decoded = await run(wire);
-		expect(decoded.linkTableCells).toEqual(direct.linkTableCells);
-		expect(decoded.linkCandidates).toEqual(direct.linkCandidates);
-
-		const { linkTableCells: _cells, ...countOnly } = wire;
-		const { linkTableCellCount: _count, ...bufferOnly } = wire;
-		const mutateWords = (edit: (words: Int32Array) => void) => {
-			const words = Int32Array.from(new Int32Array(wire.linkTableCells as ArrayBuffer));
-			edit(words);
-			return { ...wire, linkTableCells: words.buffer };
-		};
-		for (const malformed of [
-			countOnly,
-			bufferOnly,
-			{ ...wire, linkTableCellCount: 3 },
-			{ ...wire, linkTableCellTexts: ["[b](/u|v)"] },
-			{ ...wire, linkTableCellTexts: [12345, { evil: 1 }] },
-			{ ...wire, linkTableCellTexts: ["x".repeat(10_000_000)] },
-			{ ...wire, extra: 1 },
-			mutateWords((words) => {
-				words[0] = (words[0] ?? 0) + 1;
-			}),
-			// Tamper cell a to point at cell b or stretch across `|`
-			mutateWords((words) => {
-				words[1] = words[4] ?? 0;
-				words[2] = words[5] ?? 0;
-			}),
-			mutateWords((words) => {
-				words[2] = words[5] ?? 0;
-			}),
-			// Truncate cell a inside a real table cell (Round 36 Track A #1)
-			mutateWords((words) => {
-				words[1] = words[0] ?? 0;
-			}),
-			mutateWords((words) => {
-				words[2] = (words[2] ?? 0) - 1;
-			}),
-			// Duplicate candidateFrom
-			mutateWords((words) => {
-				words[3] = words[0] ?? 0;
-			}),
-		]) {
-			await expect(run(malformed)).rejects.toThrow("editor-block-index-result-invalid");
-		}
-	});
-
-	it("rejects forged table cells on plain paragraphs and cross-block invalid math spans, while accepting real cross-block multiline paren-math table cells (Round 36 Track A #1, Track B #3)", async () => {
-		const runWithPayload = async (source: string, payload: unknown) => {
-			const adapter = createAdapter();
-			const pending = adapter.build({ generation: 1, revision: 1, source }, signal());
-			const worker = await firstWorker();
-			worker.emit({
-				data: payload as EditorMarkdownBlockIndexPackedData,
-				generation: 1,
-				revision: 1,
-				type: "result",
-			});
-			try {
-				return await pending;
-			} finally {
-				adapter.dispose();
-			}
-		};
-
-		// Track A #1: forged `[0, 0, 11]` table cell on plain paragraph `"[a](/x\\\\|y)"`
-		const plain = "[a](/x\\\\|y)";
-		const plainMessages: EditorBlockIndexWorkerResponse[] = [];
-		createEditorBlockIndexWorkerHandler((message) => plainMessages.push(message))({
-			data: { generation: 1, revision: 1, source: plain, type: "build", referenceLabelCaseFoldProfile: 14 },
-		});
-		const plainPacked = plainMessages[0];
-		if ("result" !== plainPacked?.type) throw new Error("plain-result-missing");
-		await expect(
-			runWithPayload(plain, {
-				...plainPacked.data,
-				linkTableCellCount: 1,
-				linkTableCells: Int32Array.from([0, 0, plain.length]).buffer,
-			}),
-		).rejects.toThrow("editor-block-index-result-invalid");
-
-		// Cross-block tampered `$...$` or `\(...\)` spanning a code/unavailable block stays rejected
-		const codeCross = "\\(a\n```\nc\n```\nb\\)";
-		await expect(
-			runWithPayload(
-				codeCross,
-				packedFields(
-					[0, 3, 0, 0, 4, 1, 4, 13, 1, 3, 0, 1, 14, 17, 4, 4, 4, 1],
-					[0, codeCross.length, 2, codeCross.length - 2, 0],
-					codeCross.length,
-				),
-			),
-		).rejects.toThrow("editor-block-index-result-invalid");
-		const dollarCross = "$a\n\nb$";
-		await expect(
-			runWithPayload(
-				dollarCross,
-				packedFields(
-					[0, 2, 0, 0, 4, 1, 4, 6, 2, 2, 4, 1],
-					[0, dollarCross.length, 1, dollarCross.length - 1, 0],
-					dollarCross.length,
-				),
-			),
-		).rejects.toThrow("editor-block-index-result-invalid");
-
-		// Track B Finding 3: all 5 cross-block multiline `\(...\)` PHP table-cell inputs
-		for (const source of [
-			'[r]: /u "\\(a"\nb\\) [x][a\\|b] | c |\n| --- | --- |\n\n[a|b]: https://example.com/ok',
-			"| [x][a\\|b] \\(m\n\nn\\) | c |\n| --- | --- |\n\n[a|b]: https://example.com/ok",
-			"| [x](https://example.com/1\\\\|2) \\(m\n\nn\\) | c |\n| --- | --- |",
-			"| [x](https://example.com/1\\\\|2) \\(m\n# h\nn\\) | c |\n| --- | --- |",
-			'[r]: /u "\\(a"\nb\\) [x](https://example.com/1\\\\|2) | c |\n| --- | --- |',
-		]) {
-			const messages: EditorBlockIndexWorkerResponse[] = [];
-			createEditorBlockIndexWorkerHandler((message) => messages.push(message))({
-				data: { generation: 1, revision: 1, source, type: "build", referenceLabelCaseFoldProfile: 14 },
-			});
-			const packed = messages[0];
-			if ("result" !== packed?.type) throw new Error("packed-missing");
-			expect(packed.data.linkTableCellCount, source).toBe(1);
-			const direct = createEditorMarkdownBlockIndex(source, { referenceLabelCaseFoldProfile: 14 });
-			const decoded = await runWithPayload(source, packed.data);
-			expect(decoded.linkTableCells, source).toEqual(direct.linkTableCells);
-			expect(decoded.linkCandidates, source).toEqual(direct.linkCandidates);
-		}
-	});
-
-	it("accepts worker round-trips for post-refdef indented math and multiline paren-math HTML-tag tables while still rejecting tampered cross-block records (Round 37 Track A #3, Track B Finding 4)", async () => {
-		const runWithPayload = async (source: string, payload: unknown) => {
-			const adapter = createAdapter();
-			const pending = adapter.build(
-				{ generation: 1, revision: 1, source },
-				signal(),
-			);
-			const worker = await firstWorker();
-			worker.emit({
-				data: payload as EditorMarkdownBlockIndexPackedData,
-				generation: 1,
-				revision: 1,
-				type: "result",
-			});
-			try {
-				return await pending;
-			} finally {
-				adapter.dispose();
-			}
-		};
-
-		const pack = (source: string) => {
-			const messages: EditorBlockIndexWorkerResponse[] = [];
-			createEditorBlockIndexWorkerHandler((message) => messages.push(message))({
-				data: {
-					generation: 1,
-					referenceLabelCaseFoldProfile: 14,
-					revision: 1,
-					source,
-					type: "build",
-				},
-			});
-			const packed = messages[0];
-			if ("result" !== packed?.type) throw new Error(`packed-missing:${source}`);
-			return packed.data;
-		};
-
-		// Track B Finding 4: post-refdef 4-space/tab indented inline math + genuine code negative controls.
-		for (const source of [
-			"[r]: /u\n    $x$\n\n| [a](https://example.com) | b |\n| - | - |",
-			"[r]: /u\n    $x$",
-			"[r]: /u\n\t$x$",
-			"[r]: /u\n    \\(x\\)",
-			"[r]: /u\n    \\(x\n\ny\\)",
-			"[r]: /u\n    $x$\n\n    $y$",
-			"\n\n    $x$",
-			"[r]: /u\n\n    $x$",
-		]) {
-			const direct = createEditorMarkdownBlockIndex(source, {
-				referenceLabelCaseFoldProfile: 14,
-			});
-			const decoded = await runWithPayload(source, pack(source));
-			expect(decoded.blocks, source).toEqual(direct.blocks);
-			expect(decoded.mathSpans, source).toEqual(direct.mathSpans);
-			expect(decoded.linkCandidates, source).toEqual(direct.linkCandidates);
-			if (direct.linkTableCells && direct.linkTableCells.size > 0) {
-				expect(decoded.linkTableCells, source).toEqual(direct.linkTableCells);
-			}
-		}
-
-		// Track A #3: multiline `\(...\)` containing HTML block tags inside PHP tables.
-		for (const source of [
-			"\\(a\n<div>\nb\\) | [x](/u)\n-|-",
-			"\\(a\n<div>\nb\\) | [x](/a\\\\|b)\n-|-",
-			"\\(a\n<div>\nb\\) | [x][k]\n-|-\n\n[k]: https://k.example",
-			"\\(a\n<div>\nb\\) | https://a.example\n-|-",
-			"\\(a\n<div>\nb\\) | [x](/u)\n-|-\n<div>\n[bad](/no)\n</div>",
-			"<div>\n[x](/u)\n</div>",
-		]) {
-			const direct = createEditorMarkdownBlockIndex(source, {
-				referenceLabelCaseFoldProfile: 14,
-			});
-			const decoded = await runWithPayload(source, pack(source));
-			expect(decoded.blocks, source).toEqual(direct.blocks);
-			expect(decoded.mathSpans, source).toEqual(direct.mathSpans);
-			expect(decoded.linkCandidates, source).toEqual(direct.linkCandidates);
-			if (direct.linkTableCells && direct.linkTableCells.size > 0) {
-				expect(decoded.linkTableCells, source).toEqual(direct.linkTableCells);
-			}
-		}
-
-		// Security negative controls: tampered math inside genuine indented code or unavailable HTML block stays rejected.
-		const genuineIndented = "[r]: /u\n\n    $x$";
-		const mathStart = genuineIndented.indexOf("$");
-		await expect(
-			runWithPayload(
-				genuineIndented,
-				packedFields(
-					[0, 7, 0, 0, 7, 0, 9, genuineIndented.length, 2, 2, 0, 1],
-					[mathStart, mathStart + 3, mathStart + 1, mathStart + 2, 0],
-					genuineIndented.length,
-				),
-			),
-		).rejects.toThrow("editor-block-index-result-invalid");
-
-		const htmlNoTable = "\\(a\n<div>\nb\\) [x](/u)";
-		await expect(
-			runWithPayload(
-				htmlNoTable,
-				packedFields(
-					[0, 3, 0, 0, 4, 1, 4, htmlNoTable.length, 1, 2, 7, 0],
-					[0, 13, 2, 11, 0],
-					htmlNoTable.length,
-				),
-			),
-		).rejects.toThrow("editor-block-index-result-invalid");
-
-		const plainHtml = "<div>\n[x](/u)\n</div>";
-		const fakeLinkFrom = plainHtml.indexOf("[x]");
-		const fakeLinkTo = plainHtml.indexOf(")", fakeLinkFrom) + 1;
-		await expect(
-			runWithPayload(plainHtml, {
-				...packedFields(
-					[0, plainHtml.length, 0, 2, 6, 1],
-					[],
-					plainHtml.length,
-					[],
-					[0, 0, 0],
-					[fakeLinkFrom, fakeLinkTo, 0, plainHtml.length, 0, 0],
-				),
-				linkTableCellCount: 1,
-				linkTableCells: Int32Array.from([fakeLinkFrom, fakeLinkFrom, fakeLinkTo])
-					.buffer,
-			}),
-		).rejects.toThrow("editor-block-index-result-invalid");
-
-		// Round 38: post-refdef links/tables/images/display-math/nested-refdefs + quote/list inside paren-math tables round-trip identically.
-		for (const source of [
-			"[r]: /u\n    $a$ [x](/v)",
-			"[r]: /u\n    c | [x](/v)\n-|-",
-			"[r]: /u\n    [link](https://example.com)",
-			"[r]: /u\n    https://example.com",
-			"[r]: /u\n    ![alt](https://example.com/a.png)",
-			"[r]: /u\n    | a | b |\n    | --- | --- |\n    | [link](/local) | 2 |",
-			"[r]: /u\n    $$x$$\n    [link](https://example.com)",
-			"[r]: /u\n    $$x$$\n    $y$",
-			"[r]: /u\n    [r2]: /v\n\n    real code",
-			"| A | B |\n| --- | --- |\n| \\(x\n> quote\n<div>\ny\\) | [link](https://example.com) |",
-			"| A | B |\n| --- | --- |\n| \\(x\n- list\n<div>\ny\\) | [link](https://example.com) |",
-		]) {
-			const direct = createEditorMarkdownBlockIndex(source, {
-				referenceLabelCaseFoldProfile: 14,
-			});
-			const decoded = await runWithPayload(source, pack(source));
-			expect(decoded.blocks, source).toEqual(direct.blocks);
-			expect(decoded.mathSpans, source).toEqual(direct.mathSpans);
-			expect(decoded.imageBlocks, source).toEqual(direct.imageBlocks);
-			expect(decoded.imageRanges, source).toEqual(direct.imageRanges);
-			expect(decoded.linkCandidates, source).toEqual(direct.linkCandidates);
-			if (direct.linkTableCells && direct.linkTableCells.size > 0) {
-				expect(decoded.linkTableCells, source).toEqual(direct.linkTableCells);
-			}
-		}
-	});
-
 	it("rejects an oversized result with a distinct bounded-result error", async () => {
 		const adapter = createAdapter();
 		const pending = adapter.build(
@@ -1363,5 +1145,79 @@ describe("createBrowserEditorBlockIndexWorker", () => {
 				workerUrl,
 			}),
 		).toThrow("editor-block-index-worker-url-invalid");
+	});
+
+	it.each([
+		[
+			"mismatched result generation",
+			{ data: packedData(1, 3), generation: 2, revision: 1, type: "result" },
+		],
+		[
+			"mismatched result revision",
+			{ data: packedData(1, 3), generation: 1, revision: 2, type: "result" },
+		],
+		[
+			"missing result generation",
+			{ data: packedData(1, 3), revision: 1, type: "result" },
+		],
+		[
+			"mismatched error generation",
+			{
+				code: "editor-block-index-build-failed",
+				generation: 2,
+				revision: 1,
+				type: "error",
+			},
+		],
+		[
+			"missing error revision",
+			{
+				code: "editor-block-index-build-failed",
+				generation: 1,
+				type: "error",
+			},
+		],
+	])(
+		"rejects %s as stale and terminates the worker",
+		async (_label, response) => {
+			const adapter = createAdapter();
+			const pending = adapter.build(
+				{ generation: 1, revision: 1, source: "abc" },
+				signal(),
+			);
+			const worker = FakeWorker.instances[0];
+			if (!worker) throw new Error("test-worker-missing");
+			worker.emit(response as EditorBlockIndexWorkerResponse);
+
+			await expect(pending).rejects.toThrow("editor-block-index-stale");
+			expect(worker.terminated).toBe(true);
+			adapter.dispose();
+		},
+	);
+
+	it("exposes stateless protocol validation helpers with matching semantics", async () => {
+		expect(responseCode("editor-block-index-build-failed")).toBe(
+			"editor-block-index-build-failed",
+		);
+		expect(responseCode("editor-block-index-unknown")).toBeNull();
+		expect(
+			validateBuildInput(
+				{ generation: 1, revision: 2, source: "abc" },
+				signal(),
+				14,
+			),
+		).toEqual({
+			generation: 1,
+			referenceLabelCaseFoldProfile: 14,
+			revision: 2,
+			source: "abc",
+			type: "build",
+		});
+		await expect(
+			validateData(packedData(1, 3), "abc", () => false),
+		).resolves.toEqual({ status: "valid", value: data() });
+		await expect(
+			validateData({ format: "unknown" }, "abc", () => false),
+		).resolves.toEqual({ status: "invalid" });
 	});
 });

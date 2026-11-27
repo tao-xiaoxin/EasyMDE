@@ -22,43 +22,25 @@ import {
 	type TableAlignmentAnnotationAction,
 } from "./table-alignment-annotation";
 
-function hasTrailingDelimiterPipe(row: ParsedTableRow, text: string): boolean {
-	const lastCell = row.cells[row.cells.length - 1];
-	return (
-		undefined !== lastCell &&
-		lastCell.end < text.length &&
-		"|" === text[lastCell.end]
-	);
-}
-
 function cellInsertPosition(
 	row: ParsedTableRow,
 	column: number,
 	side: "left" | "right",
 	text: string,
 	delimiterRow: boolean,
-): Readonly<{ caretOffset: number; insert: string; position: number }> {
+): Readonly<{ insert: string; position: number }> {
 	const cell = row.cells[column];
 	if (!cell) throw new Error("editor-context-menu-table-column-missing");
 	const nextCell = row.cells[column + 1];
 	const newCell = delimiterRow ? " --- " : "  ";
 	if ("left" === side) {
-		if (0 === column && !row.leadingPipe) {
-			const leadingIndent = text.match(/^[ \t]*/u)?.[0].length ?? 0;
-			return {
-				caretOffset: 2,
-				insert: `|${newCell}|`,
-				position: cell.start + leadingIndent,
-			};
-		}
-		return { caretOffset: 1, insert: `${newCell}|`, position: cell.start };
+		return { insert: `${newCell}|`, position: cell.start };
 	}
 	if (nextCell) {
-		return { caretOffset: 1, insert: `${newCell}|`, position: nextCell.start };
+		return { insert: `${newCell}|`, position: nextCell.start };
 	}
-	const hasTrailingPipe = hasTrailingDelimiterPipe(row, text);
+	const hasTrailingPipe = text.endsWith("|");
 	return {
-		caretOffset: hasTrailingPipe ? 1 : 3,
 		insert: hasTrailingPipe ? `${newCell}|` : ` |${newCell}|`,
 		position: hasTrailingPipe ? cell.end + 1 : cell.end,
 	};
@@ -71,19 +53,16 @@ function insertTableColumn(
 	context: PreparedMarkdownTable,
 ): EditorTextEdit | null {
 	if ("invalid" === context.context.annotationRead.status) return null;
-	const { lines, table } = context;
-	const { column, row: selectedRowIndex } = tableRowForPosition(
-		position,
-		table,
-		lines,
-	);
+	const { block, lines, table } = {
+		block: context.context.block,
+		lines: context.lines,
+		table: context.table,
+	};
+	const { column } = tableRowForPosition(position, table, lines);
 	const insertionColumn = "left" === side ? column : column + 1;
 	let nextValue = value;
 	let delta = 0;
-	let nextPosition = position;
-	for (let rowIndex = 0; rowIndex < table.rows.length; rowIndex += 1) {
-		const row = table.rows[rowIndex];
-		if (!row) continue;
+	for (const row of table.rows) {
 		const line = lines[row.lineIndex];
 		if (!line) throw new Error("editor-context-menu-table-line-missing");
 		const targetColumn = Math.min(insertionColumn, row.cells.length);
@@ -112,11 +91,9 @@ function insertTableColumn(
 			nextValue.slice(0, absolute) +
 			insertion.insert +
 			nextValue.slice(absolute);
-		if (rowIndex === selectedRowIndex) {
-			nextPosition = absolute + insertion.caretOffset;
-		}
 		delta += insertion.insert.length;
 	}
+	const nextPosition = position <= block.end ? position : position + delta;
 	return {
 		changes: {
 			from: context.context.tableStart,
@@ -138,58 +115,26 @@ function deleteTableColumn(
 ): EditorTextEdit | null {
 	if ("invalid" === context.context.annotationRead.status) return null;
 	const { lines, table } = context;
-	const { column, row: selectedRowIndex } = tableRowForPosition(
-		position,
-		table,
-		lines,
-	);
+	const { column } = tableRowForPosition(position, table, lines);
 	if (table.rows.some((row) => row.cells.length < 2)) return null;
 	let nextValue = value;
 	let delta = 0;
-	let nextPosition = position;
-	for (let rowIndex = 0; rowIndex < table.rows.length; rowIndex += 1) {
-		const row = table.rows[rowIndex];
-		if (!row) continue;
+	for (const row of table.rows) {
 		const line = lines[row.lineIndex];
 		const cell = row.cells[column];
 		if (!line || !cell)
 			throw new Error("editor-context-menu-table-column-missing");
 		const nextCell = row.cells[column + 1];
-		const preserveLeadingSeparatorPipe = 0 === column && !row.leadingPipe;
-		const preserveTrailingSeparatorPipe =
-			1 === column &&
-			2 === row.cells.length &&
-			!row.leadingPipe &&
-			!hasTrailingDelimiterPipe(row, line.text);
-		let from: number;
-		let to: number;
-		if (preserveLeadingSeparatorPipe) {
-			const leadingIndent = line.text.match(/^[ \t]*/u)?.[0].length ?? 0;
-			from = cell.start + leadingIndent;
-			to = nextCell ? nextCell.start - 1 : cell.end;
-		} else if (preserveTrailingSeparatorPipe) {
-			from = cell.start;
-			to = cell.end;
-		} else {
-			from = 0 === column ? cell.start : cell.start - 1;
-			to =
-				nextCell && 0 !== column
-					? nextCell.start - 1
-					: (nextCell?.start ?? cell.end);
-		}
+		const from = 0 === column ? cell.start : cell.start - 1;
+		const to =
+			nextCell && 0 !== column
+				? nextCell.start - 1
+				: (nextCell?.start ?? cell.end);
 		const absoluteFrom = line.start + from + delta;
 		const absoluteTo = line.start + to + delta;
 		nextValue = nextValue.slice(0, absoluteFrom) + nextValue.slice(absoluteTo);
-		if (rowIndex === selectedRowIndex) {
-			nextPosition = preserveLeadingSeparatorPipe
-				? absoluteFrom + 1
-				: preserveTrailingSeparatorPipe
-					? absoluteFrom - 1
-					: absoluteFrom;
-		}
 		delta -= absoluteTo - absoluteFrom;
 	}
-	const clampedPosition = Math.max(0, Math.min(nextPosition, nextValue.length));
 	return {
 		changes: {
 			from: context.context.tableStart,
@@ -201,8 +146,8 @@ function deleteTableColumn(
 		},
 		selection: {
 			direction: "none",
-			end: clampedPosition,
-			start: clampedPosition,
+			end: Math.min(position, nextValue.length),
+			start: Math.min(position, nextValue.length),
 		},
 		value: nextValue,
 	};
@@ -453,13 +398,12 @@ function annotationActionForTableOperation(
 		"insert-row-above" === operation.type ||
 		"insert-row-below" === operation.type
 	) {
-		if (row < 2) {
-			return { row: 1, type: "insert-row" };
-		}
-		return {
-			row: "insert-row-above" === operation.type ? row - 1 : row,
-			type: "insert-row",
-		};
+		const logicalRow = row < 2 ? 1 : row - 1;
+		const insertionRow =
+			"insert-row-above" === operation.type
+				? logicalRow - (row < 2 ? 0 : 1)
+				: logicalRow;
+		return { row: Math.max(1, insertionRow), type: "insert-row" };
 	}
 	return null;
 }

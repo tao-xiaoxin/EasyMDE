@@ -7,7 +7,7 @@ import {
   waitFor,
   within
 } from '@testing-library/react';
-import { undoDepth } from '@codemirror/commands';
+import { redo, undoDepth } from '@codemirror/commands';
 import { EditorView } from '@codemirror/view';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -33,6 +33,8 @@ import {
   findEditorCodeContentTarget as observedCodeContentTarget
 } from '../../features/editor-context-menu/editor-code-content-target';
 import { EditorRoot } from './EditorRoot';
+import { createEditorBlockIndexWorkerHandler } from '../../entrypoints/editor-block-index-worker';
+import { validateData } from '../../integrations/browser/editor-context-menu/editor-block-index-worker-protocol';
 import {
   cleanupEditorRootTestHarness,
   contextMenuStrings,
@@ -615,7 +617,7 @@ describe('EditorRoot context menu', () => {
       Promise.resolve(
         createPreviewResponse(
           request,
-          '<p>Before</p><p>Plain</p><p>After</p>' as SafePreviewHtml,
+          '<p>Before</p><p><span class="easymde-math easymde-math-inline">\\(x\\)</span></p><p>After</p>' as SafePreviewHtml,
           {
             math: true
           }
@@ -736,7 +738,7 @@ describe('EditorRoot context menu', () => {
       Promise.resolve(
         createPreviewResponse(
           request,
-          '<p>Before</p><p>Plain</p><p>After</p>' as SafePreviewHtml,
+          '<p>Before</p><p><span class="easymde-math easymde-math-inline">\\(x\\)</span></p><p>After</p>' as SafePreviewHtml,
           {
             math: true
           }
@@ -2250,7 +2252,7 @@ describe('EditorRoot context menu', () => {
     view.unmount();
   });
 
-  it('keeps code-block common actions grouped without duplicating root actions', async () => {
+  it('keeps code-block submenu code-only without bold, HTML, simplified, or nested general menus', async () => {
     const props = fixture();
     const sourceValue = '```js\nconst value = 1;\n```';
     const codePosition = sourceValue.indexOf('value');
@@ -2270,28 +2272,32 @@ describe('EditorRoot context menu', () => {
     const codeTrigger = await within(document.body).findByRole('menuitem', {
       name: 'Code block'
     });
+    const rootMenu = codeTrigger.closest<HTMLElement>('[role="menu"]');
+    if (!rootMenu) throw new Error('root-menu-missing');
+    expect(within(rootMenu).queryByRole('menuitem', { name: /^Bold/ })).toBeNull();
+    expect(within(rootMenu).getByRole('menuitem', { name: 'Copy / Paste as' })).toBeTruthy();
+    expect(within(rootMenu).getByRole('menuitem', { name: 'Insert' })).toBeTruthy();
     fireEvent.mouseEnter(codeTrigger);
     const codeMenu = await within(document.body).findByRole('menu', {
       name: 'Code block'
     });
 
-    const bold = within(codeMenu).getByRole('menuitem', { name: /^Bold/ });
-    expect(bold.getAttribute('aria-disabled')).toBe('true');
+    expect(within(codeMenu).queryByRole('menuitem', { name: /^Bold/ })).toBeNull();
+    expect(within(codeMenu).queryByRole('menuitem', { name: 'Copy / Paste as' })).toBeNull();
+    expect(within(codeMenu).queryByRole('menuitem', { name: 'Insert' })).toBeNull();
+    expect(within(codeMenu).getByRole('menuitem', { name: 'Copy code block' })).toBeTruthy();
     expect(within(codeMenu).getByRole('menuitem', { name: 'Delete code block' })).toBeTruthy();
-    expect(within(codeMenu).getByRole('menuitem', { name: 'Copy / Paste as' })).toBeTruthy();
-    expect(within(codeMenu).getByRole('menuitem', { name: 'Insert' })).toBeTruthy();
-    expect(within(document.body).queryAllByRole('menuitem', { name: /^Bold/ })).toHaveLength(1);
-    expect(within(document.body).queryAllByRole('menuitem', { name: 'Copy / Paste as' })).toHaveLength(1);
-    expect(within(document.body).queryAllByRole('menuitem', { name: 'Insert' })).toHaveLength(1);
 
-    fireEvent.mouseEnter(within(codeMenu).getByRole('menuitem', { name: 'Copy / Paste as' }));
+    fireEvent.mouseEnter(within(rootMenu).getByRole('menuitem', { name: 'Copy / Paste as' }));
     const copyPasteMenu = await within(document.body).findByRole('menu', {
       name: 'Copy / Paste as'
     });
-    expect(within(copyPasteMenu).getByRole('menuitem', { name: 'Copy as HTML code' })).toBeTruthy();
-    expect(within(copyPasteMenu).getByRole('menuitem', { name: 'Copy with simplified formatting' })).toBeTruthy();
+    expect(within(copyPasteMenu).getByRole('menuitem', { name: 'Copy as Markdown' })).toBeTruthy();
+    expect(within(copyPasteMenu).getByRole('menuitem', { name: 'Paste as plain text' })).toBeTruthy();
+    expect(within(copyPasteMenu).queryByRole('menuitem', { name: 'Copy as HTML code' })).toBeNull();
+    expect(within(copyPasteMenu).queryByRole('menuitem', { name: 'Copy with simplified formatting' })).toBeNull();
 
-    fireEvent.mouseEnter(within(codeMenu).getByRole('menuitem', { name: 'Insert' }));
+    fireEvent.mouseEnter(within(rootMenu).getByRole('menuitem', { name: 'Insert' }));
     const insertMenu = await within(document.body).findByRole('menu', {
       name: 'Insert'
     });
@@ -2853,4 +2859,254 @@ describe('EditorRoot context menu', () => {
       view.unmount();
     }
   );
+
+  it('applies per-block CommonMark Bold in Source context menu with 1-step Undo and Redo', async () => {
+    const props = fixture();
+    const initial = [
+      '# Heading 1',
+      '',
+      'First paragraph',
+      '',
+      '```js',
+      'const keep = 1;',
+      '```',
+      '',
+      '- List item',
+      '',
+      'Second paragraph'
+    ].join('\n');
+    const expected = [
+      '# **Heading 1**',
+      '',
+      '**First paragraph**',
+      '',
+      '```js',
+      'const keep = 1;',
+      '```',
+      '',
+      '- **List item**',
+      '',
+      '**Second paragraph**'
+    ].join('\n');
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(0, initial.length);
+    const view = render(<EditorRoot {...props} />);
+    const source = await waitFor(() => {
+      const element = view.container.querySelector<HTMLElement>('.cm-content');
+      if (!element) throw new Error('source-surface-missing');
+      return element;
+    });
+
+    layoutContextMenuSurface(source);
+    fireEvent.contextMenu(source, { clientX: 20, clientY: 24 });
+    fireEvent.click(
+      await within(document.body).findByRole('menuitem', { name: /^Bold/ })
+    );
+    await waitFor(() => expect(props.submissionField.value).toBe(expected));
+    const editorView = EditorView.findFromDOM(source);
+    if (!editorView) throw new Error('source-editor-view-missing');
+    expect(undoDepth(editorView.state)).toBe(1);
+
+    fireEvent.click(view.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(props.submissionField.value).toBe(initial));
+    act(() => {
+      redo(editorView);
+    });
+    await waitFor(() => expect(props.submissionField.value).toBe(expected));
+    view.unmount();
+  });
+
+  it('refuses Source context-menu Bold when selection spans only non-boldable content', async () => {
+    const props = fixture();
+    const initial = '---';
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(0, initial.length);
+    const view = render(<EditorRoot {...props} />);
+    const source = await waitFor(() => {
+      const element = view.container.querySelector<HTMLElement>('.cm-content');
+      if (!element) throw new Error('source-surface-missing');
+      return element;
+    });
+
+    layoutContextMenuSurface(source);
+    fireEvent.contextMenu(source, { clientX: 20, clientY: 24 });
+    fireEvent.click(
+      await within(document.body).findByRole('menuitem', { name: /^Bold/ })
+    );
+    await waitFor(() =>
+      expect(props.onFailure).toHaveBeenCalledWith(
+        'editor-context-menu-command-unavailable'
+      )
+    );
+    expect(props.submissionField.value).toBe(initial);
+    const editorView = EditorView.findFromDOM(source);
+    if (!editorView) throw new Error('source-editor-view-missing');
+    expect(undoDepth(editorView.state)).toBe(0);
+    view.unmount();
+  });
+
+  it('preserves unselected reference links and adds missing bold on mixed Visual context-menu Bold with 1-step Undo', async () => {
+    const props = fixture();
+    const initial = [
+      '[Use docs][doc] and First',
+      '',
+      '**Already**',
+      '',
+      'Last',
+      '',
+      '[doc]: https://example.com'
+    ].join('\n');
+    const expected = [
+      '[Use docs][doc] and **First**',
+      '',
+      '**Already**',
+      '',
+      '**Last**',
+      '',
+      '[doc]: https://example.com'
+    ].join('\n');
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(
+      initial.indexOf('First'),
+      initial.indexOf('Last') + 'Last'.length
+    );
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          '<p><a href="https://example.com">Use docs</a> and First</p><p><strong>Already</strong></p><p>Last</p>' as SafePreviewHtml,
+          {}
+        )
+      )
+    );
+    const view = render(<EditorRoot {...props} />);
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const visualEditor = await view.findByRole('textbox', {
+        name: '可视化文章编辑器'
+      });
+      layoutContextMenuSurface(visualEditor);
+
+      fireEvent.contextMenu(visualEditor, { clientX: 20, clientY: 24 });
+      fireEvent.click(
+        await within(document.body).findByRole('menuitem', { name: /^Bold/ })
+      );
+
+      await waitFor(() => expect(props.submissionField.value).toBe(expected));
+      expect(props.submissionField.value).toContain('[Use docs][doc]');
+      expect(props.submissionField.value).toContain('[doc]: https://example.com');
+      expect(visualEditor.querySelectorAll('strong')).toHaveLength(3);
+
+      fireEvent.keyDown(visualEditor, { ctrlKey: true, key: 'z' });
+      await waitFor(() => expect(props.submissionField.value).toBe(initial));
+      expect(visualEditor.querySelectorAll('strong')).toHaveLength(1);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it.each([
+    [14 as const, '[\u1C89**link**]\n\n[\u1C8Alink]: /foo'],
+    [17 as const, '[\u1C89**link**][\u1C89link]\n\n[\u1C8Alink]: /foo']
+  ])(
+    'threads referenceLabelCaseFoldProfile (%s) from EditorRoot into Source context-menu Bold',
+    async (profile, expected) => {
+      const props = {
+        ...fixture(),
+        editorBlockIndexPort: sourceLinkBlockIndexPort(),
+        referenceLabelCaseFoldProfile: profile
+      };
+      const initial = '[\u1C89link]\n\n[\u1C8Alink]: /foo';
+      const linkStart = initial.indexOf('link');
+      props.submissionField.value = initial;
+      props.submissionField.defaultValue = initial;
+      props.submissionField.setSelectionRange(linkStart, linkStart + 4);
+      const view = render(<EditorRoot {...props} />);
+      try {
+        const source = await waitFor(() => {
+          const element = view.container.querySelector<HTMLElement>('.cm-content');
+          if (!element) throw new Error('source-surface-missing');
+          return element;
+        });
+        layoutContextMenuSurface(source);
+        fireEvent.contextMenu(source, { clientX: 20, clientY: 24 });
+        fireEvent.click(
+          await within(document.body).findByRole('menuitem', { name: /^Bold/ })
+        );
+        await waitFor(() => expect(props.submissionField.value).toBe(expected));
+      } finally {
+        view.unmount();
+      }
+    }
+  );
+
+  it('opens Source context menu cleanly on cross-paragraph inline math (R23-2a) without worker invalidation and refuses Bold', async () => {
+    const initial = '\\(a\n\n**word!** \\)';
+    const wordStart = initial.indexOf('word!');
+    const validatedWorkerPort: EditorMarkdownBlockIndexPort = {
+      async build(input) {
+        const responses: unknown[] = [];
+        const handler = createEditorBlockIndexWorkerHandler((message) => {
+          responses.push(message);
+        });
+        handler({
+          data: {
+            generation: input.generation,
+            referenceLabelCaseFoldProfile: 14,
+            revision: input.revision,
+            source: input.source,
+            type: 'build'
+          }
+        });
+        const first = responses[0] as { data?: unknown; type?: string } | undefined;
+        if ('result' !== first?.type) {
+          throw new Error('editor-block-index-build-failed');
+        }
+        const validated = await validateData(first.data, input.source, () => false);
+        if ('valid' !== validated.status) {
+          throw new Error('editor-block-index-result-invalid');
+        }
+        return validated.value;
+      },
+      dispose: vi.fn()
+    };
+    const props = {
+      ...fixture(),
+      editorBlockIndexPort: validatedWorkerPort
+    };
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(wordStart, wordStart + 'word!'.length);
+    const view = render(<EditorRoot {...props} />);
+    try {
+      const source = await waitFor(() => {
+        const element = view.container.querySelector<HTMLElement>('.cm-content');
+        if (!element) throw new Error('source-surface-missing');
+        return element;
+      });
+      layoutContextMenuSurface(source);
+      fireEvent.contextMenu(source, { clientX: 20, clientY: 24 });
+      const boldItem = await within(document.body).findByRole('menuitem', {
+        name: /^Bold/
+      });
+      expect(props.onFailure).not.toHaveBeenCalledWith(
+        'editor-block-index-result-invalid'
+      );
+      fireEvent.click(boldItem);
+      await waitFor(() =>
+        expect(props.onFailure).toHaveBeenCalledWith(
+          'editor-context-menu-command-unavailable'
+        )
+      );
+      expect(props.submissionField.value).toBe(initial);
+    } finally {
+      view.unmount();
+    }
+  });
 });

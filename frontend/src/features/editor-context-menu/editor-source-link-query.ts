@@ -3,19 +3,7 @@ import type {
 	PreviewRequestPort,
 	PreviewResponse,
 } from "../../contracts/ports/preview-request";
-import {
-	isPhpTrimChar,
-	unescapeTableCellPipes,
-} from "../../shared/markdown/php-commonmark-block-helpers";
-import { gfmAutolinkTrailingContext } from "../../shared/markdown/php-commonmark-inline-html";
-import {
-	MAX_MARKDOWN_PREVIEW_BYTES,
-	utf8ByteLength,
-} from "../../shared/utf8-byte-length";
-import type {
-	EditorMarkdownBlockIndex,
-	EditorMarkdownLinkTableCellContext,
-} from "./editor-markdown-block-index";
+import type { EditorMarkdownBlockIndex } from "./editor-markdown-block-index";
 import type { SimplifiedFormattingDomParser } from "./editor-simplified-formatting";
 import {
 	type EditorSourceLinkCandidate,
@@ -24,7 +12,7 @@ import {
 	findEditorSourceLink,
 } from "./editor-source-link";
 
-export const MAX_EDITOR_SOURCE_LINK_QUERY_BYTES = MAX_MARKDOWN_PREVIEW_BYTES;
+export const MAX_EDITOR_SOURCE_LINK_QUERY_BYTES = 1_048_576;
 export const EDITOR_SOURCE_LINK_QUERY_TIMEOUT_MS = 10_000;
 const VISUAL_BLOCK_ATTRIBUTE = "data-easymde-visual-block-id";
 
@@ -137,6 +125,23 @@ function sameBinding(
 	);
 }
 
+function utf8ByteLength(value: string): number {
+	let bytes = 0;
+	for (let index = 0; index < value.length; index += 1) {
+		const codePoint = value.codePointAt(index) ?? 0;
+		if (codePoint > 0xffff) index += 1;
+		bytes +=
+			codePoint <= 0x7f
+				? 1
+				: codePoint <= 0x7ff
+					? 2
+					: codePoint <= 0xffff
+						? 3
+						: 4;
+	}
+	return bytes;
+}
+
 function lineCount(markdown: string): number {
 	let count = 1;
 	for (let index = 0; index < markdown.length; index += 1) {
@@ -157,7 +162,7 @@ function topLevelElements(document: Document): ReadonlyArray<Element> {
 function anchorsIn(root: Element): ReadonlyArray<HTMLAnchorElement> {
 	const anchors: HTMLAnchorElement[] = [];
 	if (root instanceof HTMLAnchorElement) anchors.push(root);
-	anchors.push(...Array.from(root.querySelectorAll<HTMLAnchorElement>("a")));
+	for (const anchor of root.querySelectorAll<HTMLAnchorElement>("a")) anchors.push(anchor);
 	return anchors;
 }
 
@@ -182,175 +187,10 @@ function hasGeneratedOrImageNode(root: Element): boolean {
 	);
 }
 
-function hasUnexpectedOutsideContent(
-	root: Element,
-	anchor: HTMLAnchorElement,
-	expectedTrailingText: string,
-): boolean {
-	if (0 === expectedTrailingText.length) {
-		return hasOutsideText(root, anchor);
-	}
-	let seenAnchor = false;
-	let trailingText = "";
-	for (let index = 0; index < root.childNodes.length; index += 1) {
-		const child = root.childNodes[index];
-		if (!child) continue;
-		if (child === anchor) {
-			seenAnchor = true;
-			continue;
-		}
-		if (3 !== child.nodeType) return true;
-		const text = child.nodeValue ?? "";
-		if (!seenAnchor) {
-			if (text.trim()) return true;
-		} else {
-			trailingText += text;
-		}
-	}
-	return !seenAnchor || trailingText !== expectedTrailingText;
-}
-
-type PreparedSourceLinkQuery = Readonly<{
-	expectedTrailingText: string;
-	queryMarkdown: string;
-}>;
-
-function isBareGfmAutolinkCandidate(
-	candidate: EditorSourceLinkCandidate,
-): boolean {
-	return (
-		"link" === candidate.kind &&
-		!candidate.reference &&
-		!candidate.source.startsWith("[")
-	);
-}
-
-function lineBoundsAt(
-	source: string,
-	offset: number,
-): Readonly<{ end: number; start: number }> {
-	let start = offset;
-	while (start > 0) {
-		const ch = source[start - 1];
-		if ("\n" === ch || "\r" === ch) break;
-		start -= 1;
-	}
-	let end = offset;
-	while (end < source.length) {
-		const ch = source[end];
-		if ("\n" === ch || "\r" === ch) break;
-		end += 1;
-	}
-	return { end, start };
-}
-
-function tokenEndBeforeWhitespace(
-	text: string,
-	start: number,
-	limit: number,
-): number {
-	let pos = start;
-	while (pos < limit) {
-		if (text.charCodeAt(pos) <= 0x20) break;
-		pos += 1;
-	}
-	return pos;
-}
-
-function computeTableCellAutolinkTrailingContext(
-	source: string,
-	candidate: EditorSourceLinkCandidate,
-	tableCell: EditorMarkdownLinkTableCellContext,
-): string {
-	if (undefined !== tableCell.maskedCellText) {
-		const cellText = tableCell.maskedCellText;
-		const headFrom = candidate.from - tableCell.cellStart;
-		const headTo = candidate.to - tableCell.cellStart;
-		let tailLimit = cellText.length;
-		while (tailLimit > headTo && isPhpTrimChar(cellText[tailLimit - 1])) {
-			tailLimit -= 1;
-		}
-		const tailEnd = tokenEndBeforeWhitespace(cellText, headTo, tailLimit);
-		const unescapedHead = unescapeTableCellPipes(
-			cellText.slice(headFrom, headTo),
-		);
-		const unescapedTail = unescapeTableCellPipes(
-			cellText.slice(headTo, tailEnd),
-		);
-		return gfmAutolinkTrailingContext(
-			`${unescapedHead}${unescapedTail}`,
-			0,
-			unescapedHead.length,
-		);
-	}
-	const tailEnd = tokenEndBeforeWhitespace(
-		source,
-		candidate.to,
-		tableCell.cellEnd,
-	);
-	const unescapedHead = tableCell.unescapedSource ?? candidate.source;
-	const unescapedTail = unescapeTableCellPipes(
-		source.slice(candidate.to, tailEnd),
-	);
-	return gfmAutolinkTrailingContext(
-		`${unescapedHead}${unescapedTail}`,
-		0,
-		unescapedHead.length,
-	);
-}
-
-function prepareSourceLinkQuery(
-	source: string,
-	candidate: EditorSourceLinkCandidate,
-	blockIndex: EditorMarkdownBlockIndex | null | undefined,
-): PreparedSourceLinkQuery {
-	const isBareAutolink = isBareGfmAutolinkCandidate(candidate);
-	const candidateHasEscapedPipe = candidate.source.includes("\\|");
-
-	if (candidateHasEscapedPipe || isBareAutolink) {
-		// Direct and worker-unpacked indexes both carry the authoritative
-		// PHP table-cell context; absence means the candidate is not in a cell.
-		const tableCell = blockIndex?.linkTableCells?.get(candidate.from) ?? null;
-		if (tableCell) {
-			const querySource = tableCell.unescapedSource ?? candidate.source;
-			const expectedTrailingText = isBareAutolink
-				? computeTableCellAutolinkTrailingContext(source, candidate, tableCell)
-				: "";
-			return {
-				expectedTrailingText,
-				queryMarkdown: `${querySource}${expectedTrailingText}\n\n${source}`,
-			};
-		}
-	}
-
-	let expectedTrailingText = "";
-	if (isBareAutolink) {
-		const lineBounds = lineBoundsAt(source, candidate.from);
-		const trailingBound = tokenEndBeforeWhitespace(
-			source,
-			candidate.to,
-			Math.min(lineBounds.end, candidate.blockTo),
-		);
-		expectedTrailingText =
-			trailingBound > candidate.to
-				? gfmAutolinkTrailingContext(
-						source.slice(candidate.from, trailingBound),
-						0,
-						candidate.to - candidate.from,
-					)
-				: "";
-	}
-	return {
-		expectedTrailingText,
-		queryMarkdown: `${candidate.source}${expectedTrailingText}\n\n${source}`,
-	};
-}
-
 function responseHref(
 	response: PreviewResponse,
 	candidate: EditorSourceLinkCandidate,
 	parser: SimplifiedFormattingDomParser,
-	expectedTrailingText: string,
 ):
 	| Readonly<{ href: string }>
 	| Readonly<{ status: "none" }>
@@ -430,7 +270,7 @@ function responseHref(
 	if (hasGeneratedOrImageNode(owner)) {
 		return { code: "editor-source-link-preview-ownership-invalid" };
 	}
-	if (hasUnexpectedOutsideContent(owner, anchor, expectedTrailingText)) {
+	if (hasOutsideText(owner, anchor)) {
 		// A reference link only renders when the document defines its label.
 		// Literal text beside the anchor therefore means this caret has no
 		// rendered link, while generated or unexpected nodes stay a failure.
@@ -517,7 +357,6 @@ export function createEditorSourceLinkQuery({
 	const run = async (
 		query: ActiveQuery,
 		queryMarkdown: string,
-		expectedTrailingText: string,
 	): Promise<void> => {
 		if (!currentQueryIsLive(query)) return;
 		let request: PreviewRequest;
@@ -552,12 +391,7 @@ export function createEditorSourceLinkQuery({
 		}
 		if (!currentQueryIsLive(query)) return;
 		clearQueryTimeout(query);
-		const result = responseHref(
-			response,
-			query.candidate,
-			parser,
-			expectedTrailingText,
-		);
+		const result = responseHref(response, query.candidate, parser);
 		if ("status" in result) {
 			query.state = { status: "none" };
 			publish();
@@ -599,11 +433,7 @@ export function createEditorSourceLinkQuery({
 			cached = { binding, state: failed(resolution.code) };
 			return cached.state;
 		}
-		const { expectedTrailingText, queryMarkdown } = prepareSourceLinkQuery(
-			binding.source,
-			resolution.candidate,
-			blockIndex,
-		);
+		const queryMarkdown = `${resolution.candidate.source}\n\n${binding.source}`;
 		if (utf8ByteLength(queryMarkdown) > MAX_EDITOR_SOURCE_LINK_QUERY_BYTES) {
 			cached = {
 				binding,
@@ -626,7 +456,7 @@ export function createEditorSourceLinkQuery({
 			query.controller.abort();
 			publish();
 		}, EDITOR_SOURCE_LINK_QUERY_TIMEOUT_MS);
-		void run(query, queryMarkdown, expectedTrailingText);
+		void run(query, queryMarkdown);
 		return query.state;
 	};
 

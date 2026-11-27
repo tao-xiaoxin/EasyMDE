@@ -5,10 +5,6 @@ import type {
   PreviewRequestPort
 } from '../../contracts/ports/preview-request';
 import {
-  MAX_MARKDOWN_PREVIEW_BYTES,
-  utf8ByteLength
-} from '../../shared/utf8-byte-length';
-import {
   findEditorCodeContentTarget,
   readEditorCodeContent,
   type EditorCodeBodyMap,
@@ -18,7 +14,7 @@ import {
 } from './editor-code-content-target';
 import type { EditorMarkdownBlockIndex } from './editor-markdown-block-index';
 
-export const MAX_EDITOR_CODE_CONTENT_QUERY_BYTES = MAX_MARKDOWN_PREVIEW_BYTES;
+export const MAX_EDITOR_CODE_CONTENT_QUERY_BYTES = 1_048_576;
 
 export type EditorCodeContentQueryBinding = Readonly<{
   generation: number;
@@ -114,6 +110,20 @@ function sameBinding(
     && left.source === right.source
     && left.surface === right.surface
     && sameSelection(left.selection, right.selection);
+}
+
+function utf8ByteLength(value: string): number {
+  let bytes = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const codePoint = value.codePointAt(index) ?? 0;
+    if (codePoint > 0xffff) index += 1;
+    bytes += codePoint <= 0x7f
+      ? 1
+      : codePoint <= 0x7ff
+        ? 2
+        : codePoint <= 0xffff ? 3 : 4;
+  }
+  return bytes;
 }
 
 function unavailable(code: string): EditorCodeContentQueryState {

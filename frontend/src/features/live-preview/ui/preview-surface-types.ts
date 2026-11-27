@@ -9,6 +9,7 @@ import type {
 	PreviewRequestPort,
 	SafePreviewHtml,
 } from "../../../contracts/ports/preview-request";
+import { VISUAL_MARKDOWN_SOURCE_ATTRIBUTE } from "../../../shared/markdown/normalize-math-tex";
 import type {
 	GeneratedContentKind,
 	GeneratedContentTarget,
@@ -35,8 +36,7 @@ export const PREVIEW_STAGING_DOM_APPEND_MAX_NODES = 32;
 export const PREVIEW_ATOMIC_COMMIT_BARRIER_MIN_BLOCKS = 32;
 export const PREVIEW_LARGE_DOCUMENT_BLOCK_THRESHOLD = 160;
 export const VISUAL_BLOCK_ATTRIBUTE = "data-easymde-visual-block-id";
-export const VISUAL_MARKDOWN_SOURCE_ATTRIBUTE =
-	"data-easymde-visual-markdown-source";
+export { VISUAL_MARKDOWN_SOURCE_ATTRIBUTE };
 
 export class PreviewSurfaceDomError extends Error {
 	constructor(code: string) {

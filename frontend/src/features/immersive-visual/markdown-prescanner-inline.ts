@@ -1,15 +1,85 @@
-import { matchHtmlBlockOpen } from "../../shared/markdown/php-commonmark-block-helpers";
 import {
-	type PhpMarkdownMathRange,
-	scanPhpMarkdownMathRanges,
-} from "../../shared/markdown/php-markdown-math-mask";
+	type BacktickRunBucket,
+	findNextBacktickCloser,
+	indexBacktickRunsByLength,
+} from "../../shared/markdown/markdown-backtick-scanners";
+import {
+	hasMultibyteCodeUnit,
+	isAsciiLowerAlnumOrHyphenCode,
+	isAsciiLowerCode,
+} from "../../shared/markdown/markdown-char-codes";
+import {
+	type AngleScanCache,
+	createAngleScanCache,
+	type HtmlTagDialect,
+	LEAGUE_HTML_ASCII_DIALECT,
+	LEAGUE_HTML_MULTIBYTE_DIALECT,
+	matchLeagueHtmlInlineAt,
+} from "../../shared/markdown/markdown-html-scanners";
+import { hasOddPrecedingBackslashes } from "../../shared/markdown/markdown-source-projection";
 import type { ProtectedInlineKind } from "./visual-schema";
 
 export type ProtectedInlineEntry = Readonly<{
-	continuationIndent?: boolean;
+	containerSignature?: string;
+	continuationPrefixes?: ReadonlyArray<string>;
 	kind: ProtectedInlineKind;
 	rawMarkdown: string;
 }>;
+
+type InlineContainerContext = Readonly<{
+	linePrefixes: ReadonlyArray<string>;
+	signature: string;
+	standardPrefix: string;
+}>;
+
+type PrescannedInlineLine = Readonly<{
+	endOffset: number;
+	startOffset: number;
+	text: string;
+}>;
+
+type InlineMathScanResult = Readonly<{
+	end: number;
+	kind: "literal-double-dollar" | "math";
+}>;
+
+type SingleDollarNoCloserRange = Readonly<{
+	isTableRow: boolean;
+	minIndex: number;
+	until: number;
+}>;
+
+export type InlineScanCache = {
+	angleCache: AngleScanCache;
+	backtickBucketsBySize: Map<number, BacktickRunBucket> | null;
+	htmlDialect: HtmlTagDialect;
+	lastCloseBracketMath: number;
+	lastCloseDoubleDollar: number;
+	lastCloseParen: number;
+	lastCloseParenMath: number;
+	lastUnescapedDollar: number;
+	noSingleDollarCloser: SingleDollarNoCloserRange | null;
+	unclosedTagStarts: Set<number>;
+	unmatchedLinkParenOpens: Set<number> | null;
+};
+
+export function createInlineScanCache(text: string): InlineScanCache {
+	return {
+		angleCache: createAngleScanCache(),
+		backtickBucketsBySize: null,
+		htmlDialect: hasMultibyteCodeUnit(text)
+			? LEAGUE_HTML_MULTIBYTE_DIALECT
+			: LEAGUE_HTML_ASCII_DIALECT,
+		lastCloseBracketMath: -2,
+		lastCloseDoubleDollar: -2,
+		lastCloseParen: -2,
+		lastCloseParenMath: -2,
+		lastUnescapedDollar: -2,
+		noSingleDollarCloser: null,
+		unclosedTagStarts: new Set<number>(),
+		unmatchedLinkParenOpens: null,
+	};
+}
 
 const PAIRED_INLINE_HTML_TAGS: ReadonlySet<string> = new Set([
 	"abbr",
@@ -33,712 +103,671 @@ const PAIRED_INLINE_HTML_TAGS: ReadonlySet<string> = new Set([
 	"u",
 ]);
 
-const INLINE_HTML_OPEN_TAG_STICKY =
-	/<([a-z][a-z0-9-]*)(?:[ \t]+[a-z_:][a-z0-9_.:-]*(?:[ \t]*=[ \t]*(?:[^\s"'=<>`]+|'[^'\n]*'|"[^"\n]*"))?)*[ \t]*(\/?)>/y;
-const INLINE_HTML_CLOSE_TAG_STICKY = /<\/([a-z][a-z0-9-]*)[ \t]*>/y;
-const INLINE_HTML_DECLARATION_NAME_STICKY = /<![A-Za-z]+/y;
+const TABLE_BR_STICKY = /<br[ \t]*\/?>/iy;
 const FOOTNOTE_REF_STICKY = /\[\^([^\s\]]+)\]/y;
 
-type InlineHtmlScanState = {
-	noAngleClose: boolean;
-	noCdataClose: boolean;
-	noCommentClose: boolean;
-	noPiClose: boolean;
-};
+function getLastUnescapedToken(text: string, token: string): number {
+	let pos = text.lastIndexOf(token);
+	while (pos >= 0 && hasOddPrecedingBackslashes(text, pos)) {
+		pos = pos > 0 ? text.lastIndexOf(token, pos - 1) : -1;
+	}
+	return pos;
+}
 
-type LinkTailScanState = {
-	noAngleClose: boolean;
-	noDoubleQuoteClose: boolean;
-	noParenTitleClose: boolean;
-	noSingleQuoteClose: boolean;
-};
+function getLastCloseParenMath(text: string, cache: InlineScanCache): number {
+	if (-2 === cache.lastCloseParenMath) {
+		cache.lastCloseParenMath = getLastUnescapedToken(text, "\\)");
+	}
+	return cache.lastCloseParenMath;
+}
+
+function getLastCloseBracketMath(text: string, cache: InlineScanCache): number {
+	if (-2 === cache.lastCloseBracketMath) {
+		cache.lastCloseBracketMath = getLastUnescapedToken(text, "\\]");
+	}
+	return cache.lastCloseBracketMath;
+}
+
+function getLastCloseDoubleDollar(
+	text: string,
+	cache: InlineScanCache,
+): number {
+	if (-2 === cache.lastCloseDoubleDollar) {
+		cache.lastCloseDoubleDollar = text.lastIndexOf("$$");
+	}
+	return cache.lastCloseDoubleDollar;
+}
+
+function getLastUnescapedDollar(text: string, cache: InlineScanCache): number {
+	if (-2 === cache.lastUnescapedDollar) {
+		cache.lastUnescapedDollar = getLastUnescapedToken(text, "$");
+	}
+	return cache.lastUnescapedDollar;
+}
+
+function getLastCloseParen(text: string, cache: InlineScanCache): number {
+	if (-2 === cache.lastCloseParen) {
+		cache.lastCloseParen = text.lastIndexOf(")");
+	}
+	return cache.lastCloseParen;
+}
 
 /**
- * CommonMark §4.6 Types 1–6 HTML blocks that would interrupt an open paragraph
- * if serialized at 0–3 spaces on a continuation line instead of staying inline.
+ * Classifies a valid League CommonMark 2.8.2 inline HTML token `[start, end)`
+ * (already matched by `matchLeagueHtmlInlineAt()` with lowercase tag names).
  */
-export function wouldRawHtmlInterruptParagraph(raw: string): boolean {
-	return matchHtmlBlockOpen(raw, false) !== null;
-}
-
-function execInlineHtmlOpenTag(
+function classifyLeagueHtmlToken(
 	line: string,
-	index: number,
-): RegExpExecArray | null {
-	INLINE_HTML_OPEN_TAG_STICKY.lastIndex = index;
-	return INLINE_HTML_OPEN_TAG_STICKY.exec(line);
-}
-
-function execInlineHtmlCloseTag(
-	line: string,
-	index: number,
-): RegExpExecArray | null {
-	INLINE_HTML_CLOSE_TAG_STICKY.lastIndex = index;
-	return INLINE_HTML_CLOSE_TAG_STICKY.exec(line);
-}
-
-function isTableCellPipeAt(text: string, index: number): boolean {
-	return text[index] === "|" && (index === 0 || text[index - 1] !== "\\");
-}
-
-function hasUnescapedTablePipeInSlice(
-	scanLine: string,
 	start: number,
 	end: number,
-): boolean {
-	for (let i = start; i < end; i += 1) {
-		if (isTableCellPipeAt(scanLine, i)) return true;
+): Readonly<{ kind: "close" | "open" | "other"; tagName: string }> {
+	const first = line.charCodeAt(start + 1);
+	if (47 /* / */ === first) {
+		let p = start + 2;
+		while (p < end && isAsciiLowerAlnumOrHyphenCode(line.charCodeAt(p))) p += 1;
+		return { kind: "close", tagName: line.slice(start + 2, p) };
+	}
+	if (isAsciiLowerCode(first)) {
+		if (47 /* / */ === line.charCodeAt(end - 2)) {
+			return { kind: "other", tagName: "" };
+		}
+		let p = start + 2;
+		while (p < end && isAsciiLowerAlnumOrHyphenCode(line.charCodeAt(p))) p += 1;
+		return { kind: "open", tagName: line.slice(start + 1, p) };
+	}
+	return { kind: "other", tagName: "" };
+}
+
+function hasUnescapedPipe(text: string): boolean {
+	for (let i = 0; i < text.length; i += 1) {
+		if (text[i] === "|" && !hasOddPrecedingBackslashes(text, i)) {
+			return true;
+		}
 	}
 	return false;
 }
 
-function isEscapedAt(text: string, index: number): boolean {
-	let slashes = 0;
-	for (let i = index - 1; i >= 0 && text[i] === "\\"; i -= 1) {
-		slashes += 1;
+function countNewlines(text: string): number {
+	let count = 0;
+	for (let i = 0; i < text.length; i += 1) {
+		if (10 /* \n */ === text.charCodeAt(i)) count += 1;
 	}
-	return slashes % 2 === 1;
+	return count;
 }
 
-function skipInlineCodeSpan(line: string, start: number): number {
+export function skipInlineCodeSpan(
+	line: string,
+	start: number,
+	cache?: InlineScanCache,
+): number {
 	const length = line.length;
 	let tickEnd = start;
-	while (tickEnd < length && line[tickEnd] === "`") tickEnd += 1;
+	while (tickEnd < length && 96 /* ` */ === line.charCodeAt(tickEnd)) {
+		tickEnd += 1;
+	}
 	const tickLen = tickEnd - start;
+	if (cache) {
+		let buckets = cache.backtickBucketsBySize;
+		if (!buckets) {
+			buckets = indexBacktickRunsByLength(line);
+			cache.backtickBucketsBySize = buckets;
+		}
+		const closeStart = findNextBacktickCloser(buckets, tickLen, tickEnd, true);
+		return closeStart >= 0 ? closeStart + tickLen : tickEnd;
+	}
 	const delimiter = "`".repeat(tickLen);
 	let searchFrom = tickEnd;
 	while (searchFrom < length) {
 		const found = line.indexOf(delimiter, searchFrom);
 		if (found < 0) return tickEnd;
-		const beforeIsTick = found > 0 && line[found - 1] === "`";
+		const beforeIsTick = found > 0 && 96 === line.charCodeAt(found - 1);
 		const afterIsTick =
-			found + tickLen < length && line[found + tickLen] === "`";
+			found + tickLen < length && 96 === line.charCodeAt(found + tickLen);
 		if (!beforeIsTick && !afterIsTick) return found + tickLen;
 		searchFrom = found + 1;
 	}
 	return tickEnd;
 }
 
-function matchCommonMarkInlineHtmlLength(
-	scanLine: string,
+/**
+ * Matches a recognized inline math span starting at `index` (`\(...\)`,
+ * `\[...\]`, `$$...$$`, or single-line `$...$`) with exact odd-backslash
+ * guards, returning its exclusive end offset or `-1`. Uses `cache` to guarantee
+ * strict O(N) performance on unclosed delimiters.
+ */
+function matchInlineMathEnd(
+	text: string,
 	index: number,
-	scanState: InlineHtmlScanState,
+	isTableRow = false,
+	cache?: InlineScanCache,
 ): number {
-	if (scanLine[index] !== "<") return 0;
-	const next = scanLine[index + 1];
-	if (next === "!") {
-		if (scanLine.startsWith("<!--", index)) {
-			if (scanLine.startsWith("<!-->", index)) return 5;
-			if (scanLine.startsWith("<!--->", index)) return 6;
-			if (!scanState.noCommentClose) {
-				const closePos = scanLine.indexOf("-->", index + 4);
-				if (closePos >= 0) return closePos + 3 - index;
-				scanState.noCommentClose = true;
-			}
-			return 0;
-		}
-		if (scanLine.startsWith("<![CDATA[", index)) {
-			if (!scanState.noCdataClose) {
-				const closePos = scanLine.indexOf("]]>", index + 9);
-				if (closePos >= 0) return closePos + 3 - index;
-				scanState.noCdataClose = true;
-			}
-			return 0;
-		}
-		INLINE_HTML_DECLARATION_NAME_STICKY.lastIndex = index;
-		const declName = INLINE_HTML_DECLARATION_NAME_STICKY.exec(scanLine);
-		if (declName && !scanState.noAngleClose) {
-			const closePos = scanLine.indexOf(">", index + declName[0].length);
-			if (closePos >= 0) return closePos + 1 - index;
-			scanState.noAngleClose = true;
-		}
-		return 0;
-	}
-	if (next === "?") {
-		if (!scanState.noPiClose) {
-			const closePos = scanLine.indexOf("?>", index + 2);
-			if (closePos >= 0) return closePos + 2 - index;
-			scanState.noPiClose = true;
-		}
-		return 0;
-	}
-	if (next === "/") {
-		return execInlineHtmlCloseTag(scanLine, index)?.[0].length ?? 0;
-	}
-	return execInlineHtmlOpenTag(scanLine, index)?.[0].length ?? 0;
-}
+	const length = text.length;
+	const ch = text[index] ?? "";
 
-/**
- * Scans `scanLine` from `fromIndex` for paired `<targetTag>...</targetTag>`
- * tokens (respecting backticks and GFM table pipes). When `stopAtFirstClose`
- * is true, resolves only the opening tag at `fromIndex` without allocating a
- * map; otherwise builds the full O(L) open → close map on the first mismatch.
- */
-function scanPairedTagMatches(
-	scanLine: string,
-	fromIndex: number,
-	targetTag: string,
-	isTableRow: boolean,
-	firstOpenEnd: number,
-): number | Map<number, number> {
-	const length = scanLine.length;
-	const singlePass = firstOpenEnd >= 0;
-	let depth = 1;
-	const openStack: number[] = [];
-	const closeByOpen = singlePass ? null : new Map<number, number>();
-	let scan = singlePass ? firstOpenEnd : fromIndex;
-
-	while (scan < length) {
-		const ch = scanLine[scan] ?? "";
-		if (ch === "`" && !isEscapedAt(scanLine, scan)) {
-			const codeEnd = skipInlineCodeSpan(scanLine, scan);
-			if (isTableRow && hasUnescapedTablePipeInSlice(scanLine, scan, codeEnd)) {
-				if (singlePass) return -1;
-				openStack.length = 0;
-			}
-			scan = codeEnd;
-			continue;
-		}
-		if (isTableRow && isTableCellPipeAt(scanLine, scan)) {
-			if (singlePass) return -1;
-			openStack.length = 0;
-			scan += 1;
-			continue;
-		}
-		if (ch === "<" && !isEscapedAt(scanLine, scan)) {
-			const nestedClose = execInlineHtmlCloseTag(scanLine, scan);
-			if (nestedClose?.[1]?.toLowerCase() === targetTag) {
-				const closeEnd = scan + nestedClose[0].length;
-				if (singlePass) {
-					depth -= 1;
-					if (depth === 0) return closeEnd;
-				} else if (openStack.length > 0) {
-					const openPos = openStack.pop();
-					if (openPos !== undefined) closeByOpen?.set(openPos, closeEnd);
-				}
-				scan = closeEnd;
-				continue;
-			}
-			const nestedOpen = execInlineHtmlOpenTag(scanLine, scan);
-			if (
-				nestedOpen?.[1]?.toLowerCase() === targetTag &&
-				nestedOpen[2] !== "/"
-			) {
-				const openLen = nestedOpen[0].length;
-				if (
-					isTableRow &&
-					hasUnescapedTablePipeInSlice(scanLine, scan, scan + openLen)
-				) {
-					if (singlePass) return -1;
-					openStack.length = 0;
-					scan += 1;
-					continue;
-				}
-				if (singlePass) depth += 1;
-				else openStack.push(scan);
-				scan += openLen;
-				continue;
-			}
-		}
-		scan += 1;
-	}
-	return singlePass ? -1 : (closeByOpen ?? new Map<number, number>());
-}
-
-function matchAllowedInlineHtmlEnd(
-	scanLine: string,
-	start: number,
-	isTableRow: boolean,
-	pairedTagCloseMaps: Map<string, Map<number, number>>,
-): number {
-	const closeOnly = execInlineHtmlCloseTag(scanLine, start);
 	if (
-		closeOnly?.[1] &&
-		PAIRED_INLINE_HTML_TAGS.has(closeOnly[1].toLowerCase())
+		ch === "\\" &&
+		text[index + 1] === "(" &&
+		!hasOddPrecedingBackslashes(text, index)
 	) {
-		return start + closeOnly[0].length;
-	}
-	const openMatch = execInlineHtmlOpenTag(scanLine, start);
-	if (
-		!openMatch?.[1] ||
-		!PAIRED_INLINE_HTML_TAGS.has(openMatch[1].toLowerCase()) ||
-		(isTableRow &&
-			hasUnescapedTablePipeInSlice(
-				scanLine,
-				start,
-				start + openMatch[0].length,
-			))
-	) {
-		return -1;
-	}
-	const openEnd = start + openMatch[0].length;
-	if (openMatch[2] === "/") return openEnd;
-	const targetTag = openMatch[1].toLowerCase();
-	const cachedMap = pairedTagCloseMaps.get(targetTag);
-	if (cachedMap !== undefined) return cachedMap.get(start) ?? openEnd;
-
-	const matchedEnd = scanPairedTagMatches(
-		scanLine,
-		start,
-		targetTag,
-		isTableRow,
-		openEnd,
-	);
-	if (typeof matchedEnd === "number" && matchedEnd > start) {
-		return matchedEnd;
-	}
-	const builtMap = scanPairedTagMatches(
-		scanLine,
-		start,
-		targetTag,
-		isTableRow,
-		-1,
-	);
-	if (builtMap instanceof Map) {
-		pairedTagCloseMaps.set(targetTag, builtMap);
-	}
-	return openEnd;
-}
-
-function resolveInlineScanLine(
-	line: string,
-	mathRanges: ReadonlyArray<PhpMarkdownMathRange>,
-	maskedLine?: string,
-): string {
-	if (mathRanges.length === 0) return line;
-	if (
-		maskedLine !== undefined &&
-		maskedLine.length === line.length &&
-		!maskedLine.includes("\n")
-	) {
-		return maskedLine;
-	}
-	const parts: string[] = [];
-	let cursor = 0;
-	for (let i = 0; i < mathRanges.length; i += 1) {
-		const range = mathRanges[i];
-		if (!range) continue;
-		const from = Math.max(cursor, range.from);
-		const to = Math.min(line.length, range.to);
-		if (to <= from) continue;
-		if (from > cursor) parts.push(line.slice(cursor, from));
-		const len = to - from;
-		parts.push(len >= 3 ? `M${"_".repeat(len - 2)}M` : "M".repeat(len));
-		cursor = to;
-	}
-	if (cursor < line.length) parts.push(line.slice(cursor));
-	return parts.join("");
-}
-
-function skipLinkWs(text: string, pos: number): number {
-	let p = pos;
-	while (p < text.length) {
-		const ch = text[p];
-		if (ch === " " || ch === "\t" || ch === "\n") p += 1;
-		else break;
-	}
-	return p;
-}
-
-/**
- * Parses a CommonMark §6.3 inline link tail `(...)` starting at `openParenIndex`
- * on math-masked `scanLine`: optional `<...>` or balanced bare destination (up
- * to depth 32, no whitespace/controls) + optional quoted title (`"..."`,
- * `'...'`, or `(...)`), never crossing unescaped GFM table cell pipes outside
- * math. Returns the end offset after `)`, or -1 if invalid.
- */
-function parseInlineLinkTail(
-	scanLine: string,
-	openParenIndex: number,
-	isTableRow: boolean,
-	scanState: LinkTailScanState,
-): number {
-	const length = scanLine.length;
-	let pos = skipLinkWs(scanLine, openParenIndex + 1);
-	if (pos >= length) return -1;
-	if (scanLine[pos] === ")") return pos + 1;
-
-	let hasDest = false;
-	if (scanLine[pos] === "<") {
-		if (scanState.noAngleClose) return -1;
-		pos += 1;
-		let closedAngle = false;
-		while (pos < length) {
-			if (isTableRow && isTableCellPipeAt(scanLine, pos)) return -1;
-			const ch = scanLine[pos];
-			if (ch === "\\") {
-				if (pos + 1 < length && scanLine[pos + 1] !== "\n") {
-					pos += 2;
-					continue;
-				}
-				return -1;
-			}
-			if (ch === "<" || ch === "\n") return -1;
-			if (ch === ">") {
-				pos += 1;
-				closedAngle = true;
-				break;
-			}
-			pos += 1;
-		}
-		if (!closedAngle) {
-			if (!isTableRow) scanState.noAngleClose = true;
+		if (cache && getLastCloseParenMath(text, cache) <= index + 2) {
 			return -1;
 		}
-		hasDest = true;
-	} else {
-		const destStart = pos;
-		let parenDepth = 0;
-		while (pos < length) {
-			if (isTableRow && isTableCellPipeAt(scanLine, pos)) return -1;
-			const code = scanLine.charCodeAt(pos);
-			if (code <= 0x20 || code === 0x7f) break;
-			if (code === 0x5c) {
-				pos +=
-					pos + 1 < length &&
-					scanLine.charCodeAt(pos + 1) > 0x20 &&
-					scanLine.charCodeAt(pos + 1) !== 0x7f
-						? 2
-						: 1;
-				continue;
+		for (let j = index + 2; j < length - 1; j += 1) {
+			if (
+				text[j] === "\\" &&
+				text[j + 1] === ")" &&
+				!hasOddPrecedingBackslashes(text, j)
+			) {
+				return j > index + 2 ? j + 2 : -1;
 			}
-			if (code === 0x28) {
-				parenDepth += 1;
-				if (parenDepth > 32) return -1;
-			} else if (code === 0x29) {
-				if (parenDepth === 0) break;
-				parenDepth -= 1;
-			}
-			pos += 1;
 		}
-		if (parenDepth !== 0) return -1;
-		hasDest = pos > destStart;
+		return -1;
 	}
 
-	const afterDest = pos;
-	pos = skipLinkWs(scanLine, pos);
-	if (pos >= length) return -1;
-	if (scanLine[pos] === ")") return pos + 1;
-	if (!hasDest || pos === afterDest) return -1;
-
-	const quote = scanLine[pos];
-	if (quote !== '"' && quote !== "'" && quote !== "(") return -1;
 	if (
-		(quote === '"' && scanState.noDoubleQuoteClose) ||
-		(quote === "'" && scanState.noSingleQuoteClose) ||
-		(quote === "(" && scanState.noParenTitleClose)
+		ch === "\\" &&
+		text[index + 1] === "[" &&
+		!hasOddPrecedingBackslashes(text, index)
+	) {
+		if (cache && getLastCloseBracketMath(text, cache) <= index + 2) {
+			return -1;
+		}
+		for (let j = index + 2; j < length - 1; j += 1) {
+			if (
+				text[j] === "\\" &&
+				text[j + 1] === "]" &&
+				!hasOddPrecedingBackslashes(text, j)
+			) {
+				return j > index + 2 ? j + 2 : -1;
+			}
+		}
+		return -1;
+	}
+
+	if (ch === "$" && !hasOddPrecedingBackslashes(text, index)) {
+		if (text[index + 1] === "$") {
+			if (cache && getLastCloseDoubleDollar(text, cache) <= index + 2) {
+				return -1;
+			}
+			const closeDisplay = text.indexOf("$$", index + 2);
+			return closeDisplay > index + 2 ? closeDisplay + 2 : -1;
+		}
+		const openFollow = text[index + 1] ?? "";
+		if (openFollow.length > 0 && !/\s/.test(openFollow)) {
+			if (cache) {
+				if (index >= getLastUnescapedDollar(text, cache)) {
+					return -1;
+				}
+				const noCloser = cache.noSingleDollarCloser;
+				if (
+					noCloser !== null &&
+					noCloser.isTableRow === isTableRow &&
+					index >= noCloser.minIndex &&
+					index < noCloser.until
+				) {
+					return -1;
+				}
+			}
+			for (let j = index + 1; j < length; j += 1) {
+				const cur = text[j] ?? "";
+				if (cur === "\n") {
+					if (cache) {
+						cache.noSingleDollarCloser = {
+							isTableRow,
+							minIndex: index,
+							until: j,
+						};
+					}
+					return -1;
+				}
+				if (
+					isTableRow &&
+					cur === "|" &&
+					!hasOddPrecedingBackslashes(text, j)
+				) {
+					if (cache) {
+						cache.noSingleDollarCloser = {
+							isTableRow,
+							minIndex: index,
+							until: j,
+						};
+					}
+					return -1;
+				}
+				if (cur !== "$" || hasOddPrecedingBackslashes(text, j)) {
+					continue;
+				}
+				if (text[j + 1] === "$") {
+					return -1;
+				}
+				const before = text[j - 1] ?? "";
+				const after = text[j + 1] ?? "";
+				if (/\s/.test(before) || /[0-9]/.test(after)) {
+					return -1;
+				}
+				return j > index + 1 ? j + 1 : -1;
+			}
+			if (cache) {
+				cache.noSingleDollarCloser = {
+					isTableRow,
+					minIndex: index,
+					until: length,
+				};
+			}
+		}
+	}
+
+	return -1;
+}
+
+/**
+ * Canonical single-dispatch inline math / literal `$$` scanner shared by
+ * `matchLeagueInlineHtml`, `extractInlineProtectedSyntaxChunk`, and
+ * `stripInlineHtmlOutsideCode`.
+ */
+export function scanInlineMathOrDoubleDollar(
+	text: string,
+	index: number,
+	isTableRow: boolean,
+	cache?: InlineScanCache,
+): InlineMathScanResult | null {
+	const ch = text[index] ?? "";
+	if (
+		ch !== "$" &&
+		!(ch === "\\" && (text[index + 1] === "(" || text[index + 1] === "["))
+	) {
+		return null;
+	}
+	const mathEnd = matchInlineMathEnd(text, index, isTableRow, cache);
+	if (mathEnd > index) {
+		return { end: mathEnd, kind: "math" };
+	}
+	// Empty `$$$$` or unclosed `$$` never starts a single-dollar scan.
+	if (
+		ch === "$" &&
+		text[index + 1] === "$" &&
+		!hasOddPrecedingBackslashes(text, index)
+	) {
+		return { end: index + 2, kind: "literal-double-dollar" };
+	}
+	return null;
+}
+
+/**
+ * Scans a balanced link/image destination `]( ... )` starting at `index` (`]`),
+ * returning the exclusive end offset or `-1`. Caches unmatched open paren
+ * positions so repeated unclosed `](` runs stay strictly O(N).
+ */
+function scanBalancedLinkDestinationEnd(
+	chunk: string,
+	index: number,
+	cache: InlineScanCache,
+): number {
+	const openPos = index + 1;
+	if (
+		openPos + 1 > getLastCloseParen(chunk, cache) ||
+		cache.unmatchedLinkParenOpens?.has(openPos)
 	) {
 		return -1;
 	}
-	const closeQuote = quote === "(" ? ")" : quote;
-	pos += 1;
-	let closedTitle = false;
-	while (pos < length) {
-		if (isTableRow && isTableCellPipeAt(scanLine, pos)) return -1;
-		const ch = scanLine[pos];
-		if (ch === "\\") {
-			pos += 2;
+	const length = chunk.length;
+	const openPositions = [openPos];
+	let cursor = openPos + 1;
+	while (cursor < length && openPositions.length > 0) {
+		const cur = chunk[cursor] ?? "";
+		if (cur === "\\") {
+			cursor += 2;
 			continue;
 		}
-		if (ch === closeQuote) {
-			pos += 1;
-			closedTitle = true;
-			break;
+		if (cur === "(") {
+			openPositions.push(cursor);
+		} else if (cur === ")") {
+			openPositions.pop();
 		}
-		if (quote === "(" && ch === "(") return -1;
-		pos += 1;
+		cursor += 1;
 	}
-	if (!closedTitle) {
-		if (!isTableRow) {
-			if (quote === '"') scanState.noDoubleQuoteClose = true;
-			else if (quote === "'") scanState.noSingleQuoteClose = true;
-			else scanState.noParenTitleClose = true;
-		}
-		return -1;
+	if (openPositions.length === 0) {
+		return cursor;
 	}
-	pos = skipLinkWs(scanLine, pos);
-	return pos < length && scanLine[pos] === ")" ? pos + 1 : -1;
+	let unmatched = cache.unmatchedLinkParenOpens;
+	if (!unmatched) {
+		unmatched = new Set<number>();
+		cache.unmatchedLinkParenOpens = unmatched;
+	}
+	for (let k = 0; k < openPositions.length; k += 1) {
+		const pos = openPositions[k];
+		if (pos !== undefined) unmatched.add(pos);
+	}
+	return -1;
 }
 
-export function extractInlineProtectedSyntax(
+/**
+ * Matches a valid League CommonMark 2.8.2 inline HTML token at `start` (via
+ * `matchLeagueHtmlInlineAt()`, preserving exact case-sensitive tag/attribute
+ * rules) without crossing unescaped GFM table cell pipes. For non-self-closing
+ * open tags in `PAIRED_INLINE_HTML_TAGS`, scans forward with a strict O(N)
+ * unmatched-start set to capture the balanced paired span (supporting nested
+ * inline tags, math spans, and inline Markdown); otherwise returns the single
+ * matched HTML token.
+ */
+function matchLeagueInlineHtml(
 	line: string,
+	start: number,
+	isTableRow: boolean,
+	cache: InlineScanCache,
+): string | null {
+	const length = line.length;
+	const tokenEnd = matchLeagueHtmlInlineAt(
+		line,
+		start + 1,
+		length,
+		cache.angleCache,
+		cache.htmlDialect,
+	);
+	if (tokenEnd <= start) return null;
+	const initialToken = line.slice(start, tokenEnd);
+	if (isTableRow && hasUnescapedPipe(initialToken)) return null;
+
+	const classified = classifyLeagueHtmlToken(line, start, tokenEnd);
+	if (
+		classified.kind !== "open" ||
+		!PAIRED_INLINE_HTML_TAGS.has(classified.tagName)
+	) {
+		return initialToken;
+	}
+	const targetTag = classified.tagName;
+	if (cache.unclosedTagStarts.has(start)) {
+		return initialToken;
+	}
+
+	const openPositions = [start];
+	let cursor = tokenEnd;
+	while (cursor < length) {
+		const ch = line[cursor] ?? "";
+		if (ch === "`" && !hasOddPrecedingBackslashes(line, cursor)) {
+			const codeEnd = skipInlineCodeSpan(line, cursor, cache);
+			if (isTableRow && hasUnescapedPipe(line.slice(cursor, codeEnd))) {
+				break;
+			}
+			cursor = codeEnd;
+			continue;
+		}
+		if (isTableRow && ch === "|" && !hasOddPrecedingBackslashes(line, cursor)) {
+			break;
+		}
+		const mathScan = scanInlineMathOrDoubleDollar(
+			line,
+			cursor,
+			isTableRow,
+			cache,
+		);
+		if (mathScan) {
+			if (
+				mathScan.kind === "math" &&
+				isTableRow &&
+				hasUnescapedPipe(line.slice(cursor, mathScan.end))
+			) {
+				break;
+			}
+			cursor = mathScan.end;
+			continue;
+		}
+		if (ch === "<" && !hasOddPrecedingBackslashes(line, cursor)) {
+			const nestedEnd = matchLeagueHtmlInlineAt(
+				line,
+				cursor + 1,
+				length,
+				cache.angleCache,
+				cache.htmlDialect,
+			);
+			if (nestedEnd > cursor) {
+				if (isTableRow && hasUnescapedPipe(line.slice(cursor, nestedEnd))) {
+					break;
+				}
+				const nested = classifyLeagueHtmlToken(line, cursor, nestedEnd);
+				if (nested.kind === "close" && nested.tagName === targetTag) {
+					openPositions.pop();
+					cursor = nestedEnd;
+					if (openPositions.length === 0) {
+						return line.slice(start, cursor);
+					}
+					continue;
+				}
+				if (nested.kind === "open" && nested.tagName === targetTag) {
+					openPositions.push(cursor);
+				}
+				cursor = nestedEnd;
+				continue;
+			}
+		}
+		cursor += 1;
+	}
+	for (let k = 0; k < openPositions.length; k += 1) {
+		const pos = openPositions[k];
+		if (pos !== undefined) cache.unclosedTagStarts.add(pos);
+	}
+	// Unmatched tag (or split across table cell pipes): protect only the tag
+	// itself so neighboring cells and inline text remain ordinary Markdown.
+	return initialToken;
+}
+
+/**
+ * Feature-private inline protected-syntax scanner for single-line or
+ * soft-wrapped prose chunks. Preserves exact per-output-line original line
+ * spans (`[startOffset, endOffset)`) when multiline inline HTML or math tokens
+ * span soft line breaks.
+ */
+export function extractInlineProtectedSyntaxChunk(
+	chunk: string,
 	sentinel: string,
 	protectedInlines: Map<string, ProtectedInlineEntry>,
 	isTableRow: boolean,
-	allowRefDefDest = false,
-	indentedContinuationStart = -1,
-	mathRanges?: ReadonlyArray<PhpMarkdownMathRange>,
-	maskedLine?: string,
-): string {
-	const resolvedMathRanges = mathRanges ?? scanPhpMarkdownMathRanges(line);
-	if (
-		resolvedMathRanges.length === 0 &&
-		!line.includes("<") &&
-		!line.includes("[^")
-	) {
-		return line;
-	}
+	containerContext?: InlineContainerContext,
+): PrescannedInlineLine[] {
+	const emitted: PrescannedInlineLine[] = [];
+	let currentOut = "";
+	let currentStartLine = 0;
+	let origLine = 0;
+	let index = 0;
+	const length = chunk.length;
+	const cache = createInlineScanCache(chunk);
+
+	const appendVerbatim = (slice: string): void => {
+		if (!slice.includes("\n")) {
+			currentOut += slice;
+			return;
+		}
+		const parts = slice.split("\n");
+		currentOut += parts[0] ?? "";
+		emitted.push({
+			endOffset: origLine + 1,
+			startOffset: currentStartLine,
+			text: currentOut,
+		});
+		for (let p = 1; p < parts.length - 1; p += 1) {
+			origLine += 1;
+			emitted.push({
+				endOffset: origLine + 1,
+				startOffset: origLine,
+				text: parts[p] ?? "",
+			});
+		}
+		origLine += 1;
+		currentOut = parts[parts.length - 1] ?? "";
+		currentStartLine = origLine;
+	};
+
 	const allocateToken = (
 		kind: ProtectedInlineKind,
 		rawMarkdown: string,
-		continuationIndent = false,
-	): string => {
+	): void => {
 		const token = `${sentinel}INL${protectedInlines.size}END`;
-		protectedInlines.set(
-			token,
-			continuationIndent
-				? { continuationIndent: true, kind, rawMarkdown }
-				: { kind, rawMarkdown },
-		);
-		return token;
-	};
-	if (
-		resolvedMathRanges.length > 0 &&
-		!line.includes("<") &&
-		!line.includes("[^") &&
-		!line.includes("`") &&
-		!line.includes("]")
-	) {
-		let fastResult = "";
-		let cursor = 0;
-		for (let i = 0; i < resolvedMathRanges.length; i += 1) {
-			const range = resolvedMathRanges[i];
-			if (!range || range.to <= cursor || range.from < cursor) continue;
-			if (range.from > cursor) fastResult += line.slice(cursor, range.from);
-			fastResult += allocateToken("math-inline", line.slice(range.from, range.to));
-			cursor = range.to;
+		const newlineCount = countNewlines(rawMarkdown);
+		let entry: ProtectedInlineEntry = { kind, rawMarkdown };
+		if (
+			kind === "raw-inline" &&
+			newlineCount > 0 &&
+			containerContext !== undefined
+		) {
+			const continuationPrefixes: string[] = [];
+			let hasNonStandardPrefix = false;
+			for (let offset = 1; offset <= newlineCount; offset += 1) {
+				const linePrefix =
+					containerContext.linePrefixes[origLine + offset] ?? "";
+				continuationPrefixes.push(linePrefix);
+				if (linePrefix !== containerContext.standardPrefix) {
+					hasNonStandardPrefix = true;
+				}
+			}
+			if (hasNonStandardPrefix) {
+				entry = {
+					containerSignature: containerContext.signature,
+					continuationPrefixes,
+					kind,
+					rawMarkdown,
+				};
+			}
 		}
-		return cursor < line.length ? fastResult + line.slice(cursor) : fastResult;
-	}
-	const scanLine = resolveInlineScanLine(line, resolvedMathRanges, maskedLine);
-	let result = "";
-	let index = 0;
-	const length = line.length;
-	let pairedTagCloseMaps: Map<string, Map<number, number>> | null = null;
-	let htmlScanState: InlineHtmlScanState | null = null;
-	let linkTailScanState: LinkTailScanState | null = null;
-	let noRefDestCloseAngle = false;
-	let mathCursor = 0;
+		protectedInlines.set(token, entry);
+		currentOut += token;
+		origLine += newlineCount;
+	};
 
 	while (index < length) {
-		if (resolvedMathRanges.length > 0) {
-			while (
-				mathCursor < resolvedMathRanges.length &&
-				(resolvedMathRanges[mathCursor]?.to ?? 0) <= index
-			) {
-				mathCursor += 1;
-			}
-			const activeMath = resolvedMathRanges[mathCursor];
-			if (activeMath && activeMath.from === index && activeMath.to > index) {
-				result += allocateToken(
-					"math-inline",
-					line.slice(activeMath.from, activeMath.to),
-				);
-				index = activeMath.to;
-				mathCursor += 1;
-				continue;
-			}
-		}
+		const ch = chunk[index] ?? "";
 
-		const ch = scanLine[index] ?? "";
-
-		if (ch === "`" && !isEscapedAt(scanLine, index)) {
-			const codeEnd = skipInlineCodeSpan(scanLine, index);
-			result += line.slice(index, codeEnd);
+		// Preserve inline code spans verbatim so math/footnotes inside backticks
+		// stay literal and never allocate sentinels.
+		if (ch === "`" && !hasOddPrecedingBackslashes(chunk, index)) {
+			const codeEnd = skipInlineCodeSpan(chunk, index, cache);
+			appendVerbatim(chunk.slice(index, codeEnd));
 			index = codeEnd;
 			continue;
 		}
 
+		// Link/image destinations and titles are never inline-protected here;
+		// sentinels inside `(...)` would leak into ProseMirror attributes.
 		if (
 			ch === "]" &&
-			scanLine[index + 1] === "(" &&
-			!isEscapedAt(scanLine, index)
+			chunk[index + 1] === "(" &&
+			!hasOddPrecedingBackslashes(chunk, index)
 		) {
-			if (linkTailScanState === null) {
-				linkTailScanState = {
-					noAngleClose: false,
-					noDoubleQuoteClose: false,
-					noParenTitleClose: false,
-					noSingleQuoteClose: false,
-				};
-			}
-			const endCursor = parseInlineLinkTail(
-				scanLine,
-				index + 1,
-				isTableRow,
-				linkTailScanState,
-			);
-			if (endCursor > index + 1) {
-				const firstOverlap = resolvedMathRanges[mathCursor];
-				if (!firstOverlap || firstOverlap.from >= endCursor) {
-					result += line.slice(index, endCursor);
-					index = endCursor;
-					continue;
-				}
-				let scanIdx = mathCursor;
-				let canProtectTail = true;
-				while (scanIdx < resolvedMathRanges.length) {
-					const range = resolvedMathRanges[scanIdx];
-					if (!range || range.from >= endCursor) break;
-					if (range.block || range.from < index || range.to > endCursor) {
-						canProtectTail = false;
-						break;
-					}
-					scanIdx += 1;
-				}
-				if (canProtectTail) {
-					let tailCursor = index;
-					while (mathCursor < scanIdx) {
-						const range = resolvedMathRanges[mathCursor];
-						if (range) {
-							if (range.from > tailCursor) {
-								result += line.slice(tailCursor, range.from);
-							}
-							result += allocateToken(
-								"math-inline",
-								line.slice(range.from, range.to),
-							);
-							tailCursor = range.to;
-						}
-						mathCursor += 1;
-					}
-					if (tailCursor < endCursor) {
-						result += line.slice(tailCursor, endCursor);
-					}
-					index = endCursor;
-					continue;
-				}
+			const destEnd = scanBalancedLinkDestinationEnd(chunk, index, cache);
+			if (destEnd > index) {
+				appendVerbatim(chunk.slice(index, destEnd));
+				index = destEnd;
+				continue;
 			}
 		}
 
-		if (
-			allowRefDefDest &&
-			!noRefDestCloseAngle &&
-			ch === "]" &&
-			scanLine[index + 1] === ":" &&
-			!isEscapedAt(scanLine, index)
-		) {
-			let cursor = index + 2;
-			while (
-				cursor < length &&
-				(scanLine[cursor] === " " || scanLine[cursor] === "\t")
-			) {
-				cursor += 1;
-			}
-			if (scanLine[cursor] === "<") {
-				let destEnd = cursor + 1;
-				let sawAngleClose = false;
-				while (destEnd < length) {
-					const cur = scanLine[destEnd] ?? "";
-					if (cur === "\\") {
-						destEnd += 2;
-						continue;
-					}
-					if (cur === "<" || cur === "\n") {
-						destEnd = -1;
-						break;
-					}
-					if (cur === ">") {
-						sawAngleClose = true;
-						destEnd += 1;
-						break;
-					}
-					destEnd += 1;
-				}
-				if (sawAngleClose && destEnd > cursor + 1) {
-					result += line.slice(index, destEnd);
-					index = destEnd;
-					continue;
-				}
-				if (destEnd >= length) noRefDestCloseAngle = true;
+		// GFM table cells: a literal `<br>` is a visual hard break, while an
+		// escaped `\<br\>` stays literal text (matching TableCellBreakParser).
+		if (isTableRow && ch === "<" && !hasOddPrecedingBackslashes(chunk, index)) {
+			TABLE_BR_STICKY.lastIndex = index;
+			const brMatch = TABLE_BR_STICKY.exec(chunk);
+			if (brMatch) {
+				currentOut += `${sentinel}BREND`;
+				index += brMatch[0].length;
+				continue;
 			}
 		}
 
-		if (
-			isTableRow &&
-			ch === "<" &&
-			!isEscapedAt(scanLine, index) &&
-			scanLine.startsWith("<br>", index)
-		) {
-			result += `${sentinel}BREND`;
-			index += 4;
+		// Inline LaTeX math: \(...\), \[...\], $$...$$, and single-line $...$
+		const mathScan = scanInlineMathOrDoubleDollar(
+			chunk,
+			index,
+			isTableRow,
+			cache,
+		);
+		if (mathScan) {
+			if (mathScan.kind === "math") {
+				allocateToken("math-inline", chunk.slice(index, mathScan.end));
+			} else {
+				currentOut += "$$";
+			}
+			index = mathScan.end;
 			continue;
 		}
 
+		// Footnote reference: [^label]
 		if (
 			ch === "[" &&
-			scanLine[index + 1] === "^" &&
-			!isEscapedAt(scanLine, index)
+			chunk[index + 1] === "^" &&
+			!hasOddPrecedingBackslashes(chunk, index)
 		) {
 			FOOTNOTE_REF_STICKY.lastIndex = index;
-			const match = FOOTNOTE_REF_STICKY.exec(scanLine);
+			const match = FOOTNOTE_REF_STICKY.exec(chunk);
 			if (match) {
-				const afterChar = scanLine[index + match[0].length];
+				const afterChar = chunk[index + match[0].length];
 				if (afterChar !== ":" && afterChar !== "(" && afterChar !== "[") {
-					result += allocateToken(
-						"footnote-ref",
-						line.slice(index, index + match[0].length),
-					);
+					allocateToken("footnote-ref", match[0]);
 					index += match[0].length;
 					continue;
 				}
 			}
 		}
 
-		if (ch === "<" && !isEscapedAt(scanLine, index)) {
-			const fromContinuationIndent =
-				indentedContinuationStart >= 0 && index === indentedContinuationStart;
-			if (pairedTagCloseMaps === null) {
-				pairedTagCloseMaps = new Map<string, Map<number, number>>();
-			}
-			const pairedEnd = matchAllowedInlineHtmlEnd(
-				scanLine,
+		// Valid League CommonMark 2.8.2 inline HTML tokens (balanced paired tags
+		// like `<u>text</u>`, `<u>*italic*</u>`, `<sub>2</sub>`, `<kbd>⌘</kbd>`,
+		// plus any single open/close tag, HTML comment including `<!-->`/`<!--->`,
+		// processing instruction, declaration, or `<![CDATA[...]]>`): preserve
+		// verbatim as a protected inline atom without crossing table cell pipes or
+		// projecting fake math atoms inside raw HTML attributes.
+		if (ch === "<" && !hasOddPrecedingBackslashes(chunk, index)) {
+			const matchedHtml = matchLeagueInlineHtml(
+				chunk,
 				index,
 				isTableRow,
-				pairedTagCloseMaps,
+				cache,
 			);
-			if (pairedEnd > index) {
-				result += allocateToken(
-					"raw-inline",
-					line.slice(index, pairedEnd),
-					fromContinuationIndent,
-				);
-				index = pairedEnd;
-				continue;
-			}
-			if (htmlScanState === null) {
-				htmlScanState = {
-					noAngleClose: false,
-					noCdataClose: false,
-					noCommentClose: false,
-					noPiClose: false,
-				};
-			}
-			const rawHtmlLen = matchCommonMarkInlineHtmlLength(
-				scanLine,
-				index,
-				htmlScanState,
-			);
-			if (
-				rawHtmlLen > 0 &&
-				!(
-					isTableRow &&
-					hasUnescapedTablePipeInSlice(scanLine, index, index + rawHtmlLen)
-				)
-			) {
-				result += allocateToken(
-					"raw-inline",
-					line.slice(index, index + rawHtmlLen),
-					fromContinuationIndent,
-				);
-				index += rawHtmlLen;
+			if (matchedHtml !== null) {
+				allocateToken("raw-inline", matchedHtml);
+				index += matchedHtml.length;
 				continue;
 			}
 		}
 
-		result += line[index] ?? "";
+		if (ch === "\n") {
+			emitted.push({
+				endOffset: origLine + 1,
+				startOffset: currentStartLine,
+				text: currentOut,
+			});
+			origLine += 1;
+			currentOut = "";
+			currentStartLine = origLine;
+		} else {
+			currentOut += ch;
+		}
 		index += 1;
 	}
 
-	return result;
+	emitted.push({
+		endOffset: origLine + 1,
+		startOffset: currentStartLine,
+		text: currentOut,
+	});
+	return emitted;
+}
+
+const INLINE_PROTECTED_TRIGGER = /[$\\<[]/;
+
+/** Feature-private single-line inline protected-syntax scanner for the prescanner. */
+export function extractInlineProtectedSyntax(
+	line: string,
+	sentinel: string,
+	protectedInlines: Map<string, ProtectedInlineEntry>,
+	isTableRow: boolean,
+): string {
+	if (!INLINE_PROTECTED_TRIGGER.test(line)) {
+		return line;
+	}
+	return extractInlineProtectedSyntaxChunk(
+		line,
+		sentinel,
+		protectedInlines,
+		isTableRow,
+	)
+		.map((entry) => entry.text)
+		.join("\n");
 }

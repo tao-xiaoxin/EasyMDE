@@ -7,7 +7,8 @@ import {
 	findEditorMarkdownPreviousBlock,
 } from "./editor-markdown-block-index";
 import type { EditorCodeContentTarget } from "./editor-code-content-target";
-import { lineIndexAt, linesOf, newlineFor } from "./editor-markdown-lines";
+import { linesOf, newlineFor } from "./editor-markdown-lines";
+import { buildNestedCodeParagraphInsertion } from "../../shared/markdown/markdown-nested-code-paragraph";
 import {
 	findMarkdownTable,
 	findMarkdownTableBlock,
@@ -291,6 +292,23 @@ function leadingNewlineCount(value: string, newline: string): number {
 	return count;
 }
 
+function trailingNewlineCount(
+	value: string,
+	end: number,
+	newline: string,
+): number {
+	let count = 0;
+	let offset = end;
+	while (
+		offset >= newline.length &&
+		value.startsWith(newline, offset - newline.length)
+	) {
+		count += 1;
+		offset -= newline.length;
+	}
+	return count;
+}
+
 function trimBlockInsertionText(value: string): string {
 	return value
 		.replace(/^(?:\r\n|\r|\n)+/u, "")
@@ -361,25 +379,6 @@ function validCodeInsertionTarget(
 	);
 }
 
-function linePrefixForCodeTarget(
-	value: string,
-	position: number,
-	kind: EditorCodeContentTarget["kind"],
-): string | null {
-	const lines = linesOf(value);
-	const line = lines[lineIndexAt(lines, Math.max(0, position - (position > 0 ? 1 : 0)))];
-	if (!line) return null;
-	const text = value.slice(line.start, line.end);
-	if ("fenced" === kind) {
-		const marker = text.search(/(?:`{3,}|~{3,})/u);
-		if (marker <= 0) return null;
-		return text.slice(0, marker);
-	}
-	const content = text.search(/\S/u);
-	if (content <= 0) return null;
-	return text.slice(0, content);
-}
-
 function insertParagraphAroundNestedCode(
 	value: string,
 	relative: "after" | "before",
@@ -391,26 +390,21 @@ function insertParagraphAroundNestedCode(
 		target.from < block.start ||
 		target.to > block.end ||
 		target.from > target.to
-	) return null;
-	const lines = linesOf(value);
-	const newline = newlineFor(value, lines);
-	const insertionPoint = "before" === relative ? target.from : target.to;
-	const prefix = linePrefixForCodeTarget(value, insertionPoint, target.kind);
-	if (!prefix || insertionPoint < block.start || insertionPoint > block.end) {
+	)
 		return null;
-	}
-	const insertion = "before" === relative
-		? prefix + newline
-		: newline + prefix;
-	const nextValue =
-		value.slice(0, insertionPoint) + insertion + value.slice(insertionPoint);
-	const nextPosition = insertionPoint + insertion.length;
+	const edit = buildNestedCodeParagraphInsertion(
+		value,
+		{ from: target.from, to: target.to },
+		relative,
+		{ from: block.start, to: block.end },
+	);
+	if (!edit) return null;
 	return createTextEdit(
 		value,
-		nextValue,
-		{ direction: "none", end: nextPosition, start: nextPosition },
-		insertionPoint,
-		insertionPoint,
+		edit.value,
+		edit.selection,
+		edit.changes.from,
+		edit.changes.to,
 	);
 }
 
@@ -470,14 +464,51 @@ export function insertParagraphRelative(
 	const lines = linesOf(value);
 	const insertionPoint = "before" === relative ? block.start : block.end;
 	const newline = newlineFor(value, lines);
-	const insertion =
-		"before" === relative && "thematic-break" === block.kind
-			? newline + newline
-			: newline;
+	const isBlankParagraph =
+		"paragraph" === block.kind &&
+		/^[ \t]*$/u.test(value.slice(block.start, block.end));
+	if (isBlankParagraph) {
+		const nextValue =
+			value.slice(0, insertionPoint) + newline + value.slice(insertionPoint);
+		const nextPosition =
+			"before" === relative ? insertionPoint : insertionPoint + newline.length;
+		return createTextEdit(
+			value,
+			nextValue,
+			{ direction: "none", end: nextPosition, start: nextPosition },
+			insertionPoint,
+			insertionPoint,
+		);
+	}
+	let beforePad: string;
+	let afterPad: string;
+	if ("before" === relative) {
+		const precedingNewlines = trailingNewlineCount(
+			value,
+			insertionPoint,
+			newline,
+		);
+		const prefixEnd = insertionPoint - precedingNewlines * newline.length;
+		const hasPrecedingContent =
+			prefixEnd > 0 && /\S/u.test(value.slice(0, prefixEnd));
+		beforePad = hasPrecedingContent
+			? newline.repeat(Math.max(0, 2 - precedingNewlines))
+			: "";
+		afterPad = newline + newline;
+	} else {
+		const suffix = value.slice(insertionPoint);
+		const trailingNewlines = leadingNewlineCount(suffix, newline);
+		const restAfterNewlines = suffix.slice(trailingNewlines * newline.length);
+		const hasFollowingContent = /\S/u.test(restAfterNewlines);
+		beforePad = newline + newline;
+		afterPad = hasFollowingContent
+			? newline.repeat(Math.max(0, 2 - trailingNewlines))
+			: "";
+	}
+	const insertion = beforePad + afterPad;
 	const nextValue =
 		value.slice(0, insertionPoint) + insertion + value.slice(insertionPoint);
-	const nextPosition =
-		"before" === relative ? insertionPoint : insertionPoint + insertion.length;
+	const nextPosition = insertionPoint + beforePad.length;
 	return createTextEdit(
 		value,
 		nextValue,

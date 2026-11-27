@@ -9,12 +9,8 @@ import {
 	syntaxTree,
 } from "@codemirror/language";
 import { EditorState } from "@codemirror/state";
-import {
-	MAX_MARKDOWN_PREVIEW_BYTES,
-	utf8ByteLength,
-} from "../../shared/utf8-byte-length";
 
-export const MAX_EDITOR_CODE_INDENTATION_BYTES = MAX_MARKDOWN_PREVIEW_BYTES;
+export const MAX_EDITOR_CODE_INDENTATION_BYTES = 1_048_576;
 export const EDITOR_CODE_INDENTATION_PARSE_TIMEOUT_MS = 50;
 
 export type EditorCodeIndentationLineRange = Readonly<{
@@ -102,6 +98,23 @@ function unavailable(
 	code: EditorCodeIndentationUnavailableCode,
 ): EditorCodeIndentationResult {
 	return { code, status: "unavailable" };
+}
+
+function utf8ByteLength(value: string): number {
+	let bytes = 0;
+	for (let index = 0; index < value.length; index += 1) {
+		const codePoint = value.codePointAt(index) ?? 0;
+		if (codePoint > 0xffff) index += 1;
+		bytes +=
+			codePoint <= 0x7f
+				? 1
+				: codePoint <= 0x7ff
+					? 2
+					: codePoint <= 0xffff
+						? 3
+						: 4;
+	}
+	return bytes;
 }
 
 function firstInfoToken(info: string | undefined): string {

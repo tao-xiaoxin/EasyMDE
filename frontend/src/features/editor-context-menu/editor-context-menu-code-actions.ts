@@ -76,10 +76,13 @@ function editorCodeContentLineRange(
 		);
 	});
 	if (!rows.length || selection.start >= selection.end) return null;
-	return {
-		end: Math.max(...rows.map((row) => row.contentLine)) + 1,
-		start: Math.min(...rows.map((row) => row.contentLine))
-	};
+	let start = Number.POSITIVE_INFINITY;
+	let end = Number.NEGATIVE_INFINITY;
+	for (const row of rows) {
+		if (row.contentLine < start) start = row.contentLine;
+		if (row.contentLine > end) end = row.contentLine;
+	}
+	return { end: end + 1, start };
 }
 
 function rebaseEditorCodeBodyMap(

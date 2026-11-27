@@ -67,16 +67,26 @@ type ProtectedEnhancementWindow = Window & {
 	mermaid?: MermaidRuntime;
 };
 
-export function extractBlockMathTex(rawMarkdown: string): string {
+export function isDisplayMathMarkdown(rawMarkdown: string): boolean {
 	const trimmed = rawMarkdown.trim();
-	const fenced =
+	return (
 		trimmed.length >= 4 &&
 		((trimmed.startsWith("$$") && trimmed.endsWith("$$")) ||
-			(trimmed.startsWith("\\[") && trimmed.endsWith("\\]")));
-	return fenced ? trimmed.slice(2, -2).trim() : trimmed;
+			(trimmed.startsWith("\\[") && trimmed.endsWith("\\]")))
+	);
+}
+
+export function extractBlockMathTex(rawMarkdown: string): string {
+	const trimmed = rawMarkdown.trim();
+	return isDisplayMathMarkdown(trimmed)
+		? trimmed.slice(2, -2).trim()
+		: trimmed;
 }
 
 export function extractInlineMathTex(rawMarkdown: string): string {
+	if (isDisplayMathMarkdown(rawMarkdown)) {
+		return extractBlockMathTex(rawMarkdown);
+	}
 	const trimmed = rawMarkdown.trim();
 	if (
 		trimmed.startsWith("\\(") &&
@@ -97,22 +107,40 @@ export function extractInlineMathTex(rawMarkdown: string): string {
 }
 
 export function extractMermaidSource(rawMarkdown: string): string {
-	const normalized = rawMarkdown.replace(/\r\n?/g, "\n").trim();
-	if (normalized.length === 0) return "";
+	const normalized = rawMarkdown
+		.replace(/\r\n?/g, "\n")
+		.replace(/^(?:[ \t]*\n)+/, "")
+		.replace(/(?:\n[ \t]*)+$/, "");
+	if (normalized.trim().length === 0) return "";
 	const lines = normalized.split("\n");
-	const opener = /^ {0,3}(`{3,}|~{3,})[ \t]*mermaid\b.*$/i.exec(lines[0] ?? "");
-	if (!opener?.[1]) return normalized;
+	const opener = /^( {0,3})(`{3,}|~{3,})[ \t]*mermaid\b.*$/i.exec(
+		lines[0] ?? "",
+	);
+	if (!opener?.[2]) return normalized.trim();
+	const openerIndent = opener[1]?.length ?? 0;
 	const closerPattern =
-		opener[1][0] === "~" ? /^ {0,3}(~{3,})[ \t]*$/ : /^ {0,3}(`{3,})[ \t]*$/;
+		opener[2][0] === "~" ? /^ {0,3}(~{3,})[ \t]*$/ : /^ {0,3}(`{3,})[ \t]*$/;
 	const closer =
 		lines.length > 1 ? closerPattern.exec(lines[lines.length - 1] ?? "") : null;
 	const hasCloser = Boolean(
-		closer?.[1] && closer[1].length >= opener[1].length,
+		closer?.[1] && closer[1].length >= opener[2].length,
 	);
-	return lines
-		.slice(1, hasCloser ? lines.length - 1 : lines.length)
-		.join("\n")
-		.trim();
+	const bodyLines = lines.slice(1, hasCloser ? lines.length - 1 : lines.length);
+	const stripped =
+		openerIndent > 0
+			? bodyLines.map((line) => {
+					let cut = 0;
+					while (
+						cut < openerIndent &&
+						cut < line.length &&
+						32 === line.charCodeAt(cut)
+					) {
+						cut += 1;
+					}
+					return cut > 0 ? line.slice(cut) : line;
+				})
+			: bodyLines;
+	return stripped.join("\n").trim();
 }
 
 export function createRuntimeProvider(

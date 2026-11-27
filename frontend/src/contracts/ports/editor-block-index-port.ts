@@ -71,22 +71,6 @@ export type EditorMarkdownLinkCandidate = Readonly<{
 	to: number;
 }>;
 
-export type EditorMarkdownLinkTableCellContext = Readonly<{
-	cellEnd: number;
-	cellStart: number;
-	/**
-	 * Masked slice `[cellStart, cellEnd)` when PHP math masking altered the
-	 * table cell text; omitted when `source` already matches the cell text.
-	 */
-	maskedCellText?: string;
-	/**
-	 * Precomputed table-cell-unescaped query source when the candidate contains
-	 * `\|` outside PHP math spans; omitted when `source.slice(from, to)` is
-	 * already identical.
-	 */
-	unescapedSource?: string;
-}>;
-
 /** The worker result is source-free; the Root retains the canonical source. */
 export type EditorMarkdownBlockIndexData = Readonly<{
 	blocks: ReadonlyArray<EditorMarkdownSourceBlock>;
@@ -99,12 +83,6 @@ export type EditorMarkdownBlockIndexData = Readonly<{
 	 * re-deriving link candidates themselves.
 	 */
 	linkCandidates?: ReadonlyArray<EditorMarkdownLinkCandidate>;
-	/**
-	 * Precomputed PHP GFM table-cell context keyed by `candidate.from` for
-	 * link candidates inside PHP table rows. Omitted when no table-cell link
-	 * candidates exist (or in hand-written fixtures).
-	 */
-	linkTableCells?: ReadonlyMap<number, EditorMarkdownLinkTableCellContext>;
 	mathSpans: ReadonlyArray<EditorMarkdownMathSpan>;
 }>;
 
@@ -122,15 +100,8 @@ export type EditorMarkdownBlockIndexPackedData = Readonly<{
 	length: number;
 	linkCount: number;
 	links: ArrayBuffer;
-	linkTableCellCount?: number;
-	linkTableCells?: ArrayBuffer;
 	mathSpanCount: number;
 	mathSpans: ArrayBuffer;
-}>;
-
-export type EditorMarkdownLinkTableCellWireData = Readonly<{
-	linkTableCellCount: number;
-	linkTableCells: ArrayBuffer;
 }>;
 
 export type EditorBlockIndexWorkerData = EditorMarkdownBlockIndexPackedData;
@@ -190,23 +161,6 @@ export const EDITOR_BLOCK_INDEX_PACKED_MATH_FIELDS = 5;
 export const EDITOR_BLOCK_INDEX_PACKED_IMAGE_BLOCK_FIELDS = 3;
 export const EDITOR_BLOCK_INDEX_PACKED_IMAGE_RANGE_FIELDS = 2;
 export const EDITOR_BLOCK_INDEX_PACKED_LINK_FIELDS = 6;
-export const EDITOR_BLOCK_INDEX_LINK_TABLE_CELL_STRIDE = 3;
-const EDITOR_BLOCK_INDEX_PACKED_V3_KEYS: ReadonlyArray<string> = [
-	"blockCount",
-	"blocks",
-	"format",
-	"imageCount",
-	"images",
-	"length",
-	"linkCount",
-	"links",
-	"mathSpanCount",
-	"mathSpans",
-];
-const EDITOR_BLOCK_INDEX_LINK_TABLE_CELL_WIRE_KEYS: ReadonlyArray<string> = [
-	"linkTableCellCount",
-	"linkTableCells",
-];
 export const EDITOR_BLOCK_INDEX_LINK_KIND_LINK = 0;
 export const EDITOR_BLOCK_INDEX_LINK_KIND_AUTOLINK = 1;
 export const EDITOR_BLOCK_INDEX_IMAGE_STATUS_READY = 0;
@@ -293,66 +247,6 @@ export function resolveEditorBlockIndexWorkerUrl(
 	} catch {
 		throw new Error("editor-block-index-worker-url-invalid");
 	}
-}
-
-export const EDITOR_BLOCK_INDEX_PACKED_V3_WITH_TABLE_CELLS_KEYS: ReadonlyArray<string> =
-	[
-		...EDITOR_BLOCK_INDEX_PACKED_V3_KEYS,
-		...EDITOR_BLOCK_INDEX_LINK_TABLE_CELL_WIRE_KEYS,
-	];
-
-type EditorBlockIndexPackedKeyShape = "base" | "with-table-cells";
-
-export type EditorMarkdownTableCellMathRange = Readonly<{
-	block?: boolean;
-	displayMode?: boolean;
-	from: number;
-	to: number;
-}>;
-
-function hasOwnEditorBlockIndexKey(
-	value: Readonly<Record<string, unknown>>,
-	key: string,
-): boolean {
-	// biome-ignore lint/suspicious/noPrototypeBuiltins: Object.hasOwn is outside the supported browser baseline.
-	return Object.prototype.hasOwnProperty.call(value, key);
-}
-
-export function hasExactEditorBlockIndexKeys(
-	value: Readonly<Record<string, unknown>>,
-	keys: ReadonlyArray<string>,
-): boolean {
-	return (
-		Object.keys(value).length === keys.length &&
-		keys.every((key) => hasOwnEditorBlockIndexKey(value, key))
-	);
-}
-
-/**
- * Validates that a `packed-v3` worker payload has either the exact 10 base
- * keys (no table-cell wire extension) or the exact 12 keys (both table-cell
- * wire extension keys), rejecting partial or extra keys.
- */
-export function hasExactEditorBlockIndexPackedKeys(
-	value: Readonly<Record<string, unknown>>,
-): EditorBlockIndexPackedKeyShape | null {
-	const hasCount = hasOwnEditorBlockIndexKey(value, "linkTableCellCount");
-	const hasBuffer = hasOwnEditorBlockIndexKey(value, "linkTableCells");
-	if (!hasCount && !hasBuffer) {
-		return hasExactEditorBlockIndexKeys(
-			value,
-			EDITOR_BLOCK_INDEX_PACKED_V3_KEYS,
-		)
-			? "base"
-			: null;
-	}
-	if (!hasCount || !hasBuffer) return null;
-	return hasExactEditorBlockIndexKeys(
-		value,
-		EDITOR_BLOCK_INDEX_PACKED_V3_WITH_TABLE_CELLS_KEYS,
-	)
-		? "with-table-cells"
-		: null;
 }
 
 export type EditorMarkdownBlockIndexPort = Readonly<{

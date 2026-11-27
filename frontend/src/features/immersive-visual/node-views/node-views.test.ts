@@ -1,5 +1,4 @@
 import { history, undo, undoDepth } from "prosemirror-history";
-import type { Node as ProseMirrorNode } from "prosemirror-model";
 import type { Transaction } from "prosemirror-state";
 import { EditorState, NodeSelection, TextSelection } from "prosemirror-state";
 import {
@@ -23,7 +22,6 @@ import { serializeVisualDocToMarkdown } from "../markdown-serializer";
 import { visualEditorSchema } from "../visual-schema";
 import {
 	renderRawBlockPreview,
-	renderRawInlinePreview,
 	stripCommonMarkHtmlForPreview,
 } from "./protected-atom-preview-renderer";
 import {
@@ -84,7 +82,6 @@ function flushMicrotasks(): Promise<void> {
 function mountVisualEditor(
 	markdown: string,
 	options: Readonly<{
-		doc?: ProseMirrorNode;
 		editable?: boolean;
 		nodeViewsOptions?: VisualNodeViewsOptions;
 		onTransaction?: (transaction: Transaction) => void;
@@ -111,7 +108,7 @@ function mountVisualEditor(
 	plugins.push(tableEditing());
 
 	const state = EditorState.create({
-		doc: options.doc ?? parseMarkdownToVisualDoc(markdown),
+		doc: parseMarkdownToVisualDoc(markdown),
 		schema: visualEditorSchema,
 		plugins,
 	});
@@ -1860,112 +1857,52 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 	});
 
 	it("renders HTML container blocks, inline HTML tags, reference links, and TOC in main-baseline WYSIWYG style while keeping source editable", () => {
-		const detailsBlock = [
-			"<details>",
-			"<summary>Expand details</summary>",
-			"",
-			"Inside details paragraph.",
-			"",
-			"* Bullet one",
-			"",
-			"```bash",
-			'echo "hi"',
-			"```",
-			"",
-			"</details>",
-		].join("\n");
-		const divBlock = [
-			'<div align="center">',
-			"",
-			"### Centered Heading",
-			"",
-			"<kbd>Ctrl</kbd> + <kbd>S</kbd> and [Safe](https://example.com) and [Evil](javascript:alert(1)).",
-			"",
-			"</div>",
-		].join("\n");
 		const markdown = [
 			"## 1. Overview",
 			"[TOC]",
 			"Text <u>underlined</u>, <mark>marked</mark>, H<sub>2</sub>O, x<sup>2</sup>, <kbd>⌘</kbd> + <kbd>K</kbd>.",
-			detailsBlock,
-			divBlock,
+			[
+				"<details>",
+				"<summary>Expand details</summary>",
+				"",
+				"Inside details paragraph.",
+				"",
+				"* Bullet one",
+				"",
+				"```bash",
+				'echo "hi"',
+				"```",
+				"",
+				"</details>",
+			].join("\n"),
+			[
+				'<div align="center">',
+				"",
+				"### Centered Heading",
+				"",
+				"<kbd>Ctrl</kbd> + <kbd>S</kbd> and [Safe](https://example.com) and [Evil](javascript:alert(1)).",
+				"",
+				"</div>",
+			].join("\n"),
 			'[ref-a]: https://example.com "Example"',
 		].join("\n\n");
 
 		const view = mountVisualEditor(markdown);
 
-		// Paired inline HTML tags render their visible text without showing raw tags
-		// (including `<kbd>Ctrl</kbd>` / `<kbd>S</kbd>`, which are now real editable
-		// Markdown between blank-line-closed Type-6 `<div>` / `</div>` tags).
+		// Paired inline HTML tags render their visible text without showing raw tags.
 		const inlineRendered = Array.from(
 			view.dom.querySelectorAll(".easymde-protected-inline-rendered"),
 		).map((el) => el.textContent);
-		expect(inlineRendered).toEqual([
-			"underlined",
-			"marked",
-			"2",
-			"2",
-			"⌘",
-			"K",
-			"Ctrl",
-			"S",
-		]);
+		expect(inlineRendered).toEqual(["underlined", "marked", "2", "2", "⌘", "K"]);
 		expect(view.dom.textContent).not.toContain("<u>");
 		expect(view.dom.textContent).not.toContain("<kbd>");
 
-		// CommonMark Type 6 closes at blank lines: `<details>\n<summary>...`,
-		// `</details>`, `<div align="center">`, `</div>`, and `[ref-a]: ...`
-		// stay protected raw blocks while the blank-line-separated inner Markdown
-		// renders directly as editable top-level ProseMirror nodes.
+		// <details> renders its inner Markdown blocks cleanly (p, ul, Mac pre>code).
 		const rawBlocks = view.dom.querySelectorAll(
 			'[data-easymde-protected-kind="raw"]',
 		);
-		expect(rawBlocks).toHaveLength(5);
-		expect(view.dom.textContent).toContain("Inside details paragraph.");
-		expect(view.dom.querySelector(":scope > ul li")?.textContent).toBe(
-			"Bullet one",
-		);
-		expect(
-			view.dom.querySelector("pre.easymde-code-block code.language-bash")
-				?.textContent,
-		).toContain('echo "hi"');
-		expect(view.dom.querySelector("h3")?.textContent).toBe("Centered Heading");
-		const topSafeAnchor = view.dom.querySelector('a[href="https://example.com"]');
-		expect(topSafeAnchor?.textContent).toBe("Safe");
-		expect(view.dom.querySelector('a[href^="javascript:"]')).toBeNull();
-
-		// Reference link definitions collapse into a quiet chip.
-		expect(
-			rawBlocks[4]?.querySelector(".easymde-protected-meta-chip")?.textContent,
-		).toContain("[ref-a]");
-
-		// Clicking Edit on `<details>` still opens the untouched raw Markdown source.
-		const editBtn = rawBlocks[0]?.querySelector(
-			"button.easymde-protected-edit-btn",
-		) as HTMLButtonElement;
-		editBtn.click();
-		const textarea = rawBlocks[0]?.querySelector(
-			"textarea.easymde-protected-source-input",
-		) as HTMLTextAreaElement;
-		expect(textarea.value).toContain("<summary>Expand details</summary>");
-
-		// Multi-block raw cards (e.g. edited in raw card editor) still render inner
-		// Markdown safely in `ProtectedAtomNodeView` with non-navigating links.
-		const rawCardDoc = visualEditorSchema.nodes.doc.create(null, [
-			visualEditorSchema.nodes.protected_block.create({
-				kind: "raw",
-				rawMarkdown: detailsBlock,
-			}),
-			visualEditorSchema.nodes.protected_block.create({
-				kind: "raw",
-				rawMarkdown: divBlock,
-			}),
-		]);
-		const cardView = mountVisualEditor("", { doc: rawCardDoc });
-		const cardRawBlocks = cardView.dom.querySelectorAll(
-			'[data-easymde-protected-kind="raw"]',
-		);
-		const detailsPreview = cardRawBlocks[0]?.querySelector(
+		expect(rawBlocks).toHaveLength(3);
+		const detailsPreview = rawBlocks[0]?.querySelector(
 			".easymde-protected-preview",
 		);
 		expect(detailsPreview?.querySelector("p")?.textContent).toBe(
@@ -1974,15 +1911,15 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 		expect(detailsPreview?.querySelector("ul li")?.textContent).toBe(
 			"Bullet one",
 		);
+		// Tight list items inside raw blocks match CommonMark (`<li>text</li>`, no extra `<p>`).
 		expect(detailsPreview?.querySelector("ul li p")).toBeNull();
 		expect(
 			detailsPreview?.querySelector("pre.easymde-code-block code.language-bash")
 				?.textContent,
 		).toContain('echo "hi"');
 
-		const divPreview = cardRawBlocks[1]?.querySelector(
-			".easymde-protected-preview",
-		);
+		// <div align="center"> renders inner heading, strips inline <kbd> tags even at line start, and neutralizes javascript: links.
+		const divPreview = rawBlocks[1]?.querySelector(".easymde-protected-preview");
 		expect(divPreview?.querySelector("h3")?.textContent).toBe(
 			"Centered Heading",
 		);
@@ -1991,12 +1928,28 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 		expect(safeAnchor?.getAttribute("href")).toBe("https://example.com");
 		expect(divPreview?.querySelectorAll("a")).toHaveLength(1);
 		expect(divPreview?.querySelector('a[href^="javascript:"]')).toBeNull();
+		// Clicking a rendered anchor inside non-editing preview must not navigate.
 		const anchorClick = new MouseEvent("click", {
 			bubbles: true,
 			cancelable: true,
 		});
 		safeAnchor?.dispatchEvent(anchorClick);
 		expect(anchorClick.defaultPrevented).toBe(true);
+
+		// Reference link definitions collapse into a quiet chip.
+		expect(
+			rawBlocks[2]?.querySelector(".easymde-protected-meta-chip")?.textContent,
+		).toContain("[ref-a]");
+
+		// Clicking Edit on <details> still opens the untouched raw Markdown source.
+		const editBtn = rawBlocks[0]?.querySelector(
+			"button.easymde-protected-edit-btn",
+		) as HTMLButtonElement;
+		editBtn.click();
+		const textarea = rawBlocks[0]?.querySelector(
+			"textarea.easymde-protected-source-input",
+		) as HTMLTextAreaElement;
+		expect(textarea.value).toContain("<summary>Expand details</summary>");
 
 		// Canonical Markdown remains lossless.
 		expect(serializeVisualDocToMarkdown(view.state.doc)).toContain(
@@ -2008,44 +1961,25 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 	});
 
 	it("preserves paragraph text across Type-7 tags, closes paragraph after Setext headings, keeps leading indented code in raw blocks, renders inline emphasis inside tags, and updates live TOC with slug hrefs, inline-atom headings, and raw-card headings", () => {
-		const type7CardRaw = [
-			"<div>",
-			"",
-			"Text stays",
-			"<kbd>",
-			"Next line stays",
-			"",
-			"</div>",
-		].join("\n");
-		const setextCardRaw = [
-			"<div>",
-			"",
-			"Title",
-			"===",
-			"<kbd>",
-			"Stripped after setext",
-			"",
-			"</div>",
-		].join("\n");
-		const indentedCardRaw = ["<div>", "", "    indented code", "", "</div>"].join(
-			"\n",
-		);
-		const headingCardRaw = [
-			'<div align="center">',
-			"",
-			"### Centered Raw",
-			"",
-			"</div>",
-		].join("\n");
 		const markdown = [
 			"[TOC]",
 			"## Before",
 			"## Heading with <u>underlined text</u>",
 			"Inline <u>*italic*</u> and <u>nested <mark>inner</mark></u>.",
-			type7CardRaw,
-			setextCardRaw,
-			indentedCardRaw,
-			headingCardRaw,
+			["<div>", "", "Text stays", "<kbd>", "Next line stays", "", "</div>"].join(
+				"\n",
+			),
+			["<div>", "", "Title", "===", "<kbd>", "Stripped after setext", "", "</div>"].join(
+				"\n",
+			),
+			["<div>", "", "    indented code", "", "</div>"].join("\n"),
+			[
+				'<div align="center">',
+				"",
+				"### Centered Raw",
+				"",
+				"</div>",
+			].join("\n"),
 		].join("\n\n");
 
 		const view = mountVisualEditor(markdown);
@@ -2058,25 +1992,35 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 		expect(view.dom.textContent).not.toContain("*italic*");
 		expect(view.dom.textContent).toContain("nested inner");
 
-		// CommonMark Type 6 closes at blank lines, so `Text stays / Next line stays`,
-		// `<h1>Title</h1>`, indented code, and `<h3>Centered Raw</h3>` are top-level
-		// blocks, while `<kbd>\nStripped after setext` stays a Type-7 raw block.
+		// Type-7 standalone <kbd> inside a paragraph does NOT hide "Next line stays".
 		const rawBlocks = view.dom.querySelectorAll(
 			'[data-easymde-protected-kind="raw"]',
 		);
-		expect(rawBlocks).toHaveLength(9);
-		expect(view.dom.textContent).toContain("Text stays");
-		expect(view.dom.textContent).toContain("Next line stays");
-		expect(view.dom.querySelector("h1")?.textContent).toBe("Title");
-		expect(view.dom.textContent).not.toContain("Stripped after setext");
+		expect(rawBlocks).toHaveLength(4);
+		const type7Text =
+			rawBlocks[0]?.querySelector(".easymde-protected-preview p")
+				?.textContent ?? "";
+		expect(type7Text).toContain("Text stays");
+		expect(type7Text).toContain("Next line stays");
+
+		// After a Setext heading (`===`), standalone `<kbd>` starts a Type-7 HTML block and strips `Stripped after setext`.
+		const setextPreview = rawBlocks[1]?.querySelector(
+			".easymde-protected-preview",
+		);
+		expect(setextPreview?.querySelector("h1")?.textContent).toBe("Title");
+		expect(setextPreview?.textContent).not.toContain("Stripped after setext");
+
+		// Leading 4-space indented code block inside a raw block preserves its indentation.
 		expect(
-			view.dom.querySelector("pre.easymde-code-block code")?.textContent,
+			rawBlocks[2]?.querySelector(
+				".easymde-protected-preview pre.easymde-code-block code",
+			)?.textContent,
 		).toContain("indented code");
 
-		// TOC includes normal headings, inline-atom heading text/slugs, and headings between HTML tags.
-		const readTocLinks = (root: ParentNode = view.dom) =>
+		// TOC includes normal headings, inline-atom heading text/slugs, and raw-card headings.
+		const readTocLinks = () =>
 			Array.from(
-				root.querySelectorAll(
+				view.dom.querySelectorAll(
 					'[data-easymde-protected-kind="toc"] .easymde-toc ul li a',
 				),
 			).map((a) => ({
@@ -2089,52 +2033,6 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 				href: "#heading-with-underlined-text",
 				text: "Heading with underlined text",
 			},
-			{ href: "#centered-raw", text: "Centered Raw" },
-		]);
-
-		// Multi-block raw cards also preserve Type-7, Setext, indented code, and TOC heading extraction.
-		const rawCardDoc = visualEditorSchema.nodes.doc.create(null, [
-			visualEditorSchema.nodes.protected_block.create({
-				kind: "toc",
-				rawMarkdown: "[TOC]",
-			}),
-			visualEditorSchema.nodes.protected_block.create({
-				kind: "raw",
-				rawMarkdown: type7CardRaw,
-			}),
-			visualEditorSchema.nodes.protected_block.create({
-				kind: "raw",
-				rawMarkdown: setextCardRaw,
-			}),
-			visualEditorSchema.nodes.protected_block.create({
-				kind: "raw",
-				rawMarkdown: indentedCardRaw,
-			}),
-			visualEditorSchema.nodes.protected_block.create({
-				kind: "raw",
-				rawMarkdown: headingCardRaw,
-			}),
-		]);
-		const cardView = mountVisualEditor("", { doc: rawCardDoc });
-		const cardRawBlocks = cardView.dom.querySelectorAll(
-			'[data-easymde-protected-kind="raw"]',
-		);
-		const type7Text =
-			cardRawBlocks[0]?.querySelector(".easymde-protected-preview p")
-				?.textContent ?? "";
-		expect(type7Text).toContain("Text stays");
-		expect(type7Text).toContain("Next line stays");
-		const setextPreview = cardRawBlocks[1]?.querySelector(
-			".easymde-protected-preview",
-		);
-		expect(setextPreview?.querySelector("h1")?.textContent).toBe("Title");
-		expect(setextPreview?.textContent).not.toContain("Stripped after setext");
-		expect(
-			cardRawBlocks[2]?.querySelector(
-				".easymde-protected-preview pre.easymde-code-block code",
-			)?.textContent,
-		).toContain("indented code");
-		expect(readTocLinks(cardView.dom)).toEqual([
 			{ href: "#centered-raw", text: "Centered Raw" },
 		]);
 
@@ -2221,21 +2119,20 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 			span.textContent = tex;
 			target.replaceChildren(span);
 		});
-		const detailsRaw = [
-			"<details>",
-			"<summary>Math & HTML</summary>",
-			"",
-			'<span title="a > b">inside raw</span> with $E = mc^2$.',
-			"",
-			"## Dup",
-			"",
-			"## Dup",
-			"",
-			"</details>",
-		].join("\n");
 		const markdown = [
 			'Inline <span title="a > b">clean text</span> and <span title=\'x > y\'>single</span>.',
-			detailsRaw,
+			[
+				"<details>",
+				"<summary>Math & HTML</summary>",
+				"",
+				'<span title="a > b">inside raw</span> with $E = mc^2$.',
+				"",
+				"## Dup",
+				"",
+				"## Dup",
+				"",
+				"</details>",
+			].join("\n"),
 			"[TOC]",
 		].join("\n\n");
 
@@ -2250,33 +2147,11 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 		const inlineRendered = Array.from(
 			view.dom.querySelectorAll(".easymde-protected-inline-rendered"),
 		).map((el) => el.textContent);
-		expect(inlineRendered).toEqual(["clean text", "single", "inside raw"]);
+		expect(inlineRendered).toEqual(["clean text", "single"]);
 		expect(view.dom.textContent).not.toContain('b">');
 		expect(view.dom.textContent).not.toContain("y'>");
-		expect(view.dom.querySelector(".easymde-math .katex")?.textContent).toBe(
-			"E = mc^2",
-		);
 
-		// Multi-block raw card preview also strips quoted `>` attributes and renders nested math.
-		const rawCardDoc = visualEditorSchema.nodes.doc.create(null, [
-			visualEditorSchema.nodes.protected_block.create({
-				kind: "raw",
-				rawMarkdown: detailsRaw,
-			}),
-			visualEditorSchema.nodes.protected_block.create({
-				kind: "toc",
-				rawMarkdown: "[TOC]",
-			}),
-		]);
-		const rawCardView = mountVisualEditor("", {
-			doc: rawCardDoc,
-			nodeViewsOptions: {
-				protectedAtom: {
-					runtimeProvider: { getKatex: () => ({ render: katexRender }) },
-				},
-			},
-		});
-		const rawPreview = rawCardView.dom.querySelector(
+		const rawPreview = view.dom.querySelector(
 			'[data-easymde-protected-kind="raw"] .easymde-protected-preview',
 		);
 		expect(rawPreview?.textContent).toContain("inside raw");
@@ -2286,7 +2161,7 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 
 		// Duplicate headings inside raw blocks mirror TocGenerator::unique_heading_id (`-2`).
 		const tocHrefs = Array.from(
-			rawCardView.dom.querySelectorAll(
+			view.dom.querySelectorAll(
 				'[data-easymde-protected-kind="toc"] .easymde-toc ul li a',
 			),
 		).map((a) => a.getAttribute("href"));
@@ -2310,6 +2185,43 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 		expect(Array.from(nestedBalanced.protectedInlines.values())).toEqual([
 			{ kind: "raw-inline", rawMarkdown: "<span>" },
 			{ kind: "raw-inline", rawMarkdown: "<span> ok </span>" },
+		]);
+
+		// R37B #2: Strictly O(N) stack tracking when many unmatched opens precede a closing tag.
+		const manyOpensOneCloseStart = performance.now();
+		const manyOpensOneClose = prescanMarkdown(`${"<span>".repeat(4000)}</span>`);
+		expect(performance.now() - manyOpensOneCloseStart).toBeLessThan(150);
+		expect(manyOpensOneClose.protectedInlines.size).toBe(4000);
+		expect(Array.from(manyOpensOneClose.protectedInlines.values()).at(-1)).toEqual({
+			kind: "raw-inline",
+			rawMarkdown: "<span></span>",
+		});
+
+		const alternatingStart = performance.now();
+		const alternating = prescanMarkdown("<span><span>a</span>".repeat(2000));
+		expect(performance.now() - alternatingStart).toBeLessThan(150);
+		expect(alternating.protectedInlines.size).toBe(4000);
+		expect(Array.from(alternating.protectedInlines.values()).slice(0, 2)).toEqual([
+			{ kind: "raw-inline", rawMarkdown: "<span>" },
+			{ kind: "raw-inline", rawMarkdown: "<span>a</span>" },
+		]);
+
+		// R37A #1: Single-line prose keeps 1-to-1 outputLineRanges while multiline HTML merges only spanned lines.
+		const singleLineScan = prescanMarkdown("A <span>ok</span>\nPlain $z$");
+		expect(singleLineScan.outputLineRanges).toEqual([
+			{ end: 1, start: 0 },
+			{ end: 2, start: 1 },
+		]);
+		const multilineScan = prescanMarkdown(
+			'A <span\n title="$x$">text</span> and $z$\nPlain line',
+		);
+		expect(multilineScan.outputLineRanges).toEqual([
+			{ end: 2, start: 0 },
+			{ end: 3, start: 2 },
+		]);
+		expect(Array.from(multilineScan.protectedInlines.values())).toEqual([
+			{ kind: "raw-inline", rawMarkdown: '<span\n title="$x$">text</span>' },
+			{ kind: "math-inline", rawMarkdown: "$z$" },
 		]);
 	});
 
@@ -2369,31 +2281,21 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 			span.textContent = tex;
 			target.replaceChildren(span);
 		});
-		const nestedRawDoc = visualEditorSchema.nodes.doc.create(null, [
-			visualEditorSchema.nodes.paragraph.create(null, [
-				visualEditorSchema.text("Inline"),
-				visualEditorSchema.nodes.protected_inline.create({
-					kind: "raw-inline",
-					rawMarkdown: "<!-- secret -->",
-				}),
-				visualEditorSchema.text("note."),
-			]),
-			visualEditorSchema.nodes.protected_block.create({
-				kind: "raw",
-				rawMarkdown:
-					"<details>\n<summary>Nested</summary>\n\n$a + b$\n\n[^1]: Note body\n\n</details>",
-			}),
-		]);
-		const view = mountVisualEditor("", {
-			doc: nestedRawDoc,
-			nodeViewsOptions: {
-				protectedAtom: {
-					labels: { footnotes: "本地脚注", raw: "本地原始块" },
-					runtimePort,
-					runtimeProvider: { getKatex: () => ({ render: katexRender }) },
+		const view = mountVisualEditor(
+			[
+				"Inline<!-- secret -->note.",
+				"<details>\n<summary>Nested</summary>\n\n$a + b$\n\n[^1]: Note body\n\n</details>",
+			].join("\n\n"),
+			{
+				nodeViewsOptions: {
+					protectedAtom: {
+						labels: { footnotes: "本地脚注", raw: "本地原始块" },
+						runtimePort,
+						runtimeProvider: { getKatex: () => ({ render: katexRender }) },
+					},
 				},
 			},
-		});
+		);
 		const hiddenComment = view.dom.querySelector(
 			".easymde-protected-inline-hidden",
 		);
@@ -2439,26 +2341,8 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 				"script, iframe, object, embed, svg, style, form, base, meta, link",
 			),
 		).toHaveLength(0);
-		expect(root.querySelectorAll("img[src]")).toHaveLength(0);
+		expect(root.querySelectorAll("img")).toHaveLength(0);
 		expect(root.querySelectorAll("a")).toHaveLength(0);
-
-		// And when rendered inside a raw block preview card, unsafe images are omitted entirely.
-		const rawMaliciousPreview = renderRawBlockPreview(
-			document,
-			[
-				'<div onclick="alert(1)">',
-				"",
-				'<img src=x onerror=alert(1)> <svg/onload=alert(1)> <script>alert(1)</script>',
-				"",
-				"[BadLink](javascript:alert(1)) [BadVb](vbscript:msgbox(1)) ![BadImg](javascript:alert(1)) ![DataImg](data:text/html,<script>alert(1)</script>)",
-				"",
-				"</div>",
-			].join("\n"),
-			{ fallbackLabel: "Raw", footnotesLabel: "Footnotes", viewWindow: window },
-		);
-		const previewHost = document.createElement("div");
-		previewHost.appendChild(rawMaliciousPreview);
-		expect(previewHost.querySelectorAll("img, a, script, svg")).toHaveLength(0);
 
 		// Zero event-handler attributes (`on*`) or inline `style` injection on any element.
 		for (const el of Array.from(root.querySelectorAll("*"))) {
@@ -2476,807 +2360,801 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 		expect(root.textContent).toContain("Plain");
 	});
 
-	it("renders multi-line and unindented next-line reference definitions as collapsed meta chips", () => {
-		const markdown = [
-			"![x][img-title] and ![y][img-dest]",
-			'[img-title]: https://example.com/a.png\n"line 1\nline 2"',
-			'[img-dest]:\nhttps://example.com/b.png "cap"',
-		].join("\n\n");
+	it("matches PHP League CommonMark 2.8.2 on Type-7 tags, lazy blockquotes, list-exit, list-wrapped blockquotes, and <-independent multiline math (R38A #1, R38B #2)", () => {
+		const countMathInlines = (markdown: string): number => {
+			let count = 0;
+			parseMarkdownToVisualDoc(markdown).descendants((node) => {
+				if (
+					node.type.name === "protected_inline" &&
+					node.attrs.kind === "math-inline"
+				) {
+					count += 1;
+				}
+			});
+			return count;
+		};
 
-		const view = mountVisualEditor(markdown);
-		const chips = Array.from(
-			view.dom.querySelectorAll(".easymde-protected-meta-chip"),
-		).map((el) => el.textContent);
-		expect(chips).toHaveLength(2);
-		expect(chips[0]).toContain("[img-title]");
-		expect(chips[1]).toContain("[img-dest]");
+		// R38A #1a: HTML Block Type 7 (<audio>, <video>) cannot interrupt a paragraph; Types 1-6 do.
+		expect(countMathInlines("A <!--\n<audio>\n$x$\n--> and $x$")).toBe(1);
+		expect(countMathInlines("A <!--\n<video>\n$x$\n--> and $x$")).toBe(1);
+		expect(countMathInlines("A <!--\n<!DOCTYPE html>\n$x$\n--> and $x$")).toBe(
+			2,
+		);
+		// CommonMark §4.6 Type 6 (`</div>`) interrupts the paragraph and consumes
+		// until the next blank line (or EOF), matching PHP League CommonMark 2.8.2.
+		expect(countMathInlines("A <!--\n</div>\n$x$\n--> and $x$")).toBe(0);
+		expect(countMathInlines("A <!--\n</div>\n$x$\n\n--> and $z$")).toBe(1);
+
+		// R38A #1b: Lazy blockquote continuation keeps active quote depth; deeper/heading/blank break.
+		expect(countMathInlines("> A <!--\n notes\n> $x$\n> --> and $x$")).toBe(1);
+		expect(
+			countMathInlines("> > A <!--\n> notes\n> > $x$\n> > --> and $x$"),
+		).toBe(1);
+		expect(
+			countMathInlines("> A <!--\n> > nested\n> $x$\n> -->"),
+		).toBe(1);
+		expect(
+			countMathInlines("> A <!--\n# heading\n> $x$\n> -->"),
+		).toBe(1);
+		expect(countMathInlines("> A <!--\n\n> $x$\n> -->")).toBe(1);
+
+		// R38B #2.1: Container-exiting list markers interrupt paragraphs; non-1/empty inside list do not.
+		expect(countMathInlines("1. A <!--\n2. $x$\n--> and $z$")).toBe(2);
+		expect(countMathInlines("* A <!--\n*\n$x$\n--> and $z$")).toBe(2);
+		expect(countMathInlines("+ A <!--\n+\n$x$\n--> and $z$")).toBe(2);
+		expect(countMathInlines("1. A <!--\n   2. $x$\n   --> and $z$")).toBe(1);
+		expect(countMathInlines("+ A <!--\n  +\n  $x$\n  --> and $z$")).toBe(1);
+
+		// R38B #2.2: List-wrapped blockquote keeps 1 math span and exact nested structure.
+		const listQuoteMd = '- > A <span\n  >  title="$x$">text</span> and $z$';
+		const listQuoteDoc = parseMarkdownToVisualDoc(listQuoteMd);
+		expect(countMathInlines(listQuoteMd)).toBe(1);
+		expect(listQuoteDoc.firstChild?.type.name).toBe("bullet_list");
+		expect(listQuoteDoc.firstChild?.firstChild?.lastChild?.type.name).toBe(
+			"blockquote",
+		);
+
+		// R38B #2.3: Multiline math semantics are independent of `<` on line 0 and match PHP.
+		expect(countMathInlines("A < b and \\(x +\ny\\)")).toBe(1);
+		expect(countMathInlines("A and \\(x +\ny\\)")).toBe(1);
+		expect(countMathInlines("A < b and \\[x +\ny\\]")).toBe(1);
+		expect(countMathInlines("A and \\[x +\ny\\]")).toBe(1);
+		expect(countMathInlines("A < b and $$x +\ny$$")).toBe(1);
+		expect(countMathInlines("A and $$x +\ny$$")).toBe(1);
+		expect(countMathInlines("A < b and $x +\ny$")).toBe(0);
+		expect(countMathInlines("A and $x +\ny$")).toBe(0);
 	});
 
-	it("aligns stripCommonMarkHtmlForPreview Type 1 cross-tag closing and Type 6 tag list with PHP (Track B #11)", () => {
-		// Type 1 closes on any of </pre>, </script>, </style>, </textarea> (without space before >).
-		expect(stripCommonMarkHtmlForPreview("<pre>\n</script>\npara")).toBe("para");
-		expect(stripCommonMarkHtmlForPreview("<style>\n</pre>\npara")).toBe("para");
-		expect(stripCommonMarkHtmlForPreview("<textarea>\n</style>\npara")).toBe(
-			"para",
+	it("stays strictly O(N) on unclosed math, block-math, link-destination, and single-dollar runs (R38A #3, R38B #4)", () => {
+		const t1 = performance.now();
+		const r1 = prescanMarkdown(
+			`Text <span>example</span>\n${"\\(\n".repeat(32000)}`,
 		);
-		expect(stripCommonMarkHtmlForPreview("<pre>\n</script >\npara")).toBe("");
+		expect(performance.now() - t1).toBeLessThan(200);
+		expect(r1.protectedInlines.size).toBe(1);
 
-		// `<search>` is NOT a PHP CommonMark Type 6 block tag and does not interrupt a paragraph.
-		expect(stripCommonMarkHtmlForPreview("para\n<search>\nfoo")).toBe(
-			"para\nfoo",
+		const t2 = performance.now();
+		prescanMarkdown(`A < b\n${"\\[\n".repeat(4000)}`);
+		expect(performance.now() - t2).toBeLessThan(100);
+
+		const unclosedParenInSpan = `<span>${"\\(".repeat(4000)}</span>`;
+		const t3a = performance.now();
+		const r3a = prescanMarkdown(unclosedParenInSpan);
+		expect(performance.now() - t3a).toBeLessThan(100);
+		expect(r3a.protectedInlines.size).toBe(1);
+
+		const t3b = performance.now();
+		const r3b = stripCommonMarkHtmlForPreview(unclosedParenInSpan);
+		expect(performance.now() - t3b).toBeLessThan(100);
+		expect(r3b).toBe("\\(".repeat(4000));
+
+		const t4a = performance.now();
+		prescanMarkdown(`< ${"](".repeat(4000)}`);
+		expect(performance.now() - t4a).toBeLessThan(100);
+
+		const t4b = performance.now();
+		prescanMarkdown(`< ${"](".repeat(4000)})`);
+		expect(performance.now() - t4b).toBeLessThan(100);
+
+		const t5a = performance.now();
+		const r5a = prescanMarkdown(`${"$a ".repeat(4000)}\n$b$`);
+		expect(performance.now() - t5a).toBeLessThan(100);
+		expect(r5a.protectedInlines.size).toBe(1);
+
+		const t5b = performance.now();
+		const r5b = prescanMarkdown(`<span>${"$a ".repeat(4000)}</span>`);
+		expect(performance.now() - t5b).toBeLessThan(100);
+		expect(r5b.protectedInlines.size).toBe(1);
+
+		// R39A #3 & R39B #2.1: alternating list indents and lazy+indented block math stay strictly O(N).
+		const altIndentStart = performance.now();
+		prescanMarkdown(
+			`${"- A\n  \\[\n1. A\n   \\[\n".repeat(4000)}   \`\`\`\n   \`\`\`\n\\]`,
 		);
-		// Standalone `<search>` outside a paragraph is still a Type 7 HTML block.
-		expect(stripCommonMarkHtmlForPreview("<search>\nfoo")).toBe("");
+		expect(performance.now() - altIndentStart).toBeLessThan(1000);
+
+		const lazyIndentStart = performance.now();
+		prescanMarkdown(`- A < b\n${"  \\[\n\\[\n".repeat(4000)}  \`\`\`\n\\]`);
+		expect(performance.now() - lazyIndentStart).toBeLessThan(1000);
+
+		// R39B #2.2: unclosed HTML block tags and unclosed HTML comments stay strictly O(N).
+		const unclosedDivStart = performance.now();
+		prescanMarkdown("<div>\n".repeat(4000));
+		expect(performance.now() - unclosedDivStart).toBeLessThan(100);
+
+		const unclosedCommentStart = performance.now();
+		prescanMarkdown("<!--\n".repeat(4000));
+		expect(performance.now() - unclosedCommentStart).toBeLessThan(100);
+
+		// R39B #2.3: increasing unclosed backtick runs k = 1..400 stay strictly O(N).
+		const backtickParts: string[] = [];
+		for (let k = 1; k <= 400; k += 1) backtickParts.push("`".repeat(k));
+		const unclosedTicks = backtickParts.join(" ");
+		const ticksStart = performance.now();
+		prescanMarkdown(unclosedTicks);
+		expect(performance.now() - ticksStart).toBeLessThan(100);
 	});
 
-	it("strips CommonMark Types 3-5 HTML blocks, treats NBSP as non-blank, rejects <div/foo> as Type 6, and keeps uppercase inline tags literal (Track A #6 + Track B #7/#8)", () => {
-		// Type 3 (`<?` .. `?>`), including blockquote-prefixed raw blocks.
-		expect(
-			stripCommonMarkHtmlForPreview("> <?meta\n> Hidden\n> ?>\n> Visible"),
-		).toBe("> Visible");
-		expect(stripCommonMarkHtmlForPreview("<?meta\nHidden\n?>\nVisible")).toBe(
-			"Visible",
-		);
-		// Type 4 (`<![A-Za-z]` .. `>`).
-		expect(stripCommonMarkHtmlForPreview("<!DOCTYPE\nfoo\n>\nbar")).toBe("bar");
-		// Type 5 (`<![CDATA[` .. `]]>`, case-insensitive per PHP RegexHelper).
-		expect(stripCommonMarkHtmlForPreview("<![CDATA[\nfoo\n]]>\nbar")).toBe(
-			"bar",
-		);
-		expect(stripCommonMarkHtmlForPreview("<![cdata[\nfoo\n]]>\nbar")).toBe(
-			"bar",
-		);
-		// CommonMark §2.2 blank line: NBSP (`\u00a0`) does NOT close Type 6/7.
-		expect(
-			stripCommonMarkHtmlForPreview("<div>\n\u00a0\nHidden\n\nVisible"),
-		).toBe("Visible");
-		expect(
-			stripCommonMarkHtmlForPreview("> <div>\n> \u00a0\n> Hidden\n>\n> Visible"),
-		).toBe("> Visible");
-		// `<div/foo>` is NOT a Type 6 opener (`(?=\s|\/?>|$)`).
-		expect(stripCommonMarkHtmlForPreview("<div/foo>\nbar")).toBe(
-			"<div/foo>\nbar",
-		);
-		// Uppercase inline HTML tags stay literal (PHP HtmlInlineParser is lowercase-only),
-		// while standalone Type-7 blocks remain case-insensitive.
-		expect(stripCommonMarkHtmlForPreview("a <SPAN>b</SPAN> c")).toBe(
-			"a <SPAN>b</SPAN> c",
-		);
-		expect(stripCommonMarkHtmlForPreview('a <span CLASS="a">b</span> c')).toBe(
-			'a <span CLASS="a">b c',
-		);
-		expect(stripCommonMarkHtmlForPreview('a <A href="/x">b</A> c')).toBe(
-			'a <A href="/x">b</A> c',
-		);
-		expect(stripCommonMarkHtmlForPreview("<SPAN>\nhidden")).toBe("");
-
-		// Raw preview card renders `> <?meta\n> Hidden\n> ?>\n> Visible` without leaking `Hidden`.
-		const previewNode = renderRawBlockPreview(
-			document,
-			"> <?meta\n> Hidden\n> ?>\n> Visible",
-			{ fallbackLabel: "Raw", footnotesLabel: "Footnotes", viewWindow: window },
-		);
-		const host = document.createElement("div");
-		host.appendChild(previewNode);
-		expect(host.textContent).toContain("Visible");
-		expect(host.textContent).not.toContain("Hidden");
-	});
-
-	it("preserves backslash-escaped inline HTML/backticks and blockquote-nested indented code in raw preview stripping (PR-R22-A Track B #10)", () => {
-		// Backslash-escaped `<` stays literal instead of stripping `<span>`/`</span>`.
-		expect(stripCommonMarkHtmlForPreview("\\<span>hello\\</span>")).toBe(
-			"\\<span>hello\\</span>",
-		);
-		// Backslash-escaped backticks do NOT open a code span, so `<span>` IS stripped.
-		expect(stripCommonMarkHtmlForPreview("\\`<span>hello</span>\\`")).toBe(
-			"\\`hello\\`",
-		);
-		// Escaped backslash before `<` still strips `<span>`.
-		expect(stripCommonMarkHtmlForPreview("\\\\<span>hello</span>")).toBe(
-			"\\\\hello",
-		);
-		// Blockquote-nested indented code (`>     <span>code</span>`, 4+ cols after `> `) is NOT stripped.
-		expect(stripCommonMarkHtmlForPreview(">     <span>code</span>")).toBe(
-			">     <span>code</span>",
-		);
-		// Tab after `> ` advances only 2 columns (< 4), so it is NOT indented code and `<span>` IS stripped.
-		expect(stripCommonMarkHtmlForPreview("> \t<span>code</span>")).toBe(
-			"> \tcode",
-		);
-
-		// End-to-end rendered preview checks matching PHP MarkdownRenderer output.
-		const escapedHost = document.createElement("div");
-		escapedHost.appendChild(
-			renderRawBlockPreview(document, "\\<span>hello\\</span>", {
-				fallbackLabel: "Raw",
-				footnotesLabel: "Footnotes",
-				viewWindow: window,
-			}),
-		);
-		expect(escapedHost.textContent).toBe("<span>hello</span>");
-
-		const escapedTickHost = document.createElement("div");
-		escapedTickHost.appendChild(
-			renderRawBlockPreview(document, "\\`<span>hello</span>\\`", {
-				fallbackLabel: "Raw",
-				footnotesLabel: "Footnotes",
-				viewWindow: window,
-			}),
-		);
-		expect(escapedTickHost.textContent).toBe("`hello`");
-
-		const bqCodeHost = document.createElement("div");
-		bqCodeHost.appendChild(
-			renderRawBlockPreview(document, ">     <span>code</span>", {
-				fallbackLabel: "Raw",
-				footnotesLabel: "Footnotes",
-				viewWindow: window,
-			}),
-		);
-		expect(bqCodeHost.querySelector("blockquote pre code")?.textContent).toBe(
-			"<span>code</span>",
-		);
-
-		// Interleaved list + blockquote raw HTML block (`- > <div>\n  > hidden\n\n  > visible`)
-		// hides `hidden` and keeps `visible` rendered in the live ProseMirror DOM.
-		const interleavedView = mountVisualEditor(
-			"- > <div>\n  > hidden\n\n  > visible",
-		);
-		expect(interleavedView.dom.textContent).toContain("visible");
-		expect(interleavedView.dom.textContent).not.toContain("hidden");
-	});
-
-	it("delegates stripCommonMarkHtmlForPreview block classification to php-commonmark-block-engine for list indented code and container-bounded fences (PR-R23-A Track B #8)", () => {
-		// 1. List-item indented code preserves inline HTML literally (`-     code <span>x</span>`).
-		const listIndentedMd = "<div>a</div>\n\n-     code <span>x</span>";
-		expect(stripCommonMarkHtmlForPreview(listIndentedMd)).toBe(
-			"-     code <span>x</span>",
-		);
-		const listCodeHost = document.createElement("div");
-		listCodeHost.appendChild(
-			renderRawBlockPreview(document, listIndentedMd, {
-				fallbackLabel: "Raw",
-				footnotesLabel: "Footnotes",
-				viewWindow: window,
-			}),
-		);
-		expect(listCodeHost.querySelector("ul li pre code")?.textContent).toBe(
-			"code <span>x</span>",
-		);
-
-		// 2. Blockquote indented code, blockquote PI HTML block, Type 1 cross-tag close, and escaped HTML/backticks stay intact.
-		expect(stripCommonMarkHtmlForPreview(">     <span>code</span>")).toBe(
-			">     <span>code</span>",
-		);
-		expect(
-			stripCommonMarkHtmlForPreview("> <?meta\n> Hidden\n> ?>\n> Visible"),
-		).toBe("> Visible");
-		expect(stripCommonMarkHtmlForPreview("<pre>\n</script>\npara")).toBe("para");
-		expect(stripCommonMarkHtmlForPreview("\\<span>hello\\</span>")).toBe(
-			"\\<span>hello\\</span>",
-		);
-		expect(stripCommonMarkHtmlForPreview("\\`<span>hello</span>\\`")).toBe(
-			"\\`hello\\`",
-		);
-
-		// 3. Unclosed fences inside blockquotes/lists close when their container ends, so trailing inline HTML is stripped.
+	it("dispatches HTML blocks in stripCommonMarkHtmlForPreview via canonical matchLeagueHtmlBlockType (R39B #3)", () => {
+		// Type 6: <source> interrupts a paragraph and runs until blank line.
 		expect(
 			stripCommonMarkHtmlForPreview(
-				"> ```\n> <span>code</span>\n<span>outside</span>",
+				'Para\n<source src="x">\nstill html\n\nAfter',
 			),
-		).toBe("> ```\n> <span>code</span>\noutside");
+		).toBe("Para\n\nAfter");
+
+		// Not Type 6: <search> is Type 7 and cannot interrupt an open paragraph.
+		expect(
+			stripCommonMarkHtmlForPreview("Para\n<search>\nstill para"),
+		).toBe("Para\nstill para");
+
+		// Standalone <search> outside a paragraph starts a Type-7 block until blank line.
+		expect(
+			stripCommonMarkHtmlForPreview("<search>\nstill html\n\nAfter"),
+		).toBe("After");
+
+		// Type 3: processing instruction <? ... ?> interrupts paragraph and ends on ?>.
+		expect(
+			stripCommonMarkHtmlForPreview("Para\n<?php echo 1;\nstill pi ?>\nAfter"),
+		).toBe("Para\n\nAfter");
+
+		// Type 4: declaration <!DOCTYPE ...> interrupts paragraph and ends on >.
+		expect(
+			stripCommonMarkHtmlForPreview("Para\n<!DOCTYPE html>\nAfter"),
+		).toBe("Para\n\nAfter");
+
+		// Type 5: CDATA <![CDATA[ ... ]]> interrupts paragraph and ends on ]]>.
+		expect(
+			stripCommonMarkHtmlForPreview("Para\n<![CDATA[\nfoo\n]]>\nAfter"),
+		).toBe("Para\n\nAfter");
+
+		// R42A #3 + R42B #4: U+00A0 NBSP is not a CommonMark blank line and must
+		// not terminate an HTML Type-6 block in preview stripping.
+		expect(
+			stripCommonMarkHtmlForPreview("<div>\n\u00a0\n$x$\n</div>\n\n$z$"),
+		).toBe("$z$");
+
+		// R43B #1: Container-aware fences in stripCommonMarkHtmlForPreview.
 		expect(
 			stripCommonMarkHtmlForPreview(
-				"- ```\n  <span>code</span>\n<span>outside</span>",
+				"<div>\n\n```markdown\n> ```\n</div>\n```\n\nReal paragraph\n\n</div>",
 			),
-		).toBe("- ```\n  <span>code</span>\noutside");
+		).toBe("```markdown\n> ```\n</div>\n```\n\nReal paragraph");
+
 		expect(
 			stripCommonMarkHtmlForPreview(
-				"```\n> ```\n<span>still code</span>\n```\n<span>outside</span>",
+				"> ```\n> <div>keep</div>\n```\n<div>inside-new-fence</div>\n```",
 			),
-		).toBe("```\n> ```\n<span>still code</span>\n```\noutside");
-	});
+		).toBe("> ```\n> <div>keep</div>\n```\n<div>inside-new-fence</div>\n```");
 
-	it("preserves list structure, start order, and nested containers when stripping list-prefixed HTML blocks (PR-R24-A2 Track A #6a + Track B #7)", () => {
-		const renderRaw = (md: string): HTMLDivElement => {
-			const host = document.createElement("div");
-			host.appendChild(
-				renderRawBlockPreview(document, md, {
-					fallbackLabel: "Raw",
-					footnotesLabel: "Footnotes",
-					viewWindow: window,
-				}),
-			);
-			return host;
-		};
-
-		// Track A #6a: `- <!-- x -->\n  keep` keeps list structure instead of flattening to `<p>keep</p>`.
-		expect(stripCommonMarkHtmlForPreview("- <!-- x -->\n  keep")).toBe("- keep");
-		const commentListHost = renderRaw("- <!-- x -->\n  keep");
-		expect(commentListHost.querySelector("ul > li")?.textContent).toBe("keep");
-		expect(commentListHost.querySelector("pre")).toBeNull();
-
-		// Track B #7a: `100. <div>\n\n     ## Heading` preserves `<ol start="100"><li><h2>Heading</h2></li></ol>` (no `<pre><code>`).
-		expect(stripCommonMarkHtmlForPreview("100. <div>\n\n     ## Heading")).toBe(
-			"100. ## Heading",
-		);
-		const orderedHeadingHost = renderRaw("100. <div>\n\n     ## Heading");
-		const orderedList = orderedHeadingHost.querySelector("ol");
-		expect(orderedList?.getAttribute("start")).toBe("100");
-		expect(orderedList?.querySelector("li h2")?.textContent).toBe("Heading");
-		expect(orderedHeadingHost.querySelector("pre")).toBeNull();
-
-		// Track B #7b: `  - <div>\n\n    bar` preserves list structure instead of turning `    bar` into `<pre><code>`.
-		expect(stripCommonMarkHtmlForPreview("  - <div>\n\n    bar")).toBe("  - bar");
-		const indentedListHost = renderRaw("  - <div>\n\n    bar");
-		expect(indentedListHost.querySelector("ul > li")?.textContent).toBe("bar");
-		expect(indentedListHost.querySelector("pre")).toBeNull();
-
-		// Track B #7c: `- - <div>\n\n    bar` preserves nested `<ul><li><ul><li>bar</li></ul></li></ul>` (no `<pre><code>`).
-		expect(stripCommonMarkHtmlForPreview("- - <div>\n\n    bar")).toBe("- - bar");
-		const nestedListHost = renderRaw("- - <div>\n\n    bar");
-		expect(nestedListHost.querySelector("ul > li > ul > li")?.textContent).toBe(
-			"bar",
-		);
-		expect(nestedListHost.querySelector("pre")).toBeNull();
-
-		// Pure HTML-only list item must NOT emit stray empty `<ul><li></li></ul>` (falls through to collapsed meta chip).
-		expect(stripCommonMarkHtmlForPreview("- <div>only</div>")).toBe("");
-		const htmlOnlyListHost = renderRaw("- <div>only</div>");
-		expect(htmlOnlyListHost.querySelector("ul, li")).toBeNull();
 		expect(
-			htmlOnlyListHost.querySelector(".easymde-protected-meta-chip")?.textContent,
-		).toBe("Raw");
-
-		// Multi-paragraph ordered list item preserves both paragraphs inside `<ol start="100"><li>`.
-		expect(
-			stripCommonMarkHtmlForPreview("100. <div>\n\n     para1\n\n     para2"),
-		).toBe("100. para1\n\n     para2");
-		const multiParaHost = renderRaw("100. <div>\n\n     para1\n\n     para2");
-		expect(multiParaHost.querySelector("ol")?.getAttribute("start")).toBe("100");
-		expect(
-			Array.from(multiParaHost.querySelectorAll("ol > li > p")).map(
-				(p) => p.textContent,
+			stripCommonMarkHtmlForPreview(
+				"> ```\n> <div>keep</div>\n<div>strip</div>\n\nReal",
 			),
-		).toEqual(["para1", "para2"]);
-		expect(multiParaHost.querySelector("pre")).toBeNull();
+		).toBe("> ```\n> <div>keep</div>\n\nReal");
 
-		// Wave 25 Track B #8 regression guard: list-nested indented code stays intact.
-		expect(stripCommonMarkHtmlForPreview("-     code <span>x</span>")).toBe(
-			"-     code <span>x</span>",
-		);
-		const indentedCodeHost = renderRaw("-     code <span>x</span>");
-		expect(indentedCodeHost.querySelector("ul > li pre code")?.textContent).toBe(
-			"code <span>x</span>",
-		);
-
-		// Blockquote and interleaved list+blockquote containers stay intact across HTML blocks.
-		expect(stripCommonMarkHtmlForPreview("> <!-- x -->\n> keep")).toBe("> keep");
-		expect(stripCommonMarkHtmlForPreview("> <div>x</div>\n>\n> keep")).toBe(
-			"> keep",
-		);
-		// CommonMark Type 6 `<div>` without a blank line continues across `> keep` (matching PHP).
-		expect(stripCommonMarkHtmlForPreview("> <div>x</div>\n> keep")).toBe("");
-		const bqHost = renderRaw("> <!-- x -->\n> keep");
-		expect(bqHost.querySelector("blockquote > p")?.textContent).toBe("keep");
-
-		expect(stripCommonMarkHtmlForPreview("> - <div>\n>\n>   keep")).toBe(
-			"> - keep",
-		);
-		const bqListHost = renderRaw("> - <div>\n>\n>   keep");
-		expect(bqListHost.querySelector("blockquote > ul > li")?.textContent).toBe(
-			"keep",
-		);
+		// R44B #4: Indented code (top-level and container-nested) preserves HTML tags in preview stripping.
+		expect(
+			stripCommonMarkHtmlForPreview("<div>\n\n    </div>\n\nReal\n\n</div>"),
+		).toBe("    </div>\n\nReal");
 
 		expect(
-			stripCommonMarkHtmlForPreview("- > <div>\n  > hidden\n\n  > visible"),
-		).toBe("- > visible");
-		const listBqHost = renderRaw("- > <div>\n  > hidden\n\n  > visible");
-		expect(
-			listBqHost.querySelector("ul > li > blockquote > p")?.textContent,
-		).toBe("visible");
+			stripCommonMarkHtmlForPreview("<div>\n\n-     <span>code</span>\n\n</div>"),
+		).toBe("-     <span>code</span>");
 
-		expect(stripCommonMarkHtmlForPreview("- > - <div>\n  >\n  >   keep")).toBe(
-			"- > - keep",
-		);
-		const listBqListHost = renderRaw("- > - <div>\n  >\n  >   keep");
-		expect(
-			listBqListHost.querySelector("ul > li > blockquote > ul > li")
-				?.textContent,
-		).toBe("keep");
-
-		// Extra-padded list markers, indented/fenced code inside pending lists, nested empty inner list, and tab markers.
-		const extraPadCodeHost = renderRaw(
-			"1.    <div>\n\n          line1\n          line2\n\n       para2",
-		);
-		expect(extraPadCodeHost.querySelectorAll("ol > li pre")).toHaveLength(1);
-		expect(extraPadCodeHost.querySelector("ol > li pre code")?.textContent).toBe(
-			"line1\nline2",
-		);
-		expect(
-			Array.from(extraPadCodeHost.querySelectorAll("ol > li > p"))
-				.map((p) => p.textContent)
-				.filter(Boolean),
-		).toEqual(["para2"]);
-
-		const fencedPendingHost = renderRaw(
-			"100. <div>\n\n     ```js\n     <span>x</span>\n     ```",
-		);
-		expect(fencedPendingHost.querySelector("ol")?.getAttribute("start")).toBe(
-			"100",
-		);
-		expect(
-			fencedPendingHost.querySelector("ol > li pre code.language-js")
-				?.textContent,
-		).toBe("<span>x</span>");
-
-		expect(stripCommonMarkHtmlForPreview("- - <div>\n\n  outer-still")).toBe(
-			"- outer-still",
-		);
-		expect(stripCommonMarkHtmlForPreview("- <div>\n\n  <span></span>\n\n  keep")).toBe(
-			"- keep",
-		);
-		const tabMarkerHost = renderRaw("-\t<div>\n\n    keep");
-		expect(tabMarkerHost.querySelector("ul > li")?.textContent).toBe("keep");
-		const tabCodeHost = renderRaw("-\t<div>\n\n\t\tcode");
-		expect(tabCodeHost.querySelector("ul > li pre code")?.textContent).toBe(
-			"code",
-		);
-		const nestedInterruptHost = renderRaw("- outer\n  - <!-- x -->\n    inner");
-		expect(
-			nestedInterruptHost.querySelector("ul > li > ul > li")?.textContent,
-		).toBe("inner");
-	});
-
-	it("preserves multiline inline backtick code spans across paragraph lines while staying O(N) on adversarial unclosed backticks (PR-R24-A2 Track A #6b)", () => {
-		const renderRaw = (md: string): HTMLDivElement => {
-			const host = document.createElement("div");
-			host.appendChild(
-				renderRawBlockPreview(document, md, {
-					fallbackLabel: "Raw",
-					footnotesLabel: "Footnotes",
-					viewWindow: window,
-				}),
-			);
-			return host;
-		};
-
-		// Track A #6b primary reproducer: single-backtick code span spanning lines inside raw HTML block.
-		expect(stripCommonMarkHtmlForPreview("<div>\n\n`a\n<b>x`")).toBe("`a\n<b>x`");
-		const singleSpanHost = renderRaw("<div>\n\n`a\n<b>x`");
-		expect(singleSpanHost.querySelector("p > code")?.textContent).toBe("a <b>x");
-
-		// Double-backtick multiline code span containing nested single backticks and HTML tags.
-		const doubleSpanMd = "``a\n<span>`b`</span>\nc``";
-		expect(stripCommonMarkHtmlForPreview(doubleSpanMd)).toBe(doubleSpanMd);
-		const doubleSpanHost = renderRaw(doubleSpanMd);
-		expect(doubleSpanHost.querySelector("p > code")?.textContent).toBe(
-			"a <span>`b`</span> c",
-		);
-
-		// Unclosed backtick does NOT form a code span (CommonMark §6.1), so `<b>` IS stripped.
-		expect(stripCommonMarkHtmlForPreview("`a\n<b>x")).toBe("`a\nx");
-		const unclosedHost = renderRaw("`a\n<b>x");
-		expect(unclosedHost.querySelector("code")).toBeNull();
-		expect(unclosedHost.querySelector("p")?.textContent).toBe("`a\nx");
-
-		// Escaped opening backtick is literal, so `<b>` IS stripped.
-		expect(stripCommonMarkHtmlForPreview("\\`a\n<b>x`")).toBe("\\`a\nx`");
-		const escapedHost = renderRaw("\\`a\n<b>x`");
-		expect(escapedHost.querySelector("code")).toBeNull();
-		expect(escapedHost.querySelector("p")?.textContent).toBe("`a\nx`");
-
-		// Multiline backtick spans across blockquotes, list items, pending list items, and Setext headings.
-		const bqCodeHost = renderRaw("> `a\n> <b>x`");
-		expect(bqCodeHost.querySelector("blockquote p code")?.textContent).toBe(
-			"a <b>x",
-		);
-		const listCodeHost = renderRaw("- <div>\n\n  `a\n  <b>x`");
-		expect(listCodeHost.querySelector("ul > li code")?.textContent).toBe(
-			"a <b>x",
-		);
-		const setextCodeHost = renderRaw("`a\n<b>x`\n===");
-		expect(setextCodeHost.querySelector("h1 > code")?.textContent).toBe(
-			"a <b>x",
-		);
-		// Backslash inside open code span does NOT escape the closing backtick.
-		const bsCloserHost = renderRaw("`a\n<b>\\`");
-		expect(bsCloserHost.querySelector("p > code")?.textContent).toBe("a <b>\\");
-
-		// Code spans never cross blank lines, headings, or blockquote boundaries.
-		expect(stripCommonMarkHtmlForPreview("`a\n\n<b>x`")).toBe("`a\n\nx`");
-		expect(stripCommonMarkHtmlForPreview("`a\n# <b>x`")).toBe("`a\n# x`");
-		expect(stripCommonMarkHtmlForPreview("`a\n> <b>x`")).toBe("`a\n> x`");
-
-		// Adversarial O(N) guard: 20,000+ unclosed backticks across distinct lengths and mixed runs.
-		const distinctUnclosed = Array.from({ length: 200 }, (_, n) =>
-			"`".repeat(n + 1),
-		).join("a");
-		const mixedUnclosed = `\`${"``a".repeat(10000)}<b>x</b>`;
-		const perfStart = performance.now();
-		expect(stripCommonMarkHtmlForPreview(distinctUnclosed)).toBe(
-			distinctUnclosed,
-		);
-		expect(stripCommonMarkHtmlForPreview(mixedUnclosed)).toBe(
-			`\`${"``a".repeat(10000)}x`,
-		);
-		expect(performance.now() - perfStart).toBeLessThan(150);
-	});
-
-	it("preserves nested lazy continuations under pending containers and strips multiline CommonMark §6.6 inline HTML tags (PR-R25-A #5)", () => {
-		const renderRaw = (md: string): HTMLDivElement => {
-			const host = document.createElement("div");
-			host.appendChild(
-				renderRawBlockPreview(document, md, {
-					fallbackLabel: "Raw",
-					footnotesLabel: "Footnotes",
-					viewWindow: window,
-				}),
-			);
-			return host;
-		};
-
-		// Part A: Nested lazy continuations materialize ancestor blockquote/list prefixes instead of dropping them.
-		expect(stripCommonMarkHtmlForPreview("> - <span></span>\nlazy")).toBe(
-			"> - lazy",
-		);
-		const bqListLazy = renderRaw("> - <span></span>\nlazy");
-		expect(
-			bqListLazy.querySelector("blockquote > ul > li")?.textContent,
-		).toBe("lazy");
-
-		expect(
-			stripCommonMarkHtmlForPreview("- outer\n  - <span></span>\nlazy"),
-		).toBe("- outer\n  - lazy");
-		const nestedListLazy = renderRaw("- outer\n  - <span></span>\nlazy");
-		expect(
-			nestedListLazy.querySelector("ul > li > ul > li")?.textContent,
-		).toBe("lazy");
-
-		expect(
-			stripCommonMarkHtmlForPreview("- outer\n  > - <span></span>\nlazy"),
-		).toBe("- outer\n  > - lazy");
-		const listBqListLazy = renderRaw("- outer\n  > - <span></span>\nlazy");
-		expect(
-			listBqListLazy.querySelector("ul > li > blockquote > ul > li")
-				?.textContent,
-		).toBe("lazy");
-
-		expect(stripCommonMarkHtmlForPreview("> <span></span>\nlazy")).toBe(
-			"> lazy",
-		);
-		const bqOnlyLazy = renderRaw("> <span></span>\nlazy");
-		expect(bqOnlyLazy.querySelector("blockquote > p")?.textContent).toBe(
-			"lazy",
-		);
-
-		// Part B: Multiline CommonMark §6.6 inline HTML tags strip cleanly while preserving autolinks and code spans.
-		expect(
-			stripCommonMarkHtmlForPreview('<span\nclass="a">hello</span>'),
-		).toBe("hello");
-		expect(
-			renderRaw('<span\nclass="a">hello</span>').querySelector("p")?.textContent,
-		).toBe("hello");
-
-		expect(
-			stripCommonMarkHtmlForPreview("<span>hello</span\n    >"),
-		).toBe("hello");
-		expect(
-			renderRaw("<span>hello</span\n    >").querySelector("p")?.textContent,
-		).toBe("hello");
-
-		// Direct inline preview also strips multiline closing tag `</span\n>`
-		// without injecting a spurious trailing newline (PR-R26-A Track A #4).
-		const inlineMultilineClose = renderRawInlinePreview(
+		// R43B #2.4 + R43A #2: renderRawBlockPreview preserves NBSP-only inner
+		// content and collapses container-stripped multi-line ref defs.
+		const nbspPreview = renderRawBlockPreview(
 			document,
-			"<span>hello</span\n>",
-			{ footnotes: "Footnotes", raw: "Raw" },
+			"<div>\n\n\u00a0\n\n</div>",
+			{
+				fallbackLabel: "Raw HTML",
+				footnotesLabel: "Footnotes",
+				viewWindow: window,
+			},
 		);
-		expect(inlineMultilineClose.textContent).toBe("hello");
+		const nbspHost = document.createElement("div");
+		nbspHost.appendChild(nbspPreview);
+		expect(nbspHost.textContent).toBe("\u00a0");
 
-		expect(
-			stripCommonMarkHtmlForPreview('<span title="a\nb">hello</span>'),
-		).toBe("hello");
-		expect(
-			renderRaw('<span title="a\nb">hello</span>').querySelector("p")
-				?.textContent,
-		).toBe("hello");
-
-		// Autolinks remain intact and are never stripped as inline HTML.
-		expect(
-			stripCommonMarkHtmlForPreview("<div>\n\n<https://example.com> hello"),
-		).toBe("<https://example.com> hello");
-		expect(
-			renderRaw("<div>\n\n<https://example.com> hello").querySelector("p > a")
-				?.getAttribute("href"),
-		).toBe("https://example.com");
-
-		// Multiline backtick code span protection remains intact alongside multiline HTML stripping.
-		expect(stripCommonMarkHtmlForPreview("<div>\n\n`a\n<b>x`")).toBe(
-			"`a\n<b>x`",
-		);
-	});
-
-	it("omits spurious newlines on stripped multiline inline HTML and matches PHP escaped leading backtick runs (PR-R26-A Track A #4 + Track B F6a)", () => {
-		const renderRaw = (md: string): HTMLDivElement => {
-			const host = document.createElement("div");
-			host.appendChild(
-				renderRawBlockPreview(document, md, {
-					fallbackLabel: "Raw",
-					footnotesLabel: "Footnotes",
-					viewWindow: window,
-				}),
-			);
-			return host;
-		};
-
-		// Track A #4: stripped multiline inline HTML comment inside a table cell
-		// `raw-inline` atom must yield `"ab"` (matching PHP `<td>ab</td>`), NOT `"a\nb"`.
-		const inlineCommentHost = renderRawInlinePreview(
+		const refPreview = renderRawBlockPreview(
 			document,
-			"<span>a<!-- \\(x\ny\\) -->b</span>",
-			{ footnotes: "Footnotes", raw: "Raw" },
+			'[ref]: https://example.test\n"Title"',
+			{
+				fallbackLabel: "Raw HTML",
+				footnotesLabel: "Footnotes",
+				viewWindow: window,
+			},
 		);
-		expect(inlineCommentHost.textContent).toBe("ab");
+		const refHost = document.createElement("div");
+		refHost.appendChild(refPreview);
+		expect(refHost.textContent).toBe("Raw HTML · [ref]");
 
-		// Stripped multiline open/close tags inside raw-inline and raw-block preview
-		// emit zero spurious newlines while keeping real surrounding newlines intact.
-		const inlineOpenTag = renderRawInlinePreview(
-			document,
-			'<span\nclass="a">hello</span>',
-			{ footnotes: "Footnotes", raw: "Raw" },
-		);
-		expect(inlineOpenTag.textContent).toBe("hello");
-		expect(stripCommonMarkHtmlForPreview("a<!--\n-->b")).toBe("ab");
-		expect(renderRaw("a<!--\n-->b").querySelector("p")?.textContent).toBe("ab");
-		expect(stripCommonMarkHtmlForPreview("> a<!--\n> -->b")).toBe("> ab");
+		// R45A #3 + R45B #1 + R45B #3: Unified HTML-block stepper in stripCommonMarkHtmlForPreview
+		// and multiline refdef collapsing in renderRawBlockPreview.
 		expect(
-			renderRaw("> a<!--\n> -->b").querySelector("blockquote > p")?.textContent,
-		).toBe("ab");
-		expect(stripCommonMarkHtmlForPreview("a<!--\n-->b\nc")).toBe("ab\nc");
+			stripCommonMarkHtmlForPreview("<div><div>\n    </div>\n\nText\n\n</div>"),
+		).toBe("Text");
 		expect(
-			renderRaw('<span\nclass="a">hello</span>').querySelector("p")?.textContent,
-		).toBe("hello");
-		expect(
-			renderRaw("<span>hello</span\n    >").querySelector("p")?.textContent,
-		).toBe("hello");
-
-		// Track B F6a + PR-R27-A Track A #5: after consuming an escaped leading
-		// backtick `\` + `` ` ``, escape EVERY backtick in that contiguous run so
-		// secondary `markdown-it` keeps all of them literal (matching PHP
-		// `League\CommonMark\Parser\InlineParserEngine`) and preserves following
-		// code spans (`<b>x</b>`) without opening a spurious code span.
-		expect(stripCommonMarkHtmlForPreview("foo \\`` `<b>x</b>`")).toBe(
-			"foo \\`\\` `<b>x</b>`",
-		);
-		expect(stripCommonMarkHtmlForPreview("foo \\``` ``<b>x</b>``")).toBe(
-			"foo \\`\\`\\` ``<b>x</b>``",
-		);
-		expect(stripCommonMarkHtmlForPreview("foo \\``a`` `<b>x</b>`")).toBe(
-			"foo \\`\\`a`` `<b>x</b>`",
-		);
-		expect(stripCommonMarkHtmlForPreview("foo \\\\`<b>x</b>`")).toBe(
-			"foo \\\\`<b>x</b>`",
-		);
-		expect(stripCommonMarkHtmlForPreview("foo \\``a` `<b>x</b>`")).toBe(
-			"foo \\`\\`a` `x`",
-		);
-		expect(stripCommonMarkHtmlForPreview("<div>\n\nfoo \\`` `<b>x</b>`")).toBe(
-			"foo \\`\\` `<b>x</b>`",
-		);
-
-		const blockEscapedBackticks = renderRaw("<div>\n\nfoo \\`` `<b>x</b>`");
-		expect(blockEscapedBackticks.querySelector("p")?.textContent).toBe(
-			"foo `` <b>x</b>",
-		);
-		expect(blockEscapedBackticks.querySelector("p > code")?.textContent).toBe(
-			"<b>x</b>",
-		);
-
-		// PR-R27-A Track A #4: mask PHP math ranges before matching inline HTML
-		// comment closers (`-->`) so `-->` inside `\(...\)` never terminates `<!--`.
-		const mathCloserInline = renderRawInlinePreview(
-			document,
-			"<span>a<!-- \\(x -->\ny\\) -->b</span>",
-			{ footnotes: "Footnotes", raw: "Raw" },
-		);
-		expect(mathCloserInline.textContent).toBe("ab");
-		expect(
-			stripCommonMarkHtmlForPreview("a<!-- \\(x -->\ny\\) -->b\nc"),
-		).toBe("ab\nc");
-		expect(
-			renderRaw("a<!-- \\(x -->\ny\\) -->b\nc").querySelector("p")?.textContent,
-		).toBe("ab\nc");
-
-		// PR-R27-A Track A #5: multi-backtick escaped run `\`` inside inline HTML
-		// renders literal `` ``b` `` with ZERO `<code>` element (matching PHP).
-		const multiBacktickInline = renderRawInlinePreview(
-			document,
-			"<span>\\``<em>b</em>`</span>",
-			{ footnotes: "Footnotes", raw: "Raw" },
-		);
-		expect(multiBacktickInline.textContent).toBe("``b`");
-		expect(multiBacktickInline.querySelector("code")).toBeNull();
-	});
-
-	it("masks PHP math before block scanning and bounds inline HTML tags at blank-line / display-math breaks (PR-R28-A2 Track B F5)", () => {
-		const renderRaw = (md: string): HTMLDivElement => {
-			const host = document.createElement("div");
-			host.appendChild(
-				renderRawBlockPreview(document, md, {
-					fallbackLabel: "Raw",
-					footnotesLabel: "Footnotes",
-					renderNestedMath: (doc, displayMode, raw) => {
-						const el = doc.createElement(displayMode ? "div" : "span");
-						el.className = displayMode
-							? "easymde-math easymde-math-block"
-							: "easymde-math easymde-math-inline";
-						el.textContent = raw;
-						return el;
-					},
-					viewWindow: window,
-				}),
-			);
-			return host;
-		};
-
-		// F5a: Inline math inside HTML block closers must NOT terminate HTML blocks.
-		expect(stripCommonMarkHtmlForPreview("<!-- $-->$\nvisible")).toBe("");
-		const commentMathHost = renderRaw("<!-- $-->$\nvisible");
-		expect(commentMathHost.textContent).not.toContain("visible");
-		expect(
-			commentMathHost.querySelector(".easymde-protected-meta-chip"),
-		).not.toBeNull();
-		expect(
-			stripCommonMarkHtmlForPreview("<!-- \\(x -->\ny\\) -->\nvisible"),
-		).toBe("visible");
-		expect(
-			stripCommonMarkHtmlForPreview("<!-- \\(x -->\ny\\)\nvisible"),
+			stripCommonMarkHtmlForPreview(
+				'<div>\n    <div class="a">\n    <p>hello</p>\n  </div>\n</div>',
+			),
 		).toBe("");
-		expect(stripCommonMarkHtmlForPreview("<script>\n$</script>$\nvisible")).toBe(
-			"",
-		);
-		expect(stripCommonMarkHtmlForPreview("<?php\n$?>$\nvisible")).toBe("");
-		expect(stripCommonMarkHtmlForPreview("<!DOCTYPE\n$>$\nvisible")).toBe("");
-		expect(stripCommonMarkHtmlForPreview("<![CDATA[\n$]]>$\nvisible")).toBe("");
-		expect(stripCommonMarkHtmlForPreview("> <!-- $-->$\n> visible")).toBe("");
-		expect(stripCommonMarkHtmlForPreview("- <!-- $-->$\n  visible")).toBe("");
+		expect(
+			stripCommonMarkHtmlForPreview("<div>\n    </div>\n\nParagraph\n\n</div>"),
+		).toBe("Paragraph");
+		expect(
+			stripCommonMarkHtmlForPreview("<div>\n```\n</div>\n```\n\nPara\n\n</div>"),
+		).toBe("Para");
 
-		// F5b: Display math terminates Type 6/7 HTML blocks (matching PHP `\n\nTOKEN\n\n`)
-		// while preserving display math + trailing visible content, and Type 1-5 blocks still absorb it.
-		expect(stripCommonMarkHtmlForPreview("<div>\n$$a$$\nvisible")).toBe(
-			"$$a$$\n\nvisible",
+		const multilineRefPreview = renderRawBlockPreview(
+			document,
+			'[long\nlabel]: /dest\n"line1\nline2"',
+			{
+				fallbackLabel: "Raw HTML",
+				footnotesLabel: "Footnotes",
+				viewWindow: window,
+			},
 		);
-		const divDisplayHost = renderRaw("<div>\n$$a$$\nvisible");
-		expect(
-			divDisplayHost.querySelector(".easymde-math-block")?.textContent,
-		).toBe("$$a$$");
-		expect(divDisplayHost.querySelector("p")?.textContent).toBe("visible");
+		const multilineRefHost = document.createElement("div");
+		multilineRefHost.appendChild(multilineRefPreview);
+		expect(multilineRefHost.textContent).toBe("Raw HTML · [long label]");
 
-		expect(stripCommonMarkHtmlForPreview("<div>\n$$a\nb$$\nvisible")).toBe(
-			"$$a\nb$$\n\nvisible",
-		);
-		const multilineDisplayHost = renderRaw("<div>\n$$a\nb$$\nvisible");
-		expect(
-			multilineDisplayHost.querySelector(".easymde-math-block")?.textContent,
-		).toBe("$$a\nb$$");
-		expect(multilineDisplayHost.querySelector("p")?.textContent).toBe(
-			"visible",
-		);
-
-		expect(stripCommonMarkHtmlForPreview("<div>\n\\[a\nb\\]\nvisible")).toBe(
-			"\\[a\nb\\]\n\nvisible",
-		);
-		expect(
-			stripCommonMarkHtmlForPreview("<div>\nprefix $$a$$ suffix\nvisible"),
-		).toBe("$$a$$\n\n suffix\nvisible");
-		expect(stripCommonMarkHtmlForPreview("<div>$$a$$</div>")).toBe("$$a$$");
-		expect(stripCommonMarkHtmlForPreview("<span>\n$$a$$\nvisible")).toBe(
-			"$$a$$\n\nvisible",
-		);
-		expect(
-			stripCommonMarkHtmlForPreview("<div>\n$$<span>x</span>$$\nvisible"),
-		).toBe("$$<span>x</span>$$\n\nvisible");
-		expect(stripCommonMarkHtmlForPreview("<div>\n$$a$$$$b$$\nvisible")).toBe(
-			"$$a$$\n\n$$b$$\n\nvisible",
-		);
-		expect(stripCommonMarkHtmlForPreview("> <div>\n> $$a$$\n> visible")).toBe(
-			"$$a$$\n\n> visible",
-		);
-		expect(stripCommonMarkHtmlForPreview("<!-- $$a$$ -->\nvisible")).toBe(
-			"visible",
-		);
-		expect(stripCommonMarkHtmlForPreview("<pre>\n$$a$$\n</pre>\nvisible")).toBe(
-			"visible",
-		);
+		// R46B #3: Container-scoped HTML blocks (Types 1–7) in stripCommonMarkHtmlForPreview.
 		expect(
 			stripCommonMarkHtmlForPreview(
-				"<div></div>\n\n\\(a\nb\\) <em>1</em>\n\\(c\nd\\) <em>2</em>",
+				"<div>\n\n> <pre>\n> secret\n> </pre>\n\n</div>",
 			),
-		).toBe("\\(a\nb\\) 1\n\\(c\nd\\) 2");
-		expect(stripCommonMarkHtmlForPreview("> a \\(x\n> y\\) <b>hi</b>")).toBe(
-			"> a \\(x\n> y\\) hi",
-		);
-
-		// F5c: Inline HTML tags NEVER cross blank lines or display-math breaks.
+		).toBe("");
 		expect(
-			stripCommonMarkHtmlForPreview('<span><a title="$$x$$">hi</a></span>'),
-		).toBe('<a title="\n\n$$x$$\n\n">hi');
-		const attrDisplayHost = renderRaw('<span><a title="$$x$$">hi</a></span>');
-		expect(
-			attrDisplayHost.querySelector(".easymde-math-block")?.textContent,
-		).toBe("$$x$$");
-		expect(
-			Array.from(attrDisplayHost.querySelectorAll("p")).map(
-				(p) => p.textContent,
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n> <!--\n> secret\n> -->\n\n</div>",
 			),
-		).toEqual(['<a title="', '">hi']);
-
+		).toBe("");
 		expect(
-			stripCommonMarkHtmlForPreview('<span><a title="\\[x\\]">hi</a></span>'),
-		).toBe('<a title="\n\n\\[x\\]\n\n">hi');
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n> <div>\n> secret\n> </div>\n>\n> Visible\n\n</div>",
+			),
+		).toBe(">\n> Visible");
 		expect(
-			stripCommonMarkHtmlForPreview("<span>a<!-- $$x$$ -->b</span>"),
-		).toBe("a<!-- \n\n$$x$$\n\n -->b");
-		expect(stripCommonMarkHtmlForPreview('<span title="$$x$$">\nhidden')).toBe(
-			'<span title="\n\n$$x$$\n\n">\nhidden',
-		);
+			stripCommonMarkHtmlForPreview("> <pre>\n> secret\n\nOutside"),
+		).toBe("Outside");
 
-		// Direct inline preview also stops at blank-line / display-math breaks,
-		// resets scan guards across breaks, and avoids recursive fixed-point loops.
-		const inlineAttrDisplay = renderRawInlinePreview(
-			document,
-			'<span><a title="$$x$$">hi</a></span>',
-			{ footnotes: "Footnotes", raw: "Raw" },
-		);
-		expect(inlineAttrDisplay.textContent).toBe('<a title="$$x$$">hi');
-
-		const inlineGuardResetTag = renderRawInlinePreview(
-			document,
-			'<a title="$$x$$"><span title="ok">hi</span>',
-			{ footnotes: "Footnotes", raw: "Raw" },
-		);
-		expect(inlineGuardResetTag.textContent).toBe('<a title="$$x$$">hi');
-
-		const inlineGuardResetComment = renderRawInlinePreview(
-			document,
-			"a<!-- $$x$$ -->b<!-- gone -->c",
-			{ footnotes: "Footnotes", raw: "Raw" },
-		);
-		expect(inlineGuardResetComment.textContent).toBe("a<!-- $$x$$ -->bc");
-
-		const inlineBlankComment = renderRawInlinePreview(
-			document,
-			"<span>a<!-- x\n\ny -->b</span>",
-			{ footnotes: "Footnotes", raw: "Raw" },
-		);
-		expect(inlineBlankComment.textContent).toBe("a<!-- x\n\ny -->b");
-
-		// Positive controls: Track A #4, Track A #5, valid single-newline multiline tags, inline math in attrs, code spans.
+		// R47A #4: Preserve container openers & paragraph boundaries when stripping nested HTML.
 		expect(
-			stripCommonMarkHtmlForPreview("<span>a<!-- \\(x -->\ny\\) -->b</span>"),
-		).toBe("ab");
-		expect(stripCommonMarkHtmlForPreview("<span>\\``<em>b</em>`</span>")).toBe(
-			"\\`\\`b`",
-		);
-		const escapedTicksBlock = renderRaw("<span>\\``<em>b</em>`</span>");
-		expect(escapedTicksBlock.textContent).toBe("``b`");
-		expect(escapedTicksBlock.querySelector("code")).toBeNull();
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n> Before\n> <!-- comment -->\n> After\n\n</div>",
+			),
+		).toBe("> Before\n>\n> After");
 		expect(
-			stripCommonMarkHtmlForPreview('<div></div>\n\n<span\nclass="a">hello</span>'),
-		).toBe("hello");
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n> Before\n> <pre>\n> secret\n> </pre>\n> After\n\n</div>",
+			),
+		).toBe("> Before\n>\n> After");
 		expect(
-			stripCommonMarkHtmlForPreview('<span><a title="$x$">hi</a></span>'),
-		).toBe("hi");
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n- <pre>\n  secret\n  </pre>\n\n  Visible\n\n</div>",
+			),
+		).toBe("-\n  Visible");
 		expect(
-			stripCommonMarkHtmlForPreview('<span>`<a title="$$x$$">hi</a>`</span>'),
-		).toBe('`<a title="$$x$$">hi</a>`');
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n- <pre>\n  secret\n  </pre>\n  Visible\n\n</div>",
+			),
+		).toBe("-\n  Visible");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n- Item 1\n- <pre>\n  secret\n  </pre>\n  Item 2\n\n</div>",
+			),
+		).toBe("- Item 1\n-\n  Item 2");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n> - <pre>\n>   secret\n>   </pre>\n>\n>   Visible\n\n</div>",
+			),
+		).toBe("> -\n>   Visible");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n- <pre>\n  secret\n  </pre>\n\n</div>",
+			),
+		).toBe("");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\nBefore\n<!-- comment -->\nAfter\n\n</div>",
+			),
+		).toBe("Before\n\nAfter");
 
-		// Adversarial O(N) guard across thousands of unclosed tags separated by display math breaks.
-		const repeatedBrokenTags = '<a title="$$x$$">'.repeat(1500);
-		const perfStart = performance.now();
-		const perfOut = stripCommonMarkHtmlForPreview(repeatedBrokenTags);
-		expect(performance.now() - perfStart).toBeLessThan(150);
-		expect(perfOut).toContain("$$x$$");
+		const quoteTwoParaHost = document.createElement("div");
+		quoteTwoParaHost.appendChild(
+			renderRawBlockPreview(
+				document,
+				"<div>\n\n> Before\n> <!-- comment -->\n> After\n\n</div>",
+				{
+					fallbackLabel: "Raw HTML",
+					footnotesLabel: "Footnotes",
+					viewWindow: window,
+				},
+			),
+		);
+		expect(quoteTwoParaHost.querySelectorAll("blockquote > p").length).toBe(2);
+
+		const listPreHost = document.createElement("div");
+		listPreHost.appendChild(
+			renderRawBlockPreview(
+				document,
+				"<div>\n\n- <pre>\n  secret\n  </pre>\n\n  Visible\n\n</div>",
+				{
+					fallbackLabel: "Raw HTML",
+					footnotesLabel: "Footnotes",
+					viewWindow: window,
+				},
+			),
+		);
+		expect(listPreHost.querySelectorAll("ul > li").length).toBe(1);
+		expect(listPreHost.textContent?.trim()).toBe("Visible");
+
+		// R48A #3 + R48B #1: Per-frame monotonic break & nested list/quote opener preservation.
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n> > Before\n> > <!-- comment -->\n> After\n\n</div>",
+			),
+		).toBe("> > Before\n>\n> After");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n> - a\n>   <!-- comment -->\n> - b\n\n</div>",
+			),
+		).toBe("> - a\n> - b");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n> - a\n>   <!-- comment -->\n> After\n\n</div>",
+			),
+		).toBe("> - a\n>\n> After");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n> Before\n> > <!-- comment -->\n> After\n\n</div>",
+			),
+		).toBe("> Before\n>\n> After");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n> Before\n<!-- top-level c1 -->\n> <!-- c2 -->\n> After\n\n</div>",
+			),
+		).toBe("> Before\n\n> After");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n10. > <pre>\n    > secret\n    > </pre>\n    After quote inside ol10\n\n</div>",
+			),
+		).toBe("10. >\n    After quote inside ol10");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n- > <pre>\n  > secret\n  > </pre>\n\n  After quote inside list\n\n</div>",
+			),
+		).toBe("- >\n\n  After quote inside list");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n- - <pre>\n    secret\n    </pre>\n  Outer\n\n</div>",
+			),
+		).toBe("- -\n  Outer");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n- <!-- a -->\n  - <!-- b -->\n    Leaf\n\n</div>",
+			),
+		).toBe("-\n  -\n    Leaf");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n- A\n- <!-- c -->\n- B\n\n</div>",
+			),
+		).toBe("- A\n-\n- B");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n- A\n- <!-- c -->\nB\n\n</div>",
+			),
+		).toBe("- A\n-\nB");
+
+		const nestedListHost = document.createElement("div");
+		nestedListHost.appendChild(
+			renderRawBlockPreview(
+				document,
+				"<div>\n\n- <!-- a -->\n  - <!-- b -->\n    Leaf\n\n</div>",
+				{
+					fallbackLabel: "Raw HTML",
+					footnotesLabel: "Footnotes",
+					viewWindow: window,
+				},
+			),
+		);
+		expect(nestedListHost.querySelectorAll("ul > li > ul > li").length).toBe(1);
+		expect(nestedListHost.textContent?.trim()).toBe("Leaf");
+
+		const ol10Host = document.createElement("div");
+		ol10Host.appendChild(
+			renderRawBlockPreview(
+				document,
+				"<div>\n\n10. > <pre>\n    > secret\n    > </pre>\n    After quote inside ol10\n\n</div>",
+				{
+					fallbackLabel: "Raw HTML",
+					footnotesLabel: "Footnotes",
+					viewWindow: window,
+				},
+			),
+		);
+		expect(ol10Host.querySelector("ol")?.getAttribute("start")).toBe("10");
+		expect(ol10Host.querySelectorAll("pre, code").length).toBe(0);
+
+		const tightListHost = document.createElement("div");
+		tightListHost.appendChild(
+			renderRawBlockPreview(
+				document,
+				"<div>\n\n- A\n- <!-- c -->\n- B\n\n</div>",
+				{
+					fallbackLabel: "Raw HTML",
+					footnotesLabel: "Footnotes",
+					viewWindow: window,
+				},
+			),
+		);
+		expect(tightListHost.querySelectorAll("ul > li").length).toBe(3);
+		expect(tightListHost.querySelectorAll("ul > li > p").length).toBe(0);
+
+		const twoQuotesHost = document.createElement("div");
+		twoQuotesHost.appendChild(
+			renderRawBlockPreview(
+				document,
+				"<div>\n\n> Before\n<!-- top-level c1 -->\n> <!-- c2 -->\n> After\n\n</div>",
+				{
+					fallbackLabel: "Raw HTML",
+					footnotesLabel: "Footnotes",
+					viewWindow: window,
+				},
+			),
+		);
+		expect(twoQuotesHost.querySelectorAll("blockquote").length).toBe(2);
+
+		// R49A #1–#3 + R49B #1–#2: Break before openers (no Setext <h2>), stepper open frames across
+		// fences/indented code/lazy continuations, and ordered list item numbering across HTML-only items.
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\nParagraph before\n- <!-- c -->\n  After\n\n</div>",
+			),
+		).toBe("Paragraph before\n\n-\n  After");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n- A\n  - <!-- c -->\n    B\n\n</div>",
+			),
+		).toBe("- A\n\n  -\n    B");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n> Before\n<!-- top-level c1 -->\n> - <!-- c2 -->\n>   After\n\n</div>",
+			),
+		).toBe("> Before\n\n> -\n>   After");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n> Before\n> - <!-- c2 -->\n>   After\n\n</div>",
+			),
+		).toBe("> Before\n>\n> -\n>   After");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\nParagraph before\n<!-- c1 -->\n10. <!-- c2 -->\n    After\n\n</div>",
+			),
+		).toBe("Paragraph before\n\n10.\n    After");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n> ```js\n> code\n> ```\n> <!-- c -->\n> After\n\n</div>",
+			),
+		).toBe("> ```js\n> code\n> ```\n>\n> After");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n>     sample\n> <!-- c -->\n> After\n\n</div>",
+			),
+		).toBe(">     sample\n>\n> After");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n> a\nb\n> <!-- c -->\n> After\n\n</div>",
+			),
+		).toBe("> a\nb\n>\n> After");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n10. A\n11. <!-- c -->\n12. B\n\n</div>",
+			),
+		).toBe("10. A\n11.\n12. B");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n10. A\n11. <!-- c -->\n12. <!-- d -->\n13. B\n\n</div>",
+			),
+		).toBe("10. A\n11.\n12.\n13. B");
+
+		const twoQuoteListHost = document.createElement("div");
+		twoQuoteListHost.appendChild(
+			renderRawBlockPreview(
+				document,
+				"<div>\n\n> Before\n<!-- c -->\n> - <!-- d -->\n>   After\n\n</div>",
+				{
+					fallbackLabel: "Raw HTML",
+					footnotesLabel: "Footnotes",
+					viewWindow: window,
+				},
+			),
+		);
+		expect(twoQuoteListHost.querySelectorAll("blockquote").length).toBe(2);
+		expect(twoQuoteListHost.querySelectorAll("h1, h2, h3").length).toBe(0);
+		expect(twoQuoteListHost.querySelectorAll("ul > li").length).toBe(1);
+
+		const orderedGapHost = document.createElement("div");
+		orderedGapHost.appendChild(
+			renderRawBlockPreview(
+				document,
+				"<div>\n\n10. A\n11. <!-- c -->\n12. B\n\n</div>",
+				{
+					fallbackLabel: "Raw HTML",
+					footnotesLabel: "Footnotes",
+					viewWindow: window,
+				},
+			),
+		);
+		const orderedList = orderedGapHost.querySelector("ol");
+		expect(orderedList?.getAttribute("start")).toBe("10");
+		const orderedItems = Array.from(orderedGapHost.querySelectorAll("ol > li"));
+		expect(orderedItems.length).toBe(3);
+		expect(orderedItems[0]?.textContent?.trim()).toBe("A");
+		expect(orderedItems[1]?.textContent?.trim()).toBe("");
+		expect(orderedItems[2]?.textContent?.trim()).toBe("B");
+
+		const quoteCodeHost = document.createElement("div");
+		quoteCodeHost.appendChild(
+			renderRawBlockPreview(
+				document,
+				"<div>\n\n>     sample\n> <!-- c -->\n> After\n\n</div>",
+				{
+					fallbackLabel: "Raw HTML",
+					footnotesLabel: "Footnotes",
+					viewWindow: window,
+				},
+			),
+		);
+		expect(quoteCodeHost.querySelectorAll("blockquote").length).toBe(1);
+
+		// R50A #1–#3 + R50B #1–#3: Per-frame typed `ContainerFrame.marker` ordered placeholders,
+		// code-opening sibling items, mixed delimiter list splits, leading HTML-only ordered items,
+		// nested skipped items, and depth-aware blank-line breaking.
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n10. A\n11. <!-- c -->\n12. ```\n    B\n    ```\n\n</div>",
+			),
+		).toBe("10. A\n11.\n12. ```\n    B\n    ```");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n10. A\n11) <!-- c -->\n12. B\n\n</div>",
+			),
+		).toBe("10. A\n11)\n12. B");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n10. <!-- c -->\n11. B\n\n</div>",
+			),
+		).toBe("10.\n11. B");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n10. A\n11. <!-- c1 -->\n12. <!-- c2 -->\n    1. <!-- i1 -->\n    2. <!-- i2 -->\n13. B\n\n</div>",
+			),
+		).toBe("10. A\n11.\n12.\n    1.\n    2.\n13. B");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n10. A\n11. <!-- c -->\n12. - <!-- d -->\n      B\n\n</div>",
+			),
+		).toBe("10. A\n11.\n12. -\n      B");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n10. A\n11. <!-- c -->\n12. 1) <!-- d -->\n       B\n\n</div>",
+			),
+		).toBe("10. A\n11.\n12. 1)\n       B");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n> Before\n>\n<!-- top-level c1 -->\n> After\n\n</div>",
+			),
+		).toBe("> Before\n>\n\n> After");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n> > Before\n> >\n> <!-- outer c -->\n> > After\n\n</div>",
+			),
+		).toBe("> > Before\n> >\n>\n> > After");
+
+		// R51A #1–#4 + R51B #1: Preserve nested empty sublists, multi-skipped separator lists,
+		// loose blank lines & trailing HTML-only items, same-line nested openers, and strict O(N) scaling.
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n10. <!-- c -->\n    1. <!-- i -->\n11. B\n\n</div>",
+			),
+		).toBe("10.\n    1.\n11. B");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n10. A\n11) <!-- c -->\n12) <!-- d -->\n13. B\n\n</div>",
+			),
+		).toBe("10. A\n11)\n12)\n13. B");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n10. A\n11. <!-- c -->\n\n12. B\n\n</div>",
+			),
+		).toBe("10. A\n11.\n\n12. B");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n10. A\n11. <!-- c -->\n\n</div>",
+			),
+		).toBe("10. A\n11.");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n- 1) <!-- d1 -->\n  2) <!-- d2 -->\n     B\n\n</div>",
+			),
+		).toBe("- 1)\n  2)\n     B");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n10. A\n11. <!-- c1 -->\n12. 1) <!-- d1 -->\n    2) <!-- d2 -->\n       B\n\n</div>",
+			),
+		).toBe("10. A\n11.\n12. 1)\n    2)\n       B");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n- 1. 1) <!-- d1 -->\n     2) <!-- d2 -->\n        B\n\n</div>",
+			),
+		).toBe("- 1. 1)\n     2)\n        B");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n- <!-- outer -->\n  5. <!-- i1 -->\n  6. B\n\n</div>",
+			),
+		).toBe("-\n  5.\n  6. B");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n- 5. <!-- i1 -->\n  6. B\n\n</div>",
+			),
+		).toBe("- 5.\n  6. B");
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div>\n\n10. A\n11. <!-- c1 -->\n12. 5. <!-- i1 -->\n    6. B\n\n</div>",
+			),
+		).toBe("10. A\n11.\n12. 5.\n    6. B");
+
+		const nestedOrderedHost = document.createElement("div");
+		nestedOrderedHost.appendChild(
+			renderRawBlockPreview(
+				document,
+				"<div>\n\n10. A\n11. <!-- c1 -->\n12. <!-- c2 -->\n    1. <!-- i1 -->\n    2. <!-- i2 -->\n13. B\n\n</div>",
+				{
+					fallbackLabel: "Raw HTML",
+					footnotesLabel: "Footnotes",
+					viewWindow: window,
+				},
+			),
+		);
+		const outerOrdered = nestedOrderedHost.querySelector("ol");
+		expect(outerOrdered?.getAttribute("start")).toBe("10");
+		const outerItems = Array.from(outerOrdered?.children ?? []);
+		expect(outerItems.length).toBe(4);
+		expect(outerItems[2]?.querySelectorAll("ol > li").length).toBe(2);
+
+		const looseOrderedHost = document.createElement("div");
+		looseOrderedHost.appendChild(
+			renderRawBlockPreview(
+				document,
+				"<div>\n\n10. A\n11. <!-- c -->\n\n12. B\n\n</div>",
+				{
+					fallbackLabel: "Raw HTML",
+					footnotesLabel: "Footnotes",
+					viewWindow: window,
+				},
+			),
+		);
+		expect(looseOrderedHost.querySelectorAll("ol > li").length).toBe(3);
+		expect(
+			Array.from(looseOrderedHost.querySelectorAll("ol > li > p")).map((p) =>
+				p.textContent?.trim(),
+			),
+		).toEqual(["A", "", "B"]);
+
+		const multiSkippedSepHost = document.createElement("div");
+		multiSkippedSepHost.appendChild(
+			renderRawBlockPreview(
+				document,
+				"<div>\n\n10. A\n11) <!-- c -->\n12) <!-- d -->\n13. B\n\n</div>",
+				{
+					fallbackLabel: "Raw HTML",
+					footnotesLabel: "Footnotes",
+					viewWindow: window,
+				},
+			),
+		);
+		const sepOls = Array.from(multiSkippedSepHost.querySelectorAll("ol"));
+		expect(sepOls.map((ol) => ol.getAttribute("start"))).toEqual([
+			"10",
+			"11",
+			"13",
+		]);
+		expect(sepOls[1]?.querySelectorAll("li").length).toBe(2);
+
+		// Strict O(N) scaling on 16,000 consecutive HTML-only ordered items (R51A #4).
+		const hugeListMd = `<div>\n\n10. A\n${"11. <!-- c -->\n".repeat(16000)}12. B\n\n</div>`;
+		const hugeListStart = performance.now();
+		const hugeListStripped = stripCommonMarkHtmlForPreview(hugeListMd);
+		expect(performance.now() - hugeListStart).toBeLessThan(500);
+		expect(hugeListStripped.split("\n").length).toBe(16002);
+
+		const fencedOrderedHost = document.createElement("div");
+		fencedOrderedHost.appendChild(
+			renderRawBlockPreview(
+				document,
+				"<div>\n\n10. A\n11. <!-- c -->\n12. ```\n    B\n    ```\n\n</div>",
+				{
+					fallbackLabel: "Raw HTML",
+					footnotesLabel: "Footnotes",
+					viewWindow: window,
+				},
+			),
+		);
+		expect(fencedOrderedHost.querySelector("ol")?.getAttribute("start")).toBe(
+			"10",
+		);
+		expect(fencedOrderedHost.querySelectorAll("ol > li").length).toBe(3);
+
+		const mixedDelimHost = document.createElement("div");
+		mixedDelimHost.appendChild(
+			renderRawBlockPreview(
+				document,
+				"<div>\n\n10. A\n11) <!-- c -->\n12. B\n\n</div>",
+				{
+					fallbackLabel: "Raw HTML",
+					footnotesLabel: "Footnotes",
+					viewWindow: window,
+				},
+			),
+		);
+		expect(
+			Array.from(mixedDelimHost.querySelectorAll("ol")).map((ol) =>
+				ol.getAttribute("start"),
+			),
+		).toEqual(["10", "11", "12"]);
+
+		const leadingOrderedHost = document.createElement("div");
+		leadingOrderedHost.appendChild(
+			renderRawBlockPreview(
+				document,
+				"<div>\n\n10. <!-- c -->\n11. B\n\n</div>",
+				{
+					fallbackLabel: "Raw HTML",
+					footnotesLabel: "Footnotes",
+					viewWindow: window,
+				},
+			),
+		);
+		expect(leadingOrderedHost.querySelector("ol")?.getAttribute("start")).toBe(
+			"10",
+		);
+		expect(leadingOrderedHost.querySelectorAll("ol > li").length).toBe(2);
+
+		const outerQuoteBreakHost = document.createElement("div");
+		outerQuoteBreakHost.appendChild(
+			renderRawBlockPreview(
+				document,
+				"<div>\n\n> Before\n>\n<!-- top-level c1 -->\n> After\n\n</div>",
+				{
+					fallbackLabel: "Raw HTML",
+					footnotesLabel: "Footnotes",
+					viewWindow: window,
+				},
+			),
+		);
+		expect(outerQuoteBreakHost.querySelectorAll("blockquote").length).toBe(2);
 	});
 });

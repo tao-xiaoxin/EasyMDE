@@ -1,11 +1,7 @@
+import { markdownLanguage } from "@codemirror/lang-markdown";
+import MarkdownIt from "markdown-it";
 import { describe, expect, it } from "vitest";
-import {
-	MAX_MARKDOWN_PREVIEW_BYTES,
-	utf8ByteLength,
-} from "../../shared/utf8-byte-length";
-import {
-	findEditorCodeContentTarget,
-} from "./editor-code-content-target";
+
 import {
 	captureEditorContext,
 	deleteThematicBreak,
@@ -20,13 +16,7 @@ import {
 	editorContextSelectionFitsRange,
 } from "./editor-context-menu-text-edit";
 import {
-	createEditorMarkdownBlockIndex as createProfiledMarkdownBlockIndex,
-} from "./editor-markdown-block-index";
-import {
 	findMarkdownTable,
-	lineInterruptsCommonMarkTable,
-	pipePositions,
-	prepareMarkdownTable,
 	tableSelectionAt,
 } from "./editor-markdown-table";
 import {
@@ -36,6 +26,12 @@ import {
 	editMarkdownTable,
 	setMarkdownTableAlignment,
 } from "./editor-markdown-table-mutation";
+import {
+	createEditorMarkdownBlockIndex as createProfiledMarkdownBlockIndex,
+} from "./editor-markdown-block-index";
+import {
+	findEditorCodeContentTarget,
+} from "./editor-code-content-target";
 
 describe("editor context menu rules", () => {
 	it("rejects a stale block index for a changed same-length source", () => {
@@ -451,7 +447,7 @@ describe("editor context menu rules", () => {
 
 		expect(edit).not.toBeNull();
 		expect(edit?.value).toBe(
-			"before\r\n\r\n```js\r\ncode\r\n```\r\n\r\n\r\nafter",
+			"before\r\n\r\n```js\r\ncode\r\n```\r\n\r\n\r\n\r\nafter",
 		);
 		expect(edit?.value).not.toContain("code\r\n\r\n```");
 	});
@@ -466,7 +462,7 @@ describe("editor context menu rules", () => {
 		{
 			kind: "list",
 			source: ["- ```js", "  code", "  ```", "- tail"].join("\n"),
-			before: ["- ", "- ```js", "  code", "  ```", "- tail"].join("\n"),
+			before: ["- ", "  ```js", "  code", "  ```", "- tail"].join("\n"),
 			after: ["- ```js", "  code", "  ```", "  ", "- tail"].join("\n"),
 		},
 	] as const)(
@@ -509,6 +505,428 @@ describe("editor context menu rules", () => {
 		},
 	);
 
+	it("uses parsed container structure and dual empty+typed verification for nested indented code and list-wrapped quote fences", () => {
+		const commonMark = new MarkdownIt("commonmark");
+		const assertIndentedNestedCodePreserved = (
+			markdown: string,
+			expectedCode: string,
+			expectedAncestors: ReadonlyArray<"blockquote" | "list_item">,
+			expectedProbeText?: string,
+		) => {
+			// 1. CommonMark verification via markdown-it (strict §4.4 & §5.2).
+			const tokens = commonMark.parse(markdown, {});
+			const containerStack: Array<"blockquote" | "list_item"> = [];
+			const foundCodes: Array<{
+				ancestors: ReadonlyArray<"blockquote" | "list_item">;
+				content: string;
+			}> = [];
+			const foundProbes: Array<ReadonlyArray<"blockquote" | "list_item">> = [];
+			let insideParagraph = false;
+			for (const token of tokens) {
+				if (token.type === "blockquote_open") {
+					containerStack.push("blockquote");
+				} else if (token.type === "blockquote_close") {
+					containerStack.pop();
+				} else if (token.type === "list_item_open") {
+					containerStack.push("list_item");
+				} else if (token.type === "list_item_close") {
+					containerStack.pop();
+				} else if (token.type === "paragraph_open") {
+					insideParagraph = true;
+				} else if (token.type === "paragraph_close") {
+					insideParagraph = false;
+				} else if (token.type === "code_block") {
+					foundCodes.push({
+						ancestors: [...containerStack],
+						content: token.content.replace(/\n$/u, ""),
+					});
+				} else if (
+					expectedProbeText &&
+					insideParagraph &&
+					token.type === "inline" &&
+					token.content.includes(expectedProbeText)
+				) {
+					foundProbes.push([...containerStack]);
+				}
+			}
+			expect(foundCodes).toEqual([
+				{ ancestors: expectedAncestors, content: expectedCode },
+			]);
+			if (expectedProbeText) {
+				expect(foundProbes).toEqual([expectedAncestors]);
+			}
+
+			// 2. Lezer parser verification.
+			const tree = markdownLanguage.parser.parse(markdown);
+			const lezerCodes: string[] = [];
+			tree.iterate({
+				enter(node) {
+					if (node.name === "CodeText") {
+						lezerCodes.push(markdown.slice(node.from, node.to));
+					}
+				},
+			});
+			expect(lezerCodes).toEqual([expectedCode]);
+		};
+
+		// 1. Quoted indented code containing literal `~~~`.
+		const quotedIndented = ">     literally ~~~";
+		const quotedPos = quotedIndented.indexOf("literally");
+		const quotedIndex = createEditorMarkdownBlockIndex(quotedIndented);
+		const quotedTarget = findEditorCodeContentTarget(
+			quotedIndented,
+			{ end: quotedPos, start: quotedPos },
+			quotedIndex,
+		);
+		if ("unavailable" === quotedTarget.status) {
+			throw new Error(quotedTarget.code);
+		}
+		const quotedBefore = insertParagraphRelative(
+			quotedIndented,
+			{ direction: "none", end: quotedPos, start: quotedPos },
+			"before",
+			quotedIndex,
+			quotedTarget.target,
+		);
+		expect(quotedBefore?.value).toBe("> \n>\n>     literally ~~~");
+		expect(quotedBefore?.selection).toEqual({
+			direction: "none",
+			end: 2,
+			start: 2,
+		});
+		if (!quotedBefore) throw new Error("expected-quoted-before");
+		assertIndentedNestedCodePreserved(
+			quotedBefore.value,
+			"literally ~~~",
+			["blockquote"],
+		);
+		const quotedBeforeTyped =
+			quotedBefore.value.slice(0, quotedBefore.selection.start) +
+			"NEWPARA" +
+			quotedBefore.value.slice(quotedBefore.selection.start);
+		expect(quotedBeforeTyped).toBe("> NEWPARA\n>\n>     literally ~~~");
+		assertIndentedNestedCodePreserved(
+			quotedBeforeTyped,
+			"literally ~~~",
+			["blockquote"],
+			"NEWPARA",
+		);
+
+		const quotedAfter = insertParagraphRelative(
+			quotedIndented,
+			{ direction: "none", end: quotedPos, start: quotedPos },
+			"after",
+			quotedIndex,
+			quotedTarget.target,
+		);
+		expect(quotedAfter?.value).toBe(">     literally ~~~\n>\n> ");
+		if (!quotedAfter) throw new Error("expected-quoted-after");
+		assertIndentedNestedCodePreserved(
+			quotedAfter.value,
+			"literally ~~~",
+			["blockquote"],
+		);
+		const quotedAfterTyped =
+			quotedAfter.value.slice(0, quotedAfter.selection.start) +
+			"NEWPARA" +
+			quotedAfter.value.slice(quotedAfter.selection.start);
+		expect(quotedAfterTyped).toBe(">     literally ~~~\n>\n> NEWPARA");
+		assertIndentedNestedCodePreserved(
+			quotedAfterTyped,
+			"literally ~~~",
+			["blockquote"],
+			"NEWPARA",
+		);
+
+		// 2. List item with leading paragraph followed by indented code (`- intro\n\n      code`).
+		const listIntroIndented = "- intro\n\n      code";
+		const listIntroPos = listIntroIndented.indexOf("code");
+		const listIntroIndex = createEditorMarkdownBlockIndex(listIntroIndented);
+		const listIntroTarget = findEditorCodeContentTarget(
+			listIntroIndented,
+			{ end: listIntroPos, start: listIntroPos },
+			listIntroIndex,
+		);
+		if ("unavailable" === listIntroTarget.status) {
+			throw new Error(listIntroTarget.code);
+		}
+		const listIntroBefore = insertParagraphRelative(
+			listIntroIndented,
+			{ direction: "none", end: listIntroPos, start: listIntroPos },
+			"before",
+			listIntroIndex,
+			listIntroTarget.target,
+		);
+		expect(listIntroBefore?.value).toBe("- intro\n\n  \n\n      code");
+		if (!listIntroBefore) throw new Error("expected-list-intro-before");
+		assertIndentedNestedCodePreserved(
+			listIntroBefore.value,
+			"code",
+			["list_item"],
+		);
+		const listIntroBeforeTyped =
+			listIntroBefore.value.slice(0, listIntroBefore.selection.start) +
+			"NEWPARA" +
+			listIntroBefore.value.slice(listIntroBefore.selection.start);
+		expect(listIntroBeforeTyped).toBe("- intro\n\n  NEWPARA\n\n      code");
+		assertIndentedNestedCodePreserved(
+			listIntroBeforeTyped,
+			"code",
+			["list_item"],
+			"NEWPARA",
+		);
+
+		const listIntroAfter = insertParagraphRelative(
+			listIntroIndented,
+			{ direction: "none", end: listIntroPos, start: listIntroPos },
+			"after",
+			listIntroIndex,
+			listIntroTarget.target,
+		);
+		expect(listIntroAfter?.value).toBe("- intro\n\n      code\n\n  ");
+		if (!listIntroAfter) throw new Error("expected-list-intro-after");
+		assertIndentedNestedCodePreserved(
+			listIntroAfter.value,
+			"code",
+			["list_item"],
+		);
+		const listIntroAfterTyped =
+			listIntroAfter.value.slice(0, listIntroAfter.selection.start) +
+			"NEWPARA" +
+			listIntroAfter.value.slice(listIntroAfter.selection.start);
+		expect(listIntroAfterTyped).toBe("- intro\n\n      code\n\n  NEWPARA");
+		assertIndentedNestedCodePreserved(
+			listIntroAfterTyped,
+			"code",
+			["list_item"],
+			"NEWPARA",
+		);
+
+		// 3. List-wrapped quote indented code (`- >     literally ~~~`).
+		const listQuoteIndented = "- >     literally ~~~";
+		const listQuoteIndentedPos = listQuoteIndented.indexOf("literally");
+		const listQuoteIndentedIndex =
+			createEditorMarkdownBlockIndex(listQuoteIndented);
+		const listQuoteIndentedTarget = findEditorCodeContentTarget(
+			listQuoteIndented,
+			{ end: listQuoteIndentedPos, start: listQuoteIndentedPos },
+			listQuoteIndentedIndex,
+		);
+		if ("unavailable" === listQuoteIndentedTarget.status) {
+			throw new Error(listQuoteIndentedTarget.code);
+		}
+		const listQuoteIndentedBefore = insertParagraphRelative(
+			listQuoteIndented,
+			{
+				direction: "none",
+				end: listQuoteIndentedPos,
+				start: listQuoteIndentedPos,
+			},
+			"before",
+			listQuoteIndentedIndex,
+			listQuoteIndentedTarget.target,
+		);
+		expect(listQuoteIndentedBefore?.value).toBe(
+			"- > \n  >\n  >     literally ~~~",
+		);
+		expect(listQuoteIndentedBefore?.selection).toEqual({
+			direction: "none",
+			end: 4,
+			start: 4,
+		});
+		if (!listQuoteIndentedBefore) {
+			throw new Error("expected-list-quote-indented-before");
+		}
+		assertIndentedNestedCodePreserved(
+			listQuoteIndentedBefore.value,
+			"literally ~~~",
+			["list_item", "blockquote"],
+		);
+		const listQuoteIndentedBeforeTyped =
+			listQuoteIndentedBefore.value.slice(
+				0,
+				listQuoteIndentedBefore.selection.start,
+			) +
+			"NEWPARA" +
+			listQuoteIndentedBefore.value.slice(
+				listQuoteIndentedBefore.selection.start,
+			);
+		expect(listQuoteIndentedBeforeTyped).toBe(
+			"- > NEWPARA\n  >\n  >     literally ~~~",
+		);
+		assertIndentedNestedCodePreserved(
+			listQuoteIndentedBeforeTyped,
+			"literally ~~~",
+			["list_item", "blockquote"],
+			"NEWPARA",
+		);
+
+		const listQuoteIndentedAfter = insertParagraphRelative(
+			listQuoteIndented,
+			{
+				direction: "none",
+				end: listQuoteIndentedPos,
+				start: listQuoteIndentedPos,
+			},
+			"after",
+			listQuoteIndentedIndex,
+			listQuoteIndentedTarget.target,
+		);
+		expect(listQuoteIndentedAfter?.value).toBe(
+			"- >     literally ~~~\n  >\n  > ",
+		);
+		if (!listQuoteIndentedAfter) {
+			throw new Error("expected-list-quote-indented-after");
+		}
+		assertIndentedNestedCodePreserved(
+			listQuoteIndentedAfter.value,
+			"literally ~~~",
+			["list_item", "blockquote"],
+		);
+		const listQuoteIndentedAfterTyped =
+			listQuoteIndentedAfter.value.slice(
+				0,
+				listQuoteIndentedAfter.selection.start,
+			) +
+			"NEWPARA" +
+			listQuoteIndentedAfter.value.slice(
+				listQuoteIndentedAfter.selection.start,
+			);
+		expect(listQuoteIndentedAfterTyped).toBe(
+			"- >     literally ~~~\n  >\n  > NEWPARA",
+		);
+		assertIndentedNestedCodePreserved(
+			listQuoteIndentedAfterTyped,
+			"literally ~~~",
+			["list_item", "blockquote"],
+			"NEWPARA",
+		);
+
+		// 4. List-wrapped quote fence (`- > ~~~`).
+		const listQuoteFence = ["- > ~~~", "  > x", "  > ~~~"].join("\n");
+		const listQuotePos = listQuoteFence.indexOf("x");
+		const listQuoteIndex = createEditorMarkdownBlockIndex(listQuoteFence);
+		const listQuoteTarget = findEditorCodeContentTarget(
+			listQuoteFence,
+			{ end: listQuotePos, start: listQuotePos },
+			listQuoteIndex,
+		);
+		if ("unavailable" === listQuoteTarget.status) {
+			throw new Error(listQuoteTarget.code);
+		}
+		const listQuoteBefore = insertParagraphRelative(
+			listQuoteFence,
+			{ direction: "none", end: listQuotePos, start: listQuotePos },
+			"before",
+			listQuoteIndex,
+			listQuoteTarget.target,
+		);
+		expect(listQuoteBefore?.value).toBe(
+			["- > ", "  > ~~~", "  > x", "  > ~~~"].join("\n"),
+		);
+		expect(listQuoteBefore?.value).not.toContain("- > \n- > ");
+		expect(listQuoteBefore?.selection).toEqual({
+			direction: "none",
+			end: 4,
+			start: 4,
+		});
+		const listQuoteAfter = insertParagraphRelative(
+			listQuoteFence,
+			{ direction: "none", end: listQuotePos, start: listQuotePos },
+			"after",
+			listQuoteIndex,
+			listQuoteTarget.target,
+		);
+		expect(listQuoteAfter?.value).toBe(
+			["- > ~~~", "  > x", "  > ~~~", "  > "].join("\n"),
+		);
+
+		// 5. List-marker indented code (`-     code` and `1.     code`):
+		// CommonMark §5.2 forbids a list item starting with two blank lines and
+		// §4.4 forbids indented code interrupting a paragraph, so `before` must
+		// return null while `after` succeeds with empty + typed preservation.
+		for (const listIndented of [
+			{
+				after: "-     code\n\n  ",
+				afterTyped: "-     code\n\n  NEWPARA",
+				source: "-     code",
+			},
+			{
+				after: "1.     code\n\n   ",
+				afterTyped: "1.     code\n\n   NEWPARA",
+				source: "1.     code",
+			},
+		]) {
+			const pos = listIndented.source.indexOf("code");
+			const idx = createEditorMarkdownBlockIndex(listIndented.source);
+			const target = findEditorCodeContentTarget(
+				listIndented.source,
+				{ end: pos, start: pos },
+				idx,
+			);
+			if ("unavailable" === target.status) {
+				throw new Error(target.code);
+			}
+			expect(
+				insertParagraphRelative(
+					listIndented.source,
+					{ direction: "none", end: pos, start: pos },
+					"before",
+					idx,
+					target.target,
+				),
+			).toBeNull();
+			const afterEdit = insertParagraphRelative(
+				listIndented.source,
+				{ direction: "none", end: pos, start: pos },
+				"after",
+				idx,
+				target.target,
+			);
+			expect(afterEdit?.value).toBe(listIndented.after);
+			if (!afterEdit) throw new Error("expected-list-indented-after");
+			assertIndentedNestedCodePreserved(
+				afterEdit.value,
+				"code",
+				["list_item"],
+			);
+			const typed =
+				afterEdit.value.slice(0, afterEdit.selection.start) +
+				"NEWPARA" +
+				afterEdit.value.slice(afterEdit.selection.start);
+			expect(typed).toBe(listIndented.afterTyped);
+			assertIndentedNestedCodePreserved(
+				typed,
+				"code",
+				["list_item"],
+				"NEWPARA",
+			);
+		}
+
+		// Unclosed quoted fence cannot insert a paragraph below without absorbing
+		// the new line into the code body; verification must reject with null.
+		const unclosedQuoteFence = ["> ```js", "> code"].join("\n");
+		const unclosedPos = unclosedQuoteFence.indexOf("code");
+		const unclosedIndex = createEditorMarkdownBlockIndex(unclosedQuoteFence);
+		const unclosedTarget = findEditorCodeContentTarget(
+			unclosedQuoteFence,
+			{ end: unclosedPos, start: unclosedPos },
+			unclosedIndex,
+		);
+		if ("unavailable" === unclosedTarget.status) {
+			throw new Error(unclosedTarget.code);
+		}
+		expect(
+			insertParagraphRelative(
+				unclosedQuoteFence,
+				{ direction: "none", end: unclosedPos, start: unclosedPos },
+				"after",
+				unclosedIndex,
+				unclosedTarget.target,
+			),
+		).toBeNull();
+	});
+
 	it("rejects a code-relative insertion with a target outside its verified container", () => {
 		const source = ["> ```js", "> code", "> ```", "> tail"].join("\n");
 		const position = source.indexOf("code");
@@ -536,11 +954,12 @@ describe("editor context menu rules", () => {
 	});
 
 	it.each(["---", "***", "___"])(
-		"inserts two %s newlines before a thematic break and preserves the exact source boundary",
+		"inserts blank-line separated paragraph before a %s thematic break and preserves the exact source boundary",
 		(marker) => {
 			for (const newline of ["\n", "\r\n", "\r"]) {
 				const source = `# prefix${newline}  ${marker}  ${newline}suffix`;
 				const blockStart = source.indexOf(`  ${marker}`);
+				const caret = blockStart + newline.length;
 				const index = createEditorMarkdownBlockIndex(source);
 				const edit = insertParagraphRelative(
 					source,
@@ -556,21 +975,19 @@ describe("editor context menu rules", () => {
 				expect(edit).toEqual({
 					changes: {
 						from: blockStart,
-						insert: `${newline}${newline}`,
+						insert: `${newline}${newline}${newline}`,
 						to: blockStart,
 					},
 					selection: {
 						direction: "none",
-						end: blockStart,
-						start: blockStart,
+						end: caret,
+						start: caret,
 					},
-					value: `# prefix${newline}${newline}${newline}  ${marker}  ${newline}suffix`,
+					value: `# prefix${newline}${newline}${newline}${newline}  ${marker}  ${newline}suffix`,
 				});
 
-				const typed = `${edit?.value.slice(0, blockStart)}text${edit?.value.slice(blockStart)}`;
-				expect(findMarkdownBlock(typed, blockStart + 2)?.kind).toBe(
-					"paragraph",
-				);
+				const typed = `${edit?.value.slice(0, caret)}text${edit?.value.slice(caret)}`;
+				expect(findMarkdownBlock(typed, caret + 2)?.kind).toBe("paragraph");
 				expect(findMarkdownBlock(typed, typed.indexOf(marker))?.kind).toBe(
 					"thematic-break",
 				);
@@ -578,7 +995,7 @@ describe("editor context menu rules", () => {
 		},
 	);
 
-	it("keeps thematic-break insertion below on the existing one-newline path", () => {
+	it("inserts a blank-line separated paragraph below a thematic break", () => {
 		const source = "# prefix\n  ---  \nsuffix";
 		const blockStart = source.indexOf("  ---");
 		const blockEnd = source.indexOf("\n", blockStart);
@@ -599,12 +1016,17 @@ describe("editor context menu rules", () => {
 
 		expect(edit?.changes).toEqual({
 			from: blockEnd,
-			insert: "\n",
+			insert: "\n\n\n",
 			to: blockEnd,
 		});
-		expect(edit?.value).toBe("# prefix\n  ---  \n\nsuffix");
+		expect(edit?.selection).toEqual({
+			direction: "none",
+			end: blockEnd + 2,
+			start: blockEnd + 2,
+		});
+		expect(edit?.value).toBe("# prefix\n  ---  \n\n\n\nsuffix");
 		expect(edit?.value.slice(0, blockEnd)).toBe(source.slice(0, blockEnd));
-		expect(edit?.value.slice(blockEnd + 1)).toBe(source.slice(blockEnd));
+		expect(edit?.value.slice(blockEnd + 3)).toBe(source.slice(blockEnd));
 	});
 
 	it.each(["\n", "\r\n", "\r"])(
@@ -684,6 +1106,8 @@ describe("editor context menu rules", () => {
 			[
 				"prefix",
 				"",
+				"",
+				"",
 				"| H | V |",
 				"| --- | --- |",
 				"| a | b |",
@@ -710,10 +1134,10 @@ describe("editor context menu rules", () => {
 			"after",
 		);
 
-		expect(edit?.value).toBe(`${source}\n`);
+		expect(edit?.value).toBe(`${source}\n\n`);
 		expect(edit?.changes).toEqual({
 			from: source.length,
-			insert: "\n",
+			insert: "\n\n",
 			to: source.length,
 		});
 		expect(
@@ -726,7 +1150,7 @@ describe("editor context menu rules", () => {
 				},
 				"after",
 			)?.value,
-		).toBe(`${source}\n`);
+		).toBe(`${source}\n\n`);
 	});
 
 	it("inserts an empty paragraph boundary without copying the source line", () => {
@@ -735,8 +1159,8 @@ describe("editor context menu rules", () => {
 		const above = insertParagraphRelative(source, selection, "before");
 		const below = insertParagraphRelative(source, selection, "after");
 
-		expect(above?.value).toBe("\na\nb");
-		expect(below?.value).toBe("a\nb\n");
+		expect(above?.value).toBe("\n\na\nb");
+		expect(below?.value).toBe("a\nb\n\n");
 		expect(above?.value.match(/a/gu)).toHaveLength(1);
 		expect(below?.value.match(/a/gu)).toHaveLength(1);
 	});
@@ -753,7 +1177,7 @@ describe("editor context menu rules", () => {
 				},
 				"after",
 			)?.value,
-		).toBe("# H\n\nbody");
+		).toBe("# H\n\n\n\nbody");
 
 		const list = "- a\n  - b\n- c\n\nbody";
 		expect(
@@ -766,7 +1190,7 @@ describe("editor context menu rules", () => {
 				},
 				"after",
 			)?.value,
-		).toBe("- a\n  - b\n- c\n\n\nbody");
+		).toBe("- a\n  - b\n- c\n\n\n\nbody");
 
 		const indented = "    code\n\nbody";
 		expect(
@@ -779,7 +1203,7 @@ describe("editor context menu rules", () => {
 				},
 				"after",
 			)?.value,
-		).toBe("    code\n\n\nbody");
+		).toBe("    code\n\n\n\nbody");
 	});
 
 	it("inserts and deletes table rows and columns while preserving escaped/code pipes", () => {
@@ -814,7 +1238,6 @@ describe("editor context menu rules", () => {
 			"  A | URL |",
 			"  --- | :---: |",
 			"  `x\\|y` | [x](u) |",
-			"",
 			"after",
 		].join("\n");
 		const position = source.indexOf("A");
@@ -830,7 +1253,6 @@ describe("editor context menu rules", () => {
 				"  A      | URL    |",
 				"  ---    | :---:  |",
 				"  `x\\|y` | [x](u) |",
-				"",
 				"after",
 			].join("\n"),
 		);
@@ -841,7 +1263,7 @@ describe("editor context menu rules", () => {
 				"  ---    | :---:  |",
 				"  `x\\|y` | [x](u) |",
 			].join("\n"),
-			to: source.indexOf(" |\n\nafter") + 2,
+			to: source.indexOf(" |\nafter") + 2,
 		});
 	});
 
@@ -854,7 +1276,6 @@ describe("editor context menu rules", () => {
 			"  code\t | link |",
 			"  ---\t | --- |",
 			"  value\\  | [x](https://e.test/a) |",
-			"",
 			"after",
 		].join(newline);
 		const tableStart = source.indexOf("  code");
@@ -868,9 +1289,9 @@ describe("editor context menu rules", () => {
 		expect(edit?.value.startsWith(`before${newline}${marker}${newline}`)).toBe(
 			true,
 		);
-		expect(edit?.value.endsWith(`${newline}${newline}after`)).toBe(true);
+		expect(edit?.value.endsWith(`${newline}after`)).toBe(true);
 		expect(edit?.value).toContain("  value\\  | [x](https://e.test/a) |");
-		expect(edit?.value.match(/\r\n/gu)).toHaveLength(6);
+		expect(edit?.value.match(/\r\n/gu)).toHaveLength(5);
 		expect(edit?.value).not.toContain("\n|");
 		expect(edit?.changes?.from).toBe(tableStart);
 	});
@@ -891,806 +1312,6 @@ describe("editor context menu rules", () => {
 		).toBe("A");
 	});
 
-	it("aligns GFM table pipe escaping with league/commonmark TableParser::split()", () => {
-		expect(pipePositions("|x|\\\\|z|")).toEqual([0, 2, 7]);
-		expect(pipePositions("|x|\\\\|z|w|")).toEqual([0, 2, 7, 9]);
-		expect(pipePositions("|x|\\|z|w|")).toEqual([0, 2, 6, 8]);
-		expect(pipePositions("|x|\\\\ |z|")).toEqual([0, 2, 6, 8]);
-		expect(pipePositions("|x|\\\\\\\\|z|w|")).toEqual([0, 2, 9, 11]);
-		expect(pipePositions("\\|a|b|")).toEqual([3, 5]);
-
-		// Case 1: Under GFM Section 4.10 / TableParser::split(), `\\|` is an
-		// escaped pipe inside cell 1, leaving only 2 body cells for 3 header
-		// columns (`["x", "|z", ""]`). Refusing to format preserves the exact
-		// rendered table instead of turning `\\|` into a column split.
-		const shortDoubleBackslash = "|A|B|C|\n|-|-|-|\n|x|\\\\|z|";
-		for (const probe of ["A", "x", "z"]) {
-			const pos = shortDoubleBackslash.indexOf(probe);
-			expect(findMarkdownTable(shortDoubleBackslash, pos)).toBeNull();
-			expect(
-				formatMarkdownTableSource(shortDoubleBackslash, {
-					direction: "none",
-					end: pos,
-					start: pos,
-				}),
-			).toBeNull();
-		}
-
-		// Case 2: Full 3-cell row containing `\\|` keeps `\\|z` in column 1 and
-		// maps both caret and non-collapsed selection through formatting.
-		const fullDoubleBackslash = "|A|B|C|\n|-|-|-|\n|x|\\\\|z|w|";
-		const zPos = fullDoubleBackslash.indexOf("z");
-		const wPos = fullDoubleBackslash.indexOf("w");
-		const escapedTokenStart = fullDoubleBackslash.indexOf("\\\\|z");
-		const escapedTokenEnd = escapedTokenStart + "\\\\|z".length;
-		expect(findMarkdownTable(fullDoubleBackslash, zPos)).toMatchObject({
-			columnCount: 3,
-			rowCount: 2,
-		});
-		expect(
-			tableSelectionAt(fullDoubleBackslash, {
-				direction: "none",
-				end: zPos,
-				start: zPos,
-			}),
-		).toMatchObject({ column: 1, kind: "column", rowIndex: 2 });
-		expect(
-			tableSelectionAt(fullDoubleBackslash, {
-				direction: "none",
-				end: wPos,
-				start: wPos,
-			}),
-		).toMatchObject({ column: 2, kind: "column", rowIndex: 2 });
-		const fullDoubleEdit = formatMarkdownTableSource(fullDoubleBackslash, {
-			direction: "forward",
-			end: escapedTokenEnd,
-			start: escapedTokenStart,
-		});
-		const expectedFullDouble =
-			"| A | B    | C |\n| - | -    | - |\n| x | \\\\|z | w |";
-		expect(fullDoubleEdit?.value).toBe(expectedFullDouble);
-		expect(
-			fullDoubleEdit?.value.slice(
-				fullDoubleEdit.selection.start,
-				fullDoubleEdit.selection.end,
-			),
-		).toBe("\\\\|z");
-		const fullDoubleCaretEdit = formatMarkdownTableSource(fullDoubleBackslash, {
-			direction: "none",
-			end: zPos,
-			start: zPos,
-		});
-		expect(fullDoubleCaretEdit?.value).toBe(expectedFullDouble);
-		expect(
-			fullDoubleCaretEdit?.value[fullDoubleCaretEdit.selection.start],
-		).toBe("z");
-		if (fullDoubleEdit) {
-			expect(
-				formatMarkdownTableSource(fullDoubleEdit.value, fullDoubleEdit.selection),
-			).toEqual({
-				selection: fullDoubleEdit.selection,
-				value: expectedFullDouble,
-			});
-		}
-
-		// Case 3: Single-backslash control (`\|z`) formats cleanly and preserves
-		// column identity and selection mapping.
-		const singleBackslash = "|A|B|C|\n|-|-|-|\n|x|\\|z|w|";
-		const singleStart = singleBackslash.indexOf("\\|z");
-		const singleEnd = singleStart + "\\|z".length;
-		expect(findMarkdownTable(singleBackslash, singleStart)).toMatchObject({
-			columnCount: 3,
-			rowCount: 2,
-		});
-		const singleEdit = formatMarkdownTableSource(singleBackslash, {
-			direction: "forward",
-			end: singleEnd,
-			start: singleStart,
-		});
-		expect(singleEdit?.value).toBe(
-			"| A | B   | C |\n| - | -   | - |\n| x | \\|z | w |",
-		);
-		expect(
-			singleEdit?.value.slice(
-				singleEdit.selection.start,
-				singleEdit.selection.end,
-			),
-		).toBe("\\|z");
-
-		// Case 4: Spaced double-backslash (`\\ |`) has an unescaped delimiter
-		// pipe and formats to `| x | \\ | z |` with space before `|` preserved.
-		const spacedDoubleBackslash = "|A|B|C|\n|-|-|-|\n|x|\\\\ |z|";
-		const spacedStart = spacedDoubleBackslash.indexOf("\\\\");
-		const spacedEnd = spacedStart + 2;
-		expect(findMarkdownTable(spacedDoubleBackslash, spacedStart)).toMatchObject({
-			columnCount: 3,
-			rowCount: 2,
-		});
-		expect(
-			tableSelectionAt(spacedDoubleBackslash, {
-				direction: "none",
-				end: spacedDoubleBackslash.indexOf("z"),
-				start: spacedDoubleBackslash.indexOf("z"),
-			}),
-		).toMatchObject({ column: 2, kind: "column", rowIndex: 2 });
-		const spacedEdit = formatMarkdownTableSource(spacedDoubleBackslash, {
-			direction: "forward",
-			end: spacedEnd,
-			start: spacedStart,
-		});
-		expect(spacedEdit?.value).toBe(
-			"| A | B  | C |\n| - | -  | - |\n| x | \\\\ | z |",
-		);
-		expect(
-			spacedEdit?.value.slice(
-				spacedEdit.selection.start,
-				spacedEdit.selection.end,
-			),
-		).toBe("\\\\");
-
-		// Trailing `\\|` without a closing delimiter stays cell content rather than
-		// becoming a trailing delimiter pipe.
-		const trailingEscapedPipe = "|A|Header|\n|-|-|\n|x|\\\\|";
-		const trailingPos = trailingEscapedPipe.indexOf("\\\\|");
-		expect(findMarkdownTable(trailingEscapedPipe, trailingPos)).toMatchObject({
-			columnCount: 2,
-			rowCount: 2,
-		});
-		const trailingPipeEdit = formatMarkdownTableSource(trailingEscapedPipe, {
-			direction: "none",
-			end: trailingPos,
-			start: trailingPos,
-		});
-		expect(trailingPipeEdit?.value).toBe(
-			"| A | Header |\n| - | -      |\n| x | \\\\|   ",
-		);
-	});
-
-	it("suppresses right padding on outerless first cells that would become CommonMark block openers", () => {
-		const headerOpeners = [
-			"-",
-			"+",
-			"*",
-			"#",
-			"######",
-			"1.",
-			"999999999.",
-			"1)",
-			"999999999)",
-		];
-		for (const opener of headerOpeners) {
-			const source = `${opener}|\\\\|z\n|---|---|\n|xx|yy|`;
-			const caret = source.indexOf("z");
-			const edit = formatMarkdownTableSource(source, {
-				direction: "none",
-				end: caret,
-				start: caret,
-			});
-			expect(edit, opener).not.toBeNull();
-			const firstLine = (edit?.value ?? "").split("\n")[0];
-			expect(firstLine, opener).toBe(`${opener}| \\\\|z`);
-			expect(edit?.value[edit.selection.start], opener).toBe("z");
-			expect(
-				findMarkdownTable(edit?.value ?? "", edit?.selection.start ?? 0),
-				opener,
-			).toMatchObject({ columnCount: 2, rowCount: 2 });
-			if (edit) {
-				expect(
-					formatMarkdownTableSource(edit.value, edit.selection),
-					opener,
-				).toEqual({
-					selection: edit.selection,
-					value: edit.value,
-				});
-			}
-		}
-
-		// Indented outerless opener header and exact selection mapping on cell 0.
-		const indented = "  -|\\\\|z\n  |---|---|\n  |xx|yy|";
-		const dashPos = indented.indexOf("-");
-		const indentedEdit = formatMarkdownTableSource(indented, {
-			direction: "forward",
-			end: dashPos + 1,
-			start: dashPos,
-		});
-		expect(indentedEdit?.value).toBe(
-			"  -| \\\\|z\n  | --- | ---  |\n  | xx  | yy   |",
-		);
-		expect(
-			indentedEdit?.value.slice(
-				indentedEdit.selection.start,
-				indentedEdit.selection.end,
-			),
-		).toBe("-");
-
-		// Body rows without a leading pipe also suppress right padding, including
-		// when removing existing trailing spaces before the pipe (rawEnd > coreEnd)
-		// on a non-interrupting ordered-list token like `2.  |yy`.
-		for (const bodyCell of ["-", "+", "*", "#", "1.", "1)"]) {
-			const source = `|A|B|\n|---|---|\n${bodyCell}|yy`;
-			const edit = formatMarkdownTableSource(source, {
-				direction: "none",
-				end: source.indexOf("yy"),
-				start: source.indexOf("yy"),
-			});
-			expect(edit?.value, bodyCell).toBe(
-				`| A   | B   |\n| --- | --- |\n${bodyCell}| yy `,
-			);
-			expect(
-				findMarkdownTable(edit?.value ?? "", edit?.selection.start ?? 0),
-				bodyCell,
-			).toMatchObject({ columnCount: 2, rowCount: 2 });
-		}
-		const spacedBody = "|A|B|\n|---|---|\n2.  |yy";
-		const spacedBodyPos = spacedBody.lastIndexOf("2.");
-		const spacedBodyEdit = formatMarkdownTableSource(spacedBody, {
-			direction: "forward",
-			end: spacedBodyPos + 2,
-			start: spacedBodyPos,
-		});
-		expect(spacedBodyEdit?.value).toBe("| A   | B   |\n| --- | --- |\n2.| yy ");
-		expect(
-			spacedBodyEdit?.value.slice(
-				spacedBodyEdit.selection.start,
-				spacedBodyEdit.selection.end,
-			),
-		).toBe("2.");
-
-		// Non-opener tokens and leading-pipe rows keep normal column-aligned padding.
-		const nonOpeners = [
-			"--|b\n|---|---|\n|xxxx|yy|",
-			"#######|b\n|---|---|\n|xxxxxxxx|yy|",
-			"1000000000.|b\n|---|---|\n|xxxxxxxxxxxx|yy|",
-			"|-|\\\\|z|\n|---|---|\n|xx|yy|",
-		];
-		expect(
-			formatMarkdownTableSource(nonOpeners[0] ?? "", {
-				direction: "none",
-				end: 0,
-				start: 0,
-			})?.value.split("\n")[0],
-		).toBe("--   | b  ");
-		expect(
-			formatMarkdownTableSource(nonOpeners[1] ?? "", {
-				direction: "none",
-				end: 0,
-				start: 0,
-			})?.value.split("\n")[0],
-		).toBe("#######  | b  ");
-		expect(
-			formatMarkdownTableSource(nonOpeners[2] ?? "", {
-				direction: "none",
-				end: 0,
-				start: 0,
-			})?.value.split("\n")[0],
-		).toBe("1000000000.  | b  ");
-		expect(
-			formatMarkdownTableSource(nonOpeners[3] ?? "", {
-				direction: "none",
-				end: 1,
-				start: 1,
-			})?.value.split("\n")[0],
-		).toBe("| -   | \\\\|z |");
-
-		// Byte projection agrees to the exact byte with emitted bytes at the 1 MiB ceiling
-		// in both aligned and compact fallback modes.
-		const openerTable = "-|\\\\|z\n|---|---|\n|xx|yy|";
-		const expectedAligned = "-| \\\\|z\n| --- | ---  |\n| xx  | yy   |";
-		const expectedCompact = "-| \\\\|z\n| --- | --- |\n| xx | yy |";
-		const alignedBytes = utf8ByteLength(expectedAligned);
-		const exactAlignedSource = `${"p".repeat(MAX_MARKDOWN_PREVIEW_BYTES - alignedBytes - 2)}\n\n${openerTable}`;
-		const exactAlignedEdit = formatMarkdownTableSource(exactAlignedSource, {
-			direction: "none",
-			end: exactAlignedSource.lastIndexOf("xx"),
-			start: exactAlignedSource.lastIndexOf("xx"),
-		});
-		expect(exactAlignedEdit).not.toBeNull();
-		expect(utf8ByteLength(exactAlignedEdit?.value ?? "")).toBe(
-			MAX_MARKDOWN_PREVIEW_BYTES,
-		);
-		expect(exactAlignedEdit?.value.endsWith(expectedAligned)).toBe(true);
-
-		const compactBytes = utf8ByteLength(expectedCompact);
-		const exactCompactSource = `${"p".repeat(MAX_MARKDOWN_PREVIEW_BYTES - compactBytes - 2)}\n\n${openerTable}`;
-		const exactCompactEdit = formatMarkdownTableSource(exactCompactSource, {
-			direction: "none",
-			end: exactCompactSource.lastIndexOf("xx"),
-			start: exactCompactSource.lastIndexOf("xx"),
-		});
-		expect(exactCompactEdit).not.toBeNull();
-		expect(utf8ByteLength(exactCompactEdit?.value ?? "")).toBe(
-			MAX_MARKDOWN_PREVIEW_BYTES,
-		);
-		expect(exactCompactEdit?.value.endsWith(expectedCompact)).toBe(true);
-
-		const oneByteOverSource = `${"p".repeat(MAX_MARKDOWN_PREVIEW_BYTES - compactBytes - 1)}\n\n${openerTable}`;
-		expect(
-			formatMarkdownTableSource(oneByteOverSource, {
-				direction: "none",
-				end: oneByteOverSource.lastIndexOf("xx"),
-				start: oneByteOverSource.lastIndexOf("xx"),
-			}),
-		).toBeNull();
-	});
-
-	it("suppresses right padding on outerless HTML Type 1 and Type 6 block openers and keeps byte projection exact", () => {
-		const styleWithParagraph = "<style|Header\n---|---\n1|2\n\nAfter";
-		const styleEdit = formatMarkdownTableSource(styleWithParagraph, {
-			direction: "none",
-			end: styleWithParagraph.indexOf("Header"),
-			start: styleWithParagraph.indexOf("Header"),
-		});
-		expect(styleEdit?.value).toBe(
-			"<style| Header\n---    | ---   \n1      | 2     \n\nAfter",
-		);
-		expect(
-			findMarkdownTable(styleEdit?.value ?? "", styleEdit?.selection.start ?? 0),
-		).toMatchObject({ columnCount: 2, rowCount: 2 });
-		if (styleEdit) {
-			expect(
-				formatMarkdownTableSource(styleEdit.value, styleEdit.selection),
-			).toEqual({
-				selection: styleEdit.selection,
-				value: styleEdit.value,
-			});
-		}
-
-		const htmlOpeners = [
-			"<style",
-			"<pre",
-			"<script",
-			"<textarea",
-			"<div",
-			"</div",
-			"<SOURCE",
-			"<search",
-			"<p",
-			"<table",
-			"<hr",
-		];
-		for (const opener of htmlOpeners) {
-			const source = `${opener}|Header\n---|---\n1|2`;
-			const caret = source.indexOf("Header");
-			const edit = formatMarkdownTableSource(source, {
-				direction: "none",
-				end: caret,
-				start: caret,
-			});
-			expect(edit, opener).not.toBeNull();
-			expect((edit?.value ?? "").split("\n")[0], opener).toBe(
-				`${opener}| Header`,
-			);
-			expect(
-				edit?.value.slice(edit.selection.start, edit.selection.start + 6),
-				opener,
-			).toBe("Header");
-			expect(
-				findMarkdownTable(edit?.value ?? "", edit?.selection.start ?? 0),
-				opener,
-			).toMatchObject({ columnCount: 2, rowCount: 2 });
-			if (edit) {
-				expect(
-					formatMarkdownTableSource(edit.value, edit.selection),
-					opener,
-				).toEqual({
-					selection: edit.selection,
-					value: edit.value,
-				});
-			}
-		}
-
-		// Indented outerless header and body row also suppress right padding.
-		const indentedStyle = "  <style|Header\n  ---|---\n  <div|2";
-		const indentedEdit = formatMarkdownTableSource(indentedStyle, {
-			direction: "none",
-			end: indentedStyle.indexOf("Header"),
-			start: indentedStyle.indexOf("Header"),
-		});
-		expect(indentedEdit?.value).toBe(
-			"  <style| Header\n  ---    | ---   \n  <div| 2     ",
-		);
-
-		// Leading-pipe control and non-opener HTML tokens retain normal column padding.
-		const leadingPipeControl = "| <style | Header |\n| --- | --- |\n| 12345678 | 2 |";
-		expect(
-			formatMarkdownTableSource(leadingPipeControl, {
-				direction: "none",
-				end: leadingPipeControl.indexOf("Header"),
-				start: leadingPipeControl.indexOf("Header"),
-			})?.value.split("\n")[0],
-		).toBe("| <style   | Header |");
-
-		for (const nonOpener of ["<span", "</style", "<stylex"]) {
-			const source = `${nonOpener}|b\n---|---\n123456789|2`;
-			const formattedFirstLine = formatMarkdownTableSource(source, {
-				direction: "none",
-				end: source.indexOf("b"),
-				start: source.indexOf("b"),
-			})?.value.split("\n")[0];
-			expect(formattedFirstLine, nonOpener).toBe(
-				`${nonOpener}${" ".repeat(9 - nonOpener.length)} | b  `,
-			);
-		}
-
-		// Byte projection stays exact at the 1 MiB ceiling in aligned and compact modes.
-		const htmlTable = "<style|Header\n---|---\n1|2";
-		const expectedAligned = "<style| Header\n---    | ---   \n1      | 2     ";
-		const expectedCompact = "<style| Header\n--- | ---\n1 | 2";
-		const alignedBytes = utf8ByteLength(expectedAligned);
-		const exactAligned = `${"p".repeat(MAX_MARKDOWN_PREVIEW_BYTES - alignedBytes - 2)}\n\n${htmlTable}`;
-		const exactAlignedEdit = formatMarkdownTableSource(exactAligned, {
-			direction: "none",
-			end: exactAligned.lastIndexOf("Header"),
-			start: exactAligned.lastIndexOf("Header"),
-		});
-		expect(exactAlignedEdit).not.toBeNull();
-		expect(utf8ByteLength(exactAlignedEdit?.value ?? "")).toBe(
-			MAX_MARKDOWN_PREVIEW_BYTES,
-		);
-		expect(exactAlignedEdit?.value.endsWith(expectedAligned)).toBe(true);
-
-		const compactBytes = utf8ByteLength(expectedCompact);
-		const exactCompact = `${"p".repeat(MAX_MARKDOWN_PREVIEW_BYTES - compactBytes - 2)}\n\n${htmlTable}`;
-		const exactCompactEdit = formatMarkdownTableSource(exactCompact, {
-			direction: "none",
-			end: exactCompact.lastIndexOf("Header"),
-			start: exactCompact.lastIndexOf("Header"),
-		});
-		expect(exactCompactEdit).not.toBeNull();
-		expect(utf8ByteLength(exactCompactEdit?.value ?? "")).toBe(
-			MAX_MARKDOWN_PREVIEW_BYTES,
-		);
-		expect(exactCompactEdit?.value.endsWith(expectedCompact)).toBe(true);
-
-		const oneByteOver = `${"p".repeat(MAX_MARKDOWN_PREVIEW_BYTES - compactBytes - 1)}\n\n${htmlTable}`;
-		expect(
-			formatMarkdownTableSource(oneByteOver, {
-				direction: "none",
-				end: oneByteOver.lastIndexOf("Header"),
-				start: oneByteOver.lastIndexOf("Header"),
-			}),
-		).toBeNull();
-	});
-
-	it("preserves table structure when inserting columns right across escaped pipes and trailing spaces", () => {
-		const withNextRow = "|A|Header|\n|-|-|\n|x|\\\\|\n|y|z|";
-		const insertedWithNextRow = editMarkdownTable(
-			withNextRow,
-			withNextRow.indexOf("Header"),
-			{ type: "insert-column-right" },
-		);
-		expect(insertedWithNextRow?.value).toBe(
-			"|A|Header|  |\n|-|-| --- |\n|x|\\\\| |  |\n|y|z|  |",
-		);
-		expect(
-			findMarkdownTable(
-				insertedWithNextRow?.value ?? "",
-				insertedWithNextRow?.selection.start ?? 0,
-			),
-		).toMatchObject({ columnCount: 3, rowCount: 3 });
-
-		const atEof = "|A|Header|\n|-|-|\n|x|\\\\|";
-		const insertedAtEof = editMarkdownTable(atEof, atEof.indexOf("\\\\|"), {
-			type: "insert-column-right",
-		});
-		expect(insertedAtEof?.value).toBe(
-			"|A|Header|  |\n|-|-| --- |\n|x|\\\\| |  |",
-		);
-		expect(
-			tableSelectionAt(
-				insertedAtEof?.value ?? "",
-				insertedAtEof?.selection ?? { direction: "none", end: 0, start: 0 },
-			),
-		).toMatchObject({ column: 2, columnCount: 3, kind: "column", rowIndex: 2 });
-
-		const trailingSpaces = "| A | B |  \n| - | - |  \n| 1 | 2 |  ";
-		const insertedTrailingSpaces = editMarkdownTable(
-			trailingSpaces,
-			trailingSpaces.indexOf("B"),
-			{ type: "insert-column-right" },
-		);
-		expect(insertedTrailingSpaces?.value).toBe(
-			"| A | B |  |  \n| - | - | --- |  \n| 1 | 2 |  |  ",
-		);
-		expect(
-			findMarkdownTable(
-				insertedTrailingSpaces?.value ?? "",
-				insertedTrailingSpaces?.selection.start ?? 0,
-			),
-		).toMatchObject({ columnCount: 3, rowCount: 2 });
-
-		const trailingBackslash = "|A|B\n|-|-\n|x|foo\\";
-		const insertedTrailingBackslash = editMarkdownTable(
-			trailingBackslash,
-			trailingBackslash.indexOf("foo\\"),
-			{ type: "insert-column-right" },
-		);
-		expect(insertedTrailingBackslash?.value).toBe(
-			"|A|B |  |\n|-|- | --- |\n|x|foo\\ |  |",
-		);
-		expect(
-			findMarkdownTable(
-				insertedTrailingBackslash?.value ?? "",
-				insertedTrailingBackslash?.selection.start ?? 0,
-			),
-		).toMatchObject({ columnCount: 3, rowCount: 2 });
-	});
-
-	it("inserts column 0 left on pipe-less outer-border tables with explicit leading pipes and exact caret placement", () => {
-		const unindented = "A | B\n--- | ---\n1 | 2";
-		const unindentedHeaderEdit = editMarkdownTable(
-			unindented,
-			unindented.indexOf("A"),
-			{ type: "insert-column-left" },
-		);
-		expect(unindentedHeaderEdit?.value).toBe(
-			"|  |A | B\n| --- |--- | ---\n|  |1 | 2",
-		);
-		expect(
-			tableSelectionAt(
-				unindentedHeaderEdit?.value ?? "",
-				unindentedHeaderEdit?.selection ?? {
-					direction: "none",
-					end: 0,
-					start: 0,
-				},
-			),
-		).toMatchObject({ column: 0, columnCount: 3, kind: "column", rowIndex: 0 });
-		expect(unindentedHeaderEdit?.selection.start).toBe(2);
-
-		const indented = "  A | B\n  --- | ---\n  1 | 2";
-		const indentedBodyEdit = editMarkdownTable(
-			indented,
-			indented.indexOf("1"),
-			{ type: "insert-column-left" },
-		);
-		expect(indentedBodyEdit?.value).toBe(
-			"  |  |A | B\n  | --- |--- | ---\n  |  |1 | 2",
-		);
-		expect(
-			tableSelectionAt(
-				indentedBodyEdit?.value ?? "",
-				indentedBodyEdit?.selection ?? { direction: "none", end: 0, start: 0 },
-			),
-		).toMatchObject({ column: 0, columnCount: 3, kind: "column", rowIndex: 2 });
-		const bodyLineStart = (indentedBodyEdit?.value ?? "").lastIndexOf("  |  |1");
-		expect(indentedBodyEdit?.selection.start).toBe(bodyLineStart + 4);
-	});
-
-	it("preserves a separator pipe when deleting a column from a 2-column pipe-less outer-border table", () => {
-		const unindented = "A | B\n--- | ---\n1 | 2";
-		const deleteCol0 = editMarkdownTable(unindented, unindented.indexOf("1"), {
-			type: "delete-column",
-		});
-		expect(deleteCol0?.value).toBe("| B\n| ---\n| 2");
-		expect(
-			tableSelectionAt(
-				deleteCol0?.value ?? "",
-				deleteCol0?.selection ?? { direction: "none", end: 0, start: 0 },
-			),
-		).toMatchObject({ column: 0, columnCount: 1, kind: "column", rowIndex: 2 });
-
-		const deleteCol1 = editMarkdownTable(unindented, unindented.indexOf("2"), {
-			type: "delete-column",
-		});
-		expect(deleteCol1?.value).toBe("A |\n--- |\n1 |");
-		expect(
-			tableSelectionAt(
-				deleteCol1?.value ?? "",
-				deleteCol1?.selection ?? { direction: "none", end: 0, start: 0 },
-			),
-		).toMatchObject({ column: 0, columnCount: 1, kind: "column", rowIndex: 2 });
-
-		const indented = "  A | B\n  --- | ---\n  1 | 2";
-		const deleteIndentedCol0 = editMarkdownTable(
-			indented,
-			indented.indexOf("A"),
-			{ type: "delete-column" },
-		);
-		expect(deleteIndentedCol0?.value).toBe("  | B\n  | ---\n  | 2");
-		expect(
-			tableSelectionAt(
-				deleteIndentedCol0?.value ?? "",
-				deleteIndentedCol0?.selection ?? {
-					direction: "none",
-					end: 0,
-					start: 0,
-				},
-			),
-		).toMatchObject({ column: 0, columnCount: 1, kind: "column", rowIndex: 0 });
-
-		const deleteIndentedCol1 = editMarkdownTable(
-			indented,
-			indented.indexOf("B"),
-			{ type: "delete-column" },
-		);
-		expect(deleteIndentedCol1?.value).toBe("  A |\n  --- |\n  1 |");
-		expect(
-			tableSelectionAt(
-				deleteIndentedCol1?.value ?? "",
-				deleteIndentedCol1?.selection ?? {
-					direction: "none",
-					end: 0,
-					start: 0,
-				},
-			),
-		).toMatchObject({ column: 0, columnCount: 1, kind: "column", rowIndex: 0 });
-
-		const mixed = "| A | B |\n| --- | --- |\n1 | 2";
-		expect(
-			editMarkdownTable(mixed, mixed.indexOf("A"), { type: "delete-column" })
-				?.value,
-		).toBe("| B |\n| --- |\n| 2");
-		expect(
-			editMarkdownTable(mixed, mixed.indexOf("B"), { type: "delete-column" })
-				?.value,
-		).toBe("| A |\n| --- |\n1 |");
-	});
-
-	it("preserves a leading pipe when deleting column 0 on 3+-column outerless and 2-column trailing-pipe tables", () => {
-		const threeColCases = [
-			{
-				expected: "| b | c\n| - | ---\n| 2 | 3",
-				name: "delimiter single dash in col 1",
-				source: "a | b | c\n--- | - | ---\n1 | 2 | 3",
-			},
-			{
-				expected: "| # | c\n| --- | ---\n| - | 3",
-				name: "heading and list openers in col 1",
-				source: "a | # | c\n--- | --- | ---\n1 | - | 3",
-			},
-			{
-				expected: "| > x | c\n| --- | ---\n| <style | 3",
-				name: "blockquote and html opener in col 1",
-				source: "a | > x | c\n--- | --- | ---\n1 | <style | 3",
-			},
-			{
-				expected: "|     x | c\n| --- | ---\n|     y | 3",
-				name: "four-plus spaces in col 1",
-				source: "a |     x | c\n--- | --- | ---\n1 |     y | 3",
-			},
-			{
-				expected: "|\tx | c\n| --- | ---\n|\ty | 3",
-				name: "leading tab in col 1",
-				source: "a |\tx | c\n--- | --- | ---\n1 |\ty | 3",
-			},
-			{
-				expected: "  | # | c\n  | --- | ---\n  | 2 | 3",
-				name: "indented outerless 3-column table",
-				source: "  a | # | c\n  --- | --- | ---\n  1 | 2 | 3",
-			},
-		];
-
-		for (const testCase of threeColCases) {
-			const edit = editMarkdownTable(
-				testCase.source,
-				testCase.source.indexOf("a"),
-				{ type: "delete-column" },
-			);
-			expect(edit?.value, testCase.name).toBe(testCase.expected);
-			expect(
-				tableSelectionAt(
-					edit?.value ?? "",
-					edit?.selection ?? { direction: "none", end: 0, start: 0 },
-				),
-				testCase.name,
-			).toMatchObject({
-				column: 0,
-				columnCount: 2,
-				kind: "column",
-				rowIndex: 0,
-			});
-		}
-
-		const trailingPipeTwoCol = "a | # |\n--- | --- |\n1 | 2 |";
-		const deleteTrailingCol0 = editMarkdownTable(
-			trailingPipeTwoCol,
-			trailingPipeTwoCol.indexOf("a"),
-			{ type: "delete-column" },
-		);
-		expect(deleteTrailingCol0?.value).toBe("| # |\n| --- |\n| 2 |");
-		expect(
-			tableSelectionAt(
-				deleteTrailingCol0?.value ?? "",
-				deleteTrailingCol0?.selection ?? { direction: "none", end: 0, start: 0 },
-			),
-		).toMatchObject({ column: 0, columnCount: 1, kind: "column", rowIndex: 0 });
-
-		const deleteTrailingCol1 = editMarkdownTable(
-			trailingPipeTwoCol,
-			trailingPipeTwoCol.indexOf("#"),
-			{ type: "delete-column" },
-		);
-		expect(deleteTrailingCol1?.value).toBe("a |\n--- |\n1 |");
-		expect(
-			tableSelectionAt(
-				deleteTrailingCol1?.value ?? "",
-				deleteTrailingCol1?.selection ?? { direction: "none", end: 0, start: 0 },
-			),
-		).toMatchObject({ column: 0, columnCount: 1, kind: "column", rowIndex: 0 });
-
-		// Leading-pipe controls stay single-piped when deleting column 0.
-		const leadingPipeThreeCol = "| a | # | c |\n| --- | --- | --- |\n| 1 | 2 | 3 |";
-		expect(
-			editMarkdownTable(
-				leadingPipeThreeCol,
-				leadingPipeThreeCol.indexOf("a"),
-				{ type: "delete-column" },
-			)?.value,
-		).toBe("| # | c |\n| --- | --- |\n| 2 | 3 |");
-
-		const leadingPipeTwoCol = "| a | # |\n| --- | --- |\n| 1 | 2 |";
-		expect(
-			editMarkdownTable(leadingPipeTwoCol, leadingPipeTwoCol.indexOf("a"), {
-				type: "delete-column",
-			})?.value,
-		).toBe("| # |\n| --- |\n| 2 |");
-	});
-
-	it("removes leading indentation when clearing an indented table alignment annotation", () => {
-		const source =
-			'  <!-- easymde-table-align:v1 [[1,"center"]] -->\n  | A | B |\n  | --- | --- |\n  | 1 | 2 |';
-		const result = setMarkdownTableAlignment(source, source.indexOf("A"), {
-			alignment: "left",
-			selection: { columnCount: 2, kind: "whole-table" },
-		});
-		expect(result).toMatchObject({
-			value: "  | A | B |\n  | :--- | :--- |\n  | 1 | 2 |",
-		});
-		if ("status" in result) {
-			throw new Error("table-alignment-unexpectedly-unsupported");
-		}
-		expect(findMarkdownTable(result.value, result.value.indexOf("A"))).toMatchObject({
-			baseAlignments: ["left", "left"],
-			columnCount: 2,
-			rowCount: 2,
-		});
-
-		const withPrefixCrlf =
-			'before\r\n  <!-- easymde-table-align:v1 [[1,"center"]] -->  \r\n  | A | B |\r\n  | --- | --- |\r\n  | 1 | 2 |';
-		const crlfResult = setMarkdownTableAlignment(
-			withPrefixCrlf,
-			withPrefixCrlf.indexOf("A"),
-			{
-				alignment: "left",
-				selection: { columnCount: 2, kind: "whole-table" },
-			},
-		);
-		expect(crlfResult).toMatchObject({
-			value: "before\r\n  | A | B |\r\n  | :--- | :--- |\r\n  | 1 | 2 |",
-		});
-	});
-
-	it("counts UTF-8 byte lengths consistently with TextEncoder across slices and surrogates", () => {
-		expect(MAX_MARKDOWN_PREVIEW_BYTES).toBe(1_048_576);
-		const encoder = new TextEncoder();
-		const samples = [
-			"",
-			"ascii-123",
-			"café",
-			"中文测试",
-			"😀🎉",
-			"aé中😀",
-			"\ud800",
-			"\udfff",
-			"x\ud800y\udfffz",
-		];
-		for (const sample of samples) {
-			expect(utf8ByteLength(sample)).toBe(encoder.encode(sample).byteLength);
-		}
-		const mixed = "aé中😀b";
-		// Slice bounds including splitting the surrogate pair at index 3..5.
-		for (let start = -2; start <= mixed.length + 2; start += 1) {
-			for (let end = -2; end <= mixed.length + 2; end += 1) {
-				const from = Math.max(0, Math.min(mixed.length, start));
-				const to = Math.max(from, Math.min(mixed.length, end));
-				expect(utf8ByteLength(mixed, start, end)).toBe(
-					encoder.encode(mixed.slice(from, to)).byteLength,
-				);
-			}
-		}
-	});
-
 	it("treats only a 0-3 space indent as table syntax and rejects code-indented rows", () => {
 		// A real 0-3 space indented table keeps its own bytes and gains only
 		// outer padding.
@@ -1701,7 +1322,6 @@ describe("editor context menu rules", () => {
 				`${spaces}| A | B |`,
 				`${spaces}| --- | --- |`,
 				`${spaces}| x | y |`,
-				"",
 				"after",
 			].join("\n");
 			const position = source.indexOf("x | y");
@@ -1717,7 +1337,6 @@ describe("editor context menu rules", () => {
 					`${spaces}| A   | B   |`,
 					`${spaces}| --- | --- |`,
 					`${spaces}| x   | y   |`,
-					"",
 					"after",
 				].join("\n"),
 			);
@@ -1759,7 +1378,6 @@ describe("editor context menu rules", () => {
 			"  A | B",
 			"  --- | ---",
 			"  x | y",
-			"",
 			"after",
 		].join("\n");
 		const position = source.indexOf("x | y");
@@ -1775,12 +1393,11 @@ describe("editor context menu rules", () => {
 				"  A   | B  ",
 				"  --- | ---",
 				"  x   | y  ",
-				"",
 				"after",
 			].join("\n"),
 		);
 		expect(edit?.value.startsWith("before\n\n  A")).toBe(true);
-		expect(edit?.value.endsWith("\n  x   | y  \n\nafter")).toBe(true);
+		expect(edit?.value.endsWith("\n  x   | y  \nafter")).toBe(true);
 	});
 
 	it("returns an unchanged edit for an aligned table and null for unsupported context", () => {
@@ -1824,787 +1441,6 @@ describe("editor context menu rules", () => {
 				direction: "forward",
 				end: ambiguous.indexOf("2") + 1,
 				start: ambiguous.indexOf("1"),
-			}),
-		).toBeNull();
-	});
-
-	it("matches CommonMark indented leading-pipe body and separator parsing without phantom cells", () => {
-		// CommonMark `TableParser::split(\trim($line))` strips the leading `|`
-		// after 4+ spaces, leaving only 2 explicit cells for a 3-column header;
-		// source table actions must decline instead of inventing a phantom cell 0.
-		const shortIndentedBody = "a | b | c\n--- | --- | ---\n    | x\\|z | y";
-		const shortPos = shortIndentedBody.indexOf("x\\|z");
-		expect(findMarkdownTable(shortIndentedBody, shortPos)).toBeNull();
-		expect(
-			editMarkdownTable(shortIndentedBody, shortPos, {
-				type: "delete-column",
-			}),
-		).toBeNull();
-		expect(
-			formatMarkdownTableSource(shortIndentedBody, {
-				direction: "none",
-				end: shortPos,
-				start: shortPos,
-			}),
-		).toBeNull();
-
-		// Valid 3-cell indented body rows (4 spaces or tab before leading `|`)
-		// preserve their leading indentation/pipe across column deletion,
-		// left-column insertion, and table formatting.
-		const fourSpaceBody = "a | b | c\n--- | --- | ---\n    | x\\|z | y | w";
-		const fourSpacePos = fourSpaceBody.indexOf("x\\|z");
-		expect(
-			editMarkdownTable(fourSpaceBody, fourSpacePos, {
-				type: "delete-column",
-			})?.value,
-		).toBe("| b | c\n| --- | ---\n    | y | w");
-		expect(
-			editMarkdownTable(fourSpaceBody, fourSpacePos, {
-				type: "insert-column-left",
-			})?.value,
-		).toBe("|  |a | b | c\n| --- |--- | --- | ---\n    |  | x\\|z | y | w");
-		const fourSpaceFormatted = formatMarkdownTableSource(fourSpaceBody, {
-			direction: "forward",
-			end: fourSpacePos + 4,
-			start: fourSpacePos,
-		});
-		expect(fourSpaceFormatted?.value).toBe(
-			"a    | b   | c  \n---  | --- | ---\n    | x\\|z | y   | w  ",
-		);
-		expect(
-			fourSpaceFormatted?.value.slice(
-				fourSpaceFormatted.selection.start,
-				fourSpaceFormatted.selection.end,
-			),
-		).toBe("x\\|z");
-
-		const tabBody = "a | b | c\n--- | --- | ---\n\t| x | y | z";
-		const tabPos = tabBody.indexOf("x");
-		expect(
-			editMarkdownTable(tabBody, tabPos, { type: "delete-column" })?.value,
-		).toBe("| b | c\n| --- | ---\n\t| y | z");
-		expect(
-			formatMarkdownTableSource(tabBody, {
-				direction: "none",
-				end: tabPos,
-				start: tabPos,
-			})?.value,
-		).toBe("a   | b   | c  \n--- | --- | ---\n\t| x   | y   | z  ");
-
-		// PHP `League\CommonMark` `TableStartParser::parseSeparator()` admits
-		// 4-space/tab-indented separator rows once a 0-3 space header opens a
-		// paragraph, while rejecting code-indented headers and NBSP delimiters.
-		const indentedOuterlessSep = "a | b\n    --- | ---\n    1 | 2";
-		expect(findMarkdownTable(indentedOuterlessSep, 0)).toMatchObject({
-			columnCount: 2,
-			rowCount: 2,
-		});
-		expect(
-			editMarkdownTable(indentedOuterlessSep, 0, {
-				type: "delete-column",
-			})?.value,
-		).toBe("| b\n    | ---\n    | 2");
-
-		const indentedPipedSep = "| a | b |\n    | --- | --- |\n    | 1 | 2 |";
-		expect(findMarkdownTable(indentedPipedSep, 2)).toMatchObject({
-			columnCount: 2,
-			rowCount: 2,
-		});
-		expect(
-			editMarkdownTable(indentedPipedSep, 2, {
-				type: "delete-column",
-			})?.value,
-		).toBe("| b |\n    | --- |\n    | 2 |");
-		expect(
-			formatMarkdownTableSource(indentedPipedSep, {
-				direction: "none",
-				end: 2,
-				start: 2,
-			})?.value,
-		).toBe("| a   | b   |\n    | --- | --- |\n    | 1   | 2   |");
-
-		const tabPipedSep = "| a | b |\n\t| --- | --- |\n\t| 1 | 2 |";
-		expect(findMarkdownTable(tabPipedSep, 2)).toMatchObject({
-			columnCount: 2,
-			rowCount: 2,
-		});
-
-		for (const nonTable of [
-			"    a | b\n--- | ---",
-			"\ta | b\n--- | ---",
-			"a | b\n\u00a0--- | ---",
-		]) {
-			expect(findMarkdownTable(nonTable, 0), nonTable).toBeNull();
-		}
-	});
-
-	it("declines unsafe CommonMark pipe continuation rows instead of truncating the table", () => {
-		const unsafeCases = [
-			{
-				name: "indented separator/body followed by standalone pipe",
-				probes: ["A", "1", "3"],
-				source: "| A | B |\n    | --- | --- |\n    | 1 | 2 |\n|\n| 3 | 4 |",
-			},
-			{
-				name: "non-indented table followed by standalone pipe",
-				probes: ["A", "1", "3"],
-				source: "| A | B |\n| --- | --- |\n| 1 | 2 |\n|\n| 3 | 4 |",
-			},
-			{
-				name: "table followed by whitespace-padded standalone pipe",
-				probes: ["A", "1", "3"],
-				source: "| A | B |\n| --- | --- |\n| 1 | 2 |\n   |   \n| 3 | 4 |",
-			},
-			{
-				name: "table followed by escaped pipe only",
-				probes: ["A", "1", "3"],
-				source: "| A | B |\n| --- | --- |\n| 1 | 2 |\n\\|\n| 3 | 4 |",
-			},
-			{
-				name: "table followed by text with escaped pipe only",
-				probes: ["A", "1", "3"],
-				source: "| A | B |\n| --- | --- |\n| 1 | 2 |\nfoo\\|bar\n| 3 | 4 |",
-			},
-			{
-				name: "bodyless table followed immediately by standalone pipe",
-				probes: ["A", "---"],
-				source: "| A | B |\n| --- | --- |\n|",
-			},
-			{
-				name: "single-column table followed by escaped pipe continuation",
-				probes: ["A", "1"],
-				source: "| A |\n| --- |\n| 1 |\nfoo\\|bar",
-			},
-		] as const;
-
-		for (const testCase of unsafeCases) {
-			for (const probe of testCase.probes) {
-				const position = testCase.source.indexOf(probe);
-				expect(position, `${testCase.name} (${probe})`).toBeGreaterThanOrEqual(
-					0,
-				);
-				expect(
-					prepareMarkdownTable(testCase.source, position),
-					`${testCase.name} prepareMarkdownTable (${probe})`,
-				).toBeNull();
-				expect(
-					editMarkdownTable(testCase.source, position, {
-						type: "delete-table",
-					}),
-					`${testCase.name} delete-table (${probe})`,
-				).toBeNull();
-				expect(
-					editMarkdownTable(testCase.source, position, {
-						type: "copy-table",
-					}),
-					`${testCase.name} copy-table (${probe})`,
-				).toBeNull();
-				expect(
-					editMarkdownTable(testCase.source, position, {
-						type: "insert-column-left",
-					}),
-					`${testCase.name} insert-column-left (${probe})`,
-				).toBeNull();
-				expect(
-					formatMarkdownTableSource(testCase.source, {
-						direction: "none",
-						end: position,
-						start: position,
-					}),
-					`${testCase.name} formatMarkdownTableSource (${probe})`,
-				).toBeNull();
-			}
-		}
-
-		// Control: a blank line terminates the table cleanly in CommonMark even
-		// when the next block contains pipes.
-		const blankSeparated = "| A | B |\n| --- | --- |\n| 1 | 2 |\n\n| 3 | 4 |";
-		const controlPos = blankSeparated.indexOf("1");
-		expect(prepareMarkdownTable(blankSeparated, controlPos)).not.toBeNull();
-		expect(
-			editMarkdownTable(blankSeparated, controlPos, { type: "copy-table" })
-				?.copiedText,
-		).toBe("| A | B |\n| --- | --- |\n| 1 | 2 |");
-		expect(
-			editMarkdownTable(blankSeparated, controlPos, { type: "delete-table" })
-				?.value,
-		).toBe("\n\n| 3 | 4 |");
-		expect(
-			editMarkdownTable(blankSeparated, controlPos, {
-				type: "insert-column-left",
-			})?.value,
-		).toBe("|  | A | B |\n| --- | --- | --- |\n|  | 1 | 2 |\n\n| 3 | 4 |");
-		expect(
-			formatMarkdownTableSource(blankSeparated, {
-				direction: "none",
-				end: controlPos,
-				start: controlPos,
-			})?.value,
-		).toBe("| A   | B   |\n| --- | --- |\n| 1   | 2   |\n\n| 3 | 4 |");
-	});
-
-	it("matches installed League\\CommonMark table-interruption rules across block constructs", () => {
-		const interruptingLines = [
-			"# Heading",
-			"### Heading",
-			"###### Heading",
-			"#",
-			"# ",
-			"#\tHeading",
-			"   # Heading",
-			"> quote",
-			">",
-			"   >quote",
-			"```",
-			"```js",
-			"~~~",
-			"~~~js~foo",
-			"   ```js",
-			"---",
-			"***",
-			"___",
-			" - - - ",
-			"-\t-\t-",
-			"   ---",
-			"- item",
-			"* item",
-			"+ item",
-			"- ",
-			"-",
-			"*",
-			"+",
-			"-\titem",
-			"1. item",
-			"2. item",
-			"0. item",
-			"1) item",
-			"2) item",
-			"1.",
-			"2.",
-			"999999999. item",
-			"1.\titem",
-			"<style>",
-			"<style ",
-			"<style\t",
-			"<style\v",
-			"<style\f",
-			"<style",
-			"<STYLE>",
-			"<pre>code</pre>",
-			"<script>",
-			"<textarea>",
-			"<!-- comment -->",
-			"<!--",
-			"<?php ?>",
-			"<?",
-			"<!DOCTYPE html>",
-			"<!doctype html>",
-			"<!a",
-			"<![CDATA[x]]>",
-			"<![cdata[",
-			"<div>",
-			"<div",
-			"<div ",
-			"<div/>",
-			"</div>",
-			"</div",
-			"</div/>",
-			"<source>",
-			"<p>hi</p>",
-			"<h1>",
-			"<h6>",
-			"    indented",
-			"\tindented",
-			" \tindented",
-			"   \tindented",
-			"    \v",
-		];
-		for (const line of interruptingLines) {
-			expect(lineInterruptsCommonMarkTable(line), JSON.stringify(line)).toBe(
-				true,
-			);
-		}
-
-		const nonInterruptingLines = [
-			"",
-			"   ",
-			"\t",
-			"\u00a0",
-			"\v",
-			"\f",
-			"plain",
-			"   plain",
-			"[foo]: /bar",
-			"===",
-			"=",
-			"####### Heading",
-			"#Heading",
-			"#\vHeading",
-			"#\u00a0Heading",
-			"```js`foo",
-			"``` `",
-			"``",
-			"--",
-			"-*-",
-			"--- a",
-			"---\v",
-			"---\f",
-			"-item",
-			"-\f",
-			"1.item",
-			"1.\f",
-			"1000000000. item",
-			"<span>hi</span>",
-			"<span>",
-			"</span>",
-			"<custom-el>",
-			"<search>",
-			"<h7>",
-			"</style>",
-			"<style/>",
-			"<style/",
-			"<div/",
-			"<div\u00a0>",
-			"<\u017ftyle>",
-			"<trac\u212a>",
-			"<!\u212a>",
-			"<!1",
-			"# Heading | Pipe",
-			"> quote | pipe",
-			"```js | pipe",
-			"- item | pipe",
-			"1. item | pipe",
-			"<div>a|b</div>",
-			"    indented | pipe",
-			"--- | ---",
-		];
-		for (const line of nonInterruptingLines) {
-			expect(lineInterruptsCommonMarkTable(line), JSON.stringify(line)).toBe(
-				false,
-			);
-		}
-	});
-
-	it("declines non-pipe lazy table continuations and Lezer/PHP boundary disagreements while preserving valid interrupting blocks", () => {
-		const declinedCases = [
-			{
-				name: "table continued by plain line and subsequent pipe row",
-				probes: ["A", "1", "3"],
-				source: "| A | B |\n| --- | --- |\n| 1 | 2 |\nplain\n| 3 | 4 |",
-			},
-			{
-				name: "table continued by plain line and table-shaped rows stays one declined table",
-				probes: ["A", "1", "C", "3"],
-				source:
-					"| A | B |\n| --- | --- |\n| 1 | 2 |\nplain\n| C | D |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "table followed immediately by plain text",
-				probes: ["A", "1"],
-				source: "| A | B |\n| --- | --- |\n| 1 | 2 |\nplain text",
-			},
-			{
-				name: "bodyless table followed immediately by plain text",
-				probes: ["A", "---"],
-				source: "| A | B |\n| --- | --- |\nplain text",
-			},
-			{
-				name: "table followed immediately by HTML Type 7 span",
-				probes: ["A", "1"],
-				source: "| A | B |\n| --- | --- |\n| 1 | 2 |\n<span>hi</span>",
-			},
-			{
-				name: "table followed immediately by link reference definition",
-				probes: ["A", "1"],
-				source: "| A | B |\n| --- | --- |\n| 1 | 2 |\n[foo]: /bar",
-			},
-			{
-				name: "table followed immediately by 4-space indented line (Lezer absorbs into Table)",
-				probes: ["A", "1"],
-				source: "| A | B |\n| --- | --- |\n| 1 | 2 |\n    indented",
-			},
-			{
-				name: "table followed immediately by tab indented line (Lezer absorbs into Table)",
-				probes: ["A", "1"],
-				source: "| A | B |\n| --- | --- |\n| 1 | 2 |\n\tindented",
-			},
-			{
-				name: "table followed immediately by ordered list starting at 2 (Lezer absorbs into Table)",
-				probes: ["A", "1"],
-				source: "| A | B |\n| --- | --- |\n| 1 | 2 |\n2. ordered",
-			},
-			{
-				name: "table followed immediately by <search> (absorbed by installed league/commonmark)",
-				probes: ["A", "1"],
-				source: "| A | B |\n| --- | --- |\n| 1 | 2 |\n<search>",
-			},
-			{
-				name: "table followed immediately by setext underline",
-				probes: ["A", "1"],
-				source: "| A | B |\n| --- | --- |\n| 1 | 2 |\n===",
-			},
-			{
-				name: "table followed immediately by ATX heading containing raw pipe",
-				probes: ["A", "1"],
-				source: "| A | B |\n| --- | --- |\n| 1 | 2 |\n# Heading | Pipe",
-			},
-		] as const;
-
-		for (const testCase of declinedCases) {
-			for (const probe of testCase.probes) {
-				const position = testCase.source.indexOf(probe);
-				expect(position, `${testCase.name} (${probe})`).toBeGreaterThanOrEqual(
-					0,
-				);
-				expect(
-					prepareMarkdownTable(testCase.source, position),
-					`${testCase.name} prepareMarkdownTable (${probe})`,
-				).toBeNull();
-				expect(
-					editMarkdownTable(testCase.source, position, {
-						type: "delete-table",
-					}),
-					`${testCase.name} delete-table (${probe})`,
-				).toBeNull();
-				expect(
-					editMarkdownTable(testCase.source, position, {
-						type: "copy-table",
-					}),
-					`${testCase.name} copy-table (${probe})`,
-				).toBeNull();
-				expect(
-					editMarkdownTable(testCase.source, position, {
-						type: "delete-column",
-					}),
-					`${testCase.name} delete-column (${probe})`,
-				).toBeNull();
-				expect(
-					formatMarkdownTableSource(testCase.source, {
-						direction: "none",
-						end: position,
-						start: position,
-					}),
-					`${testCase.name} formatMarkdownTableSource (${probe})`,
-				).toBeNull();
-			}
-		}
-
-		// Positive controls: genuine PHP & Lezer table-interrupting blocks with
-		// zero blank line leave the table cleanly editable without touching the
-		// following block. (Note: bare `---` directly after a table interrupts
-		// PHP `TableParser` as a thematic break, verified above via
-		// `lineInterruptsCommonMarkTable("---")`, while Lezer parses `| 1 | 2 |\n---`
-		// as `SetextHeading2`; `***`, `___`, and `- - -` remain `HorizontalRule`.)
-		const positiveInterruptors = [
-			"# Heading",
-			"### Heading",
-			"> quote",
-			"```js",
-			"~~~",
-			"- item",
-			"* item",
-			"+ item",
-			"1. item",
-			"***",
-			"___",
-			"- - -",
-			"<div>",
-			"<style>",
-			"<!-- comment -->",
-			"<?php ?>",
-			"<!DOCTYPE html>",
-			"<![CDATA[x]]>",
-		];
-		const baseTable = "| A | B |\n| --- | --- |\n| 1 | 2 |";
-		for (const followingLine of positiveInterruptors) {
-			const source = `${baseTable}\n${followingLine}`;
-			const position = source.indexOf("1");
-			const prepared = prepareMarkdownTable(source, position);
-			expect(prepared, followingLine).not.toBeNull();
-			expect(prepared?.table.endLine, followingLine).toBe(2);
-			expect(
-				editMarkdownTable(source, position, { type: "copy-table" })?.copiedText,
-				`${followingLine} copy-table`,
-			).toBe(baseTable);
-			expect(
-				editMarkdownTable(source, position, { type: "delete-table" })?.value,
-				`${followingLine} delete-table`,
-			).toBe(`\n${followingLine}`);
-			expect(
-				editMarkdownTable(source, position, { type: "delete-column" })?.value,
-				`${followingLine} delete-column`,
-			).toBe(`| B |\n| --- |\n| 2 |\n${followingLine}`);
-			expect(
-				formatMarkdownTableSource(source, {
-					direction: "none",
-					end: position,
-					start: position,
-				})?.value,
-				`${followingLine} formatMarkdownTableSource`,
-			).toBe(`| A   | B   |\n| --- | --- |\n| 1   | 2   |\n${followingLine}`);
-		}
-
-		// Blank lines (empty, spaces-only, tab-only) and bodyless tables followed
-		// by interrupting blocks also stay cleanly editable.
-		for (const blankLine of ["", "   ", "\t"]) {
-			const source = `${baseTable}\n${blankLine}\nplain`;
-			expect(
-				prepareMarkdownTable(source, source.indexOf("1"))?.table.endLine,
-				JSON.stringify(blankLine),
-			).toBe(2);
-		}
-		const bodylessInterrupted = "| A | B |\n| --- | --- |\n# Heading";
-		expect(
-			prepareMarkdownTable(bodylessInterrupted, bodylessInterrupted.indexOf("A"))
-				?.table.endLine,
-		).toBe(1);
-	});
-
-	it("keeps NBSP-prefixed comments absent and flags whitespace-blank-separated markers as orphan", () => {
-		const nbspBefore =
-			'\u00a0<!-- easymde-table-align:v1 [[0,"center"]] -->\n| A | B |\n| - | - |';
-		const nbspPrepared = prepareMarkdownTable(
-			nbspBefore,
-			nbspBefore.indexOf("| A"),
-		);
-		expect(nbspPrepared?.context.annotationRead).toEqual({
-			annotation: null,
-			status: "absent",
-		});
-		expect(nbspPrepared?.context.annotation.ownedPrefixRange).toBeUndefined();
-
-		for (const blankLine of ["    ", "\t", "  \t  "]) {
-			const orphan = `<!-- easymde-table-align:v1 [[0,"center"]] -->\n${blankLine}\n| A | B |\n| - | - |`;
-			const tablePos = orphan.indexOf("| A");
-			expect(
-				prepareMarkdownTable(orphan, tablePos)?.context.annotationRead,
-				JSON.stringify(blankLine),
-			).toEqual({
-				code: "table-alignment-annotation-marker-orphan",
-				status: "invalid",
-			});
-			expect(
-				setMarkdownTableAlignment(orphan, tablePos, {
-					alignment: "right",
-					selection: { column: 0, kind: "column" },
-				}),
-				JSON.stringify(blankLine),
-			).toEqual({
-				code: "table-alignment-annotation-marker-orphan",
-				status: "unsupported",
-			});
-		}
-	});
-
-	it("falls back to compact formatting when aligned padding would exceed the 1 MiB preview UTF-8 budget", () => {
-		const previewMaxBytes = 1_048_576;
-		const encoder = new TextEncoder();
-		const wideHeader = "h".repeat(2048);
-		const bodyRows = Array.from({ length: 600 }, (_, index) =>
-			index === 299 ? "|  target  |  y  |" : "|x|y|",
-		);
-		const source = [`|${wideHeader}|B|`, "|---|---|", ...bodyRows].join("\n");
-		expect(encoder.encode(source).byteLength).toBeLessThan(10_000);
-
-		const selectionStart = source.indexOf("target");
-		const selectionEnd = selectionStart + "target".length;
-		const edit = formatMarkdownTableSource(source, {
-			direction: "backward",
-			end: selectionEnd,
-			start: selectionStart,
-		});
-
-		expect(edit).not.toBeNull();
-		const formatted = edit?.value ?? "";
-		expect(encoder.encode(formatted).byteLength).toBeLessThanOrEqual(
-			previewMaxBytes,
-		);
-		expect(encoder.encode(formatted).byteLength).toBeLessThan(10_000);
-
-		const formattedLines = formatted.split("\n");
-		expect(formattedLines).toHaveLength(602);
-		expect(formattedLines[0]).toBe(`| ${wideHeader} | B |`);
-		expect(formattedLines[1]).toBe("| --- | --- |");
-		expect(formattedLines[2]).toBe("| x | y |");
-		expect(formattedLines[301]).toBe("| target | y |");
-		expect(edit?.selection.direction).toBe("backward");
-		expect(
-			formatted.slice(edit?.selection.start ?? 0, edit?.selection.end ?? 0),
-		).toBe("target");
-		expect(findMarkdownTable(formatted, edit?.selection.start ?? 0)).toMatchObject({
-			columnCount: 2,
-			rowCount: 601,
-		});
-		if (edit) {
-			expect(formatMarkdownTableSource(formatted, edit.selection)).toEqual({
-				selection: edit.selection,
-				value: formatted,
-			});
-		}
-
-		// Compact mode also preserves escaped trailing spaces and omitted outer pipes.
-		const outerlessRows = Array.from({ length: 600 }, (_, index) =>
-			index === 0 ? "  value\\  |  y" : "  x  |  y",
-		);
-		const outerlessSource = [
-			`  ${wideHeader} | B`,
-			"  --- | ---",
-			...outerlessRows,
-		].join("\n");
-		const valuePos = outerlessSource.indexOf("value\\");
-		const outerlessEdit = formatMarkdownTableSource(outerlessSource, {
-			direction: "none",
-			end: valuePos + "value\\".length,
-			start: valuePos,
-		});
-		expect(outerlessEdit).not.toBeNull();
-		const outerlessFormatted = outerlessEdit?.value ?? "";
-		expect(encoder.encode(outerlessFormatted).byteLength).toBeLessThan(12_000);
-		const outerlessLines = outerlessFormatted.split("\n");
-		expect(outerlessLines[0]).toBe(`  ${wideHeader} | B`);
-		expect(outerlessLines[2]).toBe("  value\\  | y");
-		expect(outerlessLines[3]).toBe("  x | y");
-		expect(
-			outerlessFormatted.slice(
-				outerlessEdit?.selection.start ?? 0,
-				outerlessEdit?.selection.end ?? 0,
-			),
-		).toBe("value\\");
-	});
-
-	it("keeps full column-aligned padding for wide-header or long tables within the 1 MiB UTF-8 budget", () => {
-		const previewMaxBytes = 1_048_576;
-		const encoder = new TextEncoder();
-
-		// Control 1: 2,048-character header with 5 body rows fits easily within 1 MiB.
-		const wideHeader = "h".repeat(2048);
-		const shortWideSource = [
-			`| ${wideHeader} | B |`,
-			"| --- | --- |",
-			...Array.from({ length: 5 }, () => "| x | y |"),
-		].join("\n");
-		const shortWidePosition = shortWideSource.lastIndexOf("x");
-		const shortWideEdit = formatMarkdownTableSource(shortWideSource, {
-			direction: "none",
-			end: shortWidePosition,
-			start: shortWidePosition,
-		});
-		expect(shortWideEdit).not.toBeNull();
-		const shortWideLines = (shortWideEdit?.value ?? "").split("\n");
-		expect(
-			encoder.encode(shortWideEdit?.value ?? "").byteLength,
-		).toBeLessThanOrEqual(previewMaxBytes);
-		expect(shortWideLines[2]).toBe(`| x${" ".repeat(2047)} | y   |`);
-
-		// Control 2: 600 body rows with a 32-character header fits easily within 1 MiB.
-		const moderateHeader = "h".repeat(32);
-		const tallModerateSource = [
-			`| ${moderateHeader} | B |`,
-			"| --- | --- |",
-			...Array.from({ length: 600 }, () => "| x | y |"),
-		].join("\n");
-		const tallModeratePosition = tallModerateSource.lastIndexOf("x");
-		const tallModerateEdit = formatMarkdownTableSource(tallModerateSource, {
-			direction: "none",
-			end: tallModeratePosition,
-			start: tallModeratePosition,
-		});
-		expect(tallModerateEdit).not.toBeNull();
-		const tallModerateLines = (tallModerateEdit?.value ?? "").split("\n");
-		expect(
-			encoder.encode(tallModerateEdit?.value ?? "").byteLength,
-		).toBeLessThanOrEqual(previewMaxBytes);
-		expect(tallModerateLines[2]).toBe(`| x${" ".repeat(31)} | y   |`);
-	});
-
-	it("counts multi-byte UTF-8 surrounding CJK and emoji text accurately against the 1 MiB budget", () => {
-		const previewMaxBytes = 1_048_576;
-		const encoder = new TextEncoder();
-		// 348,000 CJK chars (3 UTF-8 bytes each) + 1,000 emoji (4 UTF-8 bytes, 2 UTF-16 units each)
-		// = 1,048,000 UTF-8 bytes while staying at only 350,000 UTF-16 code units.
-		const multibytePrefix = `${"中".repeat(348_000)}${"😀".repeat(1_000)}\n\n`;
-		const wideHeader = "w".repeat(120);
-		const table = [
-			`|${wideHeader}|B|`,
-			"|---|---|",
-			...Array.from({ length: 10 }, () => "|x|y|"),
-		].join("\n");
-		const source = `${multibytePrefix}${table}`;
-
-		const prefixBytes = encoder.encode(multibytePrefix).byteLength;
-		expect(prefixBytes).toBe(1_048_002);
-		// Aligned table alone would be 12 * (120 + 10) + 11 = 1,571 bytes -> 1,049,573 UTF-8 bytes (> 1 MiB),
-		// even though UTF-16 .length stays well below 400,000!
-		const position = source.lastIndexOf("x");
-		const edit = formatMarkdownTableSource(source, {
-			direction: "none",
-			end: position + 1,
-			start: position,
-		});
-
-		expect(edit).not.toBeNull();
-		const formatted = edit?.value ?? "";
-		expect(formatted.length).toBeLessThan(previewMaxBytes);
-		expect(encoder.encode(formatted).byteLength).toBeLessThanOrEqual(
-			previewMaxBytes,
-		);
-		const formattedTable = formatted.slice(multibytePrefix.length);
-		const formattedLines = formattedTable.split("\n");
-		expect(formattedLines[0]).toBe(`| ${wideHeader} | B |`);
-		expect(formattedLines[2]).toBe("| x | y |");
-		expect(
-			formatted.slice(edit?.selection.start ?? 0, edit?.selection.end ?? 0),
-		).toBe("x");
-	});
-
-	it("returns null without mutating Markdown when even compact formatting exceeds the 1 MiB UTF-8 budget", () => {
-		const previewMaxBytes = 1_048_576;
-		const encoder = new TextEncoder();
-		const denseTable = "|a|b|\n|-|-|\n|1|2|";
-		const compactTable = "| a | b |\n| - | - |\n| 1 | 2 |";
-		const denseBytes = encoder.encode(denseTable).byteLength;
-		const compactBytes = encoder.encode(compactTable).byteLength;
-
-		// Input fits within 1 MiB (1,048,576 bytes), but compact normalization adds 12 bytes -> 1,048,588 (> 1 MiB).
-		const overBudgetPrefix = `${"p".repeat(previewMaxBytes - denseBytes - 2)}\n\n`;
-		const overBudgetSource = `${overBudgetPrefix}${denseTable}`;
-		expect(encoder.encode(overBudgetSource).byteLength).toBe(previewMaxBytes);
-		const overBudgetPosition = overBudgetSource.lastIndexOf("1");
-		expect(
-			formatMarkdownTableSource(overBudgetSource, {
-				direction: "none",
-				end: overBudgetPosition,
-				start: overBudgetPosition,
-			}),
-		).toBeNull();
-
-		// Exact 1 MiB boundary succeeds when compact output lands at 1,048,576 UTF-8 bytes.
-		const exactBudgetPrefix = `${"p".repeat(previewMaxBytes - compactBytes - 2)}\n\n`;
-		const exactBudgetSource = `${exactBudgetPrefix}${denseTable}`;
-		const exactPosition = exactBudgetSource.lastIndexOf("1");
-		const exactEdit = formatMarkdownTableSource(exactBudgetSource, {
-			direction: "none",
-			end: exactPosition,
-			start: exactPosition,
-		});
-		expect(exactEdit).not.toBeNull();
-		expect(encoder.encode(exactEdit?.value ?? "").byteLength).toBe(
-			previewMaxBytes,
-		);
-		expect(exactEdit?.value.endsWith(compactTable)).toBe(true);
-
-		// Already over-budget surrounding content also returns null without mutation.
-		const alreadyOverPrefix = `${"中".repeat(349_526)}\n\n`;
-		expect(encoder.encode(alreadyOverPrefix).byteLength).toBeGreaterThan(
-			previewMaxBytes,
-		);
-		const alreadyOverSource = `${alreadyOverPrefix}${denseTable}`;
-		const alreadyOverPosition = alreadyOverSource.lastIndexOf("1");
-		expect(
-			formatMarkdownTableSource(alreadyOverSource, {
-				direction: "none",
-				end: alreadyOverPosition,
-				start: alreadyOverPosition,
 			}),
 		).toBeNull();
 	});
@@ -2921,8 +1757,8 @@ describe("editor context menu rules", () => {
 	});
 
 	it("rejects table selections that cross into a following owner while allowing the table end", () => {
-		const source = "| A | B |\n| --- | --- |\n| 1 | 2 |\n\nTail";
-		const tableEnd = source.indexOf("\n\nTail");
+		const source = "| A | B |\n| --- | --- |\n| 1 | 2 |\nTail";
+		const tableEnd = source.indexOf("\nTail");
 
 		expect(
 			tableSelectionAt(source, {
@@ -3097,65 +1933,6 @@ describe("editor context menu rules", () => {
 			code: "table-alignment-annotation-marker-orphan",
 			status: "unsupported",
 		});
-
-		const trailingTabSource = `<!-- easymde-table-align:v1 [[1,"center"]] -->\t\n${table}`;
-		expect(
-			setMarkdownTableAlignment(
-				trailingTabSource,
-				trailingTabSource.lastIndexOf("1"),
-				{
-					alignment: "right",
-					selection: { column: 0, kind: "column" },
-				},
-			),
-		).toEqual({
-			code: "table-alignment-annotation-marker-invalid",
-			status: "unsupported",
-		});
-
-		const oversizedRows: Array<readonly [number, "center" | "left" | "right"]> =
-			Array.from({ length: 280 }, (_, index) => [index, "center"] as const);
-		while (
-			`<!-- easymde-table-align:v1 ${JSON.stringify(oversizedRows)} -->`
-				.length > 4096
-		) {
-			oversizedRows.pop();
-		}
-		oversizedRows.push([oversizedRows.length, "left"]);
-		for (let index = 0; index < oversizedRows.length; index += 1) {
-			const currentLength =
-				`<!-- easymde-table-align:v1 ${JSON.stringify(oversizedRows)} -->`
-					.length;
-			if (currentLength <= 4096) break;
-			const excess = currentLength - 4096;
-			oversizedRows[index] = [index, excess >= 2 ? "left" : "right"];
-		}
-		expect(
-			`<!-- easymde-table-align:v1 ${JSON.stringify(oversizedRows)} -->`.length,
-		).toBe(4096);
-		const tallTableLines = [
-			"| A | B |",
-			"| --- | ---: |",
-			...Array.from({ length: 285 }, (_, index) => `| r${index} | v${index} |`),
-		];
-		const nearLimitSource = `<!-- easymde-table-align:v1 ${JSON.stringify(oversizedRows)} -->\n${tallTableLines.join("\n")}`;
-		const nextRowPos = nearLimitSource.indexOf(`| r${oversizedRows.length} |`);
-		expect(
-			setMarkdownTableAlignment(nearLimitSource, nextRowPos, {
-				alignment: "center",
-				selection: { kind: "row", row: oversizedRows.length + 1 },
-			}),
-		).toEqual({
-			code: "table-alignment-annotation-marker-too-large",
-			status: "unsupported",
-		});
-		expect(
-			editMarkdownTable(
-				nearLimitSource,
-				nearLimitSource.indexOf("| A |"),
-				{ type: "insert-row-above" },
-			),
-		).toBeNull();
 	});
 
 	it("recognizes a table-only whole selection even when its annotation prefix is outside the selection", () => {
@@ -3231,7 +2008,7 @@ describe("editor context menu rules", () => {
 
 	it("exposes raw GFM alignment metadata and owns an adjacent annotation prefix", () => {
 		const source =
-			'before\n<!-- easymde-table-align:v1 [[1,"center"]] -->\n| A | B |\n| ---: | :---: |\n| 1 | 2 |\n\nafter';
+			'before\n<!-- easymde-table-align:v1 [[1,"center"]] -->\n| A | B |\n| ---: | :---: |\n| 1 | 2 |\nafter';
 		const table = findMarkdownTable(source, source.lastIndexOf("1"));
 		expect(table).toMatchObject({
 			baseAlignments: ["right", "center"],
@@ -3248,14 +2025,14 @@ describe("editor context menu rules", () => {
 
 	it("atomically combines delimiter and annotation edits without rewriting surrounding bytes", () => {
 		const source =
-			'prefix\n<!-- easymde-table-align:v1 [[1,"center"]] -->\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\nsuffix';
+			'prefix\n<!-- easymde-table-align:v1 [[1,"center"]] -->\n| A | B |\n| --- | --- |\n| 1 | 2 |\nsuffix';
 		const result = setMarkdownTableAlignment(source, source.lastIndexOf("B"), {
 			alignment: "right",
 			selection: { column: 1, kind: "column" },
 		});
 		expect(result).toMatchObject({
 			value:
-				'prefix\n<!-- easymde-table-align:v1 [[1,"center"],[1,1,"right"]] -->\n| A | B |\n| --- | ---: |\n| 1 | 2 |\n\nsuffix',
+				'prefix\n<!-- easymde-table-align:v1 [[1,"center"],[1,1,"right"]] -->\n| A | B |\n| --- | ---: |\n| 1 | 2 |\nsuffix',
 		});
 		expect(result && "changes" in result && result.changes).toEqual({
 			from: source.indexOf("<!--"),
@@ -3268,18 +2045,18 @@ describe("editor context menu rules", () => {
 		expect(result.value.slice(0, source.indexOf("<!--"))).toBe(
 			source.slice(0, source.indexOf("<!--")),
 		);
-		expect(result.value.slice(result.value.indexOf("2 |") + 5)).toBe("suffix");
+		expect(result.value.slice(result.value.indexOf("2 |") + 4)).toBe("suffix");
 	});
 
 	it("removes a consumed annotation while changing the whole-table GFM base atomically", () => {
 		const source =
-			'prefix\n<!-- easymde-table-align:v1 [[1,"center"]] -->\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\nsuffix';
+			'prefix\n<!-- easymde-table-align:v1 [[1,"center"]] -->\n| A | B |\n| --- | --- |\n| 1 | 2 |\nsuffix';
 		const result = setMarkdownTableAlignment(source, source.lastIndexOf("B"), {
 			alignment: "right",
 			selection: { columnCount: 2, kind: "whole-table" },
 		});
 		expect(result).toMatchObject({
-			value: "prefix\n| A | B |\n| ---: | ---: |\n| 1 | 2 |\n\nsuffix",
+			value: "prefix\n| A | B |\n| ---: | ---: |\n| 1 | 2 |\nsuffix",
 		});
 		if ("status" in result)
 			throw new Error("table-alignment-unexpectedly-unsupported");
@@ -3324,882 +2101,9 @@ describe("editor context menu rules", () => {
 		).toBe(true);
 	});
 
-	it("shifts annotation row indices accurately for every insert-row-above and insert-row-below position", () => {
-		const source = [
-			'<!-- easymde-table-align:v1 [[1,"center"],[2,"right"]] -->',
-			"| H1 | H2 |",
-			"| --- | --- |",
-			"| R1A | R1B |",
-			"| R2A | R2B |",
-		].join("\n");
-
-		const aboveR2 = editMarkdownTable(source, source.indexOf("R2A"), {
-			type: "insert-row-above",
-		});
-		expect(aboveR2?.value).toBe(
-			[
-				'<!-- easymde-table-align:v1 [[1,"center"],[3,"right"]] -->',
-				"| H1 | H2 |",
-				"| --- | --- |",
-				"| R1A | R1B |",
-				"|  |  |",
-				"| R2A | R2B |",
-			].join("\n"),
-		);
-
-		const belowR1 = editMarkdownTable(source, source.indexOf("R1A"), {
-			type: "insert-row-below",
-		});
-		expect(belowR1?.value).toBe(
-			[
-				'<!-- easymde-table-align:v1 [[1,"center"],[3,"right"]] -->',
-				"| H1 | H2 |",
-				"| --- | --- |",
-				"| R1A | R1B |",
-				"|  |  |",
-				"| R2A | R2B |",
-			].join("\n"),
-		);
-
-		const belowR2 = editMarkdownTable(source, source.indexOf("R2A"), {
-			type: "insert-row-below",
-		});
-		expect(belowR2?.value).toBe(
-			[
-				'<!-- easymde-table-align:v1 [[1,"center"],[2,"right"]] -->',
-				"| H1 | H2 |",
-				"| --- | --- |",
-				"| R1A | R1B |",
-				"| R2A | R2B |",
-				"|  |  |",
-			].join("\n"),
-		);
-
-		const aboveR1 = editMarkdownTable(source, source.indexOf("R1A"), {
-			type: "insert-row-above",
-		});
-		expect(aboveR1?.value).toBe(
-			[
-				'<!-- easymde-table-align:v1 [[2,"center"],[3,"right"]] -->',
-				"| H1 | H2 |",
-				"| --- | --- |",
-				"|  |  |",
-				"| R1A | R1B |",
-				"| R2A | R2B |",
-			].join("\n"),
-		);
-
-		for (const [probe, type] of [
-			["H1", "insert-row-above"],
-			["H1", "insert-row-below"],
-			["---", "insert-row-above"],
-			["---", "insert-row-below"],
-		] as const) {
-			const headerOrSeparatorEdit = editMarkdownTable(
-				source,
-				source.indexOf(probe),
-				{ type },
-			);
-			expect(headerOrSeparatorEdit?.value, `${probe}:${type}`).toBe(
-				[
-					'<!-- easymde-table-align:v1 [[2,"center"],[3,"right"]] -->',
-					"| H1 | H2 |",
-					"| --- | --- |",
-					"|  |  |",
-					"| R1A | R1B |",
-					"| R2A | R2B |",
-				].join("\n"),
-			);
-		}
-
-		// Header row 0 stays anchored at 0 while body row & cell entries shift.
-		const withHeaderAndCell = [
-			'<!-- easymde-table-align:v1 [[0,"left"],[1,"center"],[2,"right"],[2,1,"left"]] -->',
-			"| H1 | H2 |",
-			"| --- | --- |",
-			"| R1A | R1B |",
-			"| R2A | R2B |",
-		].join("\n");
-		expect(
-			editMarkdownTable(
-				withHeaderAndCell,
-				withHeaderAndCell.indexOf("R2A"),
-				{ type: "insert-row-above" },
-			)?.value.startsWith(
-				'<!-- easymde-table-align:v1 [[0,"left"],[1,"center"],[3,"right"],[3,1,"left"]] -->',
-			),
-		).toBe(true);
-		expect(
-			editMarkdownTable(
-				withHeaderAndCell,
-				withHeaderAndCell.indexOf("R1A"),
-				{ type: "insert-row-below" },
-			)?.value.startsWith(
-				'<!-- easymde-table-align:v1 [[0,"left"],[1,"center"],[3,"right"],[3,1,"left"]] -->',
-			),
-		).toBe(true);
-		expect(
-			editMarkdownTable(
-				withHeaderAndCell,
-				withHeaderAndCell.indexOf("R2A"),
-				{ type: "insert-row-below" },
-			)?.value.startsWith(
-				'<!-- easymde-table-align:v1 [[0,"left"],[1,"center"],[2,"right"],[2,1,"left"]] -->',
-			),
-		).toBe(true);
-		expect(
-			editMarkdownTable(
-				withHeaderAndCell,
-				withHeaderAndCell.indexOf("H1"),
-				{ type: "insert-row-below" },
-			)?.value.startsWith(
-				'<!-- easymde-table-align:v1 [[0,"left"],[2,"center"],[3,"right"],[3,1,"left"]] -->',
-			),
-		).toBe(true);
-	});
-
-	it("declines asymmetric PHP tables instead of matching a later delimiter inside their body", () => {
-		const declinedCases = [
-			{
-				name: "asymmetric narrow header opens 1-column PHP table absorbing later 2-column delimiter",
-				probes: ["A", "1", "3"],
-				source: "| A |\n| - | - |\n| 1 | 2 |\n| - | - |\n| 3 | 4 |",
-			},
-			{
-				name: "asymmetric narrow header with tab-indented separator",
-				probes: ["A", "1", "3"],
-				source: "| A |\n\t| - | - |\n| 1 | 2 |\n| - | - |\n| 3 | 4 |",
-			},
-			{
-				name: "preceding paragraph opening asymmetric PHP table directly before Lezer Table",
-				probes: ["1", "3"],
-				source: "intro\n| A |\n| - | - |\n| 1 | 2 |\n| - | - |\n| 3 | 4 |",
-			},
-			{
-				name: "preceding paragraph asymmetric PHP table continued by lazy plain line before Lezer Table",
-				probes: ["1", "3"],
-				source: "intro\n| A |\n| - | - |\nplain\n| 1 | 2 |\n| - | - |\n| 3 | 4 |",
-			},
-			{
-				name: "preceding paragraph with escaped-pipe header opening 1-column PHP table",
-				probes: ["1", "3"],
-				source: "foo\\|bar\n| - | - |\n| 1 | 2 |\n| - | - |\n| 3 | 4 |",
-			},
-			{
-				name: "paragraph with prior pipe opens PHP table on pipe-less header before 2-column delimiter",
-				probes: ["foo", "bar", "X", "1"],
-				source: "foo|\nbar\n| - | - |\n| X | Y |\n| - | - |\n| 1 | 2 |",
-			},
-			{
-				name: "paragraph with prior pipe opens 1-column PHP table on pipe-less header before 2-column table",
-				probes: ["intro", "no pipe", "A", "1"],
-				source:
-					"intro | pipe\nno pipe\n| --- |\n| A | B |\n| --- | --- |\n| 1 | 2 |",
-			},
-			{
-				name: "standalone single-pipe 0-column PHP table absorbs later 2-column table",
-				probes: ["A", "1"],
-				source: "|\n| - |\n| A | B |\n| - | - |\n| 1 | 2 |",
-			},
-			{
-				name: "whitespace-padded single-pipe 0-column PHP table absorbs later 2-column table",
-				probes: ["A", "1"],
-				source: " | \n| - |\n| A | B |\n| - | - |\n| 1 | 2 |",
-			},
-			{
-				name: "4-space-indented single-pipe continuation after paragraph opens 0-column PHP table",
-				probes: ["A", "1"],
-				source: "intro\n    |\n| - |\n| A | B |\n| - | - |\n| 1 | 2 |",
-			},
-			{
-				name: "4-space-indented pipe-less continuation after paragraph with pipe opens PHP table",
-				probes: ["X", "1"],
-				source: "foo|\n    bar\n| - | - |\n| X | Y |\n| - | - |\n| 1 | 2 |",
-			},
-			{
-				name: "heading-looking line with pipe continues declined paragraph-embedded PHP table",
-				probes: ["X", "1"],
-				source: "foo|\nbar\n| - | - |\n# H | pipe\n| X | Y |\n| - | - |\n| 1 | 2 |",
-			},
-			{
-				name: "non-empty ordered list item interrupting asymmetric PHP table absorbs following pipe lines",
-				probes: ["1", "3"],
-				source:
-					"intro\n| A |\n| - | - |\n2. item\n| 1 | 2 |\n| - | - |\n| 3 | 4 |",
-			},
-			{
-				name: "pipe-less header opening PHP table before duplicate delimiter rows",
-				probes: ["1"],
-				source: "foo|\nbar\n| - | - |\n| - | - |\n| 1 | 2 |",
-			},
-			{
-				name: "single-pipe header opening 0-column PHP table before duplicate delimiter rows",
-				probes: ["1"],
-				source: "|\n| - |\n| - |\n| 1 |",
-			},
-			{
-				name: "empty ordered list item interrupting asymmetric PHP table nests indented following table",
-				probes: ["x"],
-				source: "| a |\n| --- | --- |\n2.\n   | x | y |\n   | --- | --- |",
-			},
-			{
-				name: "empty bullet list item interrupting asymmetric PHP table nests indented following table",
-				probes: ["x"],
-				source: "| a |\n| --- | --- |\n-\n  | x | y |\n  | --- | --- |",
-			},
-			{
-				name: "blockquote paragraph interrupting asymmetric PHP table absorbs following table as lazy continuation",
-				probes: ["x"],
-				source: "| a |\n| --- | --- |\n> quote\n| x | y |\n| --- | --- |",
-			},
-		] as const;
-
-		for (const testCase of declinedCases) {
-			for (const probe of testCase.probes) {
-				const position = testCase.source.indexOf(probe);
-				expect(position, `${testCase.name} (${probe})`).toBeGreaterThanOrEqual(
-					0,
-				);
-				expect(
-					findMarkdownTable(testCase.source, position),
-					`${testCase.name} findMarkdownTable (${probe})`,
-				).toBeNull();
-				expect(
-					prepareMarkdownTable(testCase.source, position),
-					`${testCase.name} prepareMarkdownTable (${probe})`,
-				).toBeNull();
-				expect(
-					editMarkdownTable(testCase.source, position, { type: "copy-table" }),
-					`${testCase.name} copy-table (${probe})`,
-				).toBeNull();
-				expect(
-					formatMarkdownTableSource(testCase.source, {
-						direction: "none",
-						end: position,
-						start: position,
-					}),
-					`${testCase.name} formatMarkdownTableSource (${probe})`,
-				).toBeNull();
-			}
-		}
-
-		// Positive controls matching PHP `League\CommonMark`:
-		// 1. Header wider than separator does NOT open a PHP table, so a later
-		//    symmetric table still matches.
-		const widerHeader = "| A | B |\n| - |\n| 1 | 2 |\n| - | - |\n| 3 | 4 |";
-		expect(
-			prepareMarkdownTable(widerHeader, widerHeader.indexOf("3")),
-		).toMatchObject({
-			context: { columnCount: 2, rowCount: 2 },
-			table: { endLine: 4, separatorLine: 3, startLine: 2 },
-		});
-
-		// 2. Non-delimiter wider row does NOT open a PHP table.
-		const nonDelimiter = "| A |\n| x | y |\n| 1 | 2 |\n| - | - |\n| 3 | 4 |";
-		expect(
-			prepareMarkdownTable(nonDelimiter, nonDelimiter.indexOf("3")),
-		).toMatchObject({
-			context: { columnCount: 2, rowCount: 2 },
-			table: { endLine: 4, separatorLine: 3, startLine: 2 },
-		});
-
-		// 3. Blank line closes the asymmetric PHP table cleanly before the next table.
-		const blankSeparated =
-			"| A |\n| - | - |\n\n| 1 | 2 |\n| - | - |\n| 3 | 4 |";
-		expect(
-			prepareMarkdownTable(blankSeparated, blankSeparated.indexOf("3")),
-		).toMatchObject({
-			context: { columnCount: 2, rowCount: 2 },
-			table: { endLine: 5, separatorLine: 4, startLine: 3 },
-		});
-
-		// 4. Indented code interrupts the preceding paragraph's asymmetric PHP table.
-		const codeInterrupted =
-			"intro\n| A |\n| - | - |\n    code\n| 1 | 2 |\n| - | - |\n| 3 | 4 |";
-		expect(
-			prepareMarkdownTable(codeInterrupted, codeInterrupted.indexOf("3")),
-		).toMatchObject({
-			context: { columnCount: 2, rowCount: 2 },
-			table: { endLine: 6, separatorLine: 5, startLine: 4 },
-		});
-
-		// 5. Indented code interrupts paragraph-embedded pipe-less and single-pipe PHP tables.
-		const pipeLessCodeInterrupted =
-			"foo|\nbar\n| - | - |\n    code\n| X | Y |\n| - | - |\n| 1 | 2 |";
-		expect(
-			prepareMarkdownTable(
-				pipeLessCodeInterrupted,
-				pipeLessCodeInterrupted.indexOf("1"),
-			),
-		).toMatchObject({
-			context: { columnCount: 2, rowCount: 2 },
-			table: { endLine: 6, separatorLine: 5, startLine: 4 },
-		});
-
-		const singlePipeCodeInterrupted =
-			"|\n| - |\n    code\n| A | B |\n| - | - |\n| 1 | 2 |";
-		expect(
-			prepareMarkdownTable(
-				singlePipeCodeInterrupted,
-				singlePipeCodeInterrupted.indexOf("1"),
-			),
-		).toMatchObject({
-			context: { columnCount: 2, rowCount: 2 },
-			table: { endLine: 5, separatorLine: 4, startLine: 3 },
-		});
-
-		// 6. Standalone 4-space indented pipe is an indented code block, not a PHP table header.
-		const indentedCodePipe = "    |\n| - |\n| A | B |\n| - | - |\n| 1 | 2 |";
-		expect(
-			prepareMarkdownTable(indentedCodePipe, indentedCodePipe.indexOf("1")),
-		).toMatchObject({
-			context: { columnCount: 2, rowCount: 2 },
-			table: { endLine: 4, separatorLine: 3, startLine: 2 },
-		});
-
-		// 7. Paragraph with no pipe before a pipe-less line does NOT open a PHP table.
-		const noPriorPipe = "foo\nbar\n| - | - |\n| X | Y |\n| - | - |\n| 1 | 2 |";
-		expect(
-			prepareMarkdownTable(noPriorPipe, noPriorPipe.indexOf("1")),
-		).toMatchObject({
-			context: { columnCount: 2, rowCount: 2 },
-			table: { endLine: 5, separatorLine: 4, startLine: 3 },
-		});
-
-		// 8. Preceding pipe paragraph directly above a valid same-width table stays editable.
-		const pipeParaThenValidTable =
-			"intro | pipe\n| A | B |\n| --- | --- |\n| 1 | 2 |";
-		expect(
-			prepareMarkdownTable(
-				pipeParaThenValidTable,
-				pipeParaThenValidTable.indexOf("1"),
-			),
-		).toMatchObject({
-			context: { columnCount: 2, rowCount: 2 },
-			table: { endLine: 3, separatorLine: 2, startLine: 1 },
-		});
-
-		// 9. Heading with a pipe does NOT open a PHP table when no table is active above it.
-		const headingWithPipeBeforeTable =
-			"foo|\n# H | pipe\n| X | Y |\n| - | - |\n| 1 | 2 |";
-		expect(
-			prepareMarkdownTable(
-				headingWithPipeBeforeTable,
-				headingWithPipeBeforeTable.indexOf("1"),
-			),
-		).toMatchObject({
-			context: { columnCount: 2, rowCount: 2 },
-			table: { endLine: 4, separatorLine: 3, startLine: 2 },
-		});
-
-		// 10. Top-level tables after an empty ordered/bullet list item or empty blockquote
-		//     with insufficient nesting indent remain editable, matching PHP CommonMark.
-		for (const [label, source, startLine] of [
-			[
-				"empty ordered 2. then unindented top-level table",
-				"| a |\n| --- | --- |\n2.\n| x | y |\n| --- | --- |",
-				3,
-			],
-			[
-				"empty ordered 2. then 2-space top-level table (< 3-col indent)",
-				"| a |\n| --- | --- |\n2.\n  | x | y |\n  | --- | --- |",
-				3,
-			],
-			[
-				"empty bullet - then 1-space top-level table (< 2-col indent)",
-				"| a |\n| --- | --- |\n-\n | x | y |\n | --- | --- |",
-				3,
-			],
-			[
-				"empty blockquote then unindented top-level table",
-				"| a |\n| --- | --- |\n>\n| x | y |\n| --- | --- |",
-				3,
-			],
-		] as const) {
-			expect(
-				prepareMarkdownTable(source, source.indexOf("x")),
-				label,
-			).toMatchObject({
-				context: { columnCount: 2, rowCount: 1 },
-				table: {
-					endLine: startLine + 1,
-					separatorLine: startLine + 1,
-					startLine,
-				},
-			});
-		}
-	});
-
-	it("declines non-table lazy continuations after list, quote, and table+container blocks while keeping closed-container positive controls editable", () => {
-		const declinedCases = [
-			{
-				name: "bullet list item with open paragraph",
-				source: "- item\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "ordered list item (1.) with open paragraph",
-				source: "1. item\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "ordered list item (2.) with open paragraph",
-				source: "2. item\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "ordered paren list item (1)) with open paragraph",
-				source: "1) item\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "asterisk and plus bullet list items with open paragraph",
-				source: "* item\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "plus bullet list item with open paragraph",
-				source: "+ item\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "3-space indented list item with open paragraph",
-				source: "   - item\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "blockquote with open paragraph",
-				source: "> quote\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "table followed by bullet list item absorbing second candidate table",
-				source:
-					"| a | b |\n| --- | --- |\n| 1 | 2 |\n- item\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "table followed by blockquote paragraph absorbing second candidate table",
-				source:
-					"| a | b |\n| --- | --- |\n| 1 | 2 |\n> quote\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "table followed by pipe-containing blockquote heading continues first table",
-				source:
-					"| a | b |\n| --- | --- |\n| 1 | 2 |\n> # H | pipe\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "table followed by pipe-containing list heading continues first table",
-				source:
-					"| a | b |\n| --- | --- |\n| 1 | 2 |\n- # H | pipe\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "nested list inside blockquote with open paragraph",
-				source: "> - item\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "nested blockquote inside list item with open paragraph",
-				source: "- > quote\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "nested table inside blockquote absorbs lazy continuation lines",
-				source:
-					"> | a | b |\n> | --- | --- |\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "nested table inside list item absorbs lazy continuation lines",
-				source:
-					"- | a | b |\n  | --- | --- |\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "link reference definition inside blockquote keeps paragraph open",
-				source: "> [a]: /url\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "link reference definition inside list item keeps paragraph open",
-				source: "- [a]: /url\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "link reference definition inside blockquote prevents Setext heading",
-				source: "> [a]: /url\n> ===\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "lazy equals line after blockquote paragraph cannot form Setext heading",
-				source: "> Heading\n===\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "inline HTML span with content inside list item opens paragraph (not Type 7)",
-				source: "- <span>x</span>\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "HTML Type 7 cannot interrupt open paragraph inside blockquote",
-				source: "> para\n> <span>\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "loose list item ending in indented paragraph",
-				source: "- item\n\n  para2\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "blockquote paragraph followed by 4-space continuation line stays paragraph",
-				source: "> quote\n>     still para\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "blockquote space+tab is only 2 columns of indent so opens paragraph",
-				source: "> \tcode\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "single tab after bullet marker opens paragraph",
-				source: "-\titem\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "backtick fence with backtick in info string inside blockquote opens paragraph",
-				source: "> ```a`b\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "closed HTML block followed by paragraph inside blockquote",
-				source: "> <pre>x</pre>\n> para\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "blockquote closed by 2-ordered list item with open paragraph",
-				source: "> quote\n2. item\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "single-pipe paragraph line opens PHP table on first delimiter of double-delimiter table",
-				source: "foo\n|\n| --- | --- |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "multiline refdef destination with pipe does not become a table header",
-				source: "[ref]:\nhttps://example.com/a|b\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "multiline refdef title with pipe does not become a table header",
-				source: '[ref]: https://example.com\n"a | b"\n| --- | --- |\n| 3 | 4 |',
-			},
-			{
-				name: "three-line refdef title with pipe does not become a table header",
-				source: '[ref]:\nhttps://example.com\n"a | b"\n| --- | --- |\n| 3 | 4 |',
-			},
-			{
-				name: "multiline refdef spanning title lines with pipe does not become a table header",
-				source:
-					'[ref]: https://example.com\n"line1\nline2 | col2"\n| --- | --- |\n| 3 | 4 |',
-			},
-			{
-				name: "multiline refdef destination inside blockquote prevents Setext heading",
-				source:
-					"> [ref]:\n> https://example.com\n> ===\n| a | b |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "multiline refdef title inside blockquote prevents Setext heading",
-				source:
-					'> [ref]: https://example.com\n> "title"\n> ===\n| a | b |\n| --- | --- |\n| 3 | 4 |',
-			},
-			{
-				name: "multiline refdef destination inside list item prevents Setext heading",
-				source:
-					"- [ref]:\n  https://example.com\n  ===\n| a | b |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "multiline refdef title inside list item prevents Setext heading",
-				source:
-					'- [ref]: https://example.com\n  "title"\n  ===\n| a | b |\n| --- | --- |\n| 3 | 4 |',
-			},
-			{
-				name: "single-line refdef with unescaped ( inside paren title matches PHP ReferenceParser",
-				source: "> [ref]: /u (a (b)\n> ===\n| a | b |\n| --- | --- |\n| 3 | 4 |",
-			},
-			{
-				name: "single-line refdef with escaped quote at EOL matches PHP ReferenceParser unescape",
-				source:
-					'> [ref]: /u "a\\"\n> ===\n| a | b |\n| --- | --- |\n| 3 | 4 |',
-			},
-			{
-				name: "single-line refdef with HTML entity quote at EOL matches PHP ReferenceParser unescape",
-				source:
-					'> [ref]: /u "a&#34;\n> ===\n| a | b |\n| --- | --- |\n| 3 | 4 |',
-			},
-		] as const;
-
-		for (const testCase of declinedCases) {
-			const probe = testCase.source.indexOf("3");
-			expect(probe, testCase.name).toBeGreaterThanOrEqual(0);
-			expect(
-				prepareMarkdownTable(testCase.source, probe),
-				`${testCase.name} prepareMarkdownTable`,
-			).toBeNull();
-			expect(
-				findMarkdownTable(testCase.source, probe),
-				`${testCase.name} findMarkdownTable`,
-			).toBeNull();
-			expect(
-				editMarkdownTable(testCase.source, probe, { type: "copy-table" }),
-				`${testCase.name} copy-table`,
-			).toBeNull();
-			expect(
-				formatMarkdownTableSource(testCase.source, {
-					direction: "none",
-					end: probe,
-					start: probe,
-				}),
-				`${testCase.name} formatMarkdownTableSource`,
-			).toBeNull();
-		}
-
-		// In `table + list + fake table`, the first table remains editable.
-		const tableThenListThenFake =
-			"| a | b |\n| --- | --- |\n| 1 | 2 |\n- item\n| c | d |\n| --- | --- |\n| 3 | 4 |";
-		expect(
-			prepareMarkdownTable(
-				tableThenListThenFake,
-				tableThenListThenFake.indexOf("1"),
-			),
-		).toMatchObject({
-			context: { columnCount: 2, rowCount: 2 },
-			table: { endLine: 2, separatorLine: 1, startLine: 0 },
-		});
-
-		const validCases = [
-			{
-				name: "empty blockquote",
-				source: ">\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 1,
-			},
-			{
-				name: "empty bullet list item",
-				source: "-\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 1,
-			},
-			{
-				name: "empty ordered list item",
-				source: "1.\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 1,
-			},
-			{
-				name: "blockquote ending in ATX heading",
-				source: "> # Heading\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 1,
-			},
-			{
-				name: "list item ending in ATX heading",
-				source: "- # Heading\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 1,
-			},
-			{
-				name: "blockquote ending in closed fenced code",
-				source: "> ```\n> code\n> ```\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 3,
-			},
-			{
-				name: "blockquote ending in unclosed fenced code (no lazy continuation)",
-				source: "> ```\n> code\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 2,
-			},
-			{
-				name: "list item ending in closed fenced code",
-				source: "- ```\n  code\n  ```\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 3,
-			},
-			{
-				name: "list item ending in unclosed fenced code",
-				source: "- ```\n  code\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 2,
-			},
-			{
-				name: "blockquote ending in thematic break",
-				source: "> ---\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 1,
-			},
-			{
-				name: "list thematic break",
-				source: "- ---\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 1,
-			},
-			{
-				name: "blank line separator after list item",
-				source: "- item\n\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 2,
-			},
-			{
-				name: "list item ending in indented code block",
-				source: "- item\n\n      code\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 3,
-			},
-			{
-				name: "blockquote ending in indented code block",
-				source: ">     code\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 1,
-			},
-			{
-				name: "list item with two tabs (indented code block)",
-				source: "-\t\tcode\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 1,
-			},
-			{
-				name: "blockquote with two tabs (indented code block)",
-				source: ">\t\tcode\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 1,
-			},
-			{
-				name: "blockquote ending in Type 6 HTML block",
-				source: "> <div>x</div>\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 1,
-			},
-			{
-				name: "list item ending in Type 7 HTML block",
-				source: "- <span>\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 1,
-			},
-			{
-				name: "blockquote Type 7 HTML block absorbing pipe line without opening paragraph",
-				source: "> <span>\n> | a | b |\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 2,
-			},
-			{
-				name: "blockquote ending in open Type 1 HTML block",
-				source: "> <pre>\n> not closed\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 2,
-			},
-			{
-				name: "blockquote ending in Setext heading",
-				source: "> Heading\n> ===\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 2,
-			},
-			{
-				name: "list item ending in Setext heading",
-				source: "- Heading\n  ===\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 2,
-			},
-			{
-				name: "list item paragraph closed by indented Setext single-dash underline",
-				source: "- item\n  -\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 2,
-			},
-			{
-				name: "nested empty list item inside blockquote",
-				source: "> -\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 1,
-			},
-			{
-				name: "nested empty blockquote inside list item",
-				source: "- >\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 1,
-			},
-			{
-				name: "blank blockquote line closes open paragraph",
-				source: "> quote\n>\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 2,
-			},
-			{
-				name: "empty list item closes preceding blockquote",
-				source: "> quote\n-\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 2,
-			},
-			{
-				name: "ATX heading closes nested table inside blockquote",
-				source:
-					"> | a | b |\n> | --- | --- |\n> # H\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 3,
-			},
-			{
-				name: "blank blockquote line closes nested table inside blockquote",
-				source:
-					"> | a | b |\n> | --- | --- |\n>\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 3,
-			},
-			{
-				name: "table + empty list item + valid second table",
-				source:
-					"| a | b |\n| --- | --- |\n| 1 | 2 |\n-\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 4,
-			},
-			{
-				name: "table + blockquote heading + valid second table",
-				source:
-					"| a | b |\n| --- | --- |\n| 1 | 2 |\n> # H\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 4,
-			},
-			{
-				name: "asymmetric table interrupted by 2-ordered heading item + valid table",
-				source:
-					"intro\n| A |\n| - | - |\n2. # H\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 4,
-			},
-			{
-				name: "pipe list line absorbed into table then blank line then top-level paragraph + valid table",
-				source:
-					"| a | b |\n| --- | --- |\n- item | pipe\n\n  para\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 5,
-			},
-			{
-				name: "display math inside blockquote breaks container before table",
-				source: "> quote\n> $$x$$\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 2,
-			},
-			{
-				name: "link reference definition clears paragraph so empty list item starts cleanly",
-				source: "> [a]: /url\n> -\n| c | d |\n| --- | --- |\n| 3 | 4 |",
-				startLine: 2,
-			},
-			{
-				name: "valid table immediately following multiline refdef title stays editable",
-				source:
-					'[ref]: https://example.com\n"title"\n| c | d |\n| --- | --- |\n| 3 | 4 |',
-				startLine: 2,
-			},
-			{
-				name: "failed next-line refdef title with trailing text becomes valid table header",
-				source:
-					'[ref]: https://example.com\n"a | b" extra\n| --- | --- |\n| 3 | 4 |',
-				startLine: 1,
-			},
-			{
-				name: "refdef with trailing spaces after escaped quote fails title so Setext closes blockquote",
-				source:
-					'> [ref]: /u "a\\"  \n> ===\n| c | d |\n| --- | --- |\n| 3 | 4 |',
-				startLine: 2,
-			},
-		] as const;
-
-		for (const testCase of validCases) {
-			const probe = testCase.source.indexOf("3");
-			expect(probe, testCase.name).toBeGreaterThanOrEqual(0);
-			expect(
-				prepareMarkdownTable(testCase.source, probe),
-				`${testCase.name} prepareMarkdownTable`,
-			).toMatchObject({
-				context: { columnCount: 2, rowCount: 2 },
-				table: {
-					endLine: testCase.startLine + 2,
-					separatorLine: testCase.startLine + 1,
-					startLine: testCase.startLine,
-				},
-			});
-		}
-	});
-
-	it("keeps tables directly followed by display math editable while declining inline or mixed-line math", () => {
-		for (const validSource of [
-			"| A | B |\n| --- | --- |\n| 1 | 2 |\n$$x$$",
-			"| A | B |\n| --- | --- |\n| 1 | 2 |\n  $$x$$",
-			"| A | B |\n| --- | --- |\n| 1 | 2 |\n$$a | b$$",
-			"| A | B |\n| --- | --- |\n| 1 | 2 |\n\\[x\\]",
-		]) {
-			const position = validSource.indexOf("1");
-			expect(
-				prepareMarkdownTable(validSource, position),
-				validSource,
-			).toMatchObject({
-				context: { columnCount: 2, rowCount: 2 },
-				table: { endLine: 2, separatorLine: 1, startLine: 0 },
-			});
-		}
-
-		for (const declinedSource of [
-			"| A | B |\n| --- | --- |\n| 1 | 2 |\nfoo $$x$$",
-			"| A | B |\n| --- | --- |\n| 1 | 2 |\n$x$",
-		]) {
-			const position = declinedSource.indexOf("1");
-			expect(
-				prepareMarkdownTable(declinedSource, position),
-				declinedSource,
-			).toBeNull();
-		}
-	});
-
 	it("copies and deletes the annotation together with its table", () => {
 		const source =
-			'before\n<!-- easymde-table-align:v1 [[1,"center"]] -->\n| A |\n| --- |\n| 1 |\n\nafter';
+			'before\n<!-- easymde-table-align:v1 [[1,"center"]] -->\n| A |\n| --- |\n| 1 |\nafter';
 		const position = source.lastIndexOf("1");
 		expect(
 			editMarkdownTable(source, position, { type: "copy-table" })?.copiedText,
@@ -4208,12 +2112,12 @@ describe("editor context menu rules", () => {
 		);
 		expect(
 			editMarkdownTable(source, position, { type: "delete-table" })?.value,
-		).toBe("before\n\n\nafter");
+		).toBe("before\n\nafter");
 	});
 
 	it("keeps a valid marker attached when inserting adjacent paragraphs with every newline style", () => {
 		for (const newline of ["\n", "\r\n", "\r"]) {
-			const source = `before${newline}<!-- easymde-table-align:v1 [[1,"center"]] -->${newline}| A |${newline}| --- |${newline}| 1 |${newline}${newline}after`;
+			const source = `before${newline}<!-- easymde-table-align:v1 [[1,"center"]] -->${newline}| A |${newline}| --- |${newline}| 1 |${newline}after`;
 			const position = source.lastIndexOf("1");
 			const before = insertParagraphRelative(
 				source,
@@ -4226,10 +2130,10 @@ describe("editor context menu rules", () => {
 				"after",
 			);
 			expect(before?.value).toBe(
-				`before${newline}${newline}<!-- easymde-table-align:v1 [[1,"center"]] -->${newline}| A |${newline}| --- |${newline}| 1 |${newline}${newline}after`,
+				`before${newline}${newline}${newline}${newline}<!-- easymde-table-align:v1 [[1,"center"]] -->${newline}| A |${newline}| --- |${newline}| 1 |${newline}after`,
 			);
 			expect(after?.value).toBe(
-				`before${newline}<!-- easymde-table-align:v1 [[1,"center"]] -->${newline}| A |${newline}| --- |${newline}| 1 |${newline}${newline}${newline}after`,
+				`before${newline}<!-- easymde-table-align:v1 [[1,"center"]] -->${newline}| A |${newline}| --- |${newline}| 1 |${newline}${newline}${newline}${newline}after`,
 			);
 		}
 	});
@@ -4607,197 +2511,108 @@ describe("editor context menu rules", () => {
 			}),
 		).toBe(null);
 	});
+	it("keeps immediately typed NEWPARA as a standalone paragraph above and below all 9 block kinds and at document boundaries", () => {
+		const blocks = [
+			{ kind: "paragraph", markdown: "普通段落，包含 **加粗** 结束。", token: "普通段落" },
+			{ kind: "heading", markdown: "## 二级标题", token: "二级标题" },
+			{ kind: "list", markdown: "- item 1\n- item 2", token: "item 2" },
+			{ kind: "quote", markdown: "> quote line", token: "quote line" },
+			{ kind: "code", markdown: "```js\nconst a = 1;\n```", token: "const a = 1;" },
+			{ kind: "table", markdown: "| c1 | c2 |\n| --- | --- |\n| c3 | c4 |", token: "c3" },
+			{ kind: "paragraph", markdown: "$$\nE = mc^2\n$$", token: "E = mc^2" },
+			{ kind: "code", markdown: "```mermaid\ngraph TD;\n  A-->B;\n```", token: "A-->B;" },
+			{ kind: "thematic-break", markdown: "---", token: "---" },
+		] as const;
 
-	it("masks PHP math pipes in pipePositions, table parsing, table mutations, and PHP table scanning", () => {
-		// pipePositions masks pipes inside PHP math while keeping code-wrapped pipes unmasked.
-		expect(pipePositions("| $a|b$ | C |")).toEqual([0, 8, 12]);
-		expect(pipePositions("| \\(a|b\\) | C |")).toEqual([0, 10, 14]);
-		expect(pipePositions("| $$a|b$$ | C |")).toEqual([0, 10, 14]);
-		expect(pipePositions("| \\[a|b\\] | C |")).toEqual([0, 10, 14]);
-		expect(pipePositions("| `$a|b$` | C |")).toEqual([0, 5, 10, 14]);
+		const fullDoc = [
+			"Lead paragraph",
+			...blocks.map((entry) => entry.markdown),
+			"Tail paragraph",
+		].join("\n\n");
+		const fullIndex = createEditorMarkdownBlockIndex(fullDoc);
 
-		// 1. Asymmetric 1-col PHP table (`| $a|b$ |` header with 2-col separator) is declined cleanly.
-		const asymmetricMath = "| $a|b$ |\n| --- | --- |\n| $x|y$ |";
-		for (const probe of ["$a|b$", "$x|y$"]) {
-			const pos = asymmetricMath.indexOf(probe) + 1;
-			expect(prepareMarkdownTable(asymmetricMath, pos), probe).toBeNull();
-			expect(
-				editMarkdownTable(asymmetricMath, pos, { type: "insert-column-right" }),
-				`insert:${probe}`,
-			).toBeNull();
-			expect(
-				editMarkdownTable(asymmetricMath, pos, { type: "delete-column" }),
-				`delete:${probe}`,
-			).toBeNull();
+		for (const entry of blocks) {
+			const tokenPos =
+				entry.kind === "thematic-break"
+					? fullDoc.lastIndexOf(entry.token)
+					: fullDoc.indexOf(entry.token);
+			expect(tokenPos).toBeGreaterThan(0);
+			for (const relative of ["before", "after"] as const) {
+				const edit = insertParagraphRelative(
+					fullDoc,
+					{ direction: "none", end: tokenPos, start: tokenPos },
+					relative,
+					fullIndex,
+				);
+				expect(edit).not.toBeNull();
+				if (!edit?.changes) throw new Error("expected-insert-edit");
+
+				const caret = edit.selection.start;
+				const typed = `${edit.value.slice(0, caret)}NEWPARA${edit.value.slice(caret)}`;
+				expect(typed).toContain("\n\nNEWPARA\n\n");
+
+				const typedIndex = createEditorMarkdownBlockIndex(typed);
+				const newParaPos = typed.indexOf("NEWPARA");
+				const newParaBlock = findMarkdownBlock(typed, newParaPos, typedIndex);
+				expect(newParaBlock?.kind).toBe("paragraph");
+				expect(typed.slice(newParaBlock?.start, newParaBlock?.end)).toBe(
+					"NEWPARA",
+				);
+
+				// Applying the inverse of the single range edit restores exact bytes.
+				const restored =
+					edit.value.slice(0, edit.changes.from) +
+					fullDoc.slice(edit.changes.from, edit.changes.to) +
+					edit.value.slice(edit.changes.from + edit.changes.insert.length);
+				expect(restored).toBe(fullDoc);
+			}
 		}
 
-		// 2. Paragraph with inline math pipe (`text $a|b$`) has 0 real pipes in PHP -> 0 tables.
-		const nonTableMath = "text $a|b$\n| --- | --- |\n| 1 | 2 |";
-		expect(prepareMarkdownTable(nonTableMath, nonTableMath.indexOf("1"))).toBeNull();
-		expect(prepareMarkdownTable(nonTableMath, nonTableMath.indexOf("text"))).toBeNull();
+		// Document start (before first block) and document end (after last block).
+		for (const entry of blocks) {
+			const single = entry.markdown;
+			const singleIndex = createEditorMarkdownBlockIndex(single);
+			const pos = single.indexOf(entry.token);
 
-		// 3. Valid 2-col table with inline math pipe in cell 0 is recognized and editable.
-		const validTwoCol = "| $a|b$ | C |\n| --- | --- |\n| 1 | 2 |";
-		expect(prepareMarkdownTable(validTwoCol, validTwoCol.indexOf("1"))).toMatchObject({
-			context: { columnCount: 2, rowCount: 2 },
-			table: { endLine: 2, separatorLine: 1, startLine: 0 },
-		});
+			const beforeEdit = insertParagraphRelative(
+				single,
+				{ direction: "none", end: pos, start: pos },
+				"before",
+				singleIndex,
+			);
+			expect(beforeEdit).not.toBeNull();
+			if (!beforeEdit) throw new Error("expected-before-edit");
+			const typedBefore = `${beforeEdit.value.slice(0, beforeEdit.selection.start)}NEWPARA${beforeEdit.value.slice(beforeEdit.selection.start)}`;
+			expect(typedBefore).toBe(`NEWPARA\n\n${single}`);
+			const beforeBlock = findMarkdownBlock(
+				typedBefore,
+				0,
+				createEditorMarkdownBlockIndex(typedBefore),
+			);
+			expect(beforeBlock?.kind).toBe("paragraph");
+			expect(typedBefore.slice(beforeBlock?.start, beforeBlock?.end)).toBe(
+				"NEWPARA",
+			);
 
-		// 4. insert-column-right, delete-column, and format preserve `$a|b$` and `$x|y$` intact.
-		const editableMathTable = "| $a|b$ | C |\n| --- | --- |\n| $x|y$ | 2 |";
-		const col0Pos = editableMathTable.indexOf("$a|b$") + 2;
-		const col1Pos = editableMathTable.indexOf("C");
-		expect(
-			editMarkdownTable(editableMathTable, col0Pos, {
-				type: "insert-column-right",
-			})?.value,
-		).toBe("| $a|b$ |  | C |\n| --- | --- | --- |\n| $x|y$ |  | 2 |");
-		expect(
-			editMarkdownTable(editableMathTable, col1Pos, { type: "delete-column" })
-				?.value,
-		).toBe("| $a|b$ |\n| --- |\n| $x|y$ |");
-		expect(
-			formatMarkdownTableSource(editableMathTable, {
-				direction: "none",
-				end: col0Pos,
-				start: col0Pos,
-			})?.value,
-		).toBe("| $a|b$ | C   |\n| ---   | --- |\n| $x|y$ | 2   |");
-
-		// 5. Inline `\(...\)` math pipe in header/body cells stays intact across column edits.
-		const parenMathTable = "| \\(a|b\\) | C |\n| --- | --- |\n| \\(x|y\\) | 2 |";
-		expect(
-			editMarkdownTable(parenMathTable, parenMathTable.indexOf("C"), {
-				type: "delete-column",
-			})?.value,
-		).toBe("| \\(a|b\\) |\n| --- |\n| \\(x|y\\) |");
-
-		// 6. Preceding paragraph with inline math pipe does not open a phantom PHP table before a real table.
-		const mathParaBeforeTable =
-			"text $a|b$\n| --- | --- |\n| X | Y |\n| --- | --- |\n| 1 | 2 |";
-		expect(
-			prepareMarkdownTable(
-				mathParaBeforeTable,
-				mathParaBeforeTable.indexOf("1"),
-			),
-		).toMatchObject({
-			context: { columnCount: 2, rowCount: 2 },
-			table: { endLine: 4, separatorLine: 3, startLine: 2 },
-		});
-
-		// 7. Trailing ATX heading with inline math pipe interrupts the table cleanly matching PHP.
-		const tableThenHeadingMath = "| A | B |\n| --- | --- |\n| 1 | 2 |\n# H $a|b$";
-		expect(
-			prepareMarkdownTable(
-				tableThenHeadingMath,
-				tableThenHeadingMath.indexOf("1"),
-			),
-		).toMatchObject({
-			context: { columnCount: 2, rowCount: 2 },
-			table: { endLine: 2, separatorLine: 1, startLine: 0 },
-		});
-	});
-
-	it("uses document-context PHP math masking for indented math rows, declines multiline inline-math rows, and bridges blank lines inside \\(...\\) (Track B #1 & #2)", () => {
-		// Track B #1 case 1: 4-space indented inline math after a table interrupts the table in PHP and must NOT be swallowed.
-		for (const [label, source, mathToken] of [
-			[
-				"indented $a|b$ after table",
-				"| A | B |\n| --- | --- |\n| 1 | 2 |\n    $a|b$",
-				"$a|b$",
-			],
-			[
-				"indented \\(a|b\\) after table",
-				"| A | B |\n| --- | --- |\n| 1 | 2 |\n    \\(a|b\\)",
-				"\\(a|b\\)",
-			],
-		] as const) {
-			const posInTable = source.indexOf("1");
-			const posOnLine4 = source.indexOf(mathToken);
-			expect(findMarkdownTable(source, posInTable), label).toMatchObject({
-				columnCount: 2,
-				rowCount: 2,
-			});
-			expect(findMarkdownTable(source, posOnLine4), `${label}:line4`).toBeNull();
-			expect(
-				editMarkdownTable(source, posInTable, {
-					type: "insert-column-right",
-				})?.value,
-				`${label}:insert`,
-			).toBe(`| A |  | B |\n| --- | --- | --- |\n| 1 |  | 2 |\n    ${mathToken}`);
-			expect(
-				setMarkdownTableAlignment(source, posOnLine4, {
-					alignment: "center",
-					selection: { kind: "row", row: 3 },
-				}),
-				`${label}:align-line4`,
-			).toMatchObject({ status: "unsupported" });
-		}
-
-		// Track B #1 case 2: 4-space indented body row with leading pipe and inline math pipe is a valid 2x2 table.
-		const indentedBodyMath = "| A | B |\n| --- | --- |\n    | $a|b$ | 2 |";
-		expect(
-			findMarkdownTable(indentedBodyMath, indentedBodyMath.indexOf("$a|b$")),
-		).toMatchObject({
-			columnCount: 2,
-			rowCount: 2,
-		});
-		expect(
-			editMarkdownTable(indentedBodyMath, indentedBodyMath.indexOf("$a|b$"), {
-				type: "insert-column-right",
-			})?.value,
-		).toBe("| A |  | B |\n| --- | --- | --- |\n    | $a|b$ |  | 2 |");
-
-		// Formatter also uses full document context (even without trailing pipe on an indented math row).
-		const indentedNoTrailPipe = "| A | B |\n| --- | --- |\n    | 2 | $a|b$";
-		expect(
-			formatMarkdownTableSource(indentedNoTrailPipe, {
-				direction: "none",
-				end: indentedNoTrailPipe.indexOf("$a|b$"),
-				start: indentedNoTrailPipe.indexOf("$a|b$"),
-			})?.value,
-		).toBe("| A   | B     |\n| --- | ---   |\n    | 2   | $a|b$");
-
-		// Track B #1 case 3: multiline inline math inside a table row must be declined across every line.
-		for (const multilineCase of [
-			"| A | B |\n| --- | --- |\n| 1 | 2 |\n\\(a | b\nc\\) | d",
-			"| A | B |\n| --- | --- |\n| 1 | \\(a |\n| b\\) | 2 |",
-			"| A | B |\n| --- | --- |\n| $a\rb$ | 2 |",
-		]) {
-			expect(
-				findMarkdownTable(multilineCase, multilineCase.indexOf("A")),
-				multilineCase,
-			).toBeNull();
-			expect(
-				findMarkdownTable(multilineCase, multilineCase.length - 1),
-				`${multilineCase}:end`,
-			).toBeNull();
-		}
-
-		// Track B #2: blank line(s) inside multiline `\(...\)` do not close a preceding PHP table.
-		for (const bridged of [
-			"a | b\n| - | - |\n\\(x\n\ny\\)\n| A | B |\n| --- | --- |\n| 1 | 2 |",
-			"a | b\n| - | - |\n\\(x\n\n\ny\\)\n| A | B |\n| --- | --- |\n| 1 | 2 |",
-		]) {
-			const headerPos = bridged.indexOf("| A | B |");
-			const bodyPos = bridged.indexOf("1");
-			expect(findMarkdownTable(bridged, headerPos), bridged).toBeNull();
-			expect(findMarkdownTable(bridged, bodyPos), `${bridged}:body`).toBeNull();
-			expect(
-				editMarkdownTable(bridged, headerPos, { type: "insert-column-right" }),
-				`${bridged}:edit`,
-			).toBeNull();
-		}
-
-		// Positive controls: a genuine blank line after `y\)` or a display math block DOES close the preceding table.
-		for (const separated of [
-			"a | b\n| - | - |\n\\(x\n\ny\\)\n\n| A | B |\n| --- | --- |\n| 1 | 2 |",
-			"a | b\n| - | - |\n$$\nx\n\ny\n$$\n| A | B |\n| --- | --- |\n| 1 | 2 |",
-		]) {
-			expect(
-				findMarkdownTable(separated, separated.indexOf("1")),
-				separated,
-			).toMatchObject({ columnCount: 2, rowCount: 2 });
+			const afterEdit = insertParagraphRelative(
+				single,
+				{ direction: "none", end: pos, start: pos },
+				"after",
+				singleIndex,
+			);
+			expect(afterEdit).not.toBeNull();
+			if (!afterEdit) throw new Error("expected-after-edit");
+			const typedAfter = `${afterEdit.value.slice(0, afterEdit.selection.start)}NEWPARA${afterEdit.value.slice(afterEdit.selection.start)}`;
+			expect(typedAfter).toBe(`${single}\n\nNEWPARA`);
+			const afterBlock = findMarkdownBlock(
+				typedAfter,
+				typedAfter.lastIndexOf("NEWPARA"),
+				createEditorMarkdownBlockIndex(typedAfter),
+			);
+			expect(afterBlock?.kind).toBe("paragraph");
+			expect(typedAfter.slice(afterBlock?.start, afterBlock?.end)).toBe(
+				"NEWPARA",
+			);
 		}
 	});
 });

@@ -1,193 +1,110 @@
-import type { PhpCommonMarkBlockState } from "../../shared/markdown/php-commonmark-block-engine";
 import {
-	COMMONMARK_ATX_HEADING_OPEN,
-	COMMONMARK_SETEXT_UNDERLINE,
-	COMMONMARK_THEMATIC_BREAK_LINE,
-	consumeBlockquoteMarker,
-	consumeWhitespaceColumns,
-	cursorRemainder,
-	isCursorBlank,
-	matchHtmlBlockOpen,
-	measureLeadingColumns,
-	nextNonSpaceIndex,
-} from "../../shared/markdown/php-commonmark-block-helpers";
+	LEAGUE_HTML_BLOCK_CLOSE_BY_TYPE,
+	matchLeagueHtmlBlockType,
+} from "../../shared/markdown/markdown-html-scanners";
+import { hasOddPrecedingBackslashes } from "../../shared/markdown/markdown-source-projection";
 import {
-	type ContainerStep,
-	canListMarkerInterruptParagraph,
-	consumeContainerSteps,
-	createLineCursor,
-	cursorPrefix,
-	hasListBeforeQuote,
-	isCommonMarkBlankLine,
-	type ListMarkerMatch,
-	matchListMarker,
-	measureIndentColumns,
-	peelNestedContainers,
-	readBlockquotePrefix,
-	stripContainersWithColumn,
+	ATX_HEADING,
+	type ClassifiedLineContainers,
+	type ContainerFrame,
+	classifyLineContainers,
+	formatContainerSignature,
+	isInterruptingListMarker,
+	isMarkdownBlankLine,
+	leadingColumnsFrom,
+	matchContainerFrames,
+	peelContainerFrames,
+	retainFramesAcrossBlankLine,
+	SETEXT_UNDERLINE,
+	startsContainerQuote,
+	stepContainerBlockLine,
+	stripLeadingAsciiSpaceTab,
+	stripTrailingAsciiSpaceTab,
+	THEMATIC_BREAK,
+	trimAsciiSpaceTab,
 } from "./markdown-prescanner-containers";
-
-export {
-	type ContainerStep,
-	canListMarkerInterruptParagraph,
-	formatContainerPrefix,
-	hasListBeforeQuote,
-	isCommonMarkBlankLine,
-	matchListMarker,
-	measureIndentColumns,
-	type PeeledLineContainers,
-	peelContainerStepsForLine,
-	readBlockquotePrefix,
-	stripBlockContainerPrefix,
-	stripBlockquoteDepth,
-	stripContainers,
-	stripContainersWithColumn,
-	stripPartialContainers,
-	sumListContainerIndent,
-} from "./markdown-prescanner-containers";
+import {
+	TABLE_ALIGN_PREFIX,
+	TABLE_ALIGN_SUFFIX,
+} from "./table-alignment-codec";
 
 /**
- * Feature-private block-structure detection helpers for `markdown-prescanner.ts`:
- * CommonMark §4.6 Types 1–7 HTML block matching, container-aware fenced code
- * detection, footnote-block scanning, line-container resolution, paragraph
- * classification, and standalone block math scanning.
+ * Shared block-boundary predicates, fence/HTML/math block scanners, and
+ * paragraph prose-run lookahead for the Immersive Visual prescanner.
  */
 
-type ListPrefixedHtmlMatch = Readonly<{
-	containers: ReadonlyArray<ContainerStep>;
-	content: string;
-	contentIndent: number;
-	contentOffset: number;
-	htmlType: 1 | 2 | 3 | 4 | 5 | 6 | 7;
-	linePrefix: string;
-	virtualSpaces: number;
-}>;
+export const FOOTNOTE_DEF_LINE = /^ {0,3}\[\^([^\s\]]+)\]:(?:[ \t]|$)/;
 
-export function matchListPrefixedHtmlBlock(
-	line: string,
-	inParagraph: boolean,
-	prevContainerIndent: number,
-	activeContainers?: ReadonlyArray<ContainerStep>,
-): ListPrefixedHtmlMatch | null {
-	if (!line.includes("<")) {
-		return null;
-	}
-	const cursor = createLineCursor(line);
-	const containers: ContainerStep[] = [];
-	let seededInterleaved = false;
-	if (activeContainers && hasListBeforeQuote(activeContainers)) {
-		if (consumeContainerSteps(cursor, activeContainers, false)) {
-			containers.push(...activeContainers);
-			seededInterleaved = true;
-		} else {
-			cursor.column = 0;
-			cursor.index = 0;
-			cursor.virtualSpaces = 0;
-		}
-	}
-	if (!seededInterleaved) {
-		while (consumeBlockquoteMarker(cursor)) {
-			containers.push({ kind: "blockquote" });
-		}
-	}
-	const outerQuoteCount = seededInterleaved ? 0 : containers.length;
-	let consumedPrevList = false;
-	if (!seededInterleaved && prevContainerIndent > 0 && !isCursorBlank(cursor)) {
-		const leadCols = measureLeadingColumns(cursor);
-		if (leadCols >= prevContainerIndent) {
-			if (leadCols - prevContainerIndent > 3) {
-				return null;
-			}
-			consumeWhitespaceColumns(cursor, prevContainerIndent);
-			containers.push({ indent: prevContainerIndent, kind: "list" });
-			consumedPrevList = true;
-		}
-	}
-
-	const { matchedList, quotesAdded } = peelNestedContainers(
-		cursor,
-		containers,
-		!inParagraph,
-		seededInterleaved || consumedPrevList,
-	);
-	if (
-		(!matchedList &&
-			!((seededInterleaved || consumedPrevList) && quotesAdded > 0)) ||
-		measureLeadingColumns(cursor) > 3
-	) {
-		return null;
-	}
-	const htmlCandidate = line.slice(nextNonSpaceIndex(cursor));
-	if (!htmlCandidate.startsWith("<")) {
-		return null;
-	}
-	const htmlType = matchHtmlBlockOpen(htmlCandidate, true);
-	if (htmlType === null) {
-		return null;
-	}
-
-	let contentIndent = 0;
-	for (let idx = outerQuoteCount; idx < containers.length; idx += 1) {
-		const step = containers[idx];
-		if (step?.kind !== "list") {
-			break;
-		}
-		contentIndent += step.indent;
-	}
-	return {
-		containers,
-		content: cursorRemainder(cursor),
-		contentIndent,
-		contentOffset: cursor.index,
-		htmlType,
-		linePrefix: cursorPrefix(cursor),
-		virtualSpaces: cursor.virtualSpaces,
-	};
-}
+const PAIRED_HTML_BLOCK_TAGS: ReadonlySet<string> = new Set(
+	"article aside audio blockquote center details div dl fieldset figure footer form header iframe main nav ol p section summary table ul video".split(
+		" ",
+	),
+);
 
 export type DetectableFence = Readonly<{
-	containerIndent: number;
-	containers?: ReadonlyArray<ContainerStep>;
+	containerFrames: ReadonlyArray<ContainerFrame>;
 	fenceChar: "`" | "~";
 	fenceLength: number;
 	info: string;
-	quoteDepth: number;
 }>;
 
-type FenceLineSummary = Readonly<{
-	column: number;
-	containerIndent: number;
-	content: string;
-	indent: number;
-	listMarker: ListMarkerMatch | null;
-	quoteDepth: number;
+type ProseRunLine = Readonly<{
+	body: string;
+	prefix: string;
 }>;
 
-function fenceContainersOf(
-	fence: DetectableFence,
-): ReadonlyArray<ContainerStep> {
-	if (fence.containers !== undefined) {
-		return fence.containers;
+type ParagraphProseRun = Readonly<{
+	end: number;
+	lines: ReadonlyArray<ProseRunLine>;
+}>;
+
+type BlockScanCache = {
+	failedBracketBySignature: Map<string, number>;
+	failedDollarBySignature: Map<string, number>;
+	lastCloseBracketLine: number;
+	lastCloseDollarLine: number;
+	unclosedHtmlBlockLines: Map<string, Set<number>>;
+};
+
+export function createBlockScanCache(): BlockScanCache {
+	return {
+		failedBracketBySignature: new Map<string, number>(),
+		failedDollarBySignature: new Map<string, number>(),
+		lastCloseBracketLine: -2,
+		lastCloseDollarLine: -2,
+		unclosedHtmlBlockLines: new Map<string, Set<number>>(),
+	};
+}
+
+const htmlBlockTagPatterns = new Map<
+	string,
+	Readonly<{ close: RegExp; open: RegExp }>
+>();
+
+function getHtmlBlockTagPatterns(
+	tagName: string,
+): Readonly<{ close: RegExp; open: RegExp }> {
+	let patterns = htmlBlockTagPatterns.get(tagName);
+	if (!patterns) {
+		patterns = {
+			close: new RegExp(`</${tagName}\\s*>`, "gi"),
+			open: new RegExp(`<${tagName}(?=[\\s>/])[^>]*>`, "gi"),
+		};
+		htmlBlockTagPatterns.set(tagName, patterns);
 	}
-	const steps: ContainerStep[] = [];
-	for (let d = 0; d < fence.quoteDepth; d += 1) {
-		steps.push({ kind: "blockquote" });
-	}
-	if (fence.containerIndent > 0) {
-		steps.push({ indent: fence.containerIndent, kind: "list" });
-	}
-	return steps;
+	return patterns;
 }
 
 function matchFenceAt(
 	content: string,
-	indent: number,
-	containerIndent: number,
-	quoteDepth: number,
-	containers?: ReadonlyArray<ContainerStep>,
+	relIndent: number,
+	containerFrames: ReadonlyArray<ContainerFrame>,
 ): DetectableFence | null {
-	const relative = indent - containerIndent;
-	if (relative < 0 || relative > 3) {
+	const first = content.charCodeAt(0);
+	if (96 /* ` */ !== first && 126 /* ~ */ !== first) {
+		return null;
+	}
+	if (relIndent < 0 || relIndent > 3) {
 		return null;
 	}
 	const match = /^(`{3,}|~{3,})(.*)$/.exec(content);
@@ -199,502 +116,741 @@ function matchFenceAt(
 	if (fenceChar === "`" && info.includes("`")) {
 		return null;
 	}
-	return containers !== undefined
-		? {
-				containerIndent,
-				containers,
-				fenceChar,
-				fenceLength: match[1].length,
-				info,
-				quoteDepth,
-			}
-		: {
-				containerIndent,
-				fenceChar,
-				fenceLength: match[1].length,
-				info,
-				quoteDepth,
-			};
+	return {
+		containerFrames,
+		fenceChar,
+		fenceLength: match[1].length,
+		info,
+	};
 }
 
-export function detectFence(
-	analysis: FenceLineSummary,
-	baseContainers?: ReadonlyArray<ContainerStep>,
+export function detectFenceInBody(
+	body: string,
+	col: number,
+	containerFrames: ReadonlyArray<ContainerFrame>,
 ): DetectableFence | null {
-	if (!analysis.content.includes("`") && !analysis.content.includes("~")) {
-		return null;
-	}
-	const baseSteps: ContainerStep[] = baseContainers
-		? [...baseContainers]
-		: Array.from({ length: analysis.quoteDepth }, () => ({
-				kind: "blockquote" as const,
-			}));
-	const directSteps: ContainerStep[] =
-		analysis.containerIndent > 0
-			? [...baseSteps, { indent: analysis.containerIndent, kind: "list" }]
-			: baseSteps;
-	const direct = matchFenceAt(
-		analysis.content,
-		analysis.indent,
-		analysis.containerIndent,
-		analysis.quoteDepth,
-		directSteps,
+	const relIndent = leadingColumnsFrom(body, col);
+	return matchFenceAt(
+		stripLeadingAsciiSpaceTab(body),
+		relIndent,
+		containerFrames,
 	);
-	const relativeIndent = analysis.indent - analysis.containerIndent;
-	const canPeelNestedQuote =
-		relativeIndent >= 0 &&
-		relativeIndent < 4 &&
-		analysis.content.startsWith(">");
-	if (direct || (!analysis.listMarker && !canPeelNestedQuote)) {
-		return direct;
-	}
-
-	const containers: ContainerStep[] = analysis.listMarker
-		? [
-				...baseSteps,
-				{ indent: analysis.listMarker.contentIndent, kind: "list" },
-			]
-		: [...directSteps];
-	const innerCursor = createLineCursor(
-		analysis.listMarker ? analysis.listMarker.afterContent : analysis.content,
-		analysis.listMarker
-			? analysis.column + analysis.listMarker.contentIndent
-			: analysis.column + analysis.indent,
-	);
-	const { quotesAdded } = peelNestedContainers(
-		innerCursor,
-		containers,
-		true,
-		true,
-	);
-	const quoteDepth = analysis.quoteDepth + quotesAdded;
-	const matched = matchFenceAt(
-		cursorRemainder(innerCursor).replace(/^[ \t]+/, ""),
-		measureLeadingColumns(innerCursor),
-		0,
-		quoteDepth,
-		containers,
-	);
-	if (!matched) {
-		return null;
-	}
-	const trailingListIndent =
-		quoteDepth === analysis.quoteDepth
-			? (analysis.listMarker?.contentIndent ?? analysis.containerIndent)
-			: 0;
-	return { ...matched, containerIndent: trailingListIndent };
 }
 
-function isFenceCloserStripped(
-	stripped: Readonly<{ column: number; rest: string }>,
+export function checkFenceLineStatus(
+	line: string,
 	fence: DetectableFence,
-): boolean {
-	const indent = measureIndentColumns(stripped.rest, stripped.column);
-	if (indent < 0 || indent > 3) {
-		return false;
-	}
-	const content = stripped.rest.replace(/^[ \t]+/, "");
+): "closed" | "continue" | "exited" {
+	const step = stepContainerBlockLine(line, fence.containerFrames);
+	if (!step.continues) return "exited";
+	if (step.isBlank) return "continue";
+	const relIndent = leadingColumnsFrom(step.body, step.col);
+	if (relIndent > 3) return "continue";
+	const content = stripLeadingAsciiSpaceTab(step.body);
 	const match =
 		fence.fenceChar === "`"
 			? /^(`{3,})[ \t]*$/.exec(content)
 			: /^(~{3,})[ \t]*$/.exec(content);
-	return Boolean(match?.[1] && match[1].length >= fence.fenceLength);
+	return match?.[1] && match[1].length >= fence.fenceLength
+		? "closed"
+		: "continue";
 }
 
-export function findContainerBoundedFenceEnd(
+function isGfmTableDelimiter(text: string): boolean {
+	const trimmed = trimAsciiSpaceTab(text);
+	return (
+		trimmed.includes("-") &&
+		(/^\|?[ \t]*:?-{1,}:?[ \t]*(?:\|[ \t]*:?-{1,}:?[ \t]*)+\|?$/.test(
+			trimmed,
+		) ||
+			/^\|[ \t]*:?-{1,}:?[ \t]*\|$/.test(trimmed))
+	);
+}
+
+export function isGfmTableStartAt(
+	headerBody: string,
+	delimiterLine: string,
+	frames: ReadonlyArray<ContainerFrame>,
+): boolean {
+	if (!headerBody.includes("|") || !delimiterLine.includes("-")) {
+		return false;
+	}
+	const delimStep = stepContainerBlockLine(delimiterLine, frames);
+	if (
+		!delimStep.continues ||
+		delimStep.isBlank ||
+		leadingColumnsFrom(delimStep.body, delimStep.col) > 3
+	) {
+		return false;
+	}
+	return isGfmTableDelimiter(delimStep.body);
+}
+
+export function isGfmTableStartAtLine(
+	lines: ReadonlyArray<string>,
+	headerIndex: number,
+	frames: ReadonlyArray<ContainerFrame>,
+): boolean {
+	const headerLine = lines[headerIndex] ?? "";
+	if (!headerLine.includes("|")) {
+		return false;
+	}
+	const headerStep = stepContainerBlockLine(headerLine, frames);
+	if (
+		!headerStep.continues ||
+		headerStep.isBlank ||
+		leadingColumnsFrom(headerStep.body, headerStep.col) > 3
+	) {
+		return false;
+	}
+	return isGfmTableStartAt(headerStep.body, lines[headerIndex + 1] ?? "", frames);
+}
+
+export function findGfmTableEnd(
+	lines: ReadonlyArray<string>,
+	headerIndex: number,
+	frames: ReadonlyArray<ContainerFrame>,
+): number {
+	let end = headerIndex + 1;
+	for (let index = headerIndex + 2; index < lines.length; index += 1) {
+		const step = stepContainerBlockLine(lines[index] ?? "", frames);
+		if (!step.continues || step.isBlank || !step.body.includes("|")) {
+			break;
+		}
+		if (
+			leadingColumnsFrom(step.body, step.col) <= 3 &&
+			/^(?:#{1,6}(?:[ \t]|$)|`{3,}|~{3,}|>)/.test(
+				stripLeadingAsciiSpaceTab(step.body),
+			)
+		) {
+			break;
+		}
+		end = index;
+	}
+	return end;
+}
+
+function matchHtmlBlockOpener(
+	line: string,
+): Readonly<{ tagName: string; selfClosing: boolean }> | null {
+	const match = /^ {0,3}<([a-zA-Z][a-zA-Z0-9-]*)(?=[\s>/])[^>]*>/.exec(line);
+	if (!match?.[1]) {
+		return null;
+	}
+	const tagName = match[1].toLowerCase();
+	if (!PAIRED_HTML_BLOCK_TAGS.has(tagName)) {
+		return null;
+	}
+	return { tagName, selfClosing: match[0].endsWith("/>") };
+}
+
+type HtmlBlockEndState =
+	| Readonly<{ frames: ReadonlyArray<ContainerFrame>; type: "blank" }>
+	| Readonly<{
+			closePattern: RegExp;
+			frames: ReadonlyArray<ContainerFrame>;
+			type: "close";
+	  }>;
+
+type ContainerCodeLineStepperOptions = Readonly<{
+	detectFences?: boolean;
+	detectHtmlBlocks?: boolean;
+	initialHtmlBlockEnd?: HtmlBlockEndState | null;
+}>;
+
+type ContainerCodeLineStep =
+	| "blank"
+	| "fence"
+	| "html-block-blank"
+	| "html-block-close"
+	| "indented-code"
+	| Readonly<{
+			classified: ClassifiedLineContainers;
+			kind: "html-block-open";
+			mode: "blank" | "close";
+	  }>
+	| Readonly<{ classified: ClassifiedLineContainers; kind: "content" }>;
+
+type ContainerCodeLineStepper = Readonly<{
+	getLastClassified: () => ClassifiedLineContainers | null;
+	getOpenFrames: () => ReadonlyArray<ContainerFrame>;
+	setState: (
+		frames: ReadonlyArray<ContainerFrame>,
+		nextParagraphOpen: boolean,
+	) => void;
+	step: (line: string) => ContainerCodeLineStep;
+}>;
+
+/**
+ * Stateful CommonMark container + fenced/indented code-block + HTML-block line
+ * stepper shared by `prescanMarkdown`, `findHtmlBlockEnd`, and
+ * `stripCommonMarkHtmlForPreview`.
+ */
+export function createContainerCodeLineStepper(
+	options?: ContainerCodeLineStepperOptions,
+): ContainerCodeLineStepper {
+	const detectFences = options?.detectFences ?? true;
+	const detectHtmlBlocks = options?.detectHtmlBlocks ?? false;
+	let activeFence: DetectableFence | null = null;
+	let htmlBlockEnd: HtmlBlockEndState | null =
+		options?.initialHtmlBlockEnd ?? null;
+	let inIndentedCode = false;
+	let indentedCodeFrames: ReadonlyArray<ContainerFrame> = [];
+	let lastClassified: ClassifiedLineContainers | null = null;
+	let openContainerFrames: ReadonlyArray<ContainerFrame> = [];
+	let paragraphOpen = false;
+
+	return {
+		getLastClassified(): ClassifiedLineContainers | null {
+			return lastClassified;
+		},
+		getOpenFrames(): ReadonlyArray<ContainerFrame> {
+			return openContainerFrames;
+		},
+		setState(
+			frames: ReadonlyArray<ContainerFrame>,
+			nextParagraphOpen: boolean,
+		): void {
+			activeFence = null;
+			htmlBlockEnd = null;
+			inIndentedCode = false;
+			lastClassified = null;
+			openContainerFrames = frames;
+			paragraphOpen = nextParagraphOpen;
+		},
+		step(line: string): ContainerCodeLineStep {
+			lastClassified = null;
+			if (htmlBlockEnd) {
+				const step = stepContainerBlockLine(line, htmlBlockEnd.frames);
+				if (!step.continues) {
+					htmlBlockEnd = null;
+					inIndentedCode = false;
+					paragraphOpen = false;
+				} else if (htmlBlockEnd.type === "blank") {
+					if (step.isBlank) {
+						openContainerFrames = htmlBlockEnd.frames;
+						htmlBlockEnd = null;
+						inIndentedCode = false;
+						paragraphOpen = false;
+						return "blank";
+					}
+					return "html-block-blank";
+				} else {
+					if (htmlBlockEnd.closePattern.test(step.body)) {
+						htmlBlockEnd = null;
+					}
+					return "html-block-close";
+				}
+			}
+			if (activeFence) {
+				const status = checkFenceLineStatus(line, activeFence);
+				if (status === "closed") {
+					activeFence = null;
+					paragraphOpen = false;
+					return "fence";
+				}
+				if (status === "continue") {
+					return "fence";
+				}
+				activeFence = null;
+				paragraphOpen = false;
+			}
+			if (inIndentedCode) {
+				if (isMarkdownBlankLine(line)) {
+					openContainerFrames = retainFramesAcrossBlankLine(
+						openContainerFrames,
+						0,
+					);
+					if (openContainerFrames.length < indentedCodeFrames.length) {
+						inIndentedCode = false;
+					}
+					paragraphOpen = false;
+					return "blank";
+				}
+				const matchedCode = matchContainerFrames(line, indentedCodeFrames);
+				if (isMarkdownBlankLine(matchedCode.body)) {
+					openContainerFrames = retainFramesAcrossBlankLine(
+						openContainerFrames,
+						matchedCode.matchedCount,
+					);
+					if (openContainerFrames.length < indentedCodeFrames.length) {
+						inIndentedCode = false;
+					}
+					paragraphOpen = false;
+					return "blank";
+				}
+				if (
+					!matchedCode.exitedContainer &&
+					leadingColumnsFrom(matchedCode.body, matchedCode.col) >= 4
+				) {
+					return "indented-code";
+				}
+				inIndentedCode = false;
+			}
+			if (isMarkdownBlankLine(line)) {
+				openContainerFrames = retainFramesAcrossBlankLine(
+					openContainerFrames,
+					0,
+				);
+				paragraphOpen = false;
+				return "blank";
+			}
+			const classified = classifyLineContainers(
+				line,
+				openContainerFrames,
+				paragraphOpen,
+			);
+			lastClassified = classified;
+			if (classified.isBlankInContainer) {
+				openContainerFrames = classified.blockFrames;
+				paragraphOpen = false;
+				return "blank";
+			}
+			if (
+				!classified.inParagraph &&
+				classified.bodyContent.length > 0 &&
+				classified.relIndent >= 4
+			) {
+				inIndentedCode = true;
+				indentedCodeFrames = classified.blockFrames;
+				openContainerFrames = classified.blockFrames;
+				paragraphOpen = false;
+				return "indented-code";
+			}
+			if (detectFences) {
+				const fence = detectFenceInBody(
+					classified.body,
+					classified.col,
+					classified.blockFrames,
+				);
+				if (fence) {
+					activeFence = fence;
+					openContainerFrames = classified.blockFrames;
+					paragraphOpen = false;
+					return "fence";
+				}
+			}
+			if (detectHtmlBlocks && classified.relIndent <= 3) {
+				const htmlBlockType = matchLeagueHtmlBlockType(
+					classified.bodyContent,
+					0,
+					classified.inParagraph,
+				);
+				if (htmlBlockType > 0) {
+					const closePattern = LEAGUE_HTML_BLOCK_CLOSE_BY_TYPE[htmlBlockType];
+					if (closePattern) {
+						if (!closePattern.test(classified.bodyContent)) {
+							htmlBlockEnd = {
+								closePattern,
+								frames: classified.blockFrames,
+								type: "close",
+							};
+						}
+					} else {
+						htmlBlockEnd = {
+							frames: classified.blockFrames,
+							type: "blank",
+						};
+					}
+					openContainerFrames = classified.blockFrames;
+					inIndentedCode = false;
+					paragraphOpen = false;
+					return {
+						classified,
+						kind: "html-block-open",
+						mode: closePattern ? "close" : "blank",
+					};
+				}
+			}
+			openContainerFrames = classified.proseFrames;
+			paragraphOpen = classified.paragraphContinues;
+			return { classified, kind: "content" };
+		},
+	};
+}
+
+function findHtmlBlockEnd(
 	lines: ReadonlyArray<string>,
 	startIndex: number,
-	fence: DetectableFence,
+	tagName: string,
+	cache?: BlockScanCache,
 ): number {
-	const fenceContainers = fenceContainersOf(fence);
-	let end = startIndex + 1;
-	while (end < lines.length) {
-		const stripped = stripContainersWithColumn(
-			lines[end] ?? "",
-			fenceContainers,
-		);
-		if (stripped === null) {
-			return end - 1;
+	if (cache?.unclosedHtmlBlockLines.get(tagName)?.has(startIndex)) {
+		return -1;
+	}
+	const { close: closePattern, open: openPattern } =
+		getHtmlBlockTagPatterns(tagName);
+	const openLineStack: number[] = [];
+	const stepper = createContainerCodeLineStepper({
+		detectHtmlBlocks: true,
+		initialHtmlBlockEnd: { frames: [], type: "blank" },
+	});
+
+	for (let index = startIndex; index < lines.length; index += 1) {
+		const line = lines[index] ?? "";
+		let inBlankHtmlBlock = index === startIndex;
+		if (index > startIndex) {
+			const stepped = stepper.step(line);
+			if (typeof stepped === "string") {
+				if (stepped !== "html-block-blank") continue;
+				inBlankHtmlBlock = true;
+			} else if (stepped.kind === "html-block-open") {
+				if (stepped.mode === "close") continue;
+				inBlankHtmlBlock = true;
+			}
 		}
-		if (isFenceCloserStripped(stripped, fence)) {
-			return end;
+		for (const tag of line.match(openPattern) ?? []) {
+			if (!tag.endsWith("/>")) {
+				openLineStack.push(index);
+			}
 		}
-		end += 1;
+		const closeCount = (line.match(closePattern) ?? []).length;
+		for (let c = 0; c < closeCount; c += 1) {
+			openLineStack.pop();
+		}
+		if (
+			openLineStack.length === 0 &&
+			(!inBlankHtmlBlock ||
+				index + 1 >= lines.length ||
+				isMarkdownBlankLine(lines[index + 1] ?? ""))
+		) {
+			return index;
+		}
+	}
+	if (cache && openLineStack.length > 0) {
+		let unclosed = cache.unclosedHtmlBlockLines.get(tagName);
+		if (!unclosed) {
+			unclosed = new Set<number>();
+			cache.unclosedHtmlBlockLines.set(tagName, unclosed);
+		}
+		for (let k = 0; k < openLineStack.length; k += 1) {
+			const lineIdx = openLineStack[k];
+			if (lineIdx !== undefined) unclosed.add(lineIdx);
+		}
+	}
+	return -1;
+}
+
+/**
+ * Last line (inclusive) of a CommonMark §4.6 / League 2.8.2 HTML block (Types
+ * 1–7) starting at `startIndex` inside `containerFrames`, using `cache` to
+ * guarantee strict O(N) runtime. Preserves paired multi-blank-line container
+ * tags (such as `<div>\n\n...\n\n</div>` and `<details>...</details>`) as one
+ * card at top level while matching CommonMark/League close & blank-line rules.
+ */
+export function findLeagueHtmlBlockEnd(
+	lines: ReadonlyArray<string>,
+	startIndex: number,
+	htmlType: number,
+	firstLineBody: string,
+	containerFrames: ReadonlyArray<ContainerFrame>,
+	cache: BlockScanCache,
+): number {
+	const closeRe = LEAGUE_HTML_BLOCK_CLOSE_BY_TYPE[htmlType];
+	if (closeRe) {
+		if (closeRe.test(firstLineBody)) return startIndex;
+		for (let k = startIndex + 1; k < lines.length; k += 1) {
+			const step = stepContainerBlockLine(lines[k] ?? "", containerFrames);
+			if (!step.continues) return k - 1;
+			if (closeRe.test(step.body)) return k;
+		}
+		return lines.length - 1;
+	}
+
+	if (containerFrames.length === 0) {
+		const pairedOpener = matchHtmlBlockOpener(lines[startIndex] ?? "");
+		if (pairedOpener && !pairedOpener.selfClosing) {
+			const pairedEnd = findHtmlBlockEnd(
+				lines,
+				startIndex,
+				pairedOpener.tagName,
+				cache,
+			);
+			if (pairedEnd >= startIndex) return pairedEnd;
+		}
+	}
+
+	for (let k = startIndex + 1; k < lines.length; k += 1) {
+		const step = stepContainerBlockLine(lines[k] ?? "", containerFrames);
+		if (!step.continues || step.isBlank) return k - 1;
 	}
 	return lines.length - 1;
 }
 
-export type LineAnalysis = Readonly<{
-	column: number;
-	containerIndent: number;
-	content: string;
-	indent: number;
-	listMarker: ListMarkerMatch | null;
-	prefix: string;
-	quoteDepth: number;
-	rest: string;
-}>;
-
-export function analyzeLine(line: string, containerIndent: number): LineAnalysis {
-	const { column, depth, prefix, rest } = readBlockquotePrefix(line);
-	const firstCode = rest.length > 0 ? rest.charCodeAt(0) : -1;
-	if (firstCode !== 0x20 && firstCode !== 0x09) {
-		const couldBeList =
-			firstCode === 0x2d ||
-			firstCode === 0x2a ||
-			firstCode === 0x2b ||
-			(firstCode >= 0x30 && firstCode <= 0x39);
-		const rawMarker = couldBeList ? matchListMarker(rest, column) : null;
-		const listMarker =
-			rawMarker !== null &&
-			rawMarker.leadCols <=
-				(rawMarker.leadCols >= containerIndent ? containerIndent : 0) + 3
-				? rawMarker
-				: null;
-		return {
-			column,
-			containerIndent,
-			content: rest,
-			indent: 0,
-			listMarker,
-			prefix,
-			quoteDepth: depth,
-			rest,
-		};
-	}
-	const indentText = /^[ \t]*/.exec(rest)?.[0] ?? "";
-	const rawMarker = matchListMarker(rest, column);
-	const listMarker =
-		rawMarker !== null &&
-		rawMarker.leadCols <=
-			(rawMarker.leadCols >= containerIndent ? containerIndent : 0) + 3
-			? rawMarker
-			: null;
-	return {
-		column,
-		containerIndent,
-		content: rest.slice(indentText.length),
-		indent: measureIndentColumns(rest, column),
-		listMarker,
-		prefix,
-		quoteDepth: depth,
-		rest,
-	};
+/**
+ * Whether a `protected_block` payload terminates itself without requiring a
+ * trailing blank line (fenced mermaid, display math, or closed HTML Blocks
+ * Types 1–5; excludes Types 6–7, `[TOC]`, footnotes, and reference definitions).
+ */
+export function isSelfTerminatingProtectedBlock(
+	kind: string,
+	raw: string,
+): boolean {
+	if (kind === "mermaid" || kind === "math") return true;
+	if (kind !== "raw") return false;
+	const firstNl = raw.indexOf("\n");
+	const firstLine = firstNl >= 0 ? raw.slice(0, firstNl) : raw;
+	const htmlType = matchLeagueHtmlBlockType(
+		stripLeadingAsciiSpaceTab(firstLine),
+		0,
+		false,
+	);
+	const closeRe = LEAGUE_HTML_BLOCK_CLOSE_BY_TYPE[htmlType];
+	if (!closeRe) return false;
+	const lastNl = raw.lastIndexOf("\n");
+	const lastLine = lastNl >= 0 ? raw.slice(lastNl + 1) : raw;
+	return closeRe.test(lastLine);
 }
 
-type ResolvedLineContainerContext = Readonly<{
-	acceptedListMarker: ListMarkerMatch | null;
-	activeInterleavedContainers: ReadonlyArray<ContainerStep> | null;
-	analysis: LineAnalysis;
-	clearParagraph: boolean;
-	continuesListItem: boolean;
-	droppedOutOfList: boolean;
-	effectiveContainer: number;
-	hasInterleavedContainers: boolean;
-	lineQuoteDepth: number;
-	listInterruptionInParagraph: boolean;
-	nextListContentIndent: number | null;
-	nextParagraphHasContent: boolean;
-	nextParagraphOpen: boolean;
-	preMarkerContainerIndent: number;
-	prevContainerIndent: number;
-	prevListIndent: number | null;
-}>;
-
-/**
- * Resolves active list / blockquote / interleaved `list -> quote` container
- * state for one non-blank line in `prescanMarkdown`.
- */
-export function resolveLineContainerContext(
-	line: string,
-	baseAnalysis: LineAnalysis,
-	phpBlockState: PhpCommonMarkBlockState,
-	listContentIndent: number | null,
-	paragraphOpen: boolean,
-	paragraphHasContent: boolean,
-	paragraphQuoteDepth: number,
-): ResolvedLineContainerContext {
-	const hasInterleavedContainers =
-		phpBlockState.containers.length > 1 &&
-		hasListBeforeQuote(phpBlockState.containers);
-	const phpContainers: ContainerStep[] = hasInterleavedContainers
-		? phpBlockState.containers.map((container) =>
-				container.kind === "blockquote"
-					? { kind: "blockquote" }
-					: { indent: container.indent, kind: "list" },
-			)
-		: [];
-	const matchedInterleaved = hasInterleavedContainers
-		? stripContainersWithColumn(line, phpContainers)
-		: null;
-
-	if (matchedInterleaved !== null) {
-		const interRest = matchedInterleaved.rest;
-		const interColumn = matchedInterleaved.column;
-		const interIndent = measureIndentColumns(interRest, interColumn);
-		const interContent = interRest.replace(/^[ \t]+/, "");
-		const opensDeeperQuote = interIndent < 4 && interContent.startsWith(">");
-		let interQuoteDepth = 0;
-		for (const step of phpContainers) {
-			if (step.kind === "blockquote") interQuoteDepth += 1;
-		}
-		const phpLeaf = phpBlockState.leaf;
-		const nextParagraphOpen = !opensDeeperQuote && phpLeaf?.kind === "paragraph";
-		const nextParagraphHasContent =
-			nextParagraphOpen && (phpLeaf?.paragraphLineCount ?? 0) > 0;
-		const rawInterMarker = matchListMarker(interRest, interColumn);
-		const boundedInterMarker =
-			rawInterMarker !== null && rawInterMarker.leadCols <= 3
-				? rawInterMarker
-				: null;
-		const listInterruptionInParagraph =
-			nextParagraphOpen && nextParagraphHasContent && !opensDeeperQuote;
-		const acceptedListMarker =
-			boundedInterMarker !== null &&
-			(!listInterruptionInParagraph ||
-				canListMarkerInterruptParagraph(boundedInterMarker))
-				? boundedInterMarker
-				: null;
-		const effectiveContainer =
-			acceptedListMarker !== null ? acceptedListMarker.contentIndent : 0;
-		return {
-			acceptedListMarker,
-			activeInterleavedContainers: phpContainers,
-			analysis: {
-				column: interColumn,
-				containerIndent: effectiveContainer,
-				content: interContent,
-				indent: interIndent,
-				listMarker: acceptedListMarker,
-				prefix: matchedInterleaved.prefix,
-				quoteDepth: interQuoteDepth,
-				rest: interRest,
-			},
-			clearParagraph: opensDeeperQuote,
-			continuesListItem: true,
-			droppedOutOfList: false,
-			effectiveContainer,
-			hasInterleavedContainers,
-			lineQuoteDepth: interQuoteDepth,
-			listInterruptionInParagraph,
-			nextListContentIndent: listContentIndent,
-			nextParagraphHasContent,
-			nextParagraphOpen,
-			preMarkerContainerIndent: 0,
-			prevContainerIndent: 0,
-			prevListIndent: listContentIndent,
-		};
-	}
-
-	const lineQuoteDepth = baseAnalysis.quoteDepth;
-	const clearParagraph = paragraphOpen && lineQuoteDepth > paragraphQuoteDepth;
-	const nextParagraphOpen = clearParagraph ? false : paragraphOpen;
-	const nextParagraphHasContent = clearParagraph ? false : paragraphHasContent;
-	const prevContainerIndent = listContentIndent ?? 0;
-	let quotedBlankListIndent = 0;
-	if (
-		listContentIndent !== null &&
-		lineQuoteDepth > 0 &&
-		isCommonMarkBlankLine(baseAnalysis.rest)
-	) {
-		let phpQuotes = 0;
-		for (const container of phpBlockState.containers) {
-			if (container.kind === "blockquote") {
-				phpQuotes += 1;
-				if (phpQuotes > lineQuoteDepth) {
-					quotedBlankListIndent = 0;
+function getLastBlockMathCloseLine(
+	lines: ReadonlyArray<string>,
+	dollar: boolean,
+	cache: BlockScanCache,
+): number {
+	if (dollar) {
+		if (cache.lastCloseDollarLine === -2) {
+			let last = -1;
+			for (let k = lines.length - 1; k >= 0; k -= 1) {
+				if (stripTrailingAsciiSpaceTab(lines[k] ?? "").endsWith("$$")) {
+					last = k;
 					break;
 				}
-			} else if (container.hasContent) {
-				quotedBlankListIndent += container.indent;
-			} else {
+			}
+			cache.lastCloseDollarLine = last;
+		}
+		return cache.lastCloseDollarLine;
+	}
+	if (cache.lastCloseBracketLine === -2) {
+		let last = -1;
+		for (let k = lines.length - 1; k >= 0; k -= 1) {
+			if (stripTrailingAsciiSpaceTab(lines[k] ?? "").endsWith("\\]")) {
+				last = k;
 				break;
 			}
 		}
-		if (phpQuotes === 0) {
-			quotedBlankListIndent = 0;
-		}
+		cache.lastCloseBracketLine = last;
 	}
-	const continuesListItem =
-		listContentIndent === null ||
-		baseAnalysis.indent >= listContentIndent ||
-		quotedBlankListIndent > 0;
-	const listInterruptionInParagraph =
-		!hasInterleavedContainers &&
-		nextParagraphOpen &&
-		nextParagraphHasContent &&
-		lineQuoteDepth === paragraphQuoteDepth &&
-		continuesListItem;
-	const rawListMarker = baseAnalysis.listMarker;
-	const acceptedListMarker =
-		rawListMarker !== null &&
-		(!listInterruptionInParagraph ||
-			canListMarkerInterruptParagraph(rawListMarker))
-			? rawListMarker
-			: null;
-
-	let nextListContentIndent = listContentIndent;
-	let droppedOutOfList = false;
-	if (acceptedListMarker !== null) {
-		nextListContentIndent = acceptedListMarker.contentIndent;
-	} else if (quotedBlankListIndent > 0) {
-		nextListContentIndent = quotedBlankListIndent;
-	} else if (!continuesListItem) {
-		droppedOutOfList = true;
-		if (!nextParagraphOpen) {
-			nextListContentIndent = null;
-		}
-	}
-
-	const effectiveContainer =
-		acceptedListMarker !== null
-			? acceptedListMarker.contentIndent
-			: droppedOutOfList
-				? 0
-				: (nextListContentIndent ?? 0);
-	const preMarkerContainerIndent =
-		acceptedListMarker !== null
-			? acceptedListMarker.leadCols >= prevContainerIndent
-				? prevContainerIndent
-				: 0
-			: effectiveContainer;
-	const analysis =
-		baseAnalysis.containerIndent !== effectiveContainer ||
-		baseAnalysis.listMarker !== acceptedListMarker
-			? {
-					...baseAnalysis,
-					containerIndent: effectiveContainer,
-					listMarker: acceptedListMarker,
-				}
-			: baseAnalysis;
-
-	return {
-		acceptedListMarker,
-		activeInterleavedContainers: null,
-		analysis,
-		clearParagraph,
-		continuesListItem,
-		droppedOutOfList,
-		effectiveContainer,
-		hasInterleavedContainers,
-		lineQuoteDepth,
-		listInterruptionInParagraph,
-		nextListContentIndent,
-		nextParagraphHasContent,
-		nextParagraphOpen,
-		preMarkerContainerIndent,
-		prevContainerIndent,
-		prevListIndent: listContentIndent,
-	};
+	return cache.lastCloseBracketLine;
 }
 
-const CONTAINER_QUOTE = /^ {0,3}>[ \t]?/;
-const CONTAINER_LIST_MARKER = /^ {0,3}(?:[-+*]|(\d{1,9})[.)])(?=[ \t]|$)/;
-const leadingColumns = (text: string): number => measureIndentColumns(text, 0);
+function recordBlockMathFailure(
+	map: Map<string, number>,
+	signature: string,
+	until: number,
+): void {
+	const prev = map.get(signature) ?? -1;
+	if (until > prev) {
+		map.set(signature, until);
+	}
+}
 
 /**
- * Whether a line emitted as text leaves a paragraph open (so the next line
- * cannot start a reference definition), classified on the content inside any
- * nested quote/list containers, plus the quote depth those containers add.
+ * Last line of a `$$...$$` or `\[...\]` block starting at `start` inside
+ * `containerFrames`, or -1. A mid-line display formula that is neither a
+ * one-line block nor a canonical fence line is left to the inline scanner.
+ * Uses `cache` keyed by container signature to stay strictly O(N).
  */
-const PLAIN_PARAGRAPH_STATE = { nestedQuotes: 0, open: true } as const;
-
-export function classifyParagraphLine(
-	content: string,
-	relativeIndent: number,
-	paragraphOpen: boolean,
-	listInterruptionInParagraph: boolean,
-): Readonly<{ nestedQuotes: number; open: boolean }> {
-	if (relativeIndent > 3) return PLAIN_PARAGRAPH_STATE;
-	if (content.length > 0) {
-		const c0 = content.charCodeAt(0);
-		if (
-			c0 !== 0x20 &&
-			c0 !== 0x09 &&
-			c0 !== 0x23 && // #
-			c0 !== 0x2a && // *
-			c0 !== 0x2b && // +
-			c0 !== 0x2d && // -
-			c0 !== 0x3d && // =
-			c0 !== 0x3e && // >
-			c0 !== 0x5f && // _
-			(c0 < 0x30 || c0 > 0x39)
-		) {
-			return PLAIN_PARAGRAPH_STATE;
-		}
-	}
-	let inner = content;
-	let nestedQuotes = 0;
-	for (let depth = 0; depth < 32; depth += 1) {
-		const nested = depth > 0;
-		const trimmed = inner.replace(/^[ \t]+|[ \t]+$/g, "");
-		if (
-			trimmed === "" ||
-			(nested && leadingColumns(inner) >= 4) ||
-			COMMONMARK_ATX_HEADING_OPEN.test(trimmed) ||
-			COMMONMARK_THEMATIC_BREAK_LINE.test(trimmed) ||
-			(!nested &&
-				listInterruptionInParagraph &&
-				COMMONMARK_SETEXT_UNDERLINE.test(trimmed))
-		) {
-			return { nestedQuotes, open: false };
-		}
-		const quote = CONTAINER_QUOTE.exec(inner);
-		const marker = quote ? null : CONTAINER_LIST_MARKER.exec(inner);
-		if (quote) {
-			inner = inner.slice(quote[0].length);
-			nestedQuotes += 1;
-			continue;
-		}
-		if (!marker) return { nestedQuotes, open: true };
-		const after = inner.slice(marker[0].length);
-		const blank = isCommonMarkBlankLine(after);
-		const ordered = marker[1];
-		if (
-			!nested &&
-			listInterruptionInParagraph &&
-			(blank || (ordered !== undefined && ordered !== "1"))
-		) {
-			return { nestedQuotes, open: true };
-		}
-		if (blank || leadingColumns(after) >= 5) {
-			return { nestedQuotes, open: false };
-		}
-		inner = after.replace(/^[ \t]/, "");
-	}
-	return { nestedQuotes, open: paragraphOpen || true };
-}
-
-export function findFootnoteDefinitionEnd(
+export function findBlockMathEnd(
 	lines: ReadonlyArray<string>,
 	start: number,
-	effectiveContainer: number,
+	content: string,
+	containerFrames: ReadonlyArray<ContainerFrame>,
+	cache?: BlockScanCache,
 ): number {
-	let end = start;
-	while (end + 1 < lines.length) {
-		const next = analyzeLine(lines[end + 1] ?? "", effectiveContainer);
+	const dollar = content.startsWith("$$") && !content.startsWith("$$$$");
+	if (!dollar && !content.startsWith("\\[")) return -1;
+	const single = dollar
+		? /^\$\$([\s\S]+?)\$\$[ \t]*$/.exec(content)
+		: /^\\\[([\s\S]+?)\\\][ \t]*$/.exec(content);
+	const inner = single?.[1] ?? "";
+	if (single && (dollar ? !inner.includes("$$") : !isMarkdownBlankLine(inner))) {
+		return start;
+	}
+	if (!(dollar ? /^\$\$[ \t]*$/ : /^\\\[[ \t]*$/).test(content)) return -1;
+	const failedBySignature = cache
+		? dollar
+			? cache.failedDollarBySignature
+			: cache.failedBracketBySignature
+		: null;
+	const signature = failedBySignature
+		? formatContainerSignature(containerFrames)
+		: "";
+	if (cache && failedBySignature) {
+		if (start >= getLastBlockMathCloseLine(lines, dollar, cache)) {
+			return -1;
+		}
+		if ((failedBySignature.get(signature) ?? -1) > start) {
+			return -1;
+		}
+	}
+	const close = dollar ? "$$" : "\\]";
+	const inContainer = containerFrames.length > 0;
+	for (let k = start + 1; k < lines.length; k += 1) {
+		const rawLine = lines[k] ?? "";
 		if (
-			/^(?: {2,}|\t)/.test(next.rest) ||
-			/^\[\^([^\s\]]+)\]:(?:[ \t]|$)/.test(next.content)
+			!inContainer &&
+			!rawLine.includes("```") &&
+			!rawLine.includes("~~~") &&
+			!rawLine.includes(close)
 		) {
-			end += 1;
 			continue;
 		}
-		if (isCommonMarkBlankLine(next.content)) {
-			let lookahead = end + 1;
-			while (
-				lookahead < lines.length &&
-				isCommonMarkBlankLine(lines[lookahead] ?? "")
-			) {
-				lookahead += 1;
+		const step = stepContainerBlockLine(rawLine, containerFrames);
+		if (!step.continues) {
+			if (failedBySignature) {
+				recordBlockMathFailure(failedBySignature, signature, k);
 			}
-			const after = analyzeLine(lines[lookahead] ?? "", effectiveContainer);
-			if (lookahead < lines.length && after.indent >= 2) {
-				end = lookahead;
-				continue;
+			return -1;
+		}
+		if (step.isBlank) continue;
+		if (
+			!step.body.includes("```") &&
+			!step.body.includes("~~~") &&
+			!step.body.includes(close)
+		) {
+			continue;
+		}
+		if (step.body.includes("```") || step.body.includes("~~~")) {
+			const peeled = peelContainerFrames(rawLine, containerFrames);
+			if (detectFenceInBody(peeled.body, peeled.col, peeled.frames)) {
+				if (failedBySignature) {
+					recordBlockMathFailure(failedBySignature, signature, k);
+				}
+				return -1;
 			}
 		}
-		break;
+		if (stripTrailingAsciiSpaceTab(step.body).endsWith(close)) return k;
 	}
-	return end;
+	if (failedBySignature) {
+		recordBlockMathFailure(failedBySignature, signature, lines.length);
+	}
+	return -1;
+}
+
+/**
+ * Whether `text` contains an unescaped inline opener that can legally span
+ * soft line breaks inside a paragraph (`<` for inline HTML, `\(` / `\[` / `$$`
+ * for multiline inline/display math).
+ */
+export function hasMultilineInlineOpener(text: string): boolean {
+	for (let i = 0; i < text.length; i += 1) {
+		const ch = text.charCodeAt(i);
+		if (60 /* < */ === ch && !hasOddPrecedingBackslashes(text, i)) {
+			return true;
+		}
+		if (92 /* \ */ === ch && i + 1 < text.length) {
+			const next = text.charCodeAt(i + 1);
+			if (
+				(40 /* ( */ === next || 91 /* [ */ === next) &&
+				!hasOddPrecedingBackslashes(text, i)
+			) {
+				return true;
+			}
+		}
+		if (
+			36 /* $ */ === ch &&
+			i + 1 < text.length &&
+			36 === text.charCodeAt(i + 1) &&
+			!hasOddPrecedingBackslashes(text, i)
+		) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/**
+ * Whether a non-blank continuation line `body` at column `col` interrupts an
+ * open CommonMark paragraph (and therefore also terminates a pending link
+ * reference definition per CommonMark §4.7). Excludes lines with `relIndent > 3`
+ * and HTML Block Type 7 (`<span>`, `<audio>`, etc.).
+ */
+export function isCommonMarkParagraphInterrupter(
+	body: string,
+	col: number,
+	exitedContainer: boolean,
+): boolean {
+	const relIndent = leadingColumnsFrom(body, col);
+	if (relIndent > 3) return false;
+	if (startsContainerQuote(body, col)) return true;
+	const content = stripLeadingAsciiSpaceTab(body);
+	if (matchFenceAt(content, relIndent, [])) return true;
+	if (matchLeagueHtmlBlockType(content, 0, true) > 0) return true;
+	const trimmed = stripTrailingAsciiSpaceTab(content);
+	return (
+		ATX_HEADING.test(trimmed) ||
+		THEMATIC_BREAK.test(trimmed) ||
+		(!exitedContainer && SETEXT_UNDERLINE.test(trimmed)) ||
+		isInterruptingListMarker(body, exitedContainer, col)
+	);
+}
+
+/**
+ * Finds the contiguous paragraph continuation run starting at `start`
+ * (inclusive) with exact per-line container prefixes stripped for clean
+ * multiline protected-inline projection. Retains the active container stack
+ * through lazy continuation lines, excludes HTML Block Type 7 from interrupting
+ * paragraphs, and treats container-exiting list markers as paragraph breakers.
+ */
+export function findParagraphProseRunEnd(
+	lines: ReadonlyArray<string>,
+	start: number,
+	startLine: ProseRunLine,
+	activeFrames: ReadonlyArray<ContainerFrame>,
+	blockScanCache: BlockScanCache,
+): ParagraphProseRun {
+	const runLines: ProseRunLine[] = [startLine];
+	let end = start;
+
+	for (let k = start + 1; k < lines.length; k += 1) {
+		const nextLine = lines[k] ?? "";
+		if (isMarkdownBlankLine(nextLine)) break;
+
+		const matched = matchContainerFrames(nextLine, activeFrames);
+		if (isMarkdownBlankLine(matched.body)) break;
+
+		if (
+			isCommonMarkParagraphInterrupter(
+				matched.body,
+				matched.col,
+				matched.exitedContainer,
+			)
+		) {
+			break;
+		}
+
+		const relIndent = leadingColumnsFrom(matched.body, matched.col);
+		const content = stripLeadingAsciiSpaceTab(matched.body);
+		const lineFrames = matched.exitedContainer
+			? activeFrames.slice(0, matched.matchedCount)
+			: activeFrames;
+
+		if (
+			relIndent <= 3 &&
+			content.startsWith(TABLE_ALIGN_PREFIX) &&
+			stripTrailingAsciiSpaceTab(content).endsWith(TABLE_ALIGN_SUFFIX) &&
+			isGfmTableStartAtLine(lines, k + 1, lineFrames)
+		) {
+			break;
+		}
+		if (
+			relIndent <= 3 &&
+			isGfmTableStartAt(matched.body, lines[k + 1] ?? "", lineFrames)
+		) {
+			break;
+		}
+
+		if (
+			relIndent <= 3 &&
+			findBlockMathEnd(lines, k, content, lineFrames, blockScanCache) >= k
+		) {
+			break;
+		}
+		if (FOOTNOTE_DEF_LINE.test(content)) break;
+
+		runLines.push({ body: matched.body, prefix: matched.prefix });
+		end = k;
+	}
+
+	return { end, lines: runLines };
 }

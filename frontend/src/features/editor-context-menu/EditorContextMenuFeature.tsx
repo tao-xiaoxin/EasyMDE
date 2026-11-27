@@ -5,7 +5,10 @@ import {
   useState
 } from '@wordpress/element';
 
-import type { EditorClipboardPort } from '../../contracts/ports/editor-clipboard-port';
+import type {
+  EditorClipboardPort,
+  EditorClipboardState
+} from '../../contracts/ports/editor-clipboard-port';
 import type { ToolbarCommand } from '../../contracts/bootstrap/toolbar-bootstrap';
 import type {
   GeneratedContentExportIdentity,
@@ -20,7 +23,10 @@ import type {
   EditorContextMenuLabels,
   EditorContextMenuModelContext
 } from './editor-context-menu-model';
-import { createEditorContextMenuModel } from './editor-context-menu-model';
+import {
+  createEditorContextMenuModel,
+  isEditorClipboardReadable
+} from './editor-context-menu-model';
 import { EditorContextMenu } from './ui/EditorContextMenu';
 import type {
   EditorContextMenuSurface as ContextSurfaceKind,
@@ -312,7 +318,9 @@ export function EditorContextMenuFeature({
   source,
   visual
 }: EditorContextMenuFeatureProps) {
-  const [clipboardState, setClipboardState] = useState(clipboard.getState());
+  const [clipboardState, setClipboardState] = useState<EditorClipboardState>(
+    () => clipboard.getState()
+  );
   const demand = useEditorContextMenuDemand({
     clipboard,
     direction,
@@ -320,11 +328,21 @@ export function EditorContextMenuFeature({
     onAction,
     onFailure
   });
+  const open = demand.open;
 
-  useEffect(
-    () => clipboard.subscribe(() => setClipboardState(clipboard.getState())),
-    [clipboard]
-  );
+  useEffect(() => {
+    const syncClipboardState = (): void => {
+      const next = clipboard.getState();
+      if ('checking' === next.status) return;
+      setClipboardState((current) =>
+        isEditorClipboardReadable(current) === isEditorClipboardReadable(next)
+          ? current
+          : next
+      );
+    };
+    syncClipboardState();
+    return clipboard.subscribe(syncClipboardState);
+  }, [clipboard]);
 
   useEditorContextMenuActivation({
     cancelPending: demand.cancelPending,
@@ -349,7 +367,6 @@ export function EditorContextMenuFeature({
 
   useEffect(() => () => demand.dispose(), [demand.dispose]);
 
-  const open = demand.open;
   const modelContext = useMemo<EditorContextMenuModelContext | null>(() => {
     if (!open) return null;
     return {
@@ -385,13 +402,18 @@ export function EditorContextMenuFeature({
     };
   }, [canCopySimplified, clipboardState, imageShortcut, labels, open, shortcut]);
 
-  if (!open || !modelContext) return null;
+  const model = useMemo(
+    () => (modelContext ? createEditorContextMenuModel(modelContext) : null),
+    [modelContext]
+  );
+
+  if (!open || !model) return null;
   return (
     <EditorContextMenu
       anchor={open.captured.position}
       ariaLabel={labels.ariaLabel}
       direction={direction}
-      model={createEditorContextMenuModel(modelContext)}
+      model={model}
       onAction={demand.invokeAction}
       onDismiss={demand.dismiss}
       onMenuPointerDown={demand.restoreMenuSelection}

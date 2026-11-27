@@ -1,90 +1,194 @@
-import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
+import { decodeHTMLStrict } from "entities";
+import MarkdownIt from "markdown-it";
+import type { Node as ProseMirrorNode } from "prosemirror-model";
 import {
-	RAW_REFERENCE_SOURCE_META_KEY,
-	visualMarkdownItParser,
-} from "./markdown-it-config";
-import {
-	type BuiltVisualBlockSources,
-	buildBlockquoteChildSources,
-	buildVisualBlockSources,
-	type MappedBlockEntry,
-	type ParsedVisualBlockSource,
-	type ParsedVisualSharedGroup,
-	type ResolvedBlockRange,
-	resolveOriginalRangeFromTokenMap,
-} from "./markdown-parser-block-sources";
-import {
-	type InlineReferenceCollectors,
 	type MarkdownToken,
 	mapInlineTokens,
-	PHP_PARTIAL_TITLE_REF_META_KEY,
-	type ReferenceImageOrigin,
-	type ReferenceLinkOrigin,
-	readRawMetaString,
 	tokenAttrString,
 } from "./markdown-parser-inline";
-import { mapTableTokens } from "./markdown-parser-table";
 import {
-	markPreservedTaskParagraphs,
-	type ReferenceBlockLabelEntry,
-	stripTaskPrefix,
-	type TaskParagraphContext,
-} from "./markdown-parser-task";
-import {
-	isCommonMarkBlankLine,
 	type PreScanResult,
+	prescanInlineMarkdown,
 	prescanMarkdown,
-	readBlockquotePrefix,
 	restoreProtectedInlineSentinels,
-	stripBlockquoteDepth,
 } from "./markdown-prescanner";
 import {
+	isMarkdownBlankLine,
+	isMarkdownBlankText,
+	stripContainerBlockLines,
+	trimAsciiSpaceTab,
+} from "./markdown-prescanner-containers";
+import {
+	parseTableAlignComment,
+	resolveTableAlignments,
+	type TableAlignSnapshot,
+	validateTableAlignEntries,
+} from "./table-alignment-codec";
+import {
+	isValidTableTextAlign,
 	normalizeHeadingLevel,
 	sanitizeBulletMarker,
+	type TableTextAlign,
 	visualEditorSchema,
 } from "./visual-schema";
 
-export {
-	extractReferenceDefinitionLabels,
-	inspectReferenceDefinitionBlock,
-	type ReferenceDefinitionBlockInfo,
-	wouldReferenceDefinitionAbsorbFollowingBlock,
-} from "./markdown-it-config";
 export {
 	type ParsedImageScaleTitle,
 	parseImageScaleTitle,
 } from "./markdown-parser-inline";
 export { type PreScanResult, prescanMarkdown } from "./markdown-prescanner";
 
-export type {
-	BuiltVisualBlockSources,
-	ParsedVisualBlockSource,
-	ParsedVisualSharedGroup,
-	ReferenceImageOrigin,
-	ReferenceLinkOrigin,
-};
-
-export type ParsedEnvReferences = Readonly<
-	Record<string, Readonly<{ href: string; title: string }>>
->;
+export type ParsedVisualBlockSource = Readonly<{
+	node: ProseMirrorNode;
+	raw: string | null;
+	separatorBefore: string;
+}>;
 
 export type ParsedVisualDocument = Readonly<{
-	blockquoteSources?: ReadonlyMap<ProseMirrorNode, BuiltVisualBlockSources>;
 	blocks: ReadonlyArray<ParsedVisualBlockSource>;
 	doc: ProseMirrorNode;
-	envReferences?: ParsedEnvReferences;
-	firstRefDefNodeByLabel?: ReadonlyMap<string, ProseMirrorNode>;
 	leadingPrefix: string;
 	lineEnding: "\n" | "\r\n";
-	phpPartialTitleRefLabels?: ReadonlySet<string>;
-	refDefLabelsByNode?: ReadonlyMap<ProseMirrorNode, ReadonlyArray<string>>;
-	referencedLabelsByNode?: ReadonlyMap<ProseMirrorNode, ReadonlySet<string>>;
-	referenceImages?: ReadonlyMap<ProseMirrorNode, ReferenceImageOrigin>;
-	referenceLinks?: ReadonlyMap<Mark, ReferenceLinkOrigin>;
 	trailingSuffix: string;
 }>;
 
-type BlockMapContext = TaskParagraphContext;
+const markdownItParser = new MarkdownIt({
+	html: false,
+	linkify: false,
+	breaks: false,
+});
+// Reference definitions are owned exclusively by `prescanMarkdown` (passed via
+// `env.references`), preventing markdown-it's `reference` rule from swallowing
+// Setext underlines such as `[ref]:\n===` or silently dropping unprotected defs.
+markdownItParser.disable("reference");
+// mdurl.parse() calls JS `.trim()`, which strips leading/trailing non-ASCII
+// whitespace such as U+00A0 (NBSP) contrary to CommonMark §2.2 / §6.3 and
+// League CommonMark 2.8.2. Percent-encode those code points before normalizing.
+const defaultNormalizeLink =
+	markdownItParser.normalizeLink.bind(markdownItParser);
+markdownItParser.normalizeLink = (url: string): string =>
+	defaultNormalizeLink(
+		url.replace(
+			/[\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]/g,
+			encodeURIComponent,
+		),
+	);
+
+// Exact League CommonMark 2.8.2 (`RegexHelper::unescape` + `Html5EntityDecoder`)
+// two-pass backslash + entity decoder for link destinations and titles so
+// Visual projections and post-edit serialization preserve authoritative PHP
+// output across escaped entities (`\&#0;`, `\&copy;`), single- vs multi-zero
+// decimal entities (`&#0;` -> U+FFFD vs `&#00;` -> `\u0000`), hex zeros
+// (`&#x0;` / `&#x00;` -> U+FFFD), and `> 0x2FFFF` code points.
+const LEAGUE_ESCAPABLE_RE = /\\([!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~])/g;
+const LEAGUE_ENTITY_RE =
+	/&(#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[a-zA-Z][a-zA-Z0-9]{1,31});/g;
+
+function decodeLeagueEntity(match: string, entity: string): string {
+	if (entity.charCodeAt(0) === 35 /* # */) {
+		const isHex =
+			entity.charCodeAt(1) === 120 /* x */ ||
+			entity.charCodeAt(1) === 88 /* X */;
+		const digits = isHex ? entity.slice(2) : entity.slice(1);
+		const code = Number.parseInt(digits, isHex ? 16 : 10);
+		if (
+			(isHex && code === 0) ||
+			(!isHex && digits === "0") ||
+			code > 0x2ffff ||
+			(code >= 0xd800 && code <= 0xdfff)
+		) {
+			return "\ufffd";
+		}
+		return String.fromCodePoint(code);
+	}
+	return decodeHTMLStrict(match);
+}
+
+function unescapeCommonMarkText(value: string): string {
+	const unescaped = value.includes("\\")
+		? value.replace(LEAGUE_ESCAPABLE_RE, "$1")
+		: value;
+	if (!unescaped.includes("&")) {
+		return unescaped;
+	}
+	return unescaped.replace(LEAGUE_ENTITY_RE, decodeLeagueEntity);
+}
+
+const defaultParseLinkDestination =
+	markdownItParser.helpers.parseLinkDestination;
+markdownItParser.helpers.parseLinkDestination = (
+	str: string,
+	pos: number,
+	max: number,
+) => {
+	const res = defaultParseLinkDestination(str, pos, max);
+	if (res.ok) {
+		const raw =
+			str.charCodeAt(pos) === 60 /* < */
+				? str.slice(pos + 1, res.pos - 1)
+				: str.slice(pos, res.pos);
+		res.str = unescapeCommonMarkText(raw);
+	}
+	return res;
+};
+
+const defaultParseLinkTitle = markdownItParser.helpers.parseLinkTitle;
+markdownItParser.helpers.parseLinkTitle = (
+	str: string,
+	pos: number,
+	max: number,
+	prevState?: Parameters<typeof defaultParseLinkTitle>[3],
+) => {
+	const res = defaultParseLinkTitle(str, pos, max, prevState);
+	if (prevState === undefined && res.ok && res.pos >= pos + 2) {
+		res.str = unescapeCommonMarkText(str.slice(pos + 1, res.pos - 1));
+	}
+	return res;
+};
+
+function parseCellAlignmentFromToken(token: MarkdownToken): TableTextAlign {
+	const match = /text-align\s*:\s*(left|center|right)/i.exec(
+		tokenAttrString(token, "style") ?? "",
+	);
+	const normalized = match?.[1]?.toLowerCase() ?? null;
+	return isValidTableTextAlign(normalized) ? normalized : null;
+}
+
+function readCellAlignment(node: ProseMirrorNode | undefined): TableTextAlign {
+	const align = node?.attrs.textAlign;
+	return isValidTableTextAlign(align) ? align : null;
+}
+
+function stripTaskPrefix(
+	itemChildren: ReadonlyArray<ProseMirrorNode>,
+): Readonly<{ checked: boolean; children: ProseMirrorNode[] }> | null {
+	const firstBlock = itemChildren[0];
+	if (!firstBlock || firstBlock.type !== visualEditorSchema.nodes.paragraph) {
+		return null;
+	}
+	const firstInline = firstBlock.firstChild;
+	if (!firstInline?.isText || firstInline.marks.length > 0) {
+		return null;
+	}
+	const text = firstInline.text ?? "";
+	const match = /^\[([ xX])\](?:[ \t]+|$)/.exec(text);
+	if (!match?.[1]) {
+		return null;
+	}
+	const remaining = text.slice(match[0].length);
+	const inlines: ProseMirrorNode[] =
+		remaining.length > 0 ? [visualEditorSchema.text(remaining)] : [];
+	for (let i = 1; i < firstBlock.childCount; i += 1) {
+		inlines.push(firstBlock.child(i));
+	}
+	return {
+		checked: match[1].toLowerCase() === "x",
+		children: [
+			visualEditorSchema.nodes.paragraph.create(null, inlines),
+			...itemChildren.slice(1),
+		],
+	};
+}
 
 function ensureListItemChildren(
 	blocks: ReadonlyArray<ProseMirrorNode>,
@@ -117,26 +221,140 @@ function findMatchingCloseIndex(
 	return tokens.length - 1;
 }
 
+function mapTableTokens(
+	tokens: ReadonlyArray<MarkdownToken>,
+	startIndex: number,
+	endIndex: number,
+	preScan: PreScanResult,
+	alignAnnotation: string | null,
+): ProseMirrorNode {
+	const rawRows: ProseMirrorNode[] = [];
+	for (let i = startIndex + 1; i < endIndex; i += 1) {
+		if (tokens[i]?.type !== "tr_open") {
+			continue;
+		}
+		const rowClose = findMatchingCloseIndex(tokens, i, "tr_open", "tr_close");
+		const cells: ProseMirrorNode[] = [];
+		for (let j = i + 1; j < rowClose; j += 1) {
+			const cellToken = tokens[j];
+			if (cellToken?.type !== "th_open" && cellToken?.type !== "td_open") {
+				continue;
+			}
+			const isHeader = cellToken.type === "th_open";
+			const cellClose = findMatchingCloseIndex(
+				tokens,
+				j,
+				cellToken.type,
+				isHeader ? "th_close" : "td_close",
+			);
+			const inlineToken = tokens[j + 1];
+			const inlineNodes =
+				inlineToken?.type === "inline"
+					? mapInlineTokens(inlineToken.children, preScan, true)
+					: [];
+			const cellType = isHeader
+				? visualEditorSchema.nodes.table_header
+				: visualEditorSchema.nodes.table_cell;
+			cells.push(
+				cellType.create(
+					{ textAlign: parseCellAlignmentFromToken(cellToken) },
+					visualEditorSchema.nodes.paragraph.create(null, inlineNodes),
+				),
+			);
+			j = cellClose;
+		}
+		if (cells.length > 0) {
+			rawRows.push(visualEditorSchema.nodes.table_row.create(null, cells));
+		}
+		i = rowClose;
+	}
+
+	if (rawRows.length === 0) {
+		rawRows.push(
+			visualEditorSchema.nodes.table_row.create(null, [
+				visualEditorSchema.nodes.table_header.create(
+					null,
+					visualEditorSchema.nodes.paragraph.create(),
+				),
+			]),
+		);
+	}
+
+	let columnCount = 0;
+	for (const rowNode of rawRows) {
+		columnCount = Math.max(columnCount, rowNode.childCount);
+	}
+	const headerRow = rawRows[0];
+	const baseColumnAlignments: TableTextAlign[] = [];
+	for (let column = 0; column < columnCount; column += 1) {
+		baseColumnAlignments.push(
+			readCellAlignment(headerRow?.child(column) ?? undefined),
+		);
+	}
+
+	const snapshot: TableAlignSnapshot = {
+		baseAlignments: baseColumnAlignments,
+		cellAlignments: rawRows.map((rowNode) => {
+			const cells: TableTextAlign[] = [];
+			for (let column = 0; column < columnCount; column += 1) {
+				cells.push(readCellAlignment(rowNode.child(column)));
+			}
+			return cells;
+		}),
+		columnCount,
+		rowCount: rawRows.length,
+	};
+	const entries = parseTableAlignComment(alignAnnotation);
+	const validAnnotation =
+		entries !== null && validateTableAlignEntries(entries, snapshot);
+	const resolved = validAnnotation
+		? resolveTableAlignments(entries, snapshot)
+		: null;
+
+	const finalRows = resolved
+		? rawRows.map((rowNode, rowIndex) => {
+				const cells: ProseMirrorNode[] = [];
+				for (let column = 0; column < rowNode.childCount; column += 1) {
+					const cell = rowNode.child(column);
+					cells.push(
+						cell.type.create(
+							{
+								...cell.attrs,
+								textAlign: resolved[rowIndex]?.[column] ?? cell.attrs.textAlign,
+							},
+							cell.content,
+						),
+					);
+				}
+				return rowNode.type.create(rowNode.attrs, cells);
+			})
+		: rawRows;
+
+	return visualEditorSchema.nodes.table.create(
+		{
+			alignAnnotation: validAnnotation ? alignAnnotation : null,
+			columnAlignments: baseColumnAlignments,
+		},
+		finalRows,
+	);
+}
+
 type CollectedListItem = Readonly<{
 	children: ProseMirrorNode[];
-	range: ResolvedBlockRange | null;
+	range: Readonly<{ end: number; start: number }> | null;
 }>;
 
 type MappedListEntry = Readonly<{
 	node: ProseMirrorNode;
-	origRange: ResolvedBlockRange | null;
+	origRange: Readonly<{ end: number; start: number }> | null;
 }>;
 
 function collectListItems(
 	tokens: ReadonlyArray<MarkdownToken>,
 	startIndex: number,
 	endIndex: number,
-	context: BlockMapContext,
+	preScan: PreScanResult,
 ): CollectedListItem[] {
-	const itemContext: BlockMapContext = {
-		...context,
-		listDepth: context.listDepth + 1,
-	};
 	const items: CollectedListItem[] = [];
 	for (let i = startIndex + 1; i < endIndex; i += 1) {
 		if (tokens[i]?.type !== "list_item_open") {
@@ -149,137 +367,61 @@ function collectListItems(
 			"list_item_close",
 		);
 		items.push({
-			children: mapBlockTokens(tokens, i + 1, itemClose, itemContext),
-			range: resolveOriginalRangeFromTokenMap(
-				tokens[i]?.map,
-				context.preScan,
-				context.blockquoteDepth,
+			children: ensureListItemChildren(
+				mapBlockTokens(tokens, i + 1, itemClose, preScan),
 			),
+			range: resolveOriginalRangeFromTokenMap(tokens[i]?.map, preScan),
 		});
 		i = itemClose;
 	}
 	return items;
 }
 
-function trimmedBlockMapEnd(
-	map: [number, number] | null | undefined,
-	quoteDepth: number,
-	preScan: PreScanResult,
-): number | null {
-	if (!map || map.length < 2) return null;
-	let end = map[1];
-	while (end > map[0]) {
-		const range = preScan.outputLineRanges[end - 1];
-		if (!range || range.end - range.start !== 1) break;
-		const raw = preScan.rawLines[range.start] ?? "";
-		const rest = quoteDepth > 0 ? stripBlockquoteDepth(raw, quoteDepth) : raw;
-		if (rest === null || !isCommonMarkBlankLine(rest)) break;
-		end -= 1;
-	}
-	return end;
-}
-
-/**
- * Reports whether a CommonMark list is tight via direct paragraph visibility
- * (`hidden === true`) and blank-line gaps between consecutive direct items or
- * direct child blocks (keeping loose lists without direct paragraphs, such as
- * `- > a\n\n  > b`, marked `tight: false`).
- */
+/** markdown-it hides tight-list paragraphs (`token.hidden === true`). */
 function isTightListRange(
 	tokens: ReadonlyArray<MarkdownToken>,
 	startIndex: number,
 	endIndex: number,
-	preScan: PreScanResult,
 ): boolean {
-	const startOut = tokens[startIndex]?.map?.[0];
-	const startOrig =
-		startOut !== undefined ? preScan.outputLineRanges[startOut]?.start : null;
-	const quoteDepth =
-		startOrig != null
-			? readBlockquotePrefix(preScan.rawLines[startOrig] ?? "").depth
-			: 0;
-	let prevItemEnd: number | null = null;
 	for (let i = startIndex + 1; i < endIndex; i += 1) {
-		const item = tokens[i];
-		if (item?.type !== "list_item_open") continue;
-		const itemClose = findMatchingCloseIndex(
-			tokens,
-			i,
-			"list_item_open",
-			"list_item_close",
-		);
-		const itemStart = item.map?.[0] ?? null;
-		if (prevItemEnd !== null && itemStart !== null && itemStart > prevItemEnd) {
+		const token = tokens[i];
+		if (token?.type === "paragraph_open" && token.hidden !== true) {
 			return false;
 		}
-		let prevChildEnd: number | null = null;
-		for (let j = i + 1; j < itemClose; j += 1) {
-			const child = tokens[j];
-			if (!child) continue;
-			if (child.type === "paragraph_open" && child.hidden !== true)
-				return false;
-			const childStart = child.map?.[0] ?? null;
-			const childEnd = trimmedBlockMapEnd(child.map, quoteDepth, preScan);
-			if (
-				prevChildEnd !== null &&
-				childStart !== null &&
-				childStart > prevChildEnd
-			) {
-				return false;
-			}
-			if (childEnd !== null) prevChildEnd = childEnd;
-			if (child.nesting === 1) {
-				for (let depth = 1; depth > 0 && j + 1 < itemClose; ) {
-					j += 1;
-					depth += tokens[j]?.nesting ?? 0;
-				}
-			}
-		}
-		prevItemEnd =
-			prevChildEnd ?? trimmedBlockMapEnd(item.map, quoteDepth, preScan);
-		i = itemClose;
 	}
 	return true;
 }
 
 function combineItemRanges(
 	items: ReadonlyArray<CollectedListItem>,
-): ResolvedBlockRange | null {
+): Readonly<{ end: number; start: number }> | null {
 	let start = Number.POSITIVE_INFINITY;
 	let end = -1;
-	let shared = false;
 	for (const item of items) {
 		if (!item.range) {
-			return null;
-		}
-		if (item.range.shared) {
-			shared = true;
+			continue;
 		}
 		start = Math.min(start, item.range.start);
 		end = Math.max(end, item.range.end);
 	}
-	return Number.isFinite(start) && end > start ? { end, shared, start } : null;
+	return Number.isFinite(start) && end > start ? { end, start } : null;
 }
 
 function mapBulletListTokens(
 	tokens: ReadonlyArray<MarkdownToken>,
 	startIndex: number,
 	endIndex: number,
-	context: BlockMapContext,
+	preScan: PreScanResult,
 ): MappedListEntry[] {
-	const items = collectListItems(tokens, startIndex, endIndex, context);
+	const items = collectListItems(tokens, startIndex, endIndex, preScan);
 	if (items.length === 0) {
 		return [];
 	}
 
 	const marker = sanitizeBulletMarker(tokens[startIndex]?.markup);
-	const tight = isTightListRange(tokens, startIndex, endIndex, context.preScan);
+	const tight = isTightListRange(tokens, startIndex, endIndex);
 	const lists: MappedListEntry[] = [];
-	type ClassifiedItem = Readonly<{
-		entry: CollectedListItem;
-		task: ReturnType<typeof stripTaskPrefix>;
-	}>;
-	let currentGroup: ClassifiedItem[] = [];
+	let currentGroup: CollectedListItem[] = [];
 	let currentIsTask: boolean | null = null;
 
 	const flush = (): void => {
@@ -289,53 +431,70 @@ function mapBulletListTokens(
 		const listType = currentIsTask
 			? visualEditorSchema.nodes.task_list
 			: visualEditorSchema.nodes.bullet_list;
-		const itemNodes = currentGroup.map(({ entry, task }) =>
-			task
+		const itemNodes = currentGroup.map((entry) => {
+			const task = stripTaskPrefix(entry.children);
+			return task
 				? visualEditorSchema.nodes.task_item.create(
 						{ checked: task.checked },
-						ensureListItemChildren(
-							markPreservedTaskParagraphs(task.children, context),
-						),
+						task.children,
 					)
-				: visualEditorSchema.nodes.list_item.create(
-						null,
-						ensureListItemChildren(
-							markPreservedTaskParagraphs(entry.children, context),
-						),
-					),
-		);
+				: visualEditorSchema.nodes.list_item.create(null, entry.children);
+		});
 		lists.push({
 			node: listType.create({ marker, tight }, itemNodes),
-			origRange: combineItemRanges(currentGroup.map((item) => item.entry)),
+			origRange: combineItemRanges(currentGroup),
 		});
 		currentGroup = [];
 	};
 
 	for (const entry of items) {
-		const task = stripTaskPrefix(entry.children, context);
-		const isTask = task !== null;
+		const isTask = stripTaskPrefix(entry.children) !== null;
 		if (currentIsTask !== null && isTask !== currentIsTask) {
 			flush();
 		}
 		currentIsTask = isTask;
-		currentGroup.push({ entry, task });
+		currentGroup.push(entry);
 	}
 	flush();
 	return lists;
 }
 
+function extractMermaidRawMarkdown(
+	origRange: Readonly<{ end: number; start: number }> | null,
+	preScan: PreScanResult,
+	fallbackFence: string,
+): string | null {
+	if (!origRange) return null;
+	const origin = preScan.fencedBlocks.get(origRange.start);
+	if (!origin) return null;
+	const strippedLines = stripContainerBlockLines(
+		preScan.rawLines,
+		origin.frames,
+		origRange.start,
+		origRange.end,
+		origin.firstLineBody,
+		origin.col,
+		{ expandContinuationTabs: origin.closed ? "last-only" : "none" },
+	);
+	if (!origin.closed) {
+		strippedLines.push(fallbackFence);
+	}
+	return strippedLines.join("\n");
+}
+
 function mapCodeToken(
 	token: MarkdownToken,
 	preScan: PreScanResult,
+	origRange: Readonly<{ end: number; start: number }> | null,
 ): ProseMirrorNode {
 	const isFence = token.type === "fence";
 	const fenceChar = isFence && token.markup.startsWith("~") ? "~" : "`";
 	const fenceLength =
 		isFence && token.markup.length >= 3 ? token.markup.length : 3;
 	const info = isFence
-		? restoreProtectedInlineSentinels(token.info.trim(), preScan)
+		? restoreProtectedInlineSentinels(trimAsciiSpaceTab(token.info), preScan)
 		: "";
-	const language = info ? (info.split(/\s+/)[0] ?? "") : "";
+	const language = info ? (info.split(/[ \t]+/)[0] ?? "") : "";
 	const content = restoreProtectedInlineSentinels(token.content, preScan);
 	// Bijection with `serializeCodeBlock`: a body of only blank lines
 	// (`"\n".repeat(k)`) is kept verbatim; any other body drops exactly the one
@@ -350,11 +509,12 @@ function mapCodeToken(
 	if (language.toLowerCase() === "mermaid") {
 		const fence = fenceChar.repeat(fenceLength);
 		const rawMarkdown =
-			rawContent.length === 0
+			extractMermaidRawMarkdown(origRange, preScan, fence) ??
+			(rawContent.length === 0
 				? `${fence}${info}\n${fence}`
 				: pureNewlines
 					? `${fence}${info}\n${rawContent}${fence}`
-					: `${fence}${info}\n${rawContent}\n${fence}`;
+					: `${fence}${info}\n${rawContent}\n${fence}`);
 		return visualEditorSchema.nodes.protected_block.create({
 			kind: "mermaid",
 			rawMarkdown,
@@ -366,27 +526,66 @@ function mapCodeToken(
 	);
 }
 
+type MappedBlockEntry = Readonly<{
+	node: ProseMirrorNode;
+	origRange: Readonly<{ end: number; start: number }> | null;
+}>;
+
+function resolveOriginalRangeFromTokenMap(
+	map: [number, number] | null | undefined,
+	preScan: PreScanResult,
+): Readonly<{ end: number; start: number }> | null {
+	if (!map || map.length < 2) {
+		return null;
+	}
+	const startLine = map[0];
+	const endLine = map[1];
+	if (
+		!Number.isInteger(startLine) ||
+		!Number.isInteger(endLine) ||
+		startLine < 0 ||
+		endLine <= startLine
+	) {
+		return null;
+	}
+	let origStart = Number.POSITIVE_INFINITY;
+	let origEnd = -1;
+	for (let lineIdx = startLine; lineIdx < endLine; lineIdx += 1) {
+		const range = preScan.outputLineRanges[lineIdx];
+		if (!range) {
+			continue;
+		}
+		if (range.start < origStart) {
+			origStart = range.start;
+		}
+		if (range.end > origEnd) {
+			origEnd = range.end;
+		}
+	}
+	if (!Number.isFinite(origStart) || origEnd <= origStart) {
+		return null;
+	}
+	// markdown-it can include trailing blank lines in list/blockquote token maps;
+	// trim trailing blank lines so the exact inter-block separator stays outside the block.
+	while (
+		origEnd > origStart &&
+		isMarkdownBlankLine(preScan.rawLines[origEnd - 1] ?? "")
+	) {
+		origEnd -= 1;
+	}
+	return origEnd > origStart ? { start: origStart, end: origEnd } : null;
+}
+
 function mapBlockTokensWithRanges(
 	tokens: ReadonlyArray<MarkdownToken>,
 	startIndex: number,
 	endIndex: number,
-	context: BlockMapContext,
+	preScan: PreScanResult,
 ): MappedBlockEntry[] {
-	const {
-		blockquoteDepth,
-		blockquoteSources,
-		linkOccurrences,
-		listDepth,
-		paragraphRawContents,
-		preScan,
-		referenceBlockLabels,
-		referenceBlocks,
-		referenceCollectors,
-	} = context;
 	const entries: MappedBlockEntry[] = [];
 	let pendingTableAlign: Readonly<{
 		marker: string;
-		origRange: ResolvedBlockRange | null;
+		origRange: Readonly<{ end: number; start: number }> | null;
 	}> | null = null;
 
 	const flushOrphanTableAlign = (): void => {
@@ -408,22 +607,6 @@ function mapBlockTokensWithRanges(
 			continue;
 		}
 
-		if (token.type === "easymde_table_align") {
-			const tableAlign = preScan.tableAlignMarkers.get(token.content);
-			if (tableAlign !== undefined) {
-				flushOrphanTableAlign();
-				pendingTableAlign = {
-					marker: tableAlign,
-					origRange: resolveOriginalRangeFromTokenMap(
-						token.map,
-						preScan,
-						blockquoteDepth,
-					),
-				};
-				continue;
-			}
-		}
-
 		if (token.type === "paragraph_open") {
 			const closeIdx = findMatchingCloseIndex(
 				tokens,
@@ -433,12 +616,10 @@ function mapBlockTokensWithRanges(
 			);
 			const inlineToken = tokens[i + 1];
 			const trimmed =
-				inlineToken?.type === "inline" ? inlineToken.content.trim() : "";
-			const origRange = resolveOriginalRangeFromTokenMap(
-				token.map,
-				preScan,
-				blockquoteDepth,
-			);
+				inlineToken?.type === "inline"
+					? trimAsciiSpaceTab(inlineToken.content)
+					: "";
+			const origRange = resolveOriginalRangeFromTokenMap(token.map, preScan);
 
 			const tableAlign = preScan.tableAlignMarkers.get(trimmed);
 			if (tableAlign !== undefined) {
@@ -464,35 +645,12 @@ function mapBlockTokensWithRanges(
 					origRange,
 				});
 			} else {
-				const rawContent =
-					inlineToken?.type === "inline" ? inlineToken.content : "";
-				const blockRefLabels = referenceCollectors
-					? new Set<string>()
-					: undefined;
 				const inlines =
 					inlineToken?.type === "inline"
-						? mapInlineTokens(
-								inlineToken.children,
-								preScan,
-								false,
-								referenceCollectors,
-								blockRefLabels,
-								linkOccurrences,
-							)
+						? mapInlineTokens(inlineToken.children, preScan, false)
 						: [];
-				const paragraphNode = visualEditorSchema.nodes.paragraph.create(
-					null,
-					inlines,
-				);
-				if (referenceCollectors && blockRefLabels && blockRefLabels.size > 0) {
-					referenceCollectors.referencedLabelsByNode.set(
-						paragraphNode,
-						blockRefLabels,
-					);
-				}
-				paragraphRawContents.set(paragraphNode, rawContent);
 				entries.push({
-					node: paragraphNode,
+					node: visualEditorSchema.nodes.paragraph.create(null, inlines),
 					origRange,
 				});
 			}
@@ -509,20 +667,13 @@ function mapBlockTokensWithRanges(
 			);
 			const annotation = pendingTableAlign;
 			pendingTableAlign = null;
-			const tableRange = resolveOriginalRangeFromTokenMap(
-				token.map,
-				preScan,
-				blockquoteDepth,
-			);
-			const combinedRange: ResolvedBlockRange | null =
-				annotation !== null
-					? tableRange && annotation.origRange
-						? {
-								end: Math.max(annotation.origRange.end, tableRange.end),
-								shared: annotation.origRange.shared || tableRange.shared,
-								start: Math.min(annotation.origRange.start, tableRange.start),
-							}
-						: null
+			const tableRange = resolveOriginalRangeFromTokenMap(token.map, preScan);
+			const combinedRange =
+				tableRange && annotation?.origRange
+					? {
+							start: Math.min(annotation.origRange.start, tableRange.start),
+							end: Math.max(annotation.origRange.end, tableRange.end),
+						}
 					: tableRange;
 			entries.push({
 				node: mapTableTokens(
@@ -531,8 +682,6 @@ function mapBlockTokensWithRanges(
 					closeIdx,
 					preScan,
 					annotation?.marker ?? null,
-					referenceCollectors,
-					linkOccurrences,
 				),
 				origRange: combinedRange,
 			});
@@ -541,22 +690,7 @@ function mapBlockTokensWithRanges(
 		}
 
 		flushOrphanTableAlign();
-		const origRange = resolveOriginalRangeFromTokenMap(
-			token.map,
-			preScan,
-			blockquoteDepth,
-		);
-
-		if (token.type === "easymde_protected_block") {
-			const protectedEntry = preScan.protectedBlocks.get(token.content);
-			if (protectedEntry) {
-				entries.push({
-					node: visualEditorSchema.nodes.protected_block.create(protectedEntry),
-					origRange,
-				});
-			}
-			continue;
-		}
+		const origRange = resolveOriginalRangeFromTokenMap(token.map, preScan);
 
 		if (token.type === "heading_open") {
 			const closeIdx = findMatchingCloseIndex(
@@ -565,36 +699,29 @@ function mapBlockTokensWithRanges(
 				"heading_open",
 				"heading_close",
 			);
+			const inlineToken = tokens[i + 1];
+			const trimmed =
+				inlineToken?.type === "inline"
+					? trimAsciiSpaceTab(inlineToken.content)
+					: "";
+			const protectedEntry = preScan.protectedBlocks.get(trimmed);
+			if (protectedEntry) {
+				entries.push({
+					node: visualEditorSchema.nodes.protected_block.create(protectedEntry),
+					origRange,
+				});
+				i = closeIdx;
+				continue;
+			}
 			const level = normalizeHeadingLevel(
 				Number.parseInt(token.tag.slice(1), 10),
 			);
-			const inlineToken = tokens[i + 1];
-			const blockRefLabels = referenceCollectors
-				? new Set<string>()
-				: undefined;
 			const inlines =
 				inlineToken?.type === "inline"
-					? mapInlineTokens(
-							inlineToken.children,
-							preScan,
-							false,
-							referenceCollectors,
-							blockRefLabels,
-							linkOccurrences,
-						)
+					? mapInlineTokens(inlineToken.children, preScan, false)
 					: [];
-			const headingNode = visualEditorSchema.nodes.heading.create(
-				{ level },
-				inlines,
-			);
-			if (referenceCollectors && blockRefLabels && blockRefLabels.size > 0) {
-				referenceCollectors.referencedLabelsByNode.set(
-					headingNode,
-					blockRefLabels,
-				);
-			}
 			entries.push({
-				node: headingNode,
+				node: visualEditorSchema.nodes.heading.create({ level }, inlines),
 				origRange,
 			});
 			i = closeIdx;
@@ -605,36 +732,16 @@ function mapBlockTokensWithRanges(
 				"blockquote_open",
 				"blockquote_close",
 			);
-			const nextDepth = blockquoteDepth + 1;
-			const innerEntries = mapBlockTokensWithRanges(tokens, i + 1, closeIdx, {
-				...context,
-				blockquoteDepth: nextDepth,
+			const inner = mapBlockTokens(tokens, i + 1, closeIdx, preScan);
+			entries.push({
+				node: visualEditorSchema.nodes.blockquote.create(
+					null,
+					inner.length > 0
+						? inner
+						: [visualEditorSchema.nodes.paragraph.create()],
+				),
+				origRange,
 			});
-			const inner = innerEntries.map((entry) => entry.node);
-			const bqNode = visualEditorSchema.nodes.blockquote.create(
-				null,
-				inner.length > 0
-					? inner
-					: [visualEditorSchema.nodes.paragraph.create()],
-			);
-			if (
-				listDepth === 0 &&
-				origRange &&
-				!origRange.shared &&
-				innerEntries.length > 0 &&
-				innerEntries.length === bqNode.childCount
-			) {
-				blockquoteSources.set(
-					bqNode,
-					buildBlockquoteChildSources(
-						origRange,
-						innerEntries,
-						preScan.rawLines,
-						nextDepth,
-					),
-				);
-			}
-			entries.push({ node: bqNode, origRange });
 			i = closeIdx;
 		} else if (token.type === "bullet_list_open") {
 			const closeIdx = findMatchingCloseIndex(
@@ -643,7 +750,7 @@ function mapBlockTokensWithRanges(
 				"bullet_list_open",
 				"bullet_list_close",
 			);
-			const listEntries = mapBulletListTokens(tokens, i, closeIdx, context);
+			const listEntries = mapBulletListTokens(tokens, i, closeIdx, preScan);
 			// A mixed task/bullet list splits into several nodes; each keeps its
 			// exact monotonic source range so an unrelated edit cannot duplicate it.
 			for (const listEntry of listEntries) {
@@ -664,15 +771,10 @@ function mapBlockTokensWithRanges(
 			const order =
 				Number.isInteger(parsedOrder) && parsedOrder >= 0 ? parsedOrder : 1;
 			const delimiter = token.markup === ")" ? ")" : ".";
-			const tight = isTightListRange(tokens, i, closeIdx, context.preScan);
-			const collected = collectListItems(tokens, i, closeIdx, context);
+			const tight = isTightListRange(tokens, i, closeIdx);
+			const collected = collectListItems(tokens, i, closeIdx, preScan);
 			const items = collected.map((item) =>
-				visualEditorSchema.nodes.list_item.create(
-					null,
-					ensureListItemChildren(
-						markPreservedTaskParagraphs(item.children, context),
-					),
-				),
+				visualEditorSchema.nodes.list_item.create(null, item.children),
 			);
 			if (items.length > 0) {
 				entries.push({
@@ -684,85 +786,8 @@ function mapBlockTokensWithRanges(
 				});
 			}
 			i = closeIdx;
-		} else if (token.type === "reference_definition") {
-			const readRefRaw = (
-				refToken: MarkdownToken,
-				refRange: ResolvedBlockRange | null,
-			): string => {
-				const metaRaw = readRawMetaString(
-					refToken,
-					RAW_REFERENCE_SOURCE_META_KEY,
-				);
-				if (metaRaw !== null) {
-					return metaRaw;
-				}
-				return refRange && !refRange.shared
-					? preScan.rawLines.slice(refRange.start, refRange.end).join("\n")
-					: "";
-			};
-			const readRefLabelEntry = (
-				refToken: MarkdownToken,
-			): ReferenceBlockLabelEntry | null => {
-				const label = readRawMetaString(refToken, "label");
-				if (label === null) return null;
-				const hasPhpPartialTitle =
-					refToken.meta !== null &&
-					typeof refToken.meta === "object" &&
-					(refToken.meta as Record<string, unknown>)[
-						PHP_PARTIAL_TITLE_REF_META_KEY
-					] === true;
-				return { hasPhpPartialTitle, label };
-			};
-			let groupEndIdx = i;
-			const groupStart = origRange && !origRange.shared ? origRange.start : -1;
-			let groupEnd = origRange && !origRange.shared ? origRange.end : -1;
-			const rawParts: string[] = [readRefRaw(token, origRange)];
-			const refLabels: ReferenceBlockLabelEntry[] = [];
-			const firstLabel = readRefLabelEntry(token);
-			if (firstLabel !== null) refLabels.push(firstLabel);
-			while (groupEndIdx + 1 < endIndex) {
-				const nextToken = tokens[groupEndIdx + 1];
-				if (nextToken?.type !== "reference_definition") {
-					break;
-				}
-				const nextRange = resolveOriginalRangeFromTokenMap(
-					nextToken.map,
-					preScan,
-					blockquoteDepth,
-				);
-				if (
-					!nextRange ||
-					nextRange.shared ||
-					groupStart < 0 ||
-					nextRange.start !== groupEnd
-				) {
-					break;
-				}
-				rawParts.push(readRefRaw(nextToken, nextRange));
-				const nextLabel = readRefLabelEntry(nextToken);
-				if (nextLabel !== null) refLabels.push(nextLabel);
-				groupEnd = nextRange.end;
-				groupEndIdx += 1;
-			}
-			const combinedRange: ResolvedBlockRange | null =
-				groupStart >= 0 && groupEnd > groupStart
-					? { end: groupEnd, shared: false, start: groupStart }
-					: origRange;
-			const refNode = visualEditorSchema.nodes.protected_block.create({
-				kind: "raw",
-				rawMarkdown: rawParts.join("\n"),
-			});
-			referenceBlocks.add(refNode);
-			if (referenceBlockLabels && refLabels.length > 0) {
-				referenceBlockLabels.set(refNode, refLabels);
-			}
-			entries.push({
-				node: refNode,
-				origRange: combinedRange,
-			});
-			i = groupEndIdx;
 		} else if (token.type === "fence" || token.type === "code_block") {
-			entries.push({ node: mapCodeToken(token, preScan), origRange });
+			entries.push({ node: mapCodeToken(token, preScan, origRange), origRange });
 		} else if (token.type === "hr") {
 			entries.push({
 				node: visualEditorSchema.nodes.horizontal_rule.create(),
@@ -779,18 +804,17 @@ function mapBlockTokens(
 	tokens: ReadonlyArray<MarkdownToken>,
 	startIndex: number,
 	endIndex: number,
-	context: BlockMapContext,
+	preScan: PreScanResult,
 ): ProseMirrorNode[] {
-	return mapBlockTokensWithRanges(tokens, startIndex, endIndex, context).map(
+	return mapBlockTokensWithRanges(tokens, startIndex, endIndex, preScan).map(
 		(entry) => entry.node,
 	);
 }
 
 export function parseMarkdownWithBlockSources(
 	markdown: string,
-	initialReferences?: ParsedEnvReferences,
 ): ParsedVisualDocument {
-	if (/^[ \t\r\n]*$/.test(markdown)) {
+	if (isMarkdownBlankText(markdown)) {
 		return {
 			blocks: [],
 			doc: visualEditorSchema.nodes.doc.create(null, [
@@ -802,35 +826,28 @@ export function parseMarkdownWithBlockSources(
 		};
 	}
 	const preScan = prescanMarkdown(markdown);
-	const env: Record<string, unknown> = {
-		preScan,
-		...(initialReferences ? { references: { ...initialReferences } } : {}),
-		tableAlignMarkers: preScan.tableAlignMarkers,
-	};
-	const tokens = visualMarkdownItParser.parse(preScan.markdown, env);
-	const referenceCollectors: InlineReferenceCollectors = {
-		referencedLabelsByNode: new Map<ProseMirrorNode, ReadonlySet<string>>(),
-		referenceImages: new Map<ProseMirrorNode, ReferenceImageOrigin>(),
-		referenceLinks: new Map<Mark, ReferenceLinkOrigin>(),
-	};
-	const blockquoteSources = new Map<ProseMirrorNode, BuiltVisualBlockSources>();
-	const referenceBlockLabels = new WeakMap<
-		ProseMirrorNode,
-		ReadonlyArray<ReferenceBlockLabelEntry>
-	>();
-	const context: BlockMapContext = {
-		blockquoteDepth: 0,
-		blockquoteSources,
-		env,
-		linkOccurrences: new Map<string, number>(),
-		listDepth: 0,
-		paragraphRawContents: new WeakMap<ProseMirrorNode, string>(),
-		preScan,
-		referenceBlockLabels,
-		referenceBlocks: new WeakSet<ProseMirrorNode>(),
-		referenceCollectors,
-	};
-	const mapped = mapBlockTokensWithRanges(tokens, 0, tokens.length, context);
+	const normalizedReferences: Record<
+		string,
+		Readonly<{ href: string; title: string }>
+	> = {};
+	for (const [key, entry] of Object.entries(preScan.references)) {
+		const normalizedHref = markdownItParser.normalizeLink(
+			unescapeCommonMarkText(entry.href),
+		);
+		if (!markdownItParser.validateLink(normalizedHref)) {
+			continue;
+		}
+		normalizedReferences[key] = {
+			href: normalizedHref,
+			title: unescapeCommonMarkText(entry.title),
+		};
+	}
+	const env: Record<string, unknown> =
+		Object.keys(normalizedReferences).length > 0
+			? { references: normalizedReferences }
+			: {};
+	const tokens = markdownItParser.parse(preScan.markdown, env);
+	const mapped = mapBlockTokensWithRanges(tokens, 0, tokens.length, preScan);
 	const doc = visualEditorSchema.nodes.doc.create(
 		null,
 		mapped.length > 0
@@ -838,67 +855,54 @@ export function parseMarkdownWithBlockSources(
 			: [visualEditorSchema.nodes.paragraph.create()],
 	);
 
-	const { blocks, leadingPrefix, trailingSuffix } = buildVisualBlockSources(
-		mapped,
-		preScan.rawLines,
-	);
+	const rawLines = preScan.rawLines;
+	const firstRange = mapped[0]?.origRange ?? null;
+	const leadingPrefix =
+		firstRange && firstRange.start > 0
+			? `${rawLines.slice(0, firstRange.start).join("\n")}\n`
+			: "";
 
-	const { referencedLabelsByNode, referenceImages, referenceLinks } =
-		referenceCollectors;
-	let firstRefDefNodeByLabel: Map<string, ProseMirrorNode> | undefined;
-	let refDefLabelsByNode:
-		| Map<ProseMirrorNode, ReadonlyArray<string>>
-		| undefined;
-	let phpPartialTitleRefLabels: Set<string> | undefined;
-	if (referenceLinks.size > 0 || referenceImages.size > 0) {
-		firstRefDefNodeByLabel = new Map<string, ProseMirrorNode>();
-		refDefLabelsByNode = new Map<ProseMirrorNode, ReadonlyArray<string>>();
-		phpPartialTitleRefLabels = new Set<string>();
-		const collect = (node: ProseMirrorNode): void => {
-			const entries = referenceBlockLabels.get(node);
-			if (!entries) return;
-			const nodeLabels: string[] = [];
-			for (const entry of entries) {
-				nodeLabels.push(entry.label);
-				if (!firstRefDefNodeByLabel?.has(entry.label)) {
-					firstRefDefNodeByLabel?.set(entry.label, node);
-					if (entry.hasPhpPartialTitle) {
-						phpPartialTitleRefLabels?.add(entry.label);
-					}
-				}
-			}
-			if (nodeLabels.length > 0) {
-				refDefLabelsByNode?.set(node, nodeLabels);
-			}
-		};
-		doc.descendants((descendant) => {
-			collect(descendant);
-			return true;
-		});
+	let lastKnownEnd = 0;
+	let hasMonotonicRanges = mapped.length > 0;
+	const blocks: ParsedVisualBlockSource[] = [];
+
+	for (let idx = 0; idx < mapped.length; idx += 1) {
+		const entry = mapped[idx];
+		if (!entry) {
+			continue;
+		}
+		const range = entry.origRange;
+		if (range && range.start >= lastKnownEnd && range.end <= rawLines.length) {
+			const raw = rawLines.slice(range.start, range.end).join("\n");
+			const separatorBefore =
+				idx === 0
+					? ""
+					: range.start > lastKnownEnd
+						? `\n${rawLines.slice(lastKnownEnd, range.start).join("\n")}\n`
+						: "\n";
+			blocks.push({ node: entry.node, raw, separatorBefore });
+			lastKnownEnd = range.end;
+		} else {
+			hasMonotonicRanges = false;
+			blocks.push({
+				node: entry.node,
+				raw: null,
+				separatorBefore: idx === 0 ? "" : "\n\n",
+			});
+		}
 	}
 
-	const envRefs = env.references as ParsedEnvReferences | undefined;
+	const lastRange = mapped[mapped.length - 1]?.origRange ?? null;
+	const trailingSuffix =
+		hasMonotonicRanges && lastRange && lastRange.end < rawLines.length
+			? `\n${rawLines.slice(lastRange.end).join("\n")}`
+			: "";
+
 	return {
-		...(blockquoteSources.size > 0 ? { blockquoteSources } : {}),
 		blocks,
 		doc,
-		...(envRefs && Object.keys(envRefs).length > 0
-			? { envReferences: envRefs }
-			: {}),
-		...(firstRefDefNodeByLabel && firstRefDefNodeByLabel.size > 0
-			? { firstRefDefNodeByLabel }
-			: {}),
-		leadingPrefix,
+		leadingPrefix: hasMonotonicRanges ? leadingPrefix : "",
 		lineEnding: preScan.lineEnding,
-		...(phpPartialTitleRefLabels && phpPartialTitleRefLabels.size > 0
-			? { phpPartialTitleRefLabels }
-			: {}),
-		...(refDefLabelsByNode && refDefLabelsByNode.size > 0
-			? { refDefLabelsByNode }
-			: {}),
-		...(referencedLabelsByNode.size > 0 ? { referencedLabelsByNode } : {}),
-		...(referenceImages.size > 0 ? { referenceImages } : {}),
-		...(referenceLinks.size > 0 ? { referenceLinks } : {}),
 		trailingSuffix,
 	};
 }
@@ -913,7 +917,7 @@ export function parseInlineMarkdownFragment(
 	if (markdown.length === 0) {
 		return [];
 	}
-	const preScan = prescanMarkdown(markdown);
-	const tokens = visualMarkdownItParser.parseInline(preScan.markdown, {});
+	const preScan = prescanInlineMarkdown(markdown);
+	const tokens = markdownItParser.parseInline(preScan.markdown, {});
 	return mapInlineTokens(tokens[0]?.children ?? null, preScan, false);
 }

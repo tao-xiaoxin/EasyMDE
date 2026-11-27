@@ -1,29 +1,69 @@
+import type { EditorCodeContentTarget } from "./editor-code-content-target";
+import {
+	createSimpleBoldWrapEdit,
+	planSourceBoldSelection
+} from "./editor-context-menu-bold";
 import { cutEditorSelection } from "./editor-context-menu-clipboard";
 import type { EditorContextMenuActionSession } from "./editor-context-menu-action-coordinator";
 import { contextMenuActionErrorCode } from "./editor-context-menu-action-errors";
 import {
 	deleteThematicBreak,
+	type EditorSelection,
 	findMarkdownBlock,
 	insertParagraphRelative
 } from "./editor-context-menu-rules";
-import { editorContextSelectionFitsRange } from "./editor-context-menu-text-edit";
+import type { EditorMarkdownBlockIndex } from "./editor-markdown-block-index";
 import { createSimplifiedFormattingPayload } from "./editor-simplified-formatting";
 
+export type InsertParagraphRelativeActionOptions = Readonly<{
+	blockIndex: EditorMarkdownBlockIndex | undefined;
+	codeTarget?: EditorCodeContentTarget;
+	nestedCode?: boolean;
+	relative: "after" | "before";
+	selection: EditorSelection;
+	targetRange: Readonly<{ from: number; to: number }>;
+	value: string;
+}>;
+
 /**
- * Privacy-safe error code extraction for preview-backed copy actions. Preserves
- * stable preview and simplified-formatting owner codes alongside the shared
- * context-menu owner codes without leaking arbitrary exception messages.
+ * Shared paragraph-insertion dispatcher for both text/code/table and
+ * generated-content actions. Visual delegates to the Visual runtime first so
+ * live empty paragraphs stay editable, falling back to canonical edit only
+ * when the runtime reports `"unavailable"`.
  */
-function copyPreviewActionErrorCode(error: unknown, fallback: string): string {
-	if (
-		error instanceof Error
-		&& /^(?:preview|editor-(?:preview|simplified-formatting))-[a-z0-9-]+$/u.test(
-			error.message
-		)
-	) {
-		return error.message;
+export function insertParagraphRelativeAction(
+	session: EditorContextMenuActionSession,
+	options: InsertParagraphRelativeActionOptions
+): void {
+	const { capabilities, captured, report } = session;
+	const strings = capabilities.contextMenuStrings;
+	if ("visual" === captured.surface) {
+		const visualResult = capabilities.visual.insertParagraphRelative(
+			captured,
+			{
+				...(options.nestedCode ? { nestedCode: true } : {}),
+				relative: options.relative,
+				targetRange: options.targetRange
+			}
+		);
+		if ("handled" === visualResult) return;
+		if ("failed" === visualResult) {
+			report(
+				"editor-context-menu-edit-unavailable",
+				strings?.statusActionFailed
+			);
+			return;
+		}
 	}
-	return contextMenuActionErrorCode(error, fallback);
+	session.applyEdit(
+		insertParagraphRelative(
+			options.value,
+			options.selection,
+			options.relative,
+			options.blockIndex,
+			options.codeTarget
+		)
+	);
 }
 
 /**
@@ -47,10 +87,20 @@ export async function runTextContextMenuAction(
 
 	if ("bold" === id) {
 		if (!ensureCurrent()) return;
+		const command = capabilities.toolbar.commands.find(
+			({ id: commandId }) => commandId === "bold"
+		);
+		const boldOptions = {
+			...(command?.prefix ? { prefix: command.prefix } : {}),
+			...(undefined !== capabilities.referenceLabelCaseFoldProfile
+				? {
+						referenceLabelCaseFoldProfile:
+							capabilities.referenceLabelCaseFoldProfile
+					}
+				: {}),
+			...(command?.suffix ? { suffix: command.suffix } : {})
+		};
 		if ("visual" === captured.surface) {
-			const command = capabilities.toolbar.commands.find(
-				({ id: commandId }) => commandId === "bold"
-			);
 			if (!command) {
 				report(
 					"editor-context-menu-command-unavailable",
@@ -59,51 +109,35 @@ export async function runTextContextMenuAction(
 				return;
 			}
 			if (captured.selection.start !== captured.selection.end) {
-				const blockIndex = session.currentBlockIndex();
-				const block = findMarkdownBlock(
+				const plan = planSourceBoldSelection(
 					captured.value,
-					captured.selection.start,
-					blockIndex ?? undefined
-				);
-				const selectionSpansBlocks = !block || !editorContextSelectionFitsRange(
 					captured.selection,
-					{ from: block.start, to: block.end }
+					boldOptions
 				);
-				if (selectionSpansBlocks) {
-					const prefix = command.prefix ?? "";
-					const suffix = command.suffix ?? "";
-					const selected = captured.value.slice(
-						captured.selection.start,
-						captured.selection.end
+				if ("unavailable" === plan.kind) {
+					report(
+						"editor-context-menu-command-unavailable",
+						strings?.statusActionFailed
 					);
-					const nextValue =
-						captured.value.slice(0, captured.selection.start)
-						+ prefix
-						+ selected
-						+ suffix
-						+ captured.value.slice(captured.selection.end);
-					capabilities.visual.applyCanonicalChange(captured, {
-						changes: {
-							from: captured.selection.start,
-							insert: `${prefix}${selected}${suffix}`,
-							to: captured.selection.end
-						},
-						selection: {
-							direction: "none",
-							end: captured.selection.start
-								+ prefix.length
-								+ selected.length
-								+ suffix.length,
-							start: captured.selection.start
-								+ prefix.length
-								+ selected.length
-								+ suffix.length
-						},
-						selectionFallback: "caret",
-						value: nextValue
-					});
 					return;
 				}
+				const edit =
+					"edit" === plan.kind
+						? plan.edit
+						: createSimpleBoldWrapEdit(
+								captured.value,
+								captured.selection,
+								boldOptions
+							);
+				if (!edit) {
+					report(
+						"editor-context-menu-command-unavailable",
+						strings?.statusActionFailed
+					);
+					return;
+				}
+				session.applyEdit(edit);
+				return;
 			}
 			const result = capabilities.visual.executeCommand(command, {
 				requestPreviewTransfer: true
@@ -116,6 +150,25 @@ export async function runTextContextMenuAction(
 				strings?.statusActionFailed
 			);
 			return;
+		}
+		if (captured.selection.start !== captured.selection.end) {
+			const value = session.readValue();
+			const plan = planSourceBoldSelection(
+				value,
+				captured.selection,
+				boldOptions
+			);
+			if ("unavailable" === plan.kind) {
+				report(
+					"editor-context-menu-command-unavailable",
+					strings?.statusActionFailed
+				);
+				return;
+			}
+			if ("edit" === plan.kind) {
+				session.applyEdit(plan.edit);
+				return;
+			}
 		}
 		if (!capabilities.toolbar.execute("bold")) {
 			report(
@@ -171,70 +224,24 @@ export async function runTextContextMenuAction(
 		);
 		const operation = session.beginOperation();
 		const controller = operation.controller;
-		let renderFailure: string | null = null;
-		let staleBeforeWrite = false;
 		try {
 			const renderedHtml = capabilities.preview
 				.render(markdown, controller.signal)
-				.then((response) => {
-					if (controller.signal.aborted || !session.isCurrent(captured)) {
-						staleBeforeWrite = true;
-						throw new Error("editor-context-menu-context-stale");
-					}
-					return response.html;
-				})
-				.catch((error) => {
-					if (
-						!staleBeforeWrite
-						&& !controller.signal.aborted
-						&& session.isCurrent(captured)
-					) {
-						renderFailure = copyPreviewActionErrorCode(
-							error,
-							"editor-context-menu-html-copy-failed"
-						);
-					}
-					throw error;
-				});
-			void renderedHtml.catch(() => undefined);
-			const result = await clipboard.writeDeferred(renderedHtml, {
+				.then((response) => response.html);
+			const writePromise = clipboard.writeDeferred(renderedHtml, {
 				signal: controller.signal
 			});
-			if (controller.signal.aborted) return;
-			if (!ensureCurrent()) {
-				controller.abort();
-				return;
-			}
+			const [, result] = await Promise.all([renderedHtml, writePromise]);
+			if (!ensureCurrent()) return;
 			if ("written" !== result.status) {
-				controller.abort();
-				if (renderFailure) {
-					report(renderFailure, strings?.statusActionFailed);
-				} else if (staleBeforeWrite) {
-					report(
-						"editor-context-menu-context-stale",
-						strings?.statusActionFailed
-					);
-				} else {
-					report(result.code, strings?.statusClipboardUnavailable);
-				}
+				report(result.code, strings?.statusClipboardUnavailable);
 			}
 		} catch (error) {
-			const wasAborted = controller.signal.aborted;
-			controller.abort();
-			if (!wasAborted) {
-				report(
-					renderFailure
-						?? copyPreviewActionErrorCode(
-							error,
-							"editor-context-menu-html-copy-failed"
-						),
-					strings?.statusActionFailed
-				);
-			}
+			report(
+				contextMenuActionErrorCode(error, "editor-context-menu-html-copy-failed"),
+				strings?.statusActionFailed
+			);
 		} finally {
-			if (controller.signal.aborted || renderFailure) {
-				controller.abort();
-			}
 			session.finishOperation(operation);
 		}
 		return;
@@ -256,76 +263,33 @@ export async function runTextContextMenuAction(
 		const operation = session.beginOperation();
 		const controller = operation.controller;
 		const parser = capabilities.simplifiedFormattingParser;
-		let payloadFailure: string | null = null;
-		let staleBeforeWrite = false;
-		try {
-			const payload = capabilities.preview
-				.render(markdown, controller.signal)
-				.then((response) => {
-					if (controller.signal.aborted || !session.isCurrent(captured)) {
-						staleBeforeWrite = true;
-						throw new Error("editor-context-menu-context-stale");
-					}
-					const converted = createSimplifiedFormattingPayload(response.html, {
-						parser
-					});
-					if ("failed" === converted.status) {
-						throw new Error(converted.code);
-					}
-					return converted.payload;
-				})
-				.catch((error) => {
-					if (
-						!staleBeforeWrite
-						&& !controller.signal.aborted
-						&& session.isCurrent(captured)
-					) {
-						payloadFailure = copyPreviewActionErrorCode(
-							error,
-							"editor-context-menu-rich-copy-failed"
-						);
-					}
-					throw error;
+		const payload = capabilities.preview
+			.render(markdown, controller.signal)
+			.then((response) => {
+				if (controller.signal.aborted || !session.isCurrent(captured)) {
+					throw new Error("editor-context-menu-context-stale");
+				}
+				const converted = createSimplifiedFormattingPayload(response.html, {
+					parser
 				});
-			void payload.catch(() => undefined);
+				if ("failed" === converted.status) throw new Error(converted.code);
+				return converted.payload;
+			});
+		void payload.catch(() => undefined);
+		try {
 			const result = await clipboard.writeRichDeferred(payload, {
 				signal: controller.signal
 			});
-			if (controller.signal.aborted) return;
-			if (!ensureCurrent()) {
-				controller.abort();
-				return;
-			}
+			if (!ensureCurrent()) return;
 			if ("written" !== result.status) {
-				controller.abort();
-				if (payloadFailure) {
-					report(payloadFailure, strings?.statusActionFailed);
-				} else if (staleBeforeWrite) {
-					report(
-						"editor-context-menu-context-stale",
-						strings?.statusActionFailed
-					);
-				} else {
-					report(result.code, strings?.statusClipboardUnavailable);
-				}
+				report(result.code, strings?.statusClipboardUnavailable);
 			}
 		} catch (error) {
-			const wasAborted = controller.signal.aborted;
-			controller.abort();
-			if (!wasAborted) {
-				report(
-					payloadFailure
-						?? copyPreviewActionErrorCode(
-							error,
-							"editor-context-menu-rich-copy-failed"
-						),
-					strings?.statusActionFailed
-				);
-			}
+			report(
+				contextMenuActionErrorCode(error, "editor-context-menu-rich-copy-failed"),
+				strings?.statusActionFailed
+			);
 		} finally {
-			if (controller.signal.aborted || payloadFailure) {
-				controller.abort();
-			}
 			session.finishOperation(operation);
 		}
 		return;
@@ -459,15 +423,16 @@ export async function runTextContextMenuAction(
 			return;
 		}
 		if (!ensureSelectionFitsTarget(targetRange)) return;
-		session.applyEdit(
-			insertParagraphRelative(
-				value,
-				captured.selection,
-				id.includes("above") ? "before" : "after",
-				blockIndex,
-				codeRelative ? codeTarget : undefined
-			)
-		);
+		const relative = id.includes("above") ? "before" : "after";
+		insertParagraphRelativeAction(session, {
+			blockIndex,
+			...(codeRelative && codeTarget ? { codeTarget } : {}),
+			...(codeRelative ? { nestedCode: true } : {}),
+			relative,
+			selection: captured.selection,
+			targetRange,
+			value
+		});
 		return;
 	}
 

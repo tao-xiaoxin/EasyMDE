@@ -673,6 +673,91 @@ describe("mountAdminEditor", () => {
 		teardown();
 	});
 
+	it("wires window.navigator.permissions into editorClipboardPort so denied passive checks skip readText", async () => {
+		const render = vi.fn();
+		const unmount = vi.fn();
+		vi.mocked(createRoot).mockReturnValue({ render, unmount } as never);
+		const readText = vi.fn().mockRejectedValue(new Error("permission denied"));
+		const query = vi.fn().mockResolvedValue({ state: "denied" });
+		const clipboard = {
+			readText,
+			write: vi.fn().mockResolvedValue(undefined),
+			writeText: vi.fn().mockResolvedValue(undefined),
+		} as unknown as Clipboard;
+		const clipboardDescriptor = Object.getOwnPropertyDescriptor(
+			window.navigator,
+			"clipboard",
+		);
+		const permissionsDescriptor = Object.getOwnPropertyDescriptor(
+			window.navigator,
+			"permissions",
+		);
+		Object.defineProperty(window.navigator, "clipboard", {
+			configurable: true,
+			value: clipboard,
+		});
+		Object.defineProperty(window.navigator, "permissions", {
+			configurable: true,
+			value: { query },
+		});
+
+		try {
+			const teardown = mountAdminEditor(bootstrap, {
+				document,
+				failureMessage: "Editor failed",
+				onStartupFailure: vi.fn(),
+				window,
+				wordpress: {
+					apiFetch: Object.assign(vi.fn(), {
+						nonceMiddleware: { nonce: "nonce" },
+					}),
+					hooks: { addAction: vi.fn(), removeAction: vi.fn() },
+				},
+			});
+			const rendered = render.mock.calls[0]?.[0] as {
+				props: {
+					children?: {
+						props?: { editorClipboardPort?: EditorClipboardPort };
+					};
+				};
+			};
+			const editorClipboardPort =
+				rendered?.props.children?.props?.editorClipboardPort;
+			if (!editorClipboardPort) {
+				throw new Error("entrypoint-clipboard-port-missing");
+			}
+
+			await expect(editorClipboardPort.check()).resolves.toEqual({
+				code: "editor-clipboard-read-failed",
+				status: "unavailable",
+			});
+			expect(query).toHaveBeenCalledWith({ name: "clipboard-read" });
+			expect(readText).not.toHaveBeenCalled();
+
+			await expect(editorClipboardPort.read()).resolves.toEqual({
+				code: "editor-clipboard-read-failed",
+				status: "unavailable",
+			});
+			expect(readText).toHaveBeenCalledTimes(1);
+			teardown();
+		} finally {
+			if (clipboardDescriptor) {
+				Object.defineProperty(window.navigator, "clipboard", clipboardDescriptor);
+			} else {
+				Reflect.deleteProperty(window.navigator, "clipboard");
+			}
+			if (permissionsDescriptor) {
+				Object.defineProperty(
+					window.navigator,
+					"permissions",
+					permissionsDescriptor,
+				);
+			} else {
+				Reflect.deleteProperty(window.navigator, "permissions");
+			}
+		}
+	});
+
 	it.each(["error", "timeout"] as const)(
 		"cleans up an initial article candidate after stylesheet readiness %s",
 		async (exit) => {

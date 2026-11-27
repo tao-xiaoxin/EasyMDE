@@ -1,31 +1,17 @@
 import type {
 	EditorMarkdownImageRange,
 	EditorMarkdownLinkCandidate,
-	EditorMarkdownLinkTableCellContext,
 	EditorMarkdownSourceBlock,
-	EditorMarkdownTableCellMathRange,
 } from "../../contracts/ports/editor-block-index-port";
-import { deriveEditorMarkdownLinkTableCellContext } from "../../shared/markdown/editor-block-index-table-cell-codec";
-import {
-	findLineAtOffset,
-	findTableRowCellInCells,
-	getCachedPhpTableRowCells,
-	inCodeRange,
-	type ScannedMarkdownBlocks,
-	type TableRowCellRange,
-} from "../../shared/markdown/php-commonmark-block-scan";
-import { collectPhpTableCellImageRanges } from "../image-scale/image-scale-syntax";
 import {
 	originalRange,
 	type NewlineProjection,
 	type SourceRange,
-} from "./editor-markdown-source-projection";
+} from "../../shared/markdown/markdown-source-projection";
 import {
 	normalizeMarkdownReferenceLabel,
 	type ReferenceLabelCaseFoldProfile,
 } from "./reference-label-normalization";
-
-export type { EditorMarkdownLinkTableCellContext } from "../../contracts/ports/editor-block-index-port";
 
 export type MarkdownSyntaxNode = Readonly<{
 	from: number;
@@ -58,6 +44,8 @@ const LINK_BLOCKED_INLINE_ANCESTORS: Readonly<Record<string, true>> = {
 
 const URL_NODE_NAME_BIT = 1;
 const LINK_TITLE_NODE_NAME_BIT = 2;
+const BLOCKED_ANCESTOR_BIT = 1;
+const BLOCKED_INLINE_ANCESTOR_BIT = 2;
 
 function bracketLabelContent(value: string): string {
 	return value.startsWith("[") && value.endsWith("]")
@@ -66,12 +54,14 @@ function bracketLabelContent(value: string): string {
 }
 
 function directChildIndex(
-	children: ReadonlyArray<ReadonlyArray<number>>,
+	children: ReadonlyArray<ReadonlyArray<number> | undefined>,
 	nodes: ReadonlyArray<Readonly<{ name: string }>>,
 	parentIndex: number,
 	name: string,
 ): number | null {
-	for (const childIndex of children[parentIndex] ?? []) {
+	const childList = children[parentIndex];
+	if (!childList) return null;
+	for (const childIndex of childList) {
 		if (name === nodes[childIndex]?.name) return childIndex;
 	}
 	return null;
@@ -80,11 +70,27 @@ function directChildIndex(
 function markdownSyntaxStructure(
 	nodes: ReadonlyArray<MarkdownSyntaxNode>,
 ) {
-	const ancestorIndicesAt: number[][] = nodes.map(() => []);
-	const children: number[][] = nodes.map(() => []);
+	const blockedAncestorMask = new Uint8Array(nodes.length);
+	const children: Array<number[] | undefined> = new Array(nodes.length);
 	const urlDescendants = new Uint8Array(nodes.length);
 	const namesAt = new Map<number, number>();
 	const open: number[] = [];
+	let blockedDepth = 0;
+	let blockedInlineDepth = 0;
+	const popOpen = (): void => {
+		const closedIndex = open.pop();
+		if (undefined === closedIndex) return;
+		const closedName = nodes[closedIndex]?.name ?? "";
+		if (LINK_BLOCKED_ANCESTORS[closedName]) blockedDepth -= 1;
+		if (LINK_BLOCKED_INLINE_ANCESTORS[closedName]) blockedInlineDepth -= 1;
+		const parentIndex = open[open.length - 1];
+		if (
+			undefined !== parentIndex &&
+			(1 === urlDescendants[closedIndex] || "URL" === closedName)
+		) {
+			urlDescendants[parentIndex] = 1;
+		}
+	};
 	for (let index = 0; index < nodes.length; index += 1) {
 		const node = nodes[index];
 		if (!node) break;
@@ -92,13 +98,24 @@ function markdownSyntaxStructure(
 			const parentIndex = open[open.length - 1] ?? -1;
 			const parent = nodes[parentIndex];
 			if (parent && parent.from <= node.from && node.to <= parent.to) break;
-			open.pop();
+			popOpen();
 		}
 		const parentIndex = open[open.length - 1];
-		if (undefined !== parentIndex) children[parentIndex]?.push(index);
-		ancestorIndicesAt[index] = [...open];
+		if (undefined !== parentIndex) {
+			const parentName = nodes[parentIndex]?.name;
+			if ("Link" === parentName || "LinkReference" === parentName) {
+				let list = children[parentIndex];
+				if (!list) {
+					list = [];
+					children[parentIndex] = list;
+				}
+				list.push(index);
+			}
+		}
+		blockedAncestorMask[index] =
+			(blockedDepth > 0 ? BLOCKED_ANCESTOR_BIT : 0) |
+			(blockedInlineDepth > 0 ? BLOCKED_INLINE_ANCESTOR_BIT : 0);
 		if ("URL" === node.name) {
-			for (const ancestorIndex of open) urlDescendants[ancestorIndex] = 1;
 			namesAt.set(node.from, (namesAt.get(node.from) ?? 0) | URL_NODE_NAME_BIT);
 		} else if ("LinkTitle" === node.name) {
 			namesAt.set(
@@ -106,30 +123,12 @@ function markdownSyntaxStructure(
 				(namesAt.get(node.from) ?? 0) | LINK_TITLE_NODE_NAME_BIT,
 			);
 		}
+		if (LINK_BLOCKED_ANCESTORS[node.name]) blockedDepth += 1;
+		if (LINK_BLOCKED_INLINE_ANCESTORS[node.name]) blockedInlineDepth += 1;
 		open.push(index);
 	}
-	return { ancestorIndicesAt, children, namesAt, urlDescendants };
-}
-
-function hasBlockedAncestor(
-	ancestorIndices: ReadonlyArray<number> | undefined,
-	nodes: ReadonlyArray<MarkdownSyntaxNode>,
-	blockedAncestors: Readonly<Record<string, true>>,
-	unresolvedImageRanges?: ReadonlySet<string>,
-): boolean {
-	if (!ancestorIndices || 0 === ancestorIndices.length) return false;
-	for (let i = 0; i < ancestorIndices.length; i += 1) {
-		const ancestor = nodes[ancestorIndices[i] ?? -1];
-		if (!ancestor || !blockedAncestors[ancestor.name]) continue;
-		if (
-			"Image" === ancestor.name &&
-			unresolvedImageRanges?.has(`${ancestor.from}:${ancestor.to}`)
-		) {
-			continue;
-		}
-		return true;
-	}
-	return false;
+	while (open.length > 0) popOpen();
+	return { blockedAncestorMask, children, namesAt, urlDescendants };
 }
 
 function referenceLabelsFromStructure(
@@ -138,12 +137,12 @@ function referenceLabelsFromStructure(
 	structure: ReturnType<typeof markdownSyntaxStructure>,
 	profile: ReferenceLabelCaseFoldProfile,
 ): Set<string> {
-	const { ancestorIndicesAt, children } = structure;
+	const { blockedAncestorMask, children } = structure;
 	const definedLabels = new Set<string>();
 	for (let index = 0; index < nodes.length; index += 1) {
 		const node = nodes[index];
 		if ("LinkReference" !== node?.name) continue;
-		if (hasBlockedAncestor(ancestorIndicesAt[index], nodes, LINK_BLOCKED_ANCESTORS))
+		if (0 !== ((blockedAncestorMask[index] ?? 0) & BLOCKED_ANCESTOR_BIT))
 			continue;
 		const labelIndex = directChildIndex(children, nodes, index, "LinkLabel");
 		const label = nodes[labelIndex ?? -1];
@@ -168,19 +167,56 @@ export function markdownReferenceLabels(
 	return referenceLabelsFromStructure(text, nodes, markdownSyntaxStructure(nodes), profile);
 }
 
-export function markdownReferenceLabelQuery(
-	text: string,
-	nodes: ReadonlyArray<MarkdownSyntaxNode>,
-	profile: ReferenceLabelCaseFoldProfile,
-): (label: string) => boolean {
-	const labels = markdownReferenceLabels(text, nodes, profile);
-	return (label) => labels.has(normalizeMarkdownReferenceLabel(label, profile));
-}
-
 export type MarkdownReferenceDefinition = Readonly<{
 	destination: string;
 	title: string | null;
 }>;
+
+function referenceDefinitionQueryFromStructure(
+	text: string,
+	nodes: ReadonlyArray<MarkdownSyntaxNode>,
+	structure: ReturnType<typeof markdownSyntaxStructure>,
+	profile: ReferenceLabelCaseFoldProfile,
+): (label: string) => MarkdownReferenceDefinition | null {
+	let definitions: Map<string, MarkdownReferenceDefinition> | null = null;
+	return (label) => {
+		if (!definitions) {
+			const collected = new Map<string, MarkdownReferenceDefinition>();
+			for (let index = 0; index < nodes.length; index += 1) {
+				const node = nodes[index];
+				if (
+					"LinkReference" !== node?.name ||
+					0 !== ((structure.blockedAncestorMask[index] ?? 0) & BLOCKED_ANCESTOR_BIT)
+				) {
+					continue;
+				}
+				const labelNode =
+					nodes[directChildIndex(structure.children, nodes, index, "LinkLabel") ?? -1];
+				const url =
+					nodes[directChildIndex(structure.children, nodes, index, "URL") ?? -1];
+				const title =
+					nodes[directChildIndex(structure.children, nodes, index, "LinkTitle") ?? -1];
+				if (!labelNode || !url) {
+					throw new Error("visual-editor-reference-definition-map-failed");
+				}
+				const key = normalizeMarkdownReferenceLabel(
+					bracketLabelContent(text.slice(labelNode.from, labelNode.to)),
+					profile,
+				);
+				if (!collected.has(key)) {
+					collected.set(key, {
+						destination: text.slice(url.from, url.to),
+						title: title ? text.slice(title.from, title.to) : null,
+					});
+				}
+			}
+			definitions = collected;
+		}
+		if (0 === definitions.size) return null;
+		const normalized = normalizeMarkdownReferenceLabel(label, profile);
+		return definitions.get(normalized) ?? null;
+	};
+}
 
 /** First active parser-owned definition, retaining its exact source tokens. */
 export function markdownReferenceDefinitionQuery(
@@ -188,30 +224,12 @@ export function markdownReferenceDefinitionQuery(
 	nodes: ReadonlyArray<MarkdownSyntaxNode>,
 	profile: ReferenceLabelCaseFoldProfile,
 ): (label: string) => MarkdownReferenceDefinition | null {
-	const structure = markdownSyntaxStructure(nodes);
-	let definitions: Map<string, MarkdownReferenceDefinition> | null = null;
-	return (label) => {
-		const normalized = normalizeMarkdownReferenceLabel(label, profile);
-		if (!definitions) {
-			const collected = new Map<string, MarkdownReferenceDefinition>();
-			for (let index = 0; index < nodes.length; index += 1) {
-				const node = nodes[index];
-				if ("LinkReference" !== node?.name
-					|| hasBlockedAncestor(structure.ancestorIndicesAt[index], nodes, LINK_BLOCKED_ANCESTORS)) continue;
-				const labelNode = nodes[directChildIndex(structure.children, nodes, index, "LinkLabel") ?? -1];
-				const url = nodes[directChildIndex(structure.children, nodes, index, "URL") ?? -1];
-				const title = nodes[directChildIndex(structure.children, nodes, index, "LinkTitle") ?? -1];
-				if (!labelNode || !url) throw new Error("visual-editor-reference-definition-map-failed");
-				const key = normalizeMarkdownReferenceLabel(bracketLabelContent(text.slice(labelNode.from, labelNode.to)), profile);
-				if (!collected.has(key)) collected.set(key, {
-					destination: text.slice(url.from, url.to),
-					title: title ? text.slice(title.from, title.to) : null,
-				});
-			}
-			definitions = collected;
-		}
-		return definitions.get(normalized) ?? null;
-	};
+	return referenceDefinitionQueryFromStructure(
+		text,
+		nodes,
+		markdownSyntaxStructure(nodes),
+		profile,
+	);
 }
 
 /** Bind each queried reference to the definition used by the formal Preview. */
@@ -237,75 +255,131 @@ export function markdownReferenceContextQuery(
 }
 
 /**
- * Derives links that the formal CommonMark renderer creates from the caller's
- * existing parser tree, including the existing nested-link ownership rules.
+ * Checks parser-owned direct children of an inline `Link` node (`LinkMark "]"`,
+ * `LinkMark "("`, `URL`, optional `LinkTitle`, `LinkMark ")"`), handling
+ * multiline blockquote destinations (`> [label](\n> https://example.org)`)
+ * without misattributing bare URLs inside the link text to an empty `()` tail.
  */
-export function projectedLinkNodes(
+function hasOwnInlineDestinationUrl(
 	text: string,
+	children: ReadonlyArray<ReadonlyArray<number> | undefined>,
 	nodes: ReadonlyArray<MarkdownSyntaxNode>,
-	profile: ReferenceLabelCaseFoldProfile,
-	unresolvedImageRanges?: ReadonlySet<string>,
-): ReadonlyArray<ParserLinkNode> {
-	return parserProjectedLinkNodes(
-		text,
-		nodes,
-		profile,
-		undefined,
-		unresolvedImageRanges,
+	linkIndex: number,
+): boolean {
+	const childList = children[linkIndex];
+	if (!childList || childList.length < 4) return false;
+	let cursor = childList.length - 1;
+	const closeParen = nodes[childList[cursor] ?? -1];
+	if (
+		"LinkMark" !== closeParen?.name ||
+		")" !== text[closeParen.from] ||
+		closeParen.to !== closeParen.from + 1
+	) {
+		return false;
+	}
+	cursor -= 1;
+	if ("LinkTitle" === nodes[childList[cursor] ?? -1]?.name) {
+		cursor -= 1;
+	}
+	const urlNode = nodes[childList[cursor] ?? -1];
+	if ("URL" !== urlNode?.name) return false;
+	cursor -= 1;
+	const openParen = nodes[childList[cursor] ?? -1];
+	const closeBracket = nodes[childList[cursor - 1] ?? -1];
+	return (
+		"LinkMark" === openParen?.name &&
+		"(" === text[openParen.from] &&
+		openParen.to === openParen.from + 1 &&
+		"LinkMark" === closeBracket?.name &&
+		"]" === text[closeBracket.from] &&
+		closeBracket.to === openParen.from
 	);
 }
 
-function parserProjectedLinkNodes(
+export type ProjectedLinkNodesInspection = Readonly<{
+	isReferenceDefined: (rawLabel: string) => boolean;
+	links: ReadonlyArray<ParserLinkNode>;
+	needsReferenceAwareReparse: boolean;
+}>;
+
+/**
+ * Derives links that the formal CommonMark renderer creates from the caller's
+ * existing parser tree, also reporting whether any uncreated `Link` frame
+ * consumed a trailing `LinkLabel` or was revoked by a resolved inner `Link`
+ * so callers can re-parse with exact reference knowledge without letting a
+ * non-link outer bracket pair swallow trailing `[b]` or `[b](url)` syntax.
+ */
+export function inspectProjectedLinkNodes(
 	text: string,
 	nodes: ReadonlyArray<MarkdownSyntaxNode>,
 	profile: ReferenceLabelCaseFoldProfile,
-	referenceDefined?: (label: string) => boolean,
-	unresolvedImageRanges?: ReadonlySet<string>,
-): ReadonlyArray<ParserLinkNode> {
+): ProjectedLinkNodesInspection {
 	const structure = markdownSyntaxStructure(nodes);
-	const { ancestorIndicesAt, children, namesAt, urlDescendants } = structure;
-	let definition: ReturnType<typeof markdownReferenceDefinitionQuery> | null = null;
+	const { blockedAncestorMask, children, namesAt, urlDescendants } = structure;
+	let definition: ReturnType<typeof referenceDefinitionQueryFromStructure> | null = null;
 	const created = new Uint8Array(nodes.length);
 	const referenceLinks = new Uint8Array(nodes.length);
-	const frames: Array<{ hasCreatedChild: boolean; index: number }> = [];
+	const frameIndices: number[] = [];
+	const frameHasCreatedChild: number[] = [];
+	let needsReferenceAwareReparse = false;
 	const closeFrame = (): void => {
-		const frame = frames.pop();
-		if (!frame) return;
-		const frameNode = nodes[frame.index];
-		if ("Link" === frameNode?.name && frame.hasCreatedChild) {
-			created[frame.index] = 0;
+		const frameIndex = frameIndices.pop();
+		const hasCreatedChild = frameHasCreatedChild.pop() ?? 0;
+		if (undefined === frameIndex) return;
+		const frameNode = nodes[frameIndex];
+		if ("Link" === frameNode?.name) {
+			if (0 !== hasCreatedChild) {
+				created[frameIndex] = 0;
+				needsReferenceAwareReparse = true;
+			} else if (
+				0 === created[frameIndex] &&
+				null !== directChildIndex(children, nodes, frameIndex, "LinkLabel")
+			) {
+				needsReferenceAwareReparse = true;
+			}
 		}
-		const propagated = frame.hasCreatedChild || 0 !== created[frame.index];
-		const parent = frames[frames.length - 1];
-		if (parent && propagated) parent.hasCreatedChild = true;
+		const propagated = 0 !== hasCreatedChild || 0 !== created[frameIndex];
+		const parentTop = frameHasCreatedChild.length - 1;
+		if (parentTop >= 0 && propagated) frameHasCreatedChild[parentTop] = 1;
 	};
 	for (let index = 0; index < nodes.length; index += 1) {
 		const node = nodes[index];
 		if (!node) break;
-		while (frames.length > 0) {
-			const frame = frames[frames.length - 1];
-			if (!frame) break;
-			const frameNode = nodes[frame.index];
+		while (frameIndices.length > 0) {
+			const frameIndex = frameIndices[frameIndices.length - 1] ?? -1;
+			const frameNode = nodes[frameIndex];
 			if (frameNode && frameNode.from <= node.from && node.to <= frameNode.to)
 				break;
 			closeFrame();
 		}
 		if ("Link" === node.name) {
+			const hasOwnInlineUrl =
+				"[" === text[node.from] &&
+				")" === text[node.to - 1] &&
+				hasOwnInlineDestinationUrl(text, children, nodes, index);
 			const hasUrl = 1 === urlDescendants[index];
-			if ("[" === text[node.from] && ")" === text[node.to - 1] && hasUrl) {
+			if (hasOwnInlineUrl) {
 				created[index] = 1;
-			} else if (referenceDefined || !(!hasUrl && "[^" === text.slice(node.from, node.from + 2))) {
+			} else if (
+				!(
+					"[" === text[node.from] &&
+					")" === text[node.to - 1] &&
+					!hasOwnInlineUrl
+				) &&
+				(hasUrl || "[^" !== text.slice(node.from, node.from + 2))
+			) {
+				const labelIndex = directChildIndex(
+					children,
+					nodes,
+					index,
+					"LinkLabel",
+				);
 				const malformed =
-					0 !== (namesAt.get(node.to) ?? 0) ||
-					"(" === text[node.to] ||
-					"[" === text[node.to];
+					null === labelIndex &&
+					(0 !== (namesAt.get(node.to) ?? 0) ||
+						"(" === text[node.to] ||
+						"[" === text[node.to]);
 				if (!malformed) {
-					const labelIndex = directChildIndex(
-						children,
-						nodes,
-						index,
-						"LinkLabel",
-					);
 					const label = nodes[labelIndex ?? -1];
 					const labelText = label
 						? text.slice(label.from + 1, label.to - 1)
@@ -314,52 +388,34 @@ function parserProjectedLinkNodes(
 						0 < labelText.length
 							? labelText
 							: text.slice(node.from + 1, (label?.from ?? node.to) - 1);
-					definition ??= markdownReferenceDefinitionQuery(text, nodes, profile);
-					if (referenceDefined ? referenceDefined(rawLabel) : definition(rawLabel)) {
+					definition ??= referenceDefinitionQueryFromStructure(
+						text,
+						nodes,
+						structure,
+						profile,
+					);
+					if (definition(rawLabel)) {
 						created[index] = 1;
 						referenceLinks[index] = 1;
 					}
 				}
 			}
 		}
-		frames.push({ hasCreatedChild: false, index });
+		frameIndices.push(index);
+		frameHasCreatedChild.push(0);
 	}
-	while (frames.length > 0) closeFrame();
-	const createdLinkDepth = new Uint16Array(nodes.length);
-	{
-		const stack: Array<{ created: boolean; from: number; to: number }> = [];
-		let depth = 0;
-		for (let index = 0; index < nodes.length; index += 1) {
-			const node = nodes[index];
-			if (!node) break;
-			while (stack.length > 0) {
-				const top = stack[stack.length - 1];
-				if (top && top.from <= node.from && node.to <= top.to) break;
-				stack.pop();
-				if (top?.created) depth -= 1;
-			}
-			createdLinkDepth[index] = depth;
-			const isCreated = "Link" === node.name && 0 !== created[index];
-			if (isCreated) depth += 1;
-			stack.push({ created: isCreated, from: node.from, to: node.to });
-		}
-	}
+	while (frameIndices.length > 0) closeFrame();
 	const projected: ParserLinkNode[] = [];
+	let activeCreatedLinkTo = -1;
 	for (let index = 0; index < nodes.length; index += 1) {
 		const node = nodes[index];
 		if (!node) break;
-		if (
-			hasBlockedAncestor(
-				ancestorIndicesAt[index],
-				nodes,
-				LINK_BLOCKED_ANCESTORS,
-				unresolvedImageRanges,
-			)
-		)
-			continue;
+		const ancestorMask = blockedAncestorMask[index] ?? 0;
+		if (0 !== (ancestorMask & BLOCKED_ANCESTOR_BIT)) continue;
 		const hasUrl = 1 === urlDescendants[index];
 		if ("Link" === node.name) {
 			if (0 === created[index]) continue;
+			if (node.to > activeCreatedLinkTo) activeCreatedLinkTo = node.to;
 			projected.push({
 				from: node.from,
 				kind: "link",
@@ -368,17 +424,11 @@ function parserProjectedLinkNodes(
 			});
 			continue;
 		}
-		if (0 !== createdLinkDepth[index]) continue;
+		if (node.from < activeCreatedLinkTo && node.to <= activeCreatedLinkTo) {
+			continue;
+		}
 		if ("Autolink" === node.name) {
-			if (
-				hasBlockedAncestor(
-					ancestorIndicesAt[index],
-					nodes,
-					LINK_BLOCKED_INLINE_ANCESTORS,
-					unresolvedImageRanges,
-				)
-			)
-				continue;
+			if (0 !== (ancestorMask & BLOCKED_INLINE_ANCESTOR_BIT)) continue;
 			if ("<" === text[node.from] && ">" === text[node.to - 1] && hasUrl) {
 				projected.push({
 					from: node.from,
@@ -390,15 +440,7 @@ function parserProjectedLinkNodes(
 			continue;
 		}
 		if ("URL" === node.name) {
-			if (
-				hasBlockedAncestor(
-					ancestorIndicesAt[index],
-					nodes,
-					LINK_BLOCKED_INLINE_ANCESTORS,
-					unresolvedImageRanges,
-				)
-			)
-				continue;
+			if (0 !== (ancestorMask & BLOCKED_INLINE_ANCESTOR_BIT)) continue;
 			projected.push({
 				from: node.from,
 				kind: "link",
@@ -407,135 +449,47 @@ function parserProjectedLinkNodes(
 			});
 		}
 	}
-	return projected;
+	const isReferenceDefined = (rawLabel: string): boolean => {
+		definition ??= referenceDefinitionQueryFromStructure(
+			text,
+			nodes,
+			structure,
+			profile,
+		);
+		return null !== definition(rawLabel);
+	};
+	return {
+		isReferenceDefined,
+		links: projected,
+		needsReferenceAwareReparse,
+	};
 }
 
-/** Render-mapping bindings only; Source command admission above is unchanged. */
-export function renderedReferenceLinkBodies(
+/**
+ * Derives links that the formal CommonMark renderer creates from the caller's
+ * existing parser tree, including the existing nested-link ownership rules.
+ */
+export function projectedLinkNodes(
 	text: string,
 	nodes: ReadonlyArray<MarkdownSyntaxNode>,
 	profile: ReferenceLabelCaseFoldProfile,
-	referenceDefined: (label: string) => boolean,
-): ReadonlyArray<ParserLinkNode & Readonly<{ bodyStart: number; bodyEnd: number }>> {
-	const projected = parserProjectedLinkNodes(text, nodes, profile, referenceDefined);
-	const structure = markdownSyntaxStructure(nodes);
-	return projected.flatMap((link) => {
-		const index = nodes.findIndex((node) => node.name === 'Link' && node.from === link.from && node.to === link.to);
-		if (index < 0) return [];
-		const marks = (structure.children[index] ?? []).flatMap((child) => {
-			const node = nodes[child];
-			return node?.name === 'LinkMark' ? [node] : [];
-		});
-		const open = marks[0];
-		const close = marks[1];
-		if (!open || !close || text.slice(open.from, open.to) !== '[' || text.slice(close.from, close.to) !== ']') return [];
-		return [{ ...link, bodyStart: open.to, bodyEnd: close.from }];
-	});
-}
-
-const EMPTY_SOURCE_RANGES: ReadonlyArray<SourceRange> = [];
-
-function offsetInsideSortedRanges(
-	ranges: ReadonlyArray<SourceRange>,
-	offset: number,
-): boolean {
-	if (0 === ranges.length) return false;
-	if (ranges.length <= 8) {
-		for (let i = 0; i < ranges.length; i += 1) {
-			const range = ranges[i];
-			if (!range || offset < range.from) return false;
-			if (offset < range.to) return true;
-		}
-		return false;
-	}
-	let low = 0;
-	let high = ranges.length - 1;
-	while (low <= high) {
-		const middle = Math.floor((low + high) / 2);
-		const range = ranges[middle];
-		if (!range) return false;
-		if (offset < range.from) {
-			high = middle - 1;
-		} else if (offset >= range.to) {
-			low = middle + 1;
-		} else {
-			return true;
-		}
-	}
-	return false;
-}
-
-type PhpTableLinkCheck =
-	| Readonly<{ excluded: true }>
-	| Readonly<{ cell: TableRowCellRange | null; excluded: false }>;
-
-function checkRangeInPhpTable(
-	source: string,
-	phpBlockScan: ScannedMarkdownBlocks,
-	range: SourceRange,
-	sourceMaySplitTableImage: boolean,
-	cellImageRangesCache: Map<string, ReadonlyArray<SourceRange>>,
-): PhpTableLinkCheck {
-	const startLine = findLineAtOffset(phpBlockScan.lines, range.from);
-	if (!startLine) return { cell: null, excluded: false };
-	if (startLine.inlineBlockId < 0) return { excluded: true };
-	if (!startLine.isTableRow) {
-		if (range.to > startLine.lineEnd) {
-			const endLine = findLineAtOffset(phpBlockScan.lines, range.to - 1);
-			if (endLine?.isTableRow) return { excluded: true };
-		}
-		return { cell: null, excluded: false };
-	}
-	const cells = getCachedPhpTableRowCells(source, phpBlockScan, startLine);
-	const cell = findTableRowCellInCells(cells, range.from);
-	if (null === cell || range.to > cell.end) return { excluded: true };
-	if (!sourceMaySplitTableImage) return { cell, excluded: false };
-
-	const cellKey = `${cell.start}:${cell.end}`;
-	let cellImages = cellImageRangesCache.get(cellKey);
-	if (undefined === cellImages) {
-		const cellText = source.slice(cell.start, cell.end);
-		cellImages =
-			cellText.includes("![") &&
-			(cellText.includes("\\\\|") ||
-				cellText.includes("$") ||
-				cellText.includes("\\("))
-				? collectPhpTableCellImageRanges(source, phpBlockScan, startLine, cell)
-				: EMPTY_SOURCE_RANGES;
-		cellImageRangesCache.set(cellKey, cellImages);
-	}
-	return offsetInsideSortedRanges(cellImages, range.from)
-		? { excluded: true }
-		: { cell, excluded: false };
+): ReadonlyArray<ParserLinkNode> {
+	return inspectProjectedLinkNodes(text, nodes, profile).links;
 }
 
 /**
  * Maps prepared link nodes onto canonical source ranges. Candidates outside
  * editable paragraph-style blocks, inside math spans, or overlapping prepared
  * image ranges stay excluded so the menu never offers link actions there.
- * When `linkTableCellsOut` is supplied alongside `phpBlockScan`, records O(1)
- * PHP table-cell metadata for every accepted candidate inside a PHP table row.
  */
 export function linkCandidatesForBlocks(
-	projection: NewlineProjection | null,
+	projection: NewlineProjection,
 	blocks: ReadonlyArray<EditorMarkdownSourceBlock>,
 	nodes: ReadonlyArray<ParserLinkNode>,
 	mathRanges: ReadonlyArray<SourceRange>,
 	imageRanges: ReadonlyArray<EditorMarkdownImageRange>,
-	source?: string,
-	phpBlockScan?: ScannedMarkdownBlocks | null,
-	phpMathRanges?: ReadonlyArray<EditorMarkdownTableCellMathRange>,
-	linkTableCellsOut?: Map<number, EditorMarkdownLinkTableCellContext> | null,
 ): ReadonlyArray<EditorMarkdownLinkCandidate> {
 	const candidates: EditorMarkdownLinkCandidate[] = [];
-	const sourceMaySplitTableImage = Boolean(
-		source &&
-			(source.includes("\\\\|") ||
-				source.includes("$") ||
-				source.includes("\\(")),
-	);
-	const cellImageRangesCache = new Map<string, ReadonlyArray<SourceRange>>();
-	const maskedCellCache = new Map<string, string | undefined>();
 	let blockIndex = 0;
 	let mathIndex = 0;
 	let imageIndex = 0;
@@ -547,7 +501,7 @@ export function linkCandidatesForBlocks(
 			candidate && candidate.from < range.to && candidate.to > range.from,
 		);
 	for (const node of nodes) {
-		const range = projection ? originalRange(projection, node) : node;
+		const range = originalRange(projection, node);
 		while (
 			blockIndex < blocks.length &&
 			(blocks[blockIndex]?.to ?? 0) <= range.from
@@ -557,21 +511,6 @@ export function linkCandidatesForBlocks(
 		if (!block?.editable || block.from > range.from || range.to > block.to)
 			continue;
 		if (["code", "math", "unavailable"].includes(block.kind)) continue;
-		let tableCell: TableRowCellRange | null = null;
-		if (phpBlockScan && undefined !== source) {
-			if (inCodeRange(phpBlockScan.blockCodeRanges, range.from, range.to)) {
-				continue;
-			}
-			const check = checkRangeInPhpTable(
-				source,
-				phpBlockScan,
-				range,
-				sourceMaySplitTableImage,
-				cellImageRangesCache,
-			);
-			if (check.excluded) continue;
-			tableCell = check.cell;
-		}
 		while (
 			mathIndex < mathRanges.length &&
 			(mathRanges[mathIndex]?.to ?? 0) <= range.from
@@ -583,15 +522,7 @@ export function linkCandidatesForBlocks(
 			(imageRanges[imageIndex]?.to ?? 0) <= range.from
 		)
 			imageIndex += 1;
-		const activeImage = imageRanges[imageIndex];
-		if (
-			overlaps(range, activeImage) ||
-			(undefined !== activeImage &&
-				activeImage.from <= range.from &&
-				range.from < activeImage.to)
-		) {
-			continue;
-		}
+		if (overlaps(range, imageRanges[imageIndex])) continue;
 		const previous = candidates[candidates.length - 1];
 		if (previous && range.from < previous.to) {
 			// CommonMark rendered ownership: nested link syntax inside a link
@@ -607,20 +538,6 @@ export function linkCandidatesForBlocks(
 			reference: node.reference,
 			to: range.to,
 		});
-		if (tableCell && linkTableCellsOut && undefined !== source) {
-			linkTableCellsOut.set(
-				range.from,
-				deriveEditorMarkdownLinkTableCellContext(
-					source,
-					range.from,
-					range.to,
-					tableCell.start,
-					tableCell.end,
-					phpMathRanges ?? [],
-					maskedCellCache,
-				),
-			);
-		}
 	}
 	return candidates;
 }

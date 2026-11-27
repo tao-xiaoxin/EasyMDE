@@ -92,6 +92,7 @@ export type UseEditorContextMenuBridgeOptions = Readonly<{
   previewRuntimeGeneration: number;
   previewRuntimeRef: SharedRef<PreviewSurfaceRuntime | null>;
   publishEditorStatus: (status: EditorStatus) => void;
+  referenceLabelCaseFoldProfile: EditorRootProps['referenceLabelCaseFoldProfile'];
   releasePendingContextResourcesRef: SharedRef<
     (reason?: 'cancelled' | 'unavailable') => void
   >;
@@ -132,6 +133,7 @@ export function useEditorContextMenuBridge({
   previewRuntimeGeneration,
   previewRuntimeRef,
   publishEditorStatus,
+  referenceLabelCaseFoldProfile,
   releasePendingContextResourcesRef,
   remoteImageImportPort,
   reportFailure,
@@ -512,6 +514,7 @@ export function useEditorContextMenuBridge({
       previewAppearanceRef,
       previewPort,
       readContextMenuCurrentContext,
+      referenceLabelCaseFoldProfile,
       remoteImageImportPort,
       reportContextMenuFailure,
       rootActiveRef,
@@ -614,6 +617,7 @@ export function useEditorContextMenuBridge({
             scheduler
           );
         },
+        delayMs: 0,
         generation,
         onFailure: (error) => {
           const code = editorBlockIndexFailureCode(error);

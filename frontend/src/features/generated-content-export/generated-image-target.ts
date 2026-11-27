@@ -2,20 +2,10 @@ import type {
 	EditorMarkdownBlockIndexDataWithImages,
 	EditorMarkdownSourceBlock,
 } from "../../contracts/ports/editor-block-index-port";
-import { scanPhpMarkdownMathRanges } from "../../shared/markdown/php-markdown-math-mask";
 import {
 	type MarkdownImageScaleMatch,
 	parseMarkdownImageScale,
 } from "../image-scale/image-scale-contract";
-import {
-	findLineAtOffset,
-	getCachedMarkdownBlockScan,
-	type ScannedMarkdownBlocks,
-} from "../image-scale/image-scale-markdown-scan";
-import {
-	collectUncoveredPhpTableImages,
-	type LocatedMarkdownImageCore,
-} from "../image-scale/image-scale-syntax";
 
 export type GeneratedImageAcceptedPreview = Readonly<{
 	revision: number;
@@ -102,40 +92,6 @@ function safeNonNegativeInteger(value: unknown): value is number {
 	return "number" === typeof value && Number.isSafeInteger(value) && value >= 0;
 }
 
-function lineStartOffset(source: string, offset: number): number {
-	let cursor = Math.max(0, Math.min(source.length, offset));
-	while (
-		cursor > 0 &&
-		"\n" !== source[cursor - 1] &&
-		"\r" !== source[cursor - 1]
-	) {
-		cursor -= 1;
-	}
-	return cursor;
-}
-
-function parseSingleLineImageMatch(
-	source: string,
-	from: number,
-	to: number,
-	blockEnd: number,
-	rawSlice: string,
-): MarkdownImageScaleMatch | null {
-	let singleLineSliceEnd = to;
-	const maxSliceEnd = Math.min(blockEnd, to + 4);
-	while (
-		singleLineSliceEnd < maxSliceEnd &&
-		"\n" !== source[singleLineSliceEnd] &&
-		"\r" !== source[singleLineSliceEnd]
-	) {
-		singleLineSliceEnd += 1;
-	}
-	const singleLineSlice =
-		singleLineSliceEnd > to ? source.slice(from, singleLineSliceEnd) : rawSlice;
-	const parsed = parseMarkdownImageScale(singleLineSlice);
-	return parsed && parsed.end === to - from ? shiftedImage(parsed, from) : null;
-}
-
 function shiftedImage(
 	image: MarkdownImageScaleMatch,
 	offset: number,
@@ -169,6 +125,7 @@ export type GeneratedImageTargetHydrationInput = Readonly<{
 
 const MAX_IMAGE_TARGET_SOURCE_UNITS = 16_384;
 const IMAGE_HYDRATION_SLICE_MS = 4;
+const IMAGE_HYDRATION_MAX_WORK_UNITS = 4096;
 
 type HydrationBudget = Readonly<{
 	deadline: number;
@@ -192,7 +149,7 @@ async function hydrationCheckpoint(budget: HydrationBudget): Promise<void> {
 	assertHydrationActive(budget);
 	budget.workUnits += 1;
 	if (
-		budget.workUnits < 256 &&
+		budget.workUnits < IMAGE_HYDRATION_MAX_WORK_UNITS &&
 		budget.now() - budget.sliceStarted < IMAGE_HYDRATION_SLICE_MS
 	)
 		return;
@@ -316,42 +273,6 @@ export async function hydrateGeneratedImageTargetIndex(
 	const blockImages: Array<GeneratedImageTargetIndex["blockImages"][number]> =
 		[];
 	const images: MarkdownImageScaleMatch[] = [];
-	const sourceHasPipe = input.source.includes("|");
-	const firstDollar = input.source.indexOf("$");
-	const sourceHasDollarPair =
-		firstDollar >= 0 && input.source.indexOf("$", firstDollar + 1) >= 0;
-	const sourceHasBackslash = input.source.includes("\\");
-	const sourceHasBackslashMathPair =
-		sourceHasBackslash &&
-		((input.source.includes("\\[") && input.source.includes("\\]")) ||
-			(input.source.includes("\\(") && input.source.includes("\\)")));
-	const sourceNeedsDocBlockScan =
-		sourceHasPipe ||
-		input.imageIndex.mathSpans.length > 0 ||
-		sourceHasDollarPair ||
-		sourceHasBackslashMathPair;
-	let docBlocks: ScannedMarkdownBlocks | null = null;
-	const mayHaveUncoveredTableImages =
-		sourceHasPipe && input.source.includes("![");
-	let uncoveredTableImages: ReadonlyArray<LocatedMarkdownImageCore> = [];
-	let uncoveredMathRanges: ReadonlyArray<Readonly<{ from: number; to: number }>> =
-		[];
-	if (mayHaveUncoveredTableImages) {
-		docBlocks = getCachedMarkdownBlockScan(input.source);
-		uncoveredTableImages = collectUncoveredPhpTableImages(
-			input.source,
-			docBlocks,
-			input.imageIndex.imageRanges,
-		);
-		if (uncoveredTableImages.length > 0) {
-			uncoveredMathRanges =
-				input.imageIndex.mathSpans.length > 0
-					? input.imageIndex.mathSpans
-					: scanPhpMarkdownMathRanges(input.source);
-		}
-	}
-	let uncoveredIdx = 0;
-	let uncoveredMathIdx = 0;
 	for (let blockIndex = 0; blockIndex < input.blocks.length; blockIndex += 1) {
 		await hydrationCheckpoint(budget);
 		const block = input.blocks[blockIndex];
@@ -368,11 +289,6 @@ export async function hydrateGeneratedImageTargetIndex(
 		} else {
 			const prepared: MarkdownImageScaleMatch[] = [];
 			let blockUnavailable = false;
-			let blockContext: Readonly<{
-				blocks: ScannedMarkdownBlocks;
-				slice: string;
-				start: number;
-			}> | null = null;
 			for (
 				let imageOffset = 0;
 				imageOffset < metadata.count;
@@ -394,65 +310,18 @@ export async function hydrateGeneratedImageTargetIndex(
 				}
 				if (!blockUnavailable) {
 					try {
-						const rawSlice = input.source.slice(range.from, range.to);
-						const isMultiline =
-							rawSlice.includes("\n") || rawSlice.includes("\r");
-						let image: MarkdownImageScaleMatch | null = null;
-						if (sourceNeedsDocBlockScan) {
-							if (null === docBlocks) {
-								docBlocks = getCachedMarkdownBlockScan(input.source);
-							}
-							const line = findLineAtOffset(docBlocks.lines, range.from);
-							image =
-								!isMultiline &&
-								line &&
-								!line.isTableRow &&
-								line.inlineBlockId >= 0 &&
-								range.to <= line.lineEnd
-									? parseSingleLineImageMatch(
-											input.source,
-											range.from,
-											range.to,
-											block.to,
-											rawSlice,
-										)
-									: parseMarkdownImageScale(input.source, range.from, docBlocks);
-						} else if (!isMultiline) {
-							image = parseSingleLineImageMatch(
-								input.source,
-								range.from,
-								range.to,
-								block.to,
-								rawSlice,
-							);
-						} else {
-							if (null === blockContext) {
-								const contextStart = lineStartOffset(input.source, block.from);
-								const slice = input.source.slice(contextStart, block.to);
-								blockContext = {
-									blocks: getCachedMarkdownBlockScan(slice),
-									slice,
-									start: contextStart,
-								};
-							}
-							const parsed = parseMarkdownImageScale(
-								blockContext.slice,
-								range.from - blockContext.start,
-								blockContext.blocks,
-							);
-							if (parsed) {
-								image = shiftedImage(parsed, blockContext.start);
-							}
-						}
-						if (
-							!image ||
-							image.start !== range.from ||
-							image.end !== range.to ||
-							image.raw !== rawSlice
-						) {
+						const parsed = parseMarkdownImageScale(
+							input.source.slice(range.from, range.to),
+						);
+						if (!parsed || parsed.end !== range.to - range.from) {
 							blockUnavailable = true;
 						} else {
-							prepared.push(image);
+							const image = shiftedImage(parsed, range.from);
+							if (image.raw !== input.source.slice(range.from, range.to)) {
+								blockUnavailable = true;
+							} else {
+								prepared.push(image);
+							}
 						}
 					} catch (error) {
 						if (
@@ -462,104 +331,6 @@ export async function hydrateGeneratedImageTargetIndex(
 							blockUnavailable = true;
 						} else {
 							throw error;
-						}
-					}
-				}
-			}
-			if (
-				!blockUnavailable &&
-				uncoveredTableImages.length > 0 &&
-				"code" !== block.kind &&
-				"unavailable" !== block.kind
-			) {
-				while (
-					uncoveredIdx < uncoveredTableImages.length &&
-					(uncoveredTableImages[uncoveredIdx]?.core.imageEnd ?? 0) <= block.from
-				) {
-					uncoveredIdx += 1;
-				}
-				let addedRecovered = false;
-				let preparedRangeKeys: Set<string> | null = null;
-				while (uncoveredIdx < uncoveredTableImages.length) {
-					const located = uncoveredTableImages[uncoveredIdx];
-					if (!located || located.start >= block.to) break;
-					uncoveredIdx += 1;
-					const from = located.start;
-					const to = located.core.imageEnd;
-					if (from < block.from || to > block.to) {
-						blockUnavailable = true;
-						continue;
-					}
-					while (
-						uncoveredMathIdx < uncoveredMathRanges.length &&
-						(uncoveredMathRanges[uncoveredMathIdx]?.to ?? 0) <= from
-					) {
-						uncoveredMathIdx += 1;
-					}
-					const math = uncoveredMathRanges[uncoveredMathIdx];
-					if (math && from < math.to && to > math.from) {
-						if (from >= math.from && to <= math.to) continue;
-						blockUnavailable = true;
-						continue;
-					}
-					if (to - from > MAX_IMAGE_TARGET_SOURCE_UNITS) {
-						blockUnavailable = true;
-						continue;
-					}
-					if (prepared.length > 0) {
-						if (null === preparedRangeKeys) {
-							preparedRangeKeys = new Set<string>();
-							for (let idx = 0; idx < prepared.length; idx += 1) {
-								const existing = prepared[idx];
-								if (existing) {
-									preparedRangeKeys.add(`${existing.start}:${existing.end}`);
-								}
-							}
-						}
-						if (preparedRangeKeys.has(`${from}:${to}`)) {
-							continue;
-						}
-					}
-					if (!blockUnavailable) {
-						await hydrationCheckpoint(budget);
-						try {
-							const parsed = parseMarkdownImageScale(
-								input.source,
-								from,
-								docBlocks ?? undefined,
-							);
-							if (
-								!parsed ||
-								parsed.start !== from ||
-								parsed.end !== to ||
-								parsed.raw !== input.source.slice(from, to)
-							) {
-								blockUnavailable = true;
-							} else {
-								prepared.push(parsed);
-								preparedRangeKeys?.add(`${from}:${to}`);
-								addedRecovered = true;
-							}
-						} catch (error) {
-							if (
-								error instanceof Error &&
-								error.message === "image-scale-syntax-invalid"
-							) {
-								blockUnavailable = true;
-							} else {
-								throw error;
-							}
-						}
-					}
-				}
-				if (addedRecovered && !blockUnavailable && prepared.length > 1) {
-					prepared.sort((left, right) => left.start - right.start || left.end - right.end);
-					for (let idx = 1; idx < prepared.length; idx += 1) {
-						const prev = prepared[idx - 1];
-						const curr = prepared[idx];
-						if (prev && curr && curr.start < prev.end) {
-							blockUnavailable = true;
-							break;
 						}
 					}
 				}
@@ -583,7 +354,11 @@ export async function hydrateGeneratedImageTargetIndex(
 		}
 		await hydrationCheckpoint(budget);
 	}
-	await budget.yield();
+	if (budget.now() - budget.sliceStarted >= IMAGE_HYDRATION_SLICE_MS) {
+		await budget.yield();
+	} else {
+		await Promise.resolve();
+	}
 	assertHydrationActive(budget);
 	return {
 		blockImages,

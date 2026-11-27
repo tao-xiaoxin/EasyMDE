@@ -13,7 +13,6 @@ import {
 import type { EditorView } from "prosemirror-view";
 import { parseMarkdownToVisualDoc } from "./markdown-parser";
 import { serializeVisualDocToMarkdown } from "./markdown-serializer";
-import { remapLinkBoundaryKeys } from "./visual-link-boundary-remap";
 import { visualEditorSchema } from "./visual-schema";
 
 export type VisualClipboardPluginOptions = Readonly<{
@@ -31,7 +30,7 @@ const SEMANTIC_HTML_TAG_PATTERN =
 	/<\/?(?:h[1-6]|strong|b|em|i|del|s|a|img|ul|ol|li|table|thead|tbody|tr|th|td|blockquote|pre|code|hr)\b/i;
 
 const MARKDOWN_SYNTAX_SIGNAL_PATTERN =
-	/(?:^|\n)(?: {0,3}(?:#{1,6}\s|>\s|[-+*]\s|\d{1,9}\.\s|```|~~~|\$\$|---+|\*\*\*+|___+)|\|[^\n]+\|\n\|?[ \t]*:?-{1,}:?[ \t]*\|)|\*\*[^*\n]+\*\*|~~[^~\n]+~~|`[^`\n]+`|!?\[[^\]\n]+\]\([^)\n]+\)/;
+	/(?:^|\n)(?: {0,3}(?:#{1,6}\s|>\s|[-+*]\s|\d+\.\s|```|~~~|\$\$|---+|\*\*\*+|___+)|\|[^\n]+\|\n\|?[ \t]*:?-{1,}:?[ \t]*\|)|\*\*[^*\n]+\*\*|~~[^~\n]+~~|`[^`\n]+`|!?\[[^\]\n]+\]\([^)\n]+\)/;
 
 function resolveBooleanOption(
 	option: boolean | (() => boolean) | undefined,
@@ -231,10 +230,7 @@ function insertParsedMarkdownDoc(
 		);
 		return true;
 	}
-	// A pasted fragment is parsed as its own document: re-key its links so
-	// they never merge with an adjacent existing link.
-	const freshDoc = parseMarkdownToVisualDoc(normalized);
-	const parsedDoc = freshDoc.copy(remapLinkBoundaryKeys(freshDoc.content));
+	const parsedDoc = parseMarkdownToVisualDoc(normalized);
 
 	if (isSelectionInsideTableCell(view)) {
 		const cellFragment = flattenDocToTableCellFragment(parsedDoc);

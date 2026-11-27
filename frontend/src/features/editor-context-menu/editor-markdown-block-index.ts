@@ -1,78 +1,93 @@
-import { markdownLanguage } from "@codemirror/lang-markdown";
+import type { Tree } from "@lezer/common";
 
 import type {
 	EditorMarkdownBlockIndexData,
 	EditorMarkdownBlockKind,
+	EditorMarkdownImageBlock,
+	EditorMarkdownImageRange,
 	EditorMarkdownSourceBlock,
 	ReferenceLabelCaseFoldProfile,
 } from "../../contracts/ports/editor-block-index-port";
 import { markdownLineStarts } from "../../shared/markdown/markdown-line-model";
 import {
-	extractPhpCommonMarkReferenceLabel,
-	type PhpMarkdownMathRange,
-	type ScannedCodeRange,
-	type ScannedMarkdownBlocks,
-	scanPhpCommonMarkBlockCodeRanges,
-	scanPhpCommonMarkBlocks,
-	scanPhpCommonMarkReferenceLabels,
-} from "../../shared/markdown/php-commonmark-block-scan";
-import { hasPotentialGfmAutolinkTrigger } from "../../shared/markdown/php-commonmark-inline-html";
-import { scanPhpMarkdownMathRanges } from "../../shared/markdown/php-markdown-math-mask";
-import { collectUncoveredPhpTableImages } from "../image-scale/image-scale-syntax";
-import {
-	createUnresolvedReferenceImageChecker,
-	dropImagesOverlappingRanges,
-	dropLezerImagesInsideRecovered,
-	extractReferenceImageLabelRange,
-	imageIndexForBlocks,
-	isImageNodeDroppedByPhp,
-	isInlineImageNode,
-	type ParserImageNode,
-} from "./editor-markdown-image-preparation";
-import { lineIndexAtOffsets } from "./editor-markdown-lines";
-import {
-	type EditorMarkdownLinkTableCellContext,
-	linkCandidatesForBlocks,
-	type MarkdownSyntaxNode,
-	type ParserLinkNode,
-	projectedLinkNodes,
-} from "./editor-markdown-link-preparation";
-import {
-	mathSpanFromRange,
-	overlayMath,
-} from "./editor-markdown-math-preparation";
-import { reconcilePhpTableUnavailableBlocks } from "./editor-markdown-php-block-reconcile";
-import {
-	collectLocalPhpBareAutolinkBlockLinks,
-	collectPhpDisplayMathBrokenBlockLinks,
-	collectPhpReconciledBlocksContent,
-	collectUncoveredBareAutolinkOffsets,
-	mergePhpOwnedBlockLinks,
-	mergeSortedByRange,
-	type PhpOwnedBlockLinks,
-} from "./editor-markdown-php-inline-links";
-import { reconcilePhpNonCodeBlocks } from "./editor-markdown-php-non-code-reconcile";
-import {
+	appendAll,
+	hasRangeOverlap,
 	mergeRanges,
 	type NewlineProjection,
 	originalOffsetAt,
 	originalRange,
 	projectNewlines,
 	type SourceRange,
-} from "./editor-markdown-source-projection";
-import { normalizeMarkdownReferenceLabel } from "./reference-label-normalization";
+} from "../../shared/markdown/markdown-source-projection";
+import {
+	createLinearLeagueMarkdownParser,
+	MAX_LEAGUE_BLOCK_NESTING_DEPTH,
+} from "./editor-markdown-league-parser-factory";
+import { lineIndexAtOffsets } from "./editor-markdown-lines";
+import {
+	inspectProjectedLinkNodes,
+	linkCandidatesForBlocks,
+	type MarkdownSyntaxNode,
+	type ParserLinkNode,
+	projectedLinkNodes,
+} from "./editor-markdown-link-preparation";
+import {
+	type MathRange,
+	mapSubstitutedEndToOriginal,
+	mapSubstitutedStartToOriginal,
+	mathRanges,
+	mathSpanFromRange,
+	normalizeMathRanges,
+	type PhpMathSubstitution,
+	phpScansCodeBlocks,
+	scanRawMarkdownInlineCodeRanges,
+	substitutePhpMathRanges,
+} from "./editor-markdown-math-preparation";
+
+const blockIndexMarkdownParser = createLinearLeagueMarkdownParser({
+	allowNestedShortcutLinkCandidates: true,
+	blockNesting: { maxDepth: MAX_LEAGUE_BLOCK_NESTING_DEPTH, mode: "cap" },
+	htmlTagDialect: "league",
+	rejectUnescapedOpenParenInTitle: true,
+});
+
+const EMPTY_SUBSTITUTIONS: ReadonlyArray<PhpMathSubstitution> = [];
+
+/**
+ * Nodes stripped from rendered HTML by League CommonMark (`html_input => 'strip'`)
+ * or omitted from block output (`LinkReference`), so any extracted math token
+ * landing inside them never survives into rendered HTML.
+ */
+const SUB_MATH_EXCLUDED_NODES: ReadonlySet<string> = new Set([
+	"Comment",
+	"CommentBlock",
+	"HTMLBlock",
+	"HTMLTag",
+	"LinkReference",
+	"ProcessingInstruction",
+	"ProcessingInstructionBlock",
+]);
+
+/** Only syntax nodes consulted by `projectedLinkNodes()`. */
+const LINK_PROJECTION_SYNTAX_NODES: ReadonlySet<string> = new Set([
+	"Autolink",
+	"CodeBlock",
+	"FencedCode",
+	"Image",
+	"InlineCode",
+	"Link",
+	"LinkLabel",
+	"LinkMark",
+	"LinkReference",
+	"LinkTitle",
+	"URL",
+]);
 
 export type {
 	EditorMarkdownBlockKind,
 	EditorMarkdownMathSpan,
 	EditorMarkdownSourceBlock,
 } from "../../contracts/ports/editor-block-index-port";
-export type { EditorMarkdownLinkTableCellContext } from "./editor-markdown-link-preparation";
-
-const EMPTY_LINK_TABLE_CELLS: ReadonlyMap<
-	number,
-	EditorMarkdownLinkTableCellContext
-> = new Map<number, EditorMarkdownLinkTableCellContext>();
 
 export type EditorMarkdownBlockIndex = EditorMarkdownBlockIndexData &
 	Readonly<{
@@ -80,14 +95,10 @@ export type EditorMarkdownBlockIndex = EditorMarkdownBlockIndexData &
 		source: string;
 	}>;
 
-type ParserSnapshot = Readonly<{
-	blocks: ReadonlyArray<EditorMarkdownSourceBlock>;
-	hasIndentedCodeBlock: boolean;
-	hasLinkSyntax: boolean;
-	imageNodes: ReadonlyArray<ParserImageNode>;
-	nestedCodeBlocks: ReadonlyArray<SourceRange>;
-	syntaxNodes: ReadonlyArray<MarkdownSyntaxNode>;
-	unavailableRanges: ReadonlyArray<SourceRange>;
+type ParserImageNode = Readonly<{
+	available: boolean;
+	from: number;
+	to: number;
 }>;
 
 function nodeKind(name: string): EditorMarkdownBlockKind {
@@ -101,554 +112,470 @@ function nodeKind(name: string): EditorMarkdownBlockKind {
 	return "unavailable";
 }
 
-function lineContentEndAt(source: string, position: number): number {
-	const bounded = Math.max(0, Math.min(source.length, position));
-	for (let index = bounded; index < source.length; index += 1) {
-		if ("\n" === source[index] || "\r" === source[index]) return index;
+function imageNodeIsInline(source: string, from: number, to: number): boolean {
+	if (
+		from < 0 ||
+		to <= from ||
+		to > source.length ||
+		"!" !== source[from] ||
+		"[" !== source[from + 1]
+	) {
+		return false;
 	}
-	return source.length;
-}
-
-function sourceBlock(
-	source: string,
-	starts: ReadonlyArray<number>,
-	from: number,
-	to: number,
-	kind: EditorMarkdownBlockKind,
-): EditorMarkdownSourceBlock {
-	const lineStart = lineIndexAtOffsets(starts, from);
-	const start = starts[lineStart] ?? 0;
-	const end = lineContentEndAt(source, Math.max(from, to - 1));
-	return {
-		editable: "unavailable" !== kind,
-		from: start,
-		kind,
-		lineEnd: lineIndexAtOffsets(starts, Math.max(start, end)),
-		lineStart,
-		to: Math.max(start, end),
-	};
-}
-
-function parserSnapshot(
-	source: string,
-	projection: NewlineProjection,
-): ParserSnapshot {
-	const starts = markdownLineStarts(source);
-	const tree = markdownLanguage.parser.parse(projection.text);
-	const syntaxNodes: MarkdownSyntaxNode[] = [];
-	const codeBlockNodes: SourceRange[] = [];
-	let hasLinkSyntax = false;
-	let hasIndentedCodeBlock = false;
-	tree.iterate({
-		enter: (node) => {
-			if (
-				"Link" === node.name ||
-				"Autolink" === node.name ||
-				"URL" === node.name
-			) {
-				hasLinkSyntax = true;
-			} else if ("CodeBlock" === node.name) {
-				hasIndentedCodeBlock = true;
-				codeBlockNodes.push({ from: node.from, to: node.to });
-			}
-			syntaxNodes.push({ from: node.from, name: node.name, to: node.to });
-		},
-	});
-	const topLevel = tree.cursor();
-	const blocks: EditorMarkdownSourceBlock[] = [];
-	const projectedBlocks: Array<
-		Readonly<{
-			from: number;
-			kind: EditorMarkdownBlockKind;
-			to: number;
-		}>
-	> = [];
-	const unavailableRanges: SourceRange[] = [];
-	const nestedCodeBlocks: SourceRange[] = [];
-	let codeBlockCursor = 0;
-	if (topLevel.firstChild()) {
-		do {
-			const kind = nodeKind(topLevel.name);
-			if ("unavailable" === kind) {
-				unavailableRanges.push({ from: topLevel.from, to: topLevel.to });
-			}
-			while (
-				codeBlockCursor < codeBlockNodes.length &&
-				(codeBlockNodes[codeBlockCursor]?.from ?? 0) < topLevel.to
-			) {
-				const cb = codeBlockNodes[codeBlockCursor];
-				codeBlockCursor += 1;
-				if (
-					cb &&
-					cb.from >= topLevel.from &&
-					cb.to <= topLevel.to &&
-					"CodeBlock" !== topLevel.name &&
-					"unavailable" !== kind &&
-					"code" !== kind
-				) {
-					nestedCodeBlocks.push(originalRange(projection, cb));
-				}
-			}
-			projectedBlocks.push({ from: topLevel.from, kind, to: topLevel.to });
-			blocks.push(
-				sourceBlock(
-					source,
-					starts,
-					originalOffsetAt(projection, topLevel.from),
-					originalOffsetAt(projection, topLevel.to),
-					kind,
-				),
-			);
-		} while (topLevel.nextSibling());
-	}
-
-	const imageNodes: ParserImageNode[] = [];
-	let imageBlockIndex = 0;
-	tree.cursor().iterate((node) => {
-		if ("Image" !== node.name) return;
-		while (
-			imageBlockIndex < projectedBlocks.length &&
-			node.from >=
-				(projectedBlocks[imageBlockIndex]?.to ?? projection.text.length + 1)
-		)
-			imageBlockIndex += 1;
-		const block = projectedBlocks[imageBlockIndex];
-		if (
-			!block ||
-			node.from < block.from ||
-			node.to > block.to ||
-			"code" === block.kind ||
-			"unavailable" === block.kind
-		)
-			return;
-		const available = isInlineImageNode(projection.text, node.node);
-		const refRange = available
-			? null
-			: extractReferenceImageLabelRange(projection.text, node.node);
-		imageNodes.push({
-			available,
-			from: originalOffsetAt(projection, node.from),
-			projectedFrom: node.from,
-			projectedTo: node.to,
-			...(refRange
-				? {
-						referenceLabelFrom: originalOffsetAt(projection, refRange.from),
-						referenceLabelTo: originalOffsetAt(projection, refRange.to),
-					}
-				: {}),
-			to: originalOffsetAt(projection, node.to),
-		});
-	});
-	return {
-		blocks,
-		hasIndentedCodeBlock,
-		hasLinkSyntax,
-		imageNodes,
-		nestedCodeBlocks,
-		syntaxNodes,
-		unavailableRanges: mergeRanges(unavailableRanges),
-	};
-}
-
-/**
- * Answers whether the reference label at source range `[from, to)` resolves
- * to a definition PHP `extract_math()` + `League\CommonMark` recognizes.
- */
-function createPhpReferenceRangeQuery(
-	source: string,
-	phpMathRanges: ReadonlyArray<PhpMarkdownMathRange>,
-	phpBlockScan: ScannedMarkdownBlocks | null,
-	profile: ReferenceLabelCaseFoldProfile,
-): (from: number, to: number) => boolean {
-	let rawLabels: ReadonlyArray<string> | null = null;
-	let normalizedLabels: Set<string> | null = null;
-	let foldUnavailable = false;
-	let lazyMultilineScan: ScannedMarkdownBlocks | null = null;
-	const getMultilineBlockScan = (): ScannedMarkdownBlocks => {
-		if (null === lazyMultilineScan) {
-			lazyMultilineScan = scanPhpCommonMarkBlocks(source, phpMathRanges);
-		}
-		return lazyMultilineScan;
-	};
-	const isPhpReferenceLabelDefined = (rawLabel: string): boolean => {
-		if (null === rawLabels) {
-			rawLabels = scanPhpCommonMarkReferenceLabels(source, phpMathRanges);
-		}
-		if (0 === rawLabels.length) return false;
-		if (foldUnavailable) return true;
-		try {
-			if (null === normalizedLabels) {
-				const collected = new Set<string>();
-				for (let i = 0; i < rawLabels.length; i += 1) {
-					const label = rawLabels[i];
-					if (undefined !== label) {
-						collected.add(normalizeMarkdownReferenceLabel(label, profile));
-					}
-				}
-				normalizedLabels = collected;
-			}
-			const key = normalizeMarkdownReferenceLabel(rawLabel, profile);
-			return key.length > 0 && normalizedLabels.has(key);
-		} catch (error) {
-			if (
-				error instanceof Error &&
-				"visual-editor-reference-label-fold-profile-unavailable" ===
-					error.message
-			) {
-				foldUnavailable = true;
-				return true;
-			}
-			throw error;
-		}
-	};
-	return (from: number, to: number): boolean => {
-		const rawLabel = extractPhpCommonMarkReferenceLabel(
-			source,
-			from,
-			to,
-			phpMathRanges,
-			phpBlockScan,
-			getMultilineBlockScan,
-		);
-		return null !== rawLabel && isPhpReferenceLabelDefined(rawLabel);
-	};
-}
-
-/**
- * Drops every Lezer link overlapping a PHP-owned display-math-broken inline
- * block or table cell (using exact original-source coordinates so multiline
- * CRLF ranges never drift) and merges PHP's exact links in sorted order.
- */
-function mergeOriginalLinkNodesWithPhpOwned(
-	projection: NewlineProjection,
-	rawLinkNodes: ReadonlyArray<ParserLinkNode>,
-	phpOwned: PhpOwnedBlockLinks,
-): ParserLinkNode[] {
-	const surviving: ParserLinkNode[] = [];
-	let ownedIdx = 0;
-	for (let i = 0; i < rawLinkNodes.length; i += 1) {
-		const node = rawLinkNodes[i];
-		if (!node) continue;
-		const range = originalRange(projection, node);
-		while (
-			ownedIdx < phpOwned.ownedRanges.length &&
-			(phpOwned.ownedRanges[ownedIdx]?.to ?? 0) <= range.from
-		) {
-			ownedIdx += 1;
-		}
-		const owned = phpOwned.ownedRanges[ownedIdx];
-		if (owned && owned.from < range.to && owned.to > range.from) {
+	let slashRun = 0;
+	for (let index = from + 2; index < to; index += 1) {
+		const character = source[index];
+		if ("\\" === character) {
+			slashRun += 1;
 			continue;
 		}
-		surviving.push({
-			from: range.from,
-			kind: node.kind,
-			reference: node.reference,
-			to: range.to,
-		});
-	}
-
-	return mergeSortedByRange(surviving, phpOwned.links);
-}
-
-function hasMathInCodeBlocks(
-	blocks: ReadonlyArray<EditorMarkdownSourceBlock>,
-	mathRanges: ReadonlyArray<PhpMarkdownMathRange>,
-): boolean {
-	let blockIdx = 0;
-	for (let i = 0; i < mathRanges.length; i += 1) {
-		const math = mathRanges[i];
-		if (!math) continue;
-		while (
-			blockIdx < blocks.length &&
-			(blocks[blockIdx]?.to ?? 0) <= math.from
-		) {
-			blockIdx += 1;
-		}
-		const block = blocks[blockIdx];
-		if (
-			block &&
-			"code" === block.kind &&
-			block.from < math.to &&
-			block.to > math.from
-		) {
-			return true;
+		const escaped = slashRun % 2 === 1;
+		slashRun = 0;
+		if ("]" === character && !escaped) {
+			return "(" === source[index + 1];
 		}
 	}
 	return false;
 }
 
-export function createEditorMarkdownBlockIndex(
+/** O(1) line content end offset (before LF, CRLF, or bare CR) from `starts`. */
+function lineContentEnd(
 	source: string,
-	options: Readonly<{
-		referenceLabelCaseFoldProfile: ReferenceLabelCaseFoldProfile;
-	}>,
-): EditorMarkdownBlockIndex {
-	const starts = markdownLineStarts(source);
-	const projection = projectNewlines(source);
-	const parsed = parserSnapshot(source, projection);
-	const mayHaveMath =
-		source.includes("$") || source.includes("\\[") || source.includes("\\(");
-	const phpBlockCodeRanges =
-		parsed.hasIndentedCodeBlock && mayHaveMath
-			? scanPhpCommonMarkBlockCodeRanges(source)
-			: undefined;
-	const phpMathRanges = mayHaveMath
-		? scanPhpMarkdownMathRanges(
-				source,
-				undefined,
-				undefined,
-				phpBlockCodeRanges,
-			)
-		: [];
-	const hasTableImageCandidate = source.includes("|") && source.includes("![");
-	const hasEscapedPipe = source.includes("\\|");
-	const hasAutolinkTrigger = hasPotentialGfmAutolinkTrigger(source);
-	const phpBlockScan =
-		parsed.hasIndentedCodeBlock ||
-		((source.includes("|") || phpMathRanges.length > 0) &&
-			(parsed.imageNodes.length > 0 ||
-				parsed.hasLinkSyntax ||
-				parsed.unavailableRanges.length > 0 ||
-				hasTableImageCandidate ||
-				hasEscapedPipe ||
-				hasAutolinkTrigger))
-			? scanPhpCommonMarkBlocks(source, phpMathRanges)
-			: null;
-	const nonCodeReconciled =
-		parsed.hasIndentedCodeBlock && phpBlockScan
-			? reconcilePhpNonCodeBlocks(
-					source,
-					parsed.blocks,
-					phpBlockScan,
-					phpMathRanges,
-					starts,
-					parsed.nestedCodeBlocks,
-				)
-			: {
-					blocks: parsed.blocks,
-					reconciledInlineBlocks: [],
-					reconciledTableBlocks: [],
-				};
-	const unavailableTableReconciled = phpBlockScan
-		? reconcilePhpTableUnavailableBlocks(
-				source,
-				nonCodeReconciled.blocks,
-				phpBlockScan,
-				phpMathRanges,
-				starts,
-			)
-		: { blocks: nonCodeReconciled.blocks, reconciledTableBlocks: [] };
-	const tableReconciledBlocks = unavailableTableReconciled.blocks;
-	const reconciledInlineBlocks = nonCodeReconciled.reconciledInlineBlocks;
-	const reconciledTableBlocks =
-		nonCodeReconciled.reconciledTableBlocks.length > 0
-			? unavailableTableReconciled.reconciledTableBlocks.length > 0
-				? [
-						...nonCodeReconciled.reconciledTableBlocks,
-						...unavailableTableReconciled.reconciledTableBlocks,
-					]
-				: nonCodeReconciled.reconciledTableBlocks
-			: unavailableTableReconciled.reconciledTableBlocks;
-	const excludeCodeBlocksFromMath =
-		phpMathRanges.length > 0 &&
-		hasMathInCodeBlocks(tableReconciledBlocks, phpMathRanges);
-	const remainingExcludedMathRanges: ScannedCodeRange[] = [];
-	for (let i = 0; i < tableReconciledBlocks.length; i += 1) {
-		const block = tableReconciledBlocks[i];
-		if (
-			block &&
-			("unavailable" === block.kind ||
-				(excludeCodeBlocksFromMath && "code" === block.kind))
-		) {
-			remainingExcludedMathRanges.push({ end: block.to, start: block.from });
-		}
+	starts: ReadonlyArray<number>,
+	lineIndex: number,
+): number {
+	const nextStart = starts[lineIndex + 1];
+	if (undefined === nextStart) return source.length;
+	const start = starts[lineIndex] ?? 0;
+	let end = nextStart;
+	if (end > start && 10 /* \n */ === source.charCodeAt(end - 1)) end -= 1;
+	if (end > start && 13 /* \r */ === source.charCodeAt(end - 1)) end -= 1;
+	return end;
+}
+
+function stageOneCodeRanges(
+	projectedText: string,
+	tree: Tree,
+): ReadonlyArray<SourceRange> {
+	const blockCodeRanges: SourceRange[] = [];
+	if (phpScansCodeBlocks(projectedText)) {
+		const projectedStarts = markdownLineStarts(projectedText);
+		tree.iterate({
+			enter: (node) => {
+				if ("FencedCode" === node.name || "CodeBlock" === node.name) {
+					const endLine = lineIndexAtOffsets(
+						projectedStarts,
+						Math.max(node.from, node.to - 1),
+					);
+					blockCodeRanges.push({
+						from:
+							projectedStarts[lineIndexAtOffsets(projectedStarts, node.from)] ??
+							0,
+						to: projectedStarts[endLine + 1] ?? projectedText.length,
+					});
+					return false;
+				}
+				return undefined;
+			},
+		});
 	}
-	const ranges =
-		remainingExcludedMathRanges.length > 0 && phpMathRanges.length > 0
-			? scanPhpMarkdownMathRanges(
-					source,
-					remainingExcludedMathRanges,
-					undefined,
-					phpBlockCodeRanges,
-				)
-			: phpMathRanges;
-	const blocks = overlayMath(
-		source,
-		tableReconciledBlocks,
-		ranges,
-		starts,
-		[],
+	const mergedBlockCode = mergeRanges(blockCodeRanges);
+	const inlineCodeRanges = scanRawMarkdownInlineCodeRanges(
+		projectedText,
+		mergedBlockCode,
 	);
-	const isReferenceRangeDefined = createPhpReferenceRangeQuery(
-		source,
-		phpMathRanges,
-		phpBlockScan,
-		options.referenceLabelCaseFoldProfile,
-	);
-	const reconciledContent =
-		phpBlockScan &&
-		(reconciledInlineBlocks.length > 0 || reconciledTableBlocks.length > 0)
-			? collectPhpReconciledBlocksContent(
-					source,
-					phpBlockScan,
-					reconciledInlineBlocks,
-					reconciledTableBlocks,
-					isReferenceRangeDefined,
-					phpMathRanges,
-				)
-			: null;
-	const sortedLezerImages = [...parsed.imageNodes].sort(
+	return inlineCodeRanges.length > 0
+		? mergeRanges([...mergedBlockCode, ...inlineCodeRanges])
+		: mergedBlockCode;
+}
+
+function imageIndexForBlocks(
+	blocks: ReadonlyArray<EditorMarkdownSourceBlock>,
+	nodes: ReadonlyArray<ParserImageNode>,
+	mathRanges: ReadonlyArray<SourceRange>,
+): Readonly<{
+	imageBlocks: ReadonlyArray<EditorMarkdownImageBlock>;
+	imageRanges: ReadonlyArray<EditorMarkdownImageRange>;
+}> {
+	const imageBlocks: EditorMarkdownImageBlock[] = [];
+	const imageRanges: EditorMarkdownImageRange[] = [];
+	const sortedNodes = [...nodes].sort(
 		(left, right) => left.from - right.from || right.to - left.to,
 	);
-	const availableLezerImages = sortedLezerImages.filter(
-		(node) =>
-			node.available &&
-			(!phpBlockScan ||
-				!isImageNodeDroppedByPhp(source, phpBlockScan, node.from, node.to)),
-	);
-	const coveredTableImageRanges: ReadonlyArray<SourceRange> =
-		reconciledContent && reconciledContent.ownedRanges.length > 0
-			? mergeRanges([...availableLezerImages, ...reconciledContent.ownedRanges])
-			: availableLezerImages;
-	const recoveredTableImages =
-		phpBlockScan && hasTableImageCandidate
-			? collectUncoveredPhpTableImages(
-					source,
-					phpBlockScan,
-					coveredTableImageRanges,
-				).map((located) => ({
-					available: true,
-					from: located.start,
-					to: located.core.imageEnd,
-				}))
-			: [];
-	const baseImageNodes =
-		recoveredTableImages.length > 0
-			? [
-					...dropLezerImagesInsideRecovered(
-						sortedLezerImages,
-						recoveredTableImages,
-					),
-					...recoveredTableImages,
-				].sort((left, right) => left.from - right.from || right.to - left.to)
-			: sortedLezerImages;
-	const allImageNodes =
-		reconciledContent && reconciledContent.ownedRanges.length > 0
-			? [
-					...dropImagesOverlappingRanges(
-						baseImageNodes,
-						reconciledContent.ownedRanges,
-					),
-					...reconciledContent.images,
-				]
-			: baseImageNodes;
-	const isUnresolvedReferenceImage = createUnresolvedReferenceImageChecker(
-		source,
-		phpBlockScan,
-		isReferenceRangeDefined,
-	);
-	const displayMathRanges = phpMathRanges.filter((range) => range.block);
-	const images = imageIndexForBlocks(
-		source,
-		blocks,
-		allImageNodes,
-		ranges,
-		displayMathRanges,
-		phpBlockScan,
-		isUnresolvedReferenceImage,
-	);
-	const rawLinkNodes = parsed.hasLinkSyntax
-		? projectedLinkNodes(
-				projection.text,
-				parsed.syntaxNodes,
-				options.referenceLabelCaseFoldProfile,
-				images.unresolvedProjectedImageRanges.size > 0
-					? images.unresolvedProjectedImageRanges
-					: undefined,
+	let mathIndex = 0;
+	let nodeIndex = 0;
+	for (const block of blocks) {
+		const candidates: (typeof sortedNodes)[number][] = [];
+		let unavailable = "unavailable" === block.kind;
+		while (nodeIndex < sortedNodes.length) {
+			const node = sortedNodes[nodeIndex];
+			if (!node || node.from >= block.to) break;
+			nodeIndex += 1;
+			while (
+				mathIndex < mathRanges.length &&
+				(mathRanges[mathIndex]?.to ?? 0) <= node.from
 			)
-		: [];
-	const uncoveredAutolinkOffsets = hasAutolinkTrigger
-		? collectUncoveredBareAutolinkOffsets(
-				source,
-				projection,
-				blocks,
-				rawLinkNodes,
-				parsed.syntaxNodes,
-				images.imageRanges,
-				ranges,
-				reconciledContent?.ownedRanges,
-			)
-		: [];
-	const otherPhpOwnedLinks = phpBlockScan
-		? images.displayMathBrokenImageRanges.length > 0 ||
-			hasEscapedPipe ||
-			uncoveredAutolinkOffsets.length > 0
-			? collectPhpDisplayMathBrokenBlockLinks({
-					bareAutolinkOffsets: uncoveredAutolinkOffsets,
-					brokenImageRanges: images.displayMathBrokenImageRanges,
-					displayMathRanges,
-					includeEscapedPipeTableCells: hasEscapedPipe,
-					isReferenceDefined: isReferenceRangeDefined,
-					mathRanges: phpMathRanges,
-					scan: phpBlockScan,
-					...(reconciledContent?.ownedRanges
-						? { skipOwnedRanges: reconciledContent.ownedRanges }
-						: {}),
-					source,
-				})
-			: null
-		: uncoveredAutolinkOffsets.length > 0
-			? collectLocalPhpBareAutolinkBlockLinks(
-					source,
-					blocks,
-					uncoveredAutolinkOffsets,
-					isReferenceRangeDefined,
-				)
-			: null;
-	const phpOwnedLinks: PhpOwnedBlockLinks | null =
-		reconciledContent && otherPhpOwnedLinks
-			? mergePhpOwnedBlockLinks(reconciledContent, otherPhpOwnedLinks)
-			: (reconciledContent ?? otherPhpOwnedLinks);
-	const activePhpOwnedLinks =
-		phpOwnedLinks && phpOwnedLinks.ownedRanges.length > 0
-			? phpOwnedLinks
-			: null;
-	const linkNodes = activePhpOwnedLinks
-		? mergeOriginalLinkNodesWithPhpOwned(
-				projection,
-				rawLinkNodes,
-				activePhpOwnedLinks,
-			)
-		: rawLinkNodes;
-	const mathSpans = ranges.map((range) => mathSpanFromRange(source, range));
-	const linkTableCellsMap = phpBlockScan
-		? new Map<number, EditorMarkdownLinkTableCellContext>()
+				mathIndex += 1;
+			const math = mathRanges[mathIndex];
+			if (math && node.from < math.to && node.to > math.from) {
+				if (node.from >= math.from && node.to <= math.to) continue;
+				unavailable = true;
+				continue;
+			}
+			if (node.from < block.from || node.to > block.to) {
+				unavailable = true;
+				continue;
+			}
+			if (!node.available) {
+				unavailable = true;
+				continue;
+			}
+			candidates.push(node);
+		}
+		const accepted: EditorMarkdownImageRange[] = [];
+		let previous: Readonly<{ from: number; to: number }> | null = null;
+		for (const candidate of candidates) {
+			if (
+				candidate.from < block.from ||
+				candidate.from >= candidate.to ||
+				candidate.to > block.to ||
+				(previous && candidate.from < previous.to)
+			) {
+				unavailable = true;
+				break;
+			}
+			accepted.push({ from: candidate.from, to: candidate.to });
+			previous = candidate;
+		}
+		if (unavailable) {
+			imageBlocks.push({
+				count: 0,
+				firstImageIndex: imageRanges.length,
+				status: "unavailable",
+			});
+			continue;
+		}
+		imageBlocks.push({
+			count: accepted.length,
+			firstImageIndex: imageRanges.length,
+			status: "ready",
+		});
+		appendAll(imageRanges, accepted);
+	}
+	return { imageBlocks, imageRanges };
+}
+
+function isMathHostBlock(
+	block: EditorMarkdownSourceBlock | undefined,
+): block is EditorMarkdownSourceBlock {
+	return Boolean(
+		block?.editable &&
+			"code" !== block.kind &&
+			"unavailable" !== block.kind,
+	);
+}
+
+/**
+ * Keeps only math ranges strictly contained in a single editable non-code,
+ * non-unavailable block of `blocks` (matching `validatePackedMathSpans`).
+ */
+function filterMathRangesInsideBlocks(
+	blocks: ReadonlyArray<EditorMarkdownSourceBlock>,
+	ranges: ReadonlyArray<MathRange>,
+): MathRange[] {
+	const accepted: MathRange[] = [];
+	let blockIndex = 0;
+	for (const range of ranges) {
+		while (
+			blockIndex < blocks.length &&
+			(blocks[blockIndex]?.to ?? 0) <= range.from
+		) {
+			blockIndex += 1;
+		}
+		const block = blocks[blockIndex];
+		if (
+			isMathHostBlock(block) &&
+			range.from >= block.from &&
+			range.to <= block.to
+		) {
+			accepted.push(range);
+		}
+	}
+	return accepted;
+}
+
+/**
+ * Unified tree-to-index pipeline shared by zero-math documents and PHP
+ * two-stage `extract_math()` -> CommonMark substituted trees.
+ */
+function buildIndexFromTree(
+	source: string,
+	starts: ReadonlyArray<number>,
+	projection: NewlineProjection,
+	tree: Tree,
+	treeText: string,
+	substitutions: ReadonlyArray<PhpMathSubstitution>,
+	profile: ReferenceLabelCaseFoldProfile,
+): EditorMarkdownBlockIndex {
+	const hasSubs = substitutions.length > 0;
+	const blockMathByTokenStart = hasSubs
+		? new Map<number, PhpMathSubstitution>()
 		: null;
-	const linkCandidates = linkCandidatesForBlocks(
-		activePhpOwnedLinks ? null : projection,
-		blocks,
-		linkNodes,
-		ranges,
-		images.imageRanges,
-		source,
-		phpBlockScan,
-		phpMathRanges,
-		linkTableCellsMap,
+	if (blockMathByTokenStart) {
+		for (const sub of substitutions) {
+			if (sub.block) blockMathByTokenStart.set(sub.tokenFrom, sub);
+		}
+	}
+	const syntaxNodes: MarkdownSyntaxNode[] = [];
+	const rawImageNodes: SourceRange[] = [];
+	const subExcludedRaw: SourceRange[] = [];
+	tree.iterate({
+		enter: (node) => {
+			if (LINK_PROJECTION_SYNTAX_NODES.has(node.name)) {
+				syntaxNodes.push({ from: node.from, name: node.name, to: node.to });
+			}
+			if ("Image" === node.name) {
+				rawImageNodes.push({ from: node.from, to: node.to });
+			}
+			if (hasSubs && SUB_MATH_EXCLUDED_NODES.has(node.name)) {
+				subExcludedRaw.push({ from: node.from, to: node.to });
+			}
+		},
+	});
+	const topLevel = tree.cursor();
+	const rawBlocks: Array<
+		Readonly<{
+			kind: EditorMarkdownBlockKind;
+			rawFrom: number;
+			rawTo: number;
+			subFrom: number;
+			subTo: number;
+		}>
+	> = [];
+	if (topLevel.firstChild()) {
+		do {
+			const blockSub =
+				null !== blockMathByTokenStart && "Paragraph" === topLevel.name
+					? blockMathByTokenStart.get(topLevel.from)
+					: undefined;
+			const kind: EditorMarkdownBlockKind =
+				undefined !== blockSub && blockSub.tokenTo === topLevel.to
+					? "math"
+					: nodeKind(topLevel.name);
+			const projFrom = hasSubs
+				? mapSubstitutedStartToOriginal(topLevel.from, substitutions)
+				: topLevel.from;
+			const projTo = hasSubs
+				? mapSubstitutedEndToOriginal(topLevel.to, substitutions)
+				: topLevel.to;
+			if (projFrom >= projTo) continue;
+			rawBlocks.push({
+				kind,
+				rawFrom: originalOffsetAt(projection, projFrom),
+				rawTo: originalOffsetAt(projection, projTo),
+				subFrom: topLevel.from,
+				subTo: topLevel.to,
+			});
+		} while (topLevel.nextSibling());
+	}
+
+	const blocks: EditorMarkdownSourceBlock[] = [];
+	for (let i = 0; i < rawBlocks.length; i += 1) {
+		const entry = rawBlocks[i];
+		if (!entry) continue;
+		const prevTo = blocks[blocks.length - 1]?.to ?? 0;
+		const nextRawFrom = rawBlocks[i + 1]?.rawFrom ?? source.length;
+		const lineStart = lineIndexAtOffsets(starts, entry.rawFrom);
+		const lineStartOffset = starts[lineStart] ?? 0;
+		const from =
+			"math" === entry.kind || prevTo > lineStartOffset
+				? Math.max(prevTo, entry.rawFrom)
+				: lineStartOffset;
+		let to: number;
+		if ("math" === entry.kind) {
+			to = Math.max(from, entry.rawTo);
+		} else {
+			const endLine = lineIndexAtOffsets(starts, Math.max(from, entry.rawTo - 1));
+			const fullLineEnd = lineContentEnd(source, starts, endLine);
+			to =
+				nextRawFrom < fullLineEnd
+					? Math.max(from, entry.rawTo)
+					: Math.max(from, fullLineEnd);
+		}
+		if (from >= to) continue;
+		blocks.push({
+			editable: "unavailable" !== entry.kind,
+			from,
+			kind: entry.kind,
+			lineEnd: lineIndexAtOffsets(starts, Math.max(from, to - 1)),
+			lineStart: from === lineStartOffset ? lineStart : lineIndexAtOffsets(starts, from),
+			to,
+		});
+	}
+
+	let validRanges: MathRange[] = [];
+	if (hasSubs) {
+		const subExcludedRanges = mergeRanges(subExcludedRaw);
+		const survivingMath: MathRange[] = [];
+		for (const sub of substitutions) {
+			if (hasRangeOverlap(subExcludedRanges, sub.tokenFrom, sub.tokenTo)) {
+				continue;
+			}
+			const range = originalRange(projection, {
+				from: sub.origFrom,
+				to: sub.origTo,
+			});
+			survivingMath.push({
+				block: sub.block,
+				from: range.from,
+				to: range.to,
+			});
+		}
+		validRanges = filterMathRangesInsideBlocks(blocks, survivingMath);
+	}
+
+	const imageNodes: ParserImageNode[] = [];
+	let imageBlockIndex = 0;
+	for (const node of rawImageNodes) {
+		while (
+			imageBlockIndex < rawBlocks.length &&
+			node.from >= (rawBlocks[imageBlockIndex]?.subTo ?? treeText.length + 1)
+		) {
+			imageBlockIndex += 1;
+		}
+		const block = rawBlocks[imageBlockIndex];
+		if (
+			!block ||
+			node.from < block.subFrom ||
+			node.to > block.subTo ||
+			"code" === block.kind ||
+			"unavailable" === block.kind
+		) {
+			continue;
+		}
+		const projFrom = hasSubs
+			? mapSubstitutedStartToOriginal(node.from, substitutions)
+			: node.from;
+		const projTo = hasSubs
+			? mapSubstitutedEndToOriginal(node.to, substitutions)
+			: node.to;
+		if (projFrom >= projTo) continue;
+		imageNodes.push({
+			available: imageNodeIsInline(projection.text, projFrom, projTo),
+			from: originalOffsetAt(projection, projFrom),
+			to: originalOffsetAt(projection, projTo),
+		});
+	}
+
+	const initialProjection = inspectProjectedLinkNodes(
+		treeText,
+		syntaxNodes,
+		profile,
 	);
+	let projectedLinks = initialProjection.links;
+	if (initialProjection.needsReferenceAwareReparse) {
+		const resolvedParser = createLinearLeagueMarkdownParser({
+			allowNestedShortcutLinkCandidates: true,
+			blockNesting: { maxDepth: MAX_LEAGUE_BLOCK_NESTING_DEPTH, mode: "cap" },
+			htmlTagDialect: "league",
+			isReferenceDefined: initialProjection.isReferenceDefined,
+			rejectUnescapedOpenParenInTitle: true,
+		});
+		const resolvedNodes: MarkdownSyntaxNode[] = [];
+		resolvedParser.parse(treeText).iterate({
+			enter: (node) => {
+				if (LINK_PROJECTION_SYNTAX_NODES.has(node.name)) {
+					resolvedNodes.push({ from: node.from, name: node.name, to: node.to });
+				}
+			},
+		});
+		projectedLinks = projectedLinkNodes(treeText, resolvedNodes, profile);
+	}
+	let mappedLinks: ReadonlyArray<ParserLinkNode> = projectedLinks;
+	if (hasSubs) {
+		const remapped: ParserLinkNode[] = [];
+		for (const link of projectedLinks) {
+			const projFrom = mapSubstitutedStartToOriginal(link.from, substitutions);
+			const projTo = mapSubstitutedEndToOriginal(link.to, substitutions);
+			if (projFrom >= projTo) continue;
+			remapped.push({
+				from: projFrom,
+				kind: link.kind,
+				reference: link.reference,
+				to: projTo,
+			});
+		}
+		mappedLinks = remapped;
+	}
+
+	const images = imageIndexForBlocks(blocks, imageNodes, validRanges);
 	return {
 		blocks,
 		imageBlocks: images.imageBlocks,
 		imageRanges: images.imageRanges,
 		length: source.length,
-		linkCandidates,
-		linkTableCells:
-			linkTableCellsMap && linkTableCellsMap.size > 0
-				? linkTableCellsMap
-				: EMPTY_LINK_TABLE_CELLS,
-		mathSpans,
+		linkCandidates: linkCandidatesForBlocks(
+			projection,
+			blocks,
+			mappedLinks,
+			validRanges,
+			images.imageRanges,
+		),
+		mathSpans: validRanges.map((range) => mathSpanFromRange(source, range)),
 		source,
 	};
+}
+
+export function createEditorMarkdownBlockIndex(
+	source: string,
+	options: Readonly<{ referenceLabelCaseFoldProfile: ReferenceLabelCaseFoldProfile }>,
+): EditorMarkdownBlockIndex {
+	const starts = markdownLineStarts(source);
+	const projection = projectNewlines(source);
+	const tree = blockIndexMarkdownParser.parse(projection.text);
+	if (
+		!projection.text.includes("$") &&
+		!projection.text.includes("\\(") &&
+		!projection.text.includes("\\[")
+	) {
+		return buildIndexFromTree(
+			source,
+			starts,
+			projection,
+			tree,
+			projection.text,
+			EMPTY_SUBSTITUTIONS,
+			options.referenceLabelCaseFoldProfile,
+		);
+	}
+	const codeRanges = stageOneCodeRanges(projection.text, tree);
+	const candidateMath = mathRanges(projection.text, codeRanges);
+	if (0 === candidateMath.length) {
+		return buildIndexFromTree(
+			source,
+			starts,
+			projection,
+			tree,
+			projection.text,
+			EMPTY_SUBSTITUTIONS,
+			options.referenceLabelCaseFoldProfile,
+		);
+	}
+	const normalized = normalizeMathRanges(candidateMath);
+	const { substituted, substitutions } = substitutePhpMathRanges(
+		projection.text,
+		normalized.ranges,
+	);
+	const subTree = blockIndexMarkdownParser.parse(substituted);
+	return buildIndexFromTree(
+		source,
+		starts,
+		projection,
+		subTree,
+		substituted,
+		substitutions,
+		options.referenceLabelCaseFoldProfile,
+	);
 }
 
 export function findEditorMarkdownBlock(

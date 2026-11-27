@@ -1,20 +1,24 @@
 import {
+	type Attrs,
 	type DOMOutputSpec,
 	type MarkSpec,
 	type NodeSpec,
+	type Node as ProseMirrorNode,
 	Schema,
 } from "prosemirror-model";
 import { tableNodes } from "prosemirror-tables";
 import type { VisualEditorImageScalePercentage } from "../../contracts/visual-editor";
+import { VISUAL_MARKDOWN_SOURCE_ATTRIBUTE } from "../../shared/markdown/normalize-math-tex";
+import { isDisplayMathMarkdown } from "./node-views/protected-atom-runtime";
 
 export type VisualImageScale = VisualEditorImageScalePercentage;
 
-const VISUAL_IMAGE_SCALES: ReadonlyArray<VisualImageScale> = [
+export const VISUAL_IMAGE_SCALES: ReadonlyArray<VisualImageScale> = [
 	25, 33, 50, 67, 100, 150, 200,
 ];
 
 export type TableTextAlign = "left" | "center" | "right" | null;
-type BulletListMarker = "-" | "*" | "+";
+export type BulletListMarker = "-" | "*" | "+";
 export type ProtectedBlockKind =
 	| "math"
 	| "mermaid"
@@ -23,7 +27,7 @@ export type ProtectedBlockKind =
 	| "raw";
 export type ProtectedInlineKind = "math-inline" | "footnote-ref" | "raw-inline";
 
-type VisualNodeName =
+export type VisualNodeName =
 	| "doc"
 	| "paragraph"
 	| "heading"
@@ -45,7 +49,7 @@ type VisualNodeName =
 	| "image"
 	| "protected_inline";
 
-type VisualMarkName = "link" | "em" | "strong" | "strike" | "code";
+export type VisualMarkName = "link" | "em" | "strong" | "strike" | "code";
 
 const PROTECTED_BLOCK_KINDS: ReadonlyArray<ProtectedBlockKind> = [
 	"math",
@@ -72,7 +76,7 @@ const SAFE_IMAGE_DATA_URL_PATTERN =
 const INTERNAL_SENTINEL_TOKEN_PATTERN =
 	/EASYMDEPH[A-Z]*(?:INL|BLK|TBLALIGN|BR)\d*END/g;
 
-type SanitizeDomUrlOptions = Readonly<{
+export type SanitizeDomUrlOptions = Readonly<{
 	allowImageDataUrl?: boolean;
 }>;
 
@@ -260,6 +264,29 @@ function validateColumnAlignments(value: unknown): void {
 	}
 }
 
+type ProtectedInlineContinuationHint = Readonly<{
+	containerSignature: string;
+	continuationPrefixes: ReadonlyArray<string>;
+}>;
+
+const protectedInlineContinuationHints = new WeakMap<
+	Attrs,
+	ProtectedInlineContinuationHint
+>();
+
+export function setProtectedInlineContinuationHint(
+	node: ProseMirrorNode,
+	hint: ProtectedInlineContinuationHint,
+): void {
+	protectedInlineContinuationHints.set(node.attrs, hint);
+}
+
+export function getProtectedInlineContinuationHint(
+	node: ProseMirrorNode,
+): ProtectedInlineContinuationHint | undefined {
+	return protectedInlineContinuationHints.get(node.attrs);
+}
+
 function parseCodeBlockLanguageFromDom(dom: HTMLElement): string {
 	const dataLanguage = dom.getAttribute("data-language")?.trim();
 	if (dataLanguage) {
@@ -292,10 +319,15 @@ function protectedBlockExtraClasses(kind: ProtectedBlockKind): string {
 	}
 }
 
-function protectedInlineExtraClasses(kind: ProtectedInlineKind): string {
+function protectedInlineExtraClasses(
+	kind: ProtectedInlineKind,
+	rawMarkdown = "",
+): string {
 	switch (kind) {
 		case "math-inline":
-			return " easymde-math easymde-math-inline";
+			return isDisplayMathMarkdown(rawMarkdown)
+				? " easymde-math easymde-math-block"
+				: " easymde-math easymde-math-inline";
 		case "footnote-ref":
 			return " easymde-footnote-ref";
 		case "raw-inline":
@@ -365,7 +397,6 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 	doc: { content: "block+" },
 
 	paragraph: {
-		attrs: { preserveRawTaskPrefix: { default: false } },
 		content: "inline*",
 		group: "block",
 		parseDOM: [{ tag: "p" }],
@@ -614,7 +645,7 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 							dom.getAttribute("data-easymde-protected-kind"),
 						),
 						rawMarkdown: sanitizePastedProtectedRaw(
-							dom.getAttribute("data-easymde-visual-markdown-source") ??
+							dom.getAttribute(VISUAL_MARKDOWN_SOURCE_ATTRIBUTE) ??
 								dom.textContent,
 						),
 					};
@@ -634,7 +665,7 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 					contenteditable: "false",
 					"data-easymde-protected-block": "1",
 					"data-easymde-protected-kind": kind,
-					"data-easymde-visual-markdown-source": rawMarkdown,
+					[VISUAL_MARKDOWN_SOURCE_ATTRIBUTE]: rawMarkdown,
 				},
 				rawMarkdown,
 			];
@@ -724,7 +755,6 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 		attrs: {
 			kind: { default: "math-inline" },
 			rawMarkdown: { default: "" },
-			continuationIndent: { default: false },
 		},
 		parseDOM: [
 			{
@@ -734,7 +764,6 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 						return {
 							kind: "raw-inline",
 							rawMarkdown: "",
-							continuationIndent: false,
 						};
 					}
 					return {
@@ -742,10 +771,9 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 							dom.getAttribute("data-easymde-protected-kind"),
 						),
 						rawMarkdown: sanitizePastedProtectedRaw(
-							dom.getAttribute("data-easymde-visual-markdown-source") ??
+							dom.getAttribute(VISUAL_MARKDOWN_SOURCE_ATTRIBUTE) ??
 								dom.textContent,
 						),
-						continuationIndent: false,
 					};
 				},
 			},
@@ -759,11 +787,11 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 			return [
 				"span",
 				{
-					class: `easymde-protected-inline${protectedInlineExtraClasses(kind)}`,
+					class: `easymde-protected-inline${protectedInlineExtraClasses(kind, rawMarkdown)}`,
 					contenteditable: "false",
 					"data-easymde-protected-inline": "1",
 					"data-easymde-protected-kind": kind,
-					"data-easymde-visual-markdown-source": rawMarkdown,
+					[VISUAL_MARKDOWN_SOURCE_ATTRIBUTE]: rawMarkdown,
 				},
 				rawMarkdown,
 			];
@@ -771,37 +799,19 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 	},
 };
 
-let internalLinkBoundarySeq = 0;
-
-/**
- * Generates a unique internal session key for DOM-parsed and toolbar-inserted
- * link marks so adjacent links with identical `(href, title)` never merge in
- * ProseMirror while external DOM attributes remain untrusted and ignored.
- */
-export function createInternalLinkBoundaryKey(): string {
-	internalLinkBoundarySeq += 1;
-	return `dom:${internalLinkBoundarySeq}`;
-}
-
 const marks: Record<VisualMarkName, MarkSpec> = {
 	link: {
-		attrs: {
-			href: { default: "" },
-			title: { default: null },
-			boundaryKey: { default: null },
-		},
+		attrs: { href: { default: "" }, title: { default: null } },
 		inclusive: false,
 		parseDOM: [
 			{
 				tag: "a[href]",
 				getAttrs(dom) {
-					const boundaryKey = createInternalLinkBoundaryKey();
 					if (!(dom instanceof HTMLElement)) {
-						return { boundaryKey, href: "", title: null };
+						return { href: "", title: null };
 					}
 					const title = dom.getAttribute("title");
 					return {
-						boundaryKey,
 						href: sanitizeDomUrl(dom.getAttribute("href") ?? "") ?? "",
 						title:
 							typeof title === "string" && title.length > 0

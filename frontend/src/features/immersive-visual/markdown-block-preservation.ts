@@ -1,72 +1,22 @@
-import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
+import type { Node as ProseMirrorNode } from "prosemirror-model";
+import { advanceMarkdownColumns } from "../../shared/markdown/markdown-char-codes";
+import { appendAll } from "../../shared/markdown/markdown-source-projection";
 import {
-	evaluateMatchedContainerHeadRisk,
-	resolveMatchedContainerHeadLine,
-} from "./markdown-container-head-line";
-import {
-	alignContainerChildren,
-	checkRawPreservationRisks,
-	createTightSharedGroupChecker,
-	dedentSwallowedBlockAtDepth,
-	emitWithMathSentinelAtDepth,
-	hasDetachedContainerMathRisk,
-	isListSwallowingFollowingBlock,
-	leadingIndentAtDepth,
-	prefixAtDepth,
-	sharedGroupHasInvalidatedRef,
-	stripAtDepth,
-	tryStripAllLinesAtDepth,
-	wouldMergeWithPreviousList,
-} from "./markdown-container-preservation";
-import {
-	blankSeparatorAtDepth,
-	resolveContainerSlotJoin,
-} from "./markdown-container-slot-separator";
-import { serializeListPreservingItems } from "./markdown-list-preservation";
-import {
-	type BlockSerializer,
-	createMathNewlineSentinelForNode,
-	isNestedList,
-	joinSerializedBlocks,
-	restoreMathNewlineSentinel,
-} from "./markdown-list-serialization";
-import { nodesSemanticallyEqual } from "./markdown-node-alignment";
-import {
-	type BuiltVisualBlockSources,
 	type ParsedVisualBlockSource,
 	type ParsedVisualDocument,
 	parseMarkdownWithBlockSources,
-	type ReferenceImageOrigin,
-	type ReferenceLinkOrigin,
 } from "./markdown-parser";
-import {
-	buildReferencePreserveResolver,
-	computeIntactRefDefLabels,
-	createInvalidatedRefChecker,
-	type ReferencePreserveResolver,
-} from "./markdown-refdef-liveness";
-import { stripBlockquoteDepthWithColumn } from "./markdown-prescanner-containers";
-import type { PreservationPlan } from "./markdown-refdef-liveness-state";
-import { dedentBlockToLineZero } from "./markdown-reference-preservation";
-
-export {
-	createMathNewlineSentinelForNode,
-	joinSerializedBlocks,
-	restoreMathNewlineSentinel,
-	serializeList,
-} from "./markdown-list-serialization";
-export type { ReferencePreserveResolver } from "./markdown-refdef-liveness";
+import { isSelfTerminatingProtectedBlock } from "./markdown-prescanner-blocks";
+import { appendContainerSignature, isInterruptingListMarker, isMarkdownBlankLine, type ListContainerMarker } from "./markdown-prescanner-containers";
+import { sanitizeBulletMarker } from "./visual-schema";
 
 /**
- * Unified untouched-source preservation for the immersive visual editor.
+ * Untouched-source preservation for the immersive visual editor.
  *
  * The visual editor is an in-memory projection of canonical Markdown. When a
- * legitimate edit is synchronized back, one parameterized container loop
- * (`depth = 0` for `doc`, `depth >= 1` for nested `blockquote`s, delegating
- * lists to `serializeListPreservingItems` at every depth) preserves every
- * untouched block, list item, and separator verbatim — except blocks/items
- * whose referenced link/image definition was deleted or shadowed, which
- * re-serialize canonically so PHP never loses links or titles.
+ * legitimate edit is synchronized back, every block (and every list item of an
+ * edited top-level list) that the user did not touch keeps its exact original
+ * bytes, including blank-line separators. Only edited nodes are regenerated.
  *
  * Block/inline serialization is injected by `markdown-serializer.ts`, keeping
  * the dependency direction one-way (serializer -> preservation).
@@ -79,29 +29,770 @@ export type MarkdownRoundTripGuard = Readonly<{
 	serialize: (doc: ProseMirrorNode) => string;
 }>;
 
+export type SerializedLine = Readonly<{
+	fixedPrefix: string | null;
+	text: string;
+}>;
+
+type BlockSerializer = (node: ProseMirrorNode) => string;
+
+type BlockLineSerializer = (
+	node: ProseMirrorNode,
+	containerSignature: string,
+) => SerializedLine[];
+
 export type MarkdownSerializers = Readonly<{
 	serializeBlock: BlockSerializer;
-	serializeBlockWithRefs?: (
-		node: ProseMirrorNode,
-		resolveReferences: ReferencePreserveResolver | null,
-		mathNewlineToken?: string,
-	) => string;
+	serializeBlockLines: BlockLineSerializer;
 	serializeDoc: (doc: ProseMirrorNode) => string;
 }>;
 
-type RenderedChild = Readonly<{
-	emitted: string;
-	inner: string;
+export function joinSerializedLines(lines: ReadonlyArray<SerializedLine>): string {
+	return lines
+		.map((line) => (line.fixedPrefix !== null ? `${line.fixedPrefix}${line.text}` : line.text))
+		.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// List serialization
+// ---------------------------------------------------------------------------
+
+function prefixMultilineLines(
+	lines: ReadonlyArray<SerializedLine>,
+	firstLinePrefix: string,
+	continuationPrefix: string,
+): SerializedLine[] {
+	return lines.map((line, index) => {
+		if (line.fixedPrefix !== null) return line;
+		if (index === 0) {
+			return {
+				fixedPrefix: null,
+				text: line.text.length > 0 ? `${firstLinePrefix}${line.text}` : firstLinePrefix.trimEnd(),
+			};
+		}
+		return {
+			fixedPrefix: null,
+			text: line.text.length > 0 ? `${continuationPrefix}${line.text}` : "",
+		};
+	});
+}
+
+function isNestedList(node: ProseMirrorNode): boolean {
+	return (
+		node.type.name === "bullet_list" ||
+		node.type.name === "ordered_list" ||
+		node.type.name === "task_list"
+	);
+}
+
+function isLooseList(listNode: ProseMirrorNode): boolean {
+	if (listNode.attrs.tight === false) return true;
+	if (listNode.attrs.tight === true) return false;
+	for (let i = 0; i < listNode.childCount; i += 1) {
+		const item = listNode.child(i);
+		let nonListBlocks = 0;
+		for (let j = 0; j < item.childCount; j += 1) {
+			if (!isNestedList(item.child(j))) nonListBlocks += 1;
+		}
+		if (nonListBlocks > 1) return true;
+	}
+	return false;
+}
+
+function isSelfTerminatingProtected(node: ProseMirrorNode): boolean {
+	return isSelfTerminatingProtectedBlock(String(node.attrs.kind ?? ""), String(node.attrs.rawMarkdown ?? ""));
+}
+
+function needsBlankLineBetweenInListItem(
+	prev: ProseMirrorNode,
+	child: ProseMirrorNode,
+	loose: boolean,
+	blankBeforeNestedList: boolean,
+	nextFirstLine: string,
+): boolean {
+	const prevName = prev.type.name;
+	const childName = child.type.name;
+	const childIsList = isNestedList(child);
+	if (prevName === "paragraph" && childIsList)
+		return isInterruptingListMarker(nextFirstLine, false, 0) ? blankBeforeNestedList : true;
+	if (loose) return true;
+	if (prevName === "protected_block") {
+		return isSelfTerminatingProtected(prev) ? (childIsList ? blankBeforeNestedList : false) : true;
+	}
+	if (prevName === "code_block" || prevName === "heading" || prevName === "horizontal_rule") {
+		return childIsList ? blankBeforeNestedList : false;
+	}
+	if (prevName === "table") {
+		if (childName === "paragraph" || childName === "table" || nextFirstLine.includes("|")) return true;
+		if (childIsList) return blankBeforeNestedList;
+		if (childName === "protected_block") return !isSelfTerminatingProtected(child);
+		return !(childName === "code_block" || childName === "heading" || childName === "blockquote" || childName === "horizontal_rule");
+	}
+	if (prevName === "paragraph") {
+		if (childName === "table") return nextFirstLine.startsWith("<!--");
+		if (childName === "protected_block") return !isSelfTerminatingProtected(child);
+		return !(childName === "code_block" || childName === "blockquote" || childName === "heading");
+	}
+	return true;
+}
+
+function serializeListItemBodyLines(
+	itemNode: ProseMirrorNode,
+	loose: boolean,
+	serializeBlockLines: BlockLineSerializer,
+	blankBeforeNestedList: boolean,
+	containerSignature: string,
+): SerializedLine[] {
+	const firstChild = itemNode.child(0);
+	const hasPhantomParagraph =
+		itemNode.childCount > 1 && firstChild.type.name === "paragraph" && firstChild.childCount === 0;
+	const startIndex = hasPhantomParagraph ? 1 : 0;
+	const lines: SerializedLine[] = [];
+	for (let i = startIndex; i < itemNode.childCount; i += 1) {
+		const child = itemNode.child(i);
+		const prev = i > startIndex ? itemNode.child(i - 1) : null;
+		const serialized = serializeBlockLines(child, containerSignature);
+		if (i === startIndex) {
+			if (hasPhantomParagraph) lines.push({ fixedPrefix: null, text: "" });
+		} else if (prev && needsBlankLineBetweenInListItem(prev, child, loose, blankBeforeNestedList, serialized[0]?.text ?? "")) {
+			lines.push({ fixedPrefix: null, text: "" });
+		}
+		appendAll(lines, serialized);
+	}
+	return lines;
+}
+
+function serializeListItemAtLines(
+	listNode: ProseMirrorNode,
+	index: number,
+	loose: boolean,
+	serializeBlockLines: BlockLineSerializer,
+	blankBeforeNestedList: boolean,
+	containerSignature: string,
+): SerializedLine[] {
+	const item = listNode.child(index);
+	const bulletMarker = sanitizeBulletMarker(listNode.attrs.marker);
+	let listMarker: ListContainerMarker = bulletMarker;
+	let prefix = `${bulletMarker} `;
+	let indent = "  ";
+	if (listNode.type.name === "ordered_list") {
+		const delimiter = listNode.attrs.delimiter === ")" ? ")" : ".";
+		listMarker = delimiter;
+		const order = listNode.attrs.order;
+		const startOrder = typeof order === "number" && Number.isInteger(order) && order >= 0 ? order : 1;
+		prefix = `${startOrder + index}${delimiter} `;
+		indent = " ".repeat(prefix.length);
+	} else if (listNode.type.name === "task_list") {
+		prefix = item.attrs.checked ? `${bulletMarker} [x] ` : `${bulletMarker} [ ] `;
+	}
+	const itemSignature = appendContainerSignature(containerSignature, { contentIndent: indent.length, kind: "list", marker: listMarker });
+	return prefixMultilineLines(
+		serializeListItemBodyLines(item, loose, serializeBlockLines, blankBeforeNestedList, itemSignature),
+		prefix, indent,
+	);
+}
+
+export function serializeListLines(
+	listNode: ProseMirrorNode,
+	serializeBlockLines: BlockLineSerializer,
+	containerSignature: string,
+): SerializedLine[] {
+	const loose = isLooseList(listNode);
+	const lines: SerializedLine[] = [];
+	for (let i = 0; i < listNode.childCount; i += 1) {
+		if (i > 0 && loose) lines.push({ fixedPrefix: null, text: "" });
+		appendAll(lines, serializeListItemAtLines(listNode, i, loose, serializeBlockLines, false, containerSignature));
+	}
+	return lines;
+}
+
+// ---------------------------------------------------------------------------
+// Sequence alignment
+// ---------------------------------------------------------------------------
+
+type NodeMatcher = (next: ProseMirrorNode, orig: ProseMirrorNode) => boolean;
+
+/** Exact LCS is used for gaps up to this many DP cells. */
+const DP_CELL_BUDGET = 40000;
+
+function childrenOf(node: ProseMirrorNode): ProseMirrorNode[] {
+	const children: ProseMirrorNode[] = [];
+	node.forEach((child) => {
+		children.push(child);
+	});
+	return children;
+}
+
+/**
+ * Anchor surviving nodes by immutable object identity first: the longest
+ * monotonic chain of `next === orig` pairs (Hunt–Szymanski, O(P log N) over
+ * identity pairs P). A node ProseMirror kept untouched is the same object, so
+ * two visually identical blocks can never swap their raw spellings.
+ */
+function anchorIdentities(
+	newNodes: readonly ProseMirrorNode[],
+	origNodes: readonly ProseMirrorNode[],
+	matched: number[],
+): void {
+	const positions = new Map<ProseMirrorNode, number[]>();
+	origNodes.forEach((node, idx) => {
+		const list = positions.get(node);
+		if (list) list.push(idx);
+		else positions.set(node, [idx]);
+	});
+	type Link = Readonly<{ n: number; o: number; prev: Link | null }>;
+	const tails: Link[] = [];
+	// Shared node objects are rare; bound pathological duplicate pairs.
+	let pairBudget = 4 * (newNodes.length + origNodes.length) + 64;
+	newNodes.forEach((node, n) => {
+		const list = positions.get(node);
+		if (!list || list.length > pairBudget) return;
+		pairBudget -= list.length;
+		for (let k = list.length - 1; k >= 0; k -= 1) {
+			const o = list[k] ?? 0;
+			let lo = 0;
+			let hi = tails.length;
+			while (lo < hi) {
+				const mid = (lo + hi) >> 1;
+				if ((tails[mid]?.o ?? 0) < o) lo = mid + 1;
+				else hi = mid;
+			}
+			tails[lo] = { n, o, prev: lo > 0 ? (tails[lo - 1] ?? null) : null };
+		}
+	});
+	for (let link = tails[tails.length - 1] ?? null; link; link = link.prev) {
+		matched[link.n] = link.o;
+	}
+}
+
+/** Deterministic JSON with sorted object keys (attrs are JSON-compatible). */
+function stableStringify(value: unknown): string {
+	if (Array.isArray(value)) {
+		return `[${value.map(stableStringify).join(",")}]`;
+	}
+	if (value !== null && typeof value === "object") {
+		const record = value as Record<string, unknown>;
+		return `{${Object.keys(record)
+			.sort()
+			.map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+			.join(",")}}`;
+	}
+	return JSON.stringify(value) ?? "null";
+}
+
+const canonicalKeyCache = new WeakMap<ProseMirrorNode, string>();
+
+/**
+ * Equality-compatible canonical key: node type, all attrs (sorted), marks
+ * (ProseMirror keeps mark sets in canonical order) with sorted attrs, text,
+ * and child keys. Nodes with equal keys are `eq()`; memoized per immutable
+ * node, so every node's key is computed at most once.
+ */
+function canonicalKey(node: ProseMirrorNode): string {
+	const cached = canonicalKeyCache.get(node);
+	if (cached !== undefined) return cached;
+	const marks = node.marks
+		.map((mark) => `${mark.type.name}${stableStringify(mark.attrs)}`)
+		.join(";");
+	let key: string;
+	if (node.isText) {
+		key = `t${JSON.stringify(node.text ?? "")}<${marks}>`;
+	} else {
+		const children: string[] = [];
+		node.forEach((child) => {
+			children.push(canonicalKey(child));
+		});
+		key = `n${node.type.name}${stableStringify(node.attrs)}<${marks}>[${children.join(",")}]`;
+	}
+	canonicalKeyCache.set(node, key);
+	return key;
+}
+
+/** Exact LCS over a small gap (offsets are absolute indices). */
+function matchGapExact(
+	newNodes: readonly ProseMirrorNode[],
+	origNodes: readonly ProseMirrorNode[],
+	nodesMatch: NodeMatcher,
+	matched: number[],
+	newStart: number,
+	newLength: number,
+	origStart: number,
+	origLength: number,
+): void {
+	const same = (m: number, n: number): boolean => {
+		const next = newNodes[newStart + m];
+		const orig = origNodes[origStart + n];
+		return next !== undefined && orig !== undefined && nodesMatch(next, orig);
+	};
+	const width = origLength + 1;
+	const table = new Uint16Array((newLength + 1) * width);
+	for (let m = newLength - 1; m >= 0; m -= 1) {
+		for (let n = origLength - 1; n >= 0; n -= 1) {
+			table[m * width + n] = same(m, n)
+				? (table[(m + 1) * width + n + 1] ?? 0) + 1
+				: Math.max(
+						table[(m + 1) * width + n] ?? 0,
+						table[m * width + n + 1] ?? 0,
+					);
+		}
+	}
+	let m = 0;
+	let n = 0;
+	while (m < newLength && n < origLength) {
+		if (same(m, n)) {
+			matched[newStart + m] = origStart + n;
+			m += 1;
+			n += 1;
+		} else if (
+			(table[(m + 1) * width + n] ?? 0) >= (table[m * width + n + 1] ?? 0)
+		) {
+			m += 1;
+		} else {
+			n += 1;
+		}
+	}
+}
+
+/**
+ * Indexed monotonic matching for large gaps: originals are bucketed by an
+ * equality-compatible canonical key, so every bucket member is structurally
+ * equal to any new node with that key. Each bucket pointer only moves
+ * forward to the first original at or after the cursor: O(N + M) bucket
+ * operations, no candidate cutoff, and at most one verifying comparison per
+ * matched new node (zero for unmatched ones).
+ */
+function matchGapIndexed(
+	newNodes: readonly ProseMirrorNode[],
+	origNodes: readonly ProseMirrorNode[],
+	nodesMatch: NodeMatcher,
+	matched: number[],
+	newStart: number,
+	newEnd: number,
+	origStart: number,
+	origEnd: number,
+): void {
+	const buckets = new Map<string, { indices: number[]; next: number }>();
+	for (let o = origStart; o < origEnd; o += 1) {
+		const node = origNodes[o];
+		if (!node) continue;
+		const key = canonicalKey(node);
+		const bucket = buckets.get(key);
+		if (bucket) bucket.indices.push(o);
+		else buckets.set(key, { indices: [o], next: 0 });
+	}
+	let origCursor = origStart;
+	for (let n = newStart; n < newEnd; n += 1) {
+		const next = newNodes[n];
+		const bucket = next ? buckets.get(canonicalKey(next)) : undefined;
+		if (!next || !bucket) continue;
+		const { indices } = bucket;
+		while (
+			bucket.next < indices.length &&
+			(indices[bucket.next] ?? 0) < origCursor
+		) {
+			bucket.next += 1;
+		}
+		const o = indices[bucket.next] ?? -1;
+		const orig = origNodes[o];
+		// Defensive verification; equal keys already imply equality.
+		if (orig && nodesMatch(next, orig)) {
+			matched[n] = o;
+			origCursor = o + 1;
+			bucket.next += 1;
+		}
+	}
+}
+
+/** Structural matching inside one gap between identity anchors. */
+function matchGap(
+	newNodes: readonly ProseMirrorNode[],
+	origNodes: readonly ProseMirrorNode[],
+	nodesMatch: NodeMatcher,
+	matched: number[],
+	newStartIn: number,
+	newEndIn: number,
+	origStartIn: number,
+	origEndIn: number,
+): void {
+	let newStart = newStartIn;
+	let newEnd = newEndIn;
+	let origStart = origStartIn;
+	let origEnd = origEndIn;
+	const same = (n: number, o: number): boolean => {
+		const next = newNodes[n];
+		const orig = origNodes[o];
+		return next !== undefined && orig !== undefined && nodesMatch(next, orig);
+	};
+	while (newStart < newEnd && origStart < origEnd && same(newStart, origStart)) {
+		matched[newStart] = origStart;
+		newStart += 1;
+		origStart += 1;
+	}
+	while (newStart < newEnd && origStart < origEnd && same(newEnd - 1, origEnd - 1)) {
+		newEnd -= 1;
+		origEnd -= 1;
+		matched[newEnd] = origEnd;
+	}
+	const newLength = newEnd - newStart;
+	const origLength = origEnd - origStart;
+	if (newLength <= 0 || origLength <= 0) return;
+	if (newLength * origLength <= DP_CELL_BUDGET) {
+		matchGapExact(newNodes, origNodes, nodesMatch, matched, newStart, newLength, origStart, origLength);
+		return;
+	}
+	matchGapIndexed(newNodes, origNodes, nodesMatch, matched, newStart, newEnd, origStart, origEnd);
+}
+
+/**
+ * Monotonic new→original index alignment (-1 = no identical original).
+ * Identity anchors are fixed first; structural equality only fills the
+ * unanchored gaps (nodes recreated by real edits or Undo/Redo).
+ */
+function alignNodes(
+	newNodes: readonly ProseMirrorNode[],
+	origNodes: readonly ProseMirrorNode[],
+	nodesMatch: NodeMatcher,
+): number[] {
+	const newLen = newNodes.length;
+	const matched = new Array<number>(newLen).fill(-1);
+	anchorIdentities(newNodes, origNodes, matched);
+	let prevNew = -1;
+	let prevOrig = -1;
+	for (let n = 0; n <= newLen; n += 1) {
+		const o = n < newLen ? (matched[n] ?? -1) : origNodes.length;
+		if (o < 0) continue;
+		matchGap(newNodes, origNodes, nodesMatch, matched, prevNew + 1, n, prevOrig + 1, o);
+		prevNew = n;
+		prevOrig = o;
+	}
+	return matched;
+}
+
+const structurallyEqual: NodeMatcher = (next, orig) =>
+	next === orig ||
+	(next.type === orig.type && next.nodeSize === orig.nodeSize && next.eq(orig));
+
+/**
+ * Pair unmatched new entries with unmatched originals positionally when a gap
+ * between two matched anchors has the same length on both sides (an in-place
+ * edit). Matched entries keep their index; unpaired entries stay -1.
+ */
+function pairUnmatched(matched: readonly number[], origLen: number): number[] {
+	const paired = matched.slice();
+	let idx = 0;
+	while (idx < matched.length) {
+		if ((matched[idx] ?? -1) >= 0) {
+			idx += 1;
+			continue;
+		}
+		const gapStart = idx;
+		while (idx < matched.length && (matched[idx] ?? -1) < 0) {
+			idx += 1;
+		}
+		const prevOrig = gapStart > 0 ? (matched[gapStart - 1] ?? -1) : -1;
+		const nextOrig = idx < matched.length ? (matched[idx] ?? origLen) : origLen;
+		if (nextOrig - prevOrig - 1 === idx - gapStart) {
+			for (let k = gapStart; k < idx; k += 1) {
+				paired[k] = prevOrig + 1 + (k - gapStart);
+			}
+		}
+	}
+	return paired;
+}
+
+// ---------------------------------------------------------------------------
+// List-item granular preservation
+// ---------------------------------------------------------------------------
+
+type ListItemSlices = Readonly<{
+	items: ReadonlyArray<string>;
+	/** `separators[i]` precedes item `i`; `separators[0]` is always empty. */
+	separators: ReadonlyArray<string>;
+	tail: string;
 }>;
 
-type PreservationContext = Readonly<{
-	activeSerializeBlock: BlockSerializer;
-	hasInvalidatedRefDefs: boolean;
-	nodeHasInvalidatedRef: (node: ProseMirrorNode) => boolean;
-	parsed: ParsedVisualDocument;
-	plan: PreservationPlan;
-	resolveReferences: ReferencePreserveResolver | null;
-}>;
+const LIST_ITEM_START = /^( {0,3})([-*+]|\d{1,9}[.)])([ \t]+|$)/;
+const BLANK_BEFORE_NESTED_LIST =
+	/\n[ \t]*\n[ \t]+(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/;
+
+function contentIndentOf(match: RegExpExecArray): number {
+	const spacing = match[3] ?? "";
+	const width =
+		spacing.length === 0 || spacing.length > 4 || spacing.includes("\t")
+			? 1
+			: spacing.length;
+	return (match[1]?.length ?? 0) + (match[2]?.length ?? 0) + width;
+}
+
+function splitListItemSlices(raw: string): ListItemSlices | null {
+	const lines = raw.split("\n");
+	const starts: number[] = [];
+	let contentIndent = -1;
+	for (let i = 0; i < lines.length; i += 1) {
+		const match = LIST_ITEM_START.exec(lines[i] ?? "");
+		if (
+			match &&
+			(contentIndent < 0 || (match[1]?.length ?? 0) < contentIndent)
+		) {
+			starts.push(i);
+			contentIndent = contentIndentOf(match);
+		} else if (i === 0) {
+			return null;
+		}
+	}
+	const items: string[] = [];
+	const separators: string[] = [""];
+	let tail = "";
+	for (let k = 0; k < starts.length; k += 1) {
+		const start = starts[k] ?? 0;
+		const end = starts[k + 1] ?? lines.length;
+		let last = end - 1;
+		while (last > start && isMarkdownBlankLine(lines[last] ?? "")) {
+			last -= 1;
+		}
+		items.push(lines.slice(start, last + 1).join("\n"));
+		const gap = lines.slice(last + 1, end);
+		if (k + 1 < starts.length) {
+			separators.push(`\n${gap.map((line) => `${line}\n`).join("")}`);
+		} else if (gap.length > 0) {
+			tail = `\n${gap.join("\n")}`;
+		}
+	}
+	return { items, separators, tail };
+}
+
+function sliceParsesToItem(
+	slice: string,
+	listNode: ProseMirrorNode,
+	index: number,
+): boolean {
+	const doc = parseMarkdownWithBlockSources(slice).doc;
+	const list = doc.childCount === 1 ? doc.firstChild : null;
+	return (
+		list !== null &&
+		list.type === listNode.type &&
+		list.childCount === 1 &&
+		list.child(0).eq(listNode.child(index))
+	);
+}
+
+const verifiedSliceCache = new WeakMap<
+	ParsedVisualBlockSource,
+	ListItemSlices | null
+>();
+
+/** Item slices proven to re-parse to exactly the baseline item nodes. */
+function verifiedListItemSlices(
+	block: ParsedVisualBlockSource,
+): ListItemSlices | null {
+	const cached = verifiedSliceCache.get(block);
+	if (cached !== undefined) return cached;
+	let result: ListItemSlices | null = null;
+	if (block.raw !== null && isNestedList(block.node)) {
+		const slices = splitListItemSlices(block.raw);
+		if (
+			slices &&
+			slices.items.length === block.node.childCount &&
+			slices.items.every((slice, i) => sliceParsesToItem(slice, block.node, i))
+		) {
+			result = slices;
+		}
+	}
+	verifiedSliceCache.set(block, result);
+	return result;
+}
+
+function listAttrsCompatible(
+	next: ProseMirrorNode,
+	orig: ProseMirrorNode,
+): boolean {
+	if (next.type !== orig.type) return false;
+	for (const key of Object.keys(orig.attrs)) {
+		if (key !== "tight" && key !== "order" && next.attrs[key] !== orig.attrs[key]) return false;
+	}
+	return true;
+}
+
+const ORDERED_FIRST_LINE = /^([ \t]*)(\d{1,9})([.)])([ \t]*)(.*)$/;
+
+/**
+ * A reused raw item that becomes the first item of an ordered list defines
+ * the CommonMark start number. When its digits differ from the projected
+ * `order`, return candidate rewrites (keeping indent, delimiter, and body
+ * bytes as far as possible) in preference order. Each candidate must still be
+ * validated in list context; an empty result means "serialize the item".
+ */
+function alignFirstOrderedMarker(
+	listNode: ProseMirrorNode,
+	raw: string,
+): ReadonlyArray<string> {
+	if (listNode.type.name !== "ordered_list") return [raw];
+	const order: unknown = listNode.attrs.order;
+	const expected =
+		typeof order === "number" && Number.isInteger(order) && order >= 0
+			? order
+			: 1;
+	const lines = raw.split("\n");
+	const match = ORDERED_FIRST_LINE.exec(lines[0] ?? "");
+	if (!match?.[2]) return [];
+	if (Number(match[2]) === expected) return [raw];
+	const indent = match[1] ?? "";
+	const delimiter = match[3] ?? ".";
+	const spacing = match[4] ?? "";
+	const content = match[5] ?? "";
+	const digits = String(expected);
+	const delta = digits.length - match[2].length;
+	const head = `${indent}${digits}${delimiter}`;
+	const firstLine = `${head}${spacing}${content}`;
+	if (delta === 0) return [[firstLine, ...lines.slice(1)].join("\n")];
+
+	// Original content column, in Markdown columns (4-column tab stops).
+	const markerEnd = advanceMarkdownColumns(
+		`${match[2]}${delimiter}`,
+		advanceMarkdownColumns(indent, 0),
+	);
+	const spacingWidth = advanceMarkdownColumns(spacing, markerEnd) - markerEnd;
+	const oldContentColumn =
+		content.length > 0 && spacingWidth >= 1 && spacingWidth <= 4
+			? markerEnd + spacingWidth
+			: markerEnd + 1;
+	const candidates: string[] = [];
+
+	// 1. Shift structural continuation lines (indented to at least the old
+	// content column) by the width change. Lazy continuation lines indented
+	// less than the content column keep their exact bytes.
+	const shifted = lines.slice(1).map((line) => {
+		if (isMarkdownBlankLine(line)) return line;
+		const leading = /^[ \t]*/.exec(line)?.[0] ?? "";
+		const width = advanceMarkdownColumns(leading, 0);
+		if (width < oldContentColumn) return line;
+		return `${" ".repeat(Math.max(0, width + delta))}${line.slice(leading.length)}`;
+	});
+	candidates.push([firstLine, ...shifted].join("\n"));
+
+	// 2. Keep every continuation byte and absorb the width change in the
+	// marker spacing, so the content column itself does not move.
+	const paddedWidth = spacingWidth - delta;
+	if (
+		content.length > 0 &&
+		!spacing.includes("\t") &&
+		spacingWidth <= 4 &&
+		paddedWidth >= 1 &&
+		paddedWidth <= 4
+	) {
+		candidates.push(
+			[`${head}${" ".repeat(paddedWidth)}${content}`, ...lines.slice(1)].join(
+				"\n",
+			),
+		);
+	}
+	return candidates;
+}
+
+/** Whether `markdown` re-parses to exactly the single edited list node. */
+function listMarkdownParsesTo(
+	markdown: string,
+	listNode: ProseMirrorNode,
+): boolean {
+	const doc = parseMarkdownWithBlockSources(markdown).doc;
+	const reparsed = doc.childCount === 1 ? doc.firstChild : null;
+	if (!reparsed) return false;
+	if (reparsed.eq(listNode)) return true;
+	// A 1-item single-paragraph list in CommonMark can only parse as tight even
+	// when its surviving node inherited `tight: false` from a deleted sibling.
+	return (
+		listNode.childCount === 1 &&
+		reparsed.type === listNode.type &&
+		reparsed.childCount === 1 &&
+		reparsed.attrs.order === listNode.attrs.order &&
+		reparsed.attrs.delimiter === listNode.attrs.delimiter &&
+		reparsed.attrs.marker === listNode.attrs.marker &&
+		reparsed.child(0).eq(listNode.child(0))
+	);
+}
+
+/**
+ * Serialize an edited top-level list, reusing every untouched item's exact
+ * raw slice and original inter-item separators. Returns `null` when the
+ * baseline list cannot be sliced safely (caller regenerates the whole list).
+ */
+function serializeListPreservingItems(
+	listNode: ProseMirrorNode,
+	origBlock: ParsedVisualBlockSource,
+	serializeBlockLines: BlockLineSerializer,
+): string | null {
+	const orig = origBlock.node;
+	if (!listAttrsCompatible(listNode, orig)) return null;
+	const slices = verifiedListItemSlices(origBlock);
+	if (!slices) return null;
+	const newLen = listNode.childCount;
+	const origLen = orig.childCount;
+	const matched = alignNodes(
+		childrenOf(listNode),
+		childrenOf(orig),
+		structurallyEqual,
+	);
+	const paired = pairUnmatched(matched, origLen);
+	const loose = isLooseList(listNode);
+	const defaultSeparator = slices.separators[1] ?? (loose ? "\n\n" : "\n");
+
+	/** `firstRaw === null` serializes item 0 through the structural path. */
+	const assemble = (firstRaw: string | null): string => {
+		let output = "";
+		for (let idx = 0; idx < newLen; idx += 1) {
+			const matchedIdx = matched[idx] ?? -1;
+			const pairedIdx = paired[idx] ?? -1;
+			if (idx > 0) {
+				const prevPaired = paired[idx - 1] ?? -1;
+				output +=
+					pairedIdx >= 0 && prevPaired >= 0 && pairedIdx === prevPaired + 1
+						? (slices.separators[pairedIdx] ?? defaultSeparator)
+						: defaultSeparator;
+			}
+			const reused =
+				idx === 0
+					? (firstRaw ?? undefined)
+					: matchedIdx >= 0
+						? slices.items[matchedIdx]
+						: undefined;
+			if (reused !== undefined) {
+				output += reused;
+				continue;
+			}
+			const pairedSlice = pairedIdx >= 0 ? slices.items[pairedIdx] : undefined;
+			output += joinSerializedLines(
+				serializeListItemAtLines(
+					listNode, idx, loose, serializeBlockLines,
+					pairedSlice !== undefined && BLANK_BEFORE_NESTED_LIST.test(pairedSlice), "",
+				),
+			);
+		}
+		if (newLen > 0 && (paired[newLen - 1] ?? -1) === origLen - 1) {
+			output += slices.tail;
+		}
+		return output;
+	};
+
+	const firstMatched = newLen > 0 ? (matched[0] ?? -1) : -1;
+	const firstReused =
+		firstMatched >= 0 ? slices.items[firstMatched] : undefined;
+	if (firstReused === undefined) return assemble(null);
+	const candidates = alignFirstOrderedMarker(listNode, firstReused);
+	if (candidates.length === 1 && candidates[0] === firstReused) {
+		return assemble(firstReused);
+	}
+	// A rewritten first item is accepted only when the whole list re-parses
+	// to the edited node; otherwise that item is regenerated structurally.
+	for (const candidate of candidates) {
+		const output = assemble(candidate);
+		if (listMarkdownParsesTo(output, listNode)) return output;
+	}
+	return assemble(null);
+}
+
+// ---------------------------------------------------------------------------
+// Document-level preservation
+// ---------------------------------------------------------------------------
 
 function isEmptyDoc(doc: ProseMirrorNode): boolean {
 	return (
@@ -109,541 +800,6 @@ function isEmptyDoc(doc: ProseMirrorNode): boolean {
 		doc.firstChild?.type.name === "paragraph" &&
 		doc.firstChild.childCount === 0
 	);
-}
-
-// ---------------------------------------------------------------------------
-// Depth-aware blockquote line helpers (depth = 0 is top-level doc)
-// ---------------------------------------------------------------------------
-
-function serializeChildAtDepth(
-	child: ProseMirrorNode,
-	depth: number,
-	serializeBlock: BlockSerializer,
-): RenderedChild {
-	let inner = "";
-	const emitted = emitWithMathSentinelAtDepth(child, depth, (token) => {
-		const masked = serializeBlock(child, token);
-		inner =
-			token !== undefined ? restoreMathNewlineSentinel(masked, token) : masked;
-		return masked;
-	});
-	return { emitted, inner };
-}
-
-function dedentLineZeroAtDepth(
-	emitted: string,
-	inner: string,
-	depth: number,
-): RenderedChild {
-	const dedentedInner = inner.replace(/^[ \t]+/, "");
-	if (depth <= 0) {
-		return { emitted: dedentedInner, inner: dedentedInner };
-	}
-	const quotePrefix = "> ".repeat(depth);
-	const nl = emitted.indexOf("\n");
-	const innerNl = dedentedInner.indexOf("\n");
-	const firstLine = `${quotePrefix}${innerNl === -1 ? dedentedInner : dedentedInner.slice(0, innerNl)}`;
-	return {
-		emitted: nl === -1 ? firstLine : `${firstLine}${emitted.slice(nl)}`,
-		inner: dedentedInner,
-	};
-}
-
-/**
- * Dedents a canonical `protected_block` to column 0 at any depth (`depth >= 0`)
- * while protecting physical newlines inside multiline math spans (`$$...$$`,
- * `\[...\]`, `\(...\)`) for both `raw` and `math` blocks with a collision-free
- * sentinel generated on demand.
- */
-function dedentAllToLineZeroAtDepth(
-	child: ProseMirrorNode,
-	depth: number,
-	serializeBlock: BlockSerializer,
-): RenderedChild {
-	const token = createMathNewlineSentinelForNode(child, true);
-	const innerMasked = serializeBlock(child, token ?? undefined);
-	const dedentedMasked = dedentBlockToLineZero(innerMasked);
-	const prefixed = prefixAtDepth(dedentedMasked, depth);
-	return {
-		emitted:
-			token !== null ? restoreMathNewlineSentinel(prefixed, token) : prefixed,
-		inner:
-			token !== null
-				? restoreMathNewlineSentinel(dedentedMasked, token)
-				: dedentedMasked,
-	};
-}
-
-/**
- * Display math detached from the container it closed (see
- * `hasDetachedContainerMathRisk`): line 0 drops the stale container prefix
- * (indent and blockquote markers beyond `depth`) and continuation lines stay
- * byte-for-byte, exactly the math source PHP `extract_math()` captured.
- */
-function detachContainerMathAtDepth(emitted: string, depth: number): string {
-	const nl = emitted.indexOf("\n");
-	const head = stripBlockquoteDepthWithColumn(
-		nl === -1 ? emitted : emitted.slice(0, nl),
-		depth,
-	);
-	const line0 = `${"> ".repeat(Math.max(depth, 0))}${head.rest.replace(/^[ \t>]+/, "")}`;
-	return nl === -1 ? line0 : `${line0}${emitted.slice(nl)}`;
-}
-
-function indentFirstLineAtDepth(
-	emitted: string,
-	inner: string,
-	depth: number,
-): RenderedChild {
-	if (depth <= 0) {
-		const indented = `    ${emitted}`;
-		return { emitted: indented, inner: indented };
-	}
-	const quotePrefix = "> ".repeat(depth);
-	const nl = emitted.indexOf("\n");
-	const innerNl = inner.indexOf("\n");
-	const firstLine = `${quotePrefix}    ${innerNl === -1 ? inner : inner.slice(0, innerNl)}`;
-	return {
-		emitted: nl === -1 ? firstLine : `${firstLine}${emitted.slice(nl)}`,
-		inner: `    ${inner}`,
-	};
-}
-
-function tryPreserveListAtDepth(
-	listNode: ProseMirrorNode,
-	origBlock: ParsedVisualBlockSource,
-	depth: number,
-	ctx: PreservationContext,
-): string | null {
-	if (origBlock.raw === null) return null;
-	// Never re-preserve an item liveness already transitioned to canonical.
-	const liveReusable = ctx.plan.listItemReusable.get(listNode);
-	const canReuseItem =
-		ctx.hasInvalidatedRefDefs || liveReusable !== undefined
-			? (origItem: ProseMirrorNode, itemIdx: number) =>
-					liveReusable?.[itemIdx] !== false &&
-					!(ctx.hasInvalidatedRefDefs && ctx.nodeHasInvalidatedRef(origItem))
-			: null;
-	const cachedPrepared = ctx.plan.lists.get(listNode);
-	const innerRaw =
-		depth <= 0
-			? undefined
-			: (cachedPrepared?.innerRaw ??
-				tryStripAllLinesAtDepth(origBlock.raw, depth));
-	if (innerRaw === null) return null;
-	let failed = false;
-	const emitted = emitWithMathSentinelAtDepth(listNode, depth, (token) => {
-		const innerSerialized = serializeListPreservingItems(
-			listNode,
-			origBlock,
-			ctx.activeSerializeBlock,
-			ctx.parsed.envReferences,
-			ctx.resolveReferences?.isPartialTitleRefDef ?? null,
-			canReuseItem,
-			innerRaw,
-			token,
-			cachedPrepared,
-			depth,
-		);
-		if (innerSerialized === null) failed = true;
-		return innerSerialized ?? "";
-	});
-	return failed ? null : emitted;
-}
-
-// ---------------------------------------------------------------------------
-// Unified parameterized container-preservation loop (doc + nested blockquotes)
-// ---------------------------------------------------------------------------
-
-function serializeContainerPreservingChildren(
-	container: ProseMirrorNode,
-	source: BuiltVisualBlockSources,
-	depth: number,
-	ctx: PreservationContext,
-): string {
-	const baselineBlocks = source.blocks;
-	const newLen = container.childCount;
-	const origLen = baselineBlocks.length;
-	const { matchedOrigIndex, pairedOrigIndex } =
-		ctx.plan.containers.get(container) ??
-		alignContainerChildren(container, baselineBlocks);
-	const effectiveOrigIndex = new Array<number>(newLen).fill(-1);
-	const defaultBlankSep = blankSeparatorAtDepth(depth);
-
-	const parts: string[] = [];
-	if (matchedOrigIndex[0] === 0 && source.leadingPrefix.length > 0) {
-		parts.push(source.leadingPrefix);
-	}
-
-	const { isIntactSharedGroupAt, isTightRightNeighborIntact } =
-		createTightSharedGroupChecker(
-			container,
-			baselineBlocks,
-			matchedOrigIndex,
-			pairedOrigIndex,
-			ctx.parsed.blockquoteSources,
-			ctx.hasInvalidatedRefDefs ? ctx.nodeHasInvalidatedRef : null,
-		);
-
-	const tryPreserveContainerChild = (
-		child: ProseMirrorNode,
-		baseBlock: ParsedVisualBlockSource | undefined,
-	): string | null => {
-		if (!baseBlock) return null;
-		if (isNestedList(child) && baseBlock.raw !== null) {
-			return tryPreserveListAtDepth(child, baseBlock, depth, ctx);
-		}
-		if (
-			child.type.name === "blockquote" &&
-			baseBlock.node.type.name === "blockquote"
-		) {
-			const bqSource = ctx.parsed.blockquoteSources?.get(baseBlock.node);
-			if (bqSource && bqSource.blocks.length === baseBlock.node.childCount) {
-				return serializeContainerPreservingChildren(
-					child,
-					bqSource,
-					depth + 1,
-					ctx,
-				);
-			}
-		}
-		return null;
-	};
-
-	let prevInnerText = "";
-	// Exact text emitted for slot `idx - 1`, including its `depth` markers.
-	let prevEmittedText = "";
-	// Whether slot `idx - 1` was emitted byte-for-byte from its own baseline
-	// raw (a plain match or intact shared group), never rewritten after refdef
-	// invalidation or partial nested-container preservation.
-	let prevEmittedVerbatim = false;
-	for (let idx = 0; idx < newLen; idx += 1) {
-		const child = container.child(idx);
-		const origIdx = matchedOrigIndex[idx] ?? -1;
-		const origBlock = origIdx >= 0 ? baselineBlocks[origIdx] : undefined;
-		const sharedGroup = origBlock?.sharedGroup;
-		let intactGroup =
-			sharedGroup &&
-			origIdx === sharedGroup.startIndex &&
-			isIntactSharedGroupAt(idx, sharedGroup) &&
-			isTightRightNeighborIntact(idx, sharedGroup) &&
-			(!ctx.hasInvalidatedRefDefs ||
-				!sharedGroupHasInvalidatedRef(
-					baselineBlocks,
-					sharedGroup,
-					ctx.nodeHasInvalidatedRef,
-				))
-				? sharedGroup
-				: undefined;
-		const origInvalidated =
-			origBlock !== undefined &&
-			ctx.hasInvalidatedRefDefs &&
-			ctx.nodeHasInvalidatedRef(origBlock.node);
-		let serialized: string | null = intactGroup
-			? intactGroup.raw
-			: origBlock && origBlock.raw !== null && !origInvalidated
-				? origBlock.raw
-				: null;
-		let serializedFromRaw = serialized !== null;
-
-		const prevNode = idx > 0 ? container.child(idx - 1) : null;
-		const prevMatched = idx > 0 ? (matchedOrigIndex[idx - 1] ?? -1) : -1;
-		const prevWasVerbatimAdjacent =
-			prevEmittedVerbatim &&
-			prevMatched >= 0 &&
-			origIdx >= 0 &&
-			origIdx === prevMatched + 1;
-
-		// Monotonic risk dominance: a matched-invalidated or paired container
-		// whose immutable Pass-1 matched head line (shared with liveness)
-		// triggers swallow/indented risk is emitted canonically, independent
-		// of the wave in which any of its references is invalidated.
-		const matchedHeadRisk = (
-			base: ParsedVisualBlockSource | undefined,
-			effIdx: number,
-		): boolean => {
-			const headLine = resolveMatchedContainerHeadLine(
-				child,
-				base,
-				depth,
-				ctx.plan,
-				ctx.parsed,
-			);
-			if (headLine === null) return false;
-			const risks = evaluateMatchedContainerHeadRisk({
-				baselineBlocks,
-				child,
-				defaultBlankSep,
-				depth,
-				effIdx,
-				groupSep: undefined,
-				headLine,
-				isPartialTitleRefDef:
-					ctx.resolveReferences?.isPartialTitleRefDef ?? null,
-				prevEffIdx: idx > 0 ? (effectiveOrigIndex[idx - 1] ?? -1) : -1,
-				prevEmittedText: () => prevEmittedText,
-				prevInnerText: () => prevInnerText,
-				prevNode,
-				prevWasVerbatimAdjacent,
-			});
-			return risks.indentedRisk || risks.swallowRisk;
-		};
-
-		if (intactGroup || (origBlock && !sharedGroup && !origInvalidated)) {
-			effectiveOrigIndex[idx] = origIdx;
-		} else if (origBlock && origInvalidated) {
-			const nested = matchedHeadRisk(origBlock, origIdx)
-				? null
-				: tryPreserveContainerChild(child, origBlock);
-			if (nested !== null) {
-				serialized = nested;
-				serializedFromRaw = false;
-				effectiveOrigIndex[idx] = origIdx;
-			} else if (!sharedGroup) {
-				effectiveOrigIndex[idx] = origIdx;
-			}
-		} else if (!origBlock) {
-			const pairedIdx = pairedOrigIndex[idx] ?? -1;
-			const pairedBlock =
-				pairedIdx >= 0 ? baselineBlocks[pairedIdx] : undefined;
-			const nested = matchedHeadRisk(pairedBlock, pairedIdx)
-				? null
-				: tryPreserveContainerChild(child, pairedBlock);
-			if (nested !== null) {
-				serialized = nested;
-				serializedFromRaw = false;
-				effectiveOrigIndex[idx] = pairedIdx;
-			}
-		}
-
-		let generated: RenderedChild | null = null;
-		const ensureGenerated = (): RenderedChild => {
-			if (generated === null) {
-				generated = serializeChildAtDepth(
-					child,
-					depth,
-					ctx.activeSerializeBlock,
-				);
-			}
-			return generated;
-		};
-
-		const resolveJoin = (
-			emittedText: string,
-			innerText: string,
-			effIdx: number,
-			groupSep?: string,
-		): ReturnType<typeof resolveContainerSlotJoin> =>
-			resolveContainerSlotJoin({
-				baselineBlocks,
-				child,
-				defaultBlankSep,
-				depth,
-				effIdx,
-				emittedText,
-				groupSep,
-				innerText,
-				isPartialTitleRefDef:
-					ctx.resolveReferences?.isPartialTitleRefDef ?? null,
-				prevEffIdx: idx > 0 ? (effectiveOrigIndex[idx - 1] ?? -1) : -1,
-				prevEmittedText: () => prevEmittedText,
-				prevInnerText: () => prevInnerText,
-				prevNode,
-				prevWasVerbatimAdjacent,
-				serializedIsNull: serialized === null,
-			});
-
-		let candidateEmitted =
-			serialized !== null ? serialized : ensureGenerated().emitted;
-		let candidateInner =
-			serialized !== null
-				? stripAtDepth(serialized, depth)
-				: ensureGenerated().inner;
-		let { refDefMode, separator } = resolveJoin(
-			candidateEmitted,
-			candidateInner,
-			effectiveOrigIndex[idx] ?? -1,
-			intactGroup?.separatorBefore,
-		);
-		const isSwallowRisk = (emittedText: string): boolean =>
-			isListSwallowingFollowingBlock(
-				prevNode,
-				() => prevEmittedText,
-				emittedText,
-				depth,
-				prevWasVerbatimAdjacent,
-				separator !== "\n",
-			);
-		let { indentedRisk, swallowRisk } = checkRawPreservationRisks(
-			child,
-			depth,
-			candidateEmitted,
-			separator,
-			prevNode,
-			prevInnerText,
-			() => prevEmittedText,
-			prevWasVerbatimAdjacent,
-		);
-		const brokenTightLeft =
-			intactGroup !== undefined &&
-			intactGroup.separatorBefore === "\n" &&
-			(separator !== "\n" ||
-				(effectiveOrigIndex[idx - 1] ?? -1) !== intactGroup.startIndex - 1);
-		// An intact shared group at risk ONLY of being swallowed into a
-		// preceding list keeps its raw bytes, dedented (see
-		// `dedentSwallowedBlockAtDepth`).
-		const dedentedGroup =
-			intactGroup &&
-			swallowRisk &&
-			!indentedRisk &&
-			!brokenTightLeft &&
-			!wouldMergeWithPreviousList(prevNode, child)
-				? dedentSwallowedBlockAtDepth(intactGroup.raw, depth, child.type.name)
-				: null;
-		if (
-			intactGroup &&
-			dedentedGroup === null &&
-			(brokenTightLeft || indentedRisk || swallowRisk)
-		) {
-			// A shared group whose tight left neighbor changed, whose 4-column
-			// indent would now form indented code, or whose indent would be
-			// swallowed into a preceding list falls back to canonical blocks.
-			intactGroup = undefined;
-			serialized = null;
-			serializedFromRaw = false;
-			effectiveOrigIndex[idx] = -1;
-			const canonical = ensureGenerated();
-			candidateEmitted = canonical.emitted;
-			candidateInner = canonical.inner;
-			({ refDefMode, separator } = resolveJoin(
-				candidateEmitted,
-				candidateInner,
-				-1,
-			));
-			({ indentedRisk, swallowRisk } = checkRawPreservationRisks(
-				child,
-				depth,
-				candidateEmitted,
-				separator,
-				prevNode,
-				prevInnerText,
-				() => prevEmittedText,
-				prevWasVerbatimAdjacent,
-			));
-		}
-
-		if (prevNode) parts.push(separator);
-
-		let blockEmitted = candidateEmitted;
-		let blockInner = candidateInner;
-		if (dedentedGroup !== null) {
-			blockEmitted = dedentedGroup;
-			blockInner = stripAtDepth(dedentedGroup, depth);
-		} else if (
-			!intactGroup &&
-			serialized !== null &&
-			(swallowRisk || indentedRisk)
-		) {
-			if (child.type.name === "protected_block") {
-				if (
-					hasDetachedContainerMathRisk(
-						child,
-						candidateEmitted,
-						depth,
-						prevWasVerbatimAdjacent,
-					)
-				) {
-					blockEmitted = detachContainerMathAtDepth(candidateEmitted, depth);
-					blockInner = stripAtDepth(blockEmitted, depth);
-				} else if (swallowRisk && child.attrs.kind !== "math") {
-					const canonical = ensureGenerated();
-					if (isSwallowRisk(canonical.emitted)) {
-						({ emitted: blockEmitted, inner: blockInner } =
-							dedentAllToLineZeroAtDepth(
-								child,
-								depth,
-								ctx.activeSerializeBlock,
-							));
-					} else {
-						blockEmitted = canonical.emitted;
-						blockInner = canonical.inner;
-					}
-				} else {
-					// Pure 4-column indented-code risk on protected_block (e.g.
-					// `p\n    $$\n    x\n    y\n    $$`), or swallowRisk on a
-					// preserved `math` block (`>   $$a\n>     b$$`): dedent
-					// only line 0 so PHP preserves every continuation line byte
-					// inside the math span verbatim.
-					({ emitted: blockEmitted, inner: blockInner } = dedentLineZeroAtDepth(
-						candidateEmitted,
-						candidateInner,
-						depth,
-					));
-				}
-			} else {
-				// A clean matched block at risk ONLY of being swallowed into a
-				// preceding list keeps its raw inline bytes (dedented, see
-				// `dedentSwallowedBlockAtDepth`); the separator and
-				// `effectiveOrigIndex` stay as for canonical.
-				const dedented =
-					swallowRisk &&
-					!indentedRisk &&
-					serializedFromRaw &&
-					!sharedGroup &&
-					!wouldMergeWithPreviousList(prevNode, child)
-						? dedentSwallowedBlockAtDepth(serialized, depth, child.type.name)
-						: null;
-				if (dedented !== null) {
-					blockEmitted = dedented;
-					blockInner = stripAtDepth(dedented, depth);
-				} else {
-					const canonical = ensureGenerated();
-					blockEmitted = canonical.emitted;
-					blockInner = canonical.inner;
-				}
-			}
-		} else if (
-			!intactGroup &&
-			serialized === null &&
-			child.type.name === "protected_block" &&
-			swallowRisk
-		) {
-			({ emitted: blockEmitted, inner: blockInner } =
-				dedentAllToLineZeroAtDepth(child, depth, ctx.activeSerializeBlock));
-		}
-
-		if (
-			refDefMode === "indented" &&
-			leadingIndentAtDepth(blockEmitted, depth) < 4
-		) {
-			({ emitted: blockEmitted, inner: blockInner } = indentFirstLineAtDepth(
-				blockEmitted,
-				blockInner,
-				depth,
-			));
-		}
-
-		parts.push(blockEmitted);
-		prevInnerText = blockInner;
-		prevEmittedText = blockEmitted;
-		prevEmittedVerbatim =
-			serializedFromRaw && serialized !== null && blockEmitted === serialized;
-		if (intactGroup) {
-			const groupLen = intactGroup.endIndex - intactGroup.startIndex;
-			for (let offset = 1; offset < groupLen; offset += 1) {
-				effectiveOrigIndex[idx + offset] = intactGroup.startIndex + offset;
-			}
-			idx += groupLen - 1;
-		}
-	}
-
-	let output = parts.join("");
-	const keepTrailingSuffix =
-		origLen === 1 || matchedOrigIndex.some((origIdx) => origIdx >= 0);
-	if (output.length > 0 && keepTrailingSuffix) {
-		output += source.trailingSuffix;
-	}
-	return output;
 }
 
 function serializeDocPreservingUntouchedBlocks(
@@ -654,159 +810,92 @@ function serializeDocPreservingUntouchedBlocks(
 	if (isEmptyDoc(doc)) {
 		return "";
 	}
-	if (parsed.blocks.length === 0) {
+	const baselineBlocks = parsed.blocks;
+	if (baselineBlocks.length === 0) {
 		return serializers.serializeDoc(doc);
 	}
-	const { allIntact, partialTitleIntact, plan } = computeIntactRefDefLabels(
-		doc,
-		parsed,
-		serializers.serializeBlock,
-		serializers.serializeBlockWithRefs,
+
+	const newLen = doc.childCount;
+	const origLen = baselineBlocks.length;
+	const matchedOrigIndex = alignNodes(
+		childrenOf(doc),
+		baselineBlocks.map((block) => block.node),
+		structurallyEqual,
 	);
-	const resolveReferences = buildReferencePreserveResolver(
-		parsed,
-		partialTitleIntact,
-		Boolean(serializers.serializeBlockWithRefs),
-	);
-	const activeSerializeBlock: BlockSerializer =
-		resolveReferences !== null && serializers.serializeBlockWithRefs
-			? (node, mathNewlineToken) =>
-					serializers.serializeBlockWithRefs?.(
-						node,
-						resolveReferences,
-						mathNewlineToken,
-					) ?? serializers.serializeBlock(node, mathNewlineToken)
-			: serializers.serializeBlock;
-	const { hasInvalidatedRefDefs, nodeHasInvalidatedRef } =
-		createInvalidatedRefChecker(parsed, allIntact);
-	let output = serializeContainerPreservingChildren(doc, parsed, 0, {
-		activeSerializeBlock,
-		hasInvalidatedRefDefs,
-		nodeHasInvalidatedRef,
-		parsed,
-		plan,
-		resolveReferences,
-	});
+	const pairedOrigIndex = pairUnmatched(matchedOrigIndex, origLen);
+	// Original index whose separator semantics this output block inherits.
+	const effectiveOrigIndex = new Array<number>(newLen).fill(-1);
+
+	const keepLeadingPrefix = matchedOrigIndex[0] === 0;
+	const parts: string[] = [];
+	if (keepLeadingPrefix && parsed.leadingPrefix.length > 0) {
+		parts.push(parsed.leadingPrefix);
+	}
+	for (let idx = 0; idx < newLen; idx += 1) {
+		const child = doc.child(idx);
+		const origIdx = matchedOrigIndex[idx] ?? -1;
+		const origBlock = origIdx >= 0 ? baselineBlocks[origIdx] : undefined;
+		let serialized: string | null =
+			origBlock && origBlock.raw !== null ? origBlock.raw : null;
+		if (origBlock) {
+			effectiveOrigIndex[idx] = origIdx;
+		} else if (isNestedList(child)) {
+			const pairedIdx = pairedOrigIndex[idx] ?? -1;
+			const pairedBlock =
+				pairedIdx >= 0 ? baselineBlocks[pairedIdx] : undefined;
+			if (pairedBlock && pairedBlock.raw !== null) {
+				serialized = serializeListPreservingItems(
+					child,
+					pairedBlock,
+					serializers.serializeBlockLines,
+				);
+				if (serialized !== null) effectiveOrigIndex[idx] = pairedIdx;
+			}
+		}
+		if (idx > 0) {
+			const effIdx = effectiveOrigIndex[idx] ?? -1;
+			const prevEffIdx = effectiveOrigIndex[idx - 1] ?? -1;
+			const effBlock =
+				effIdx >= 0 && prevEffIdx >= 0 && effIdx === prevEffIdx + 1
+					? baselineBlocks[effIdx]
+					: undefined;
+			parts.push(effBlock ? effBlock.separatorBefore : "\n\n");
+		}
+		parts.push(serialized ?? serializers.serializeBlock(child));
+	}
+	let output = parts.join("");
+	// A multi-block document replaced without any surviving baseline block must
+	// not re-attach the stale trailing newlines; an in-place single-block edit
+	// (`"Hello\n"` -> `"Hello!\n"`) still keeps its suffix.
+	const keepTrailingSuffix =
+		origLen === 1 || matchedOrigIndex.some((origIdx) => origIdx >= 0);
+	if (output.length > 0 && keepTrailingSuffix) {
+		output += parsed.trailingSuffix;
+	}
 	if (parsed.lineEnding === "\r\n") {
 		output = output.replace(/\r\n/g, "\n").replace(/\n/g, "\r\n");
 	}
 	return output;
 }
 
-// ---------------------------------------------------------------------------
-// Live-doc identity rebinding & round-trip guard factory
-// ---------------------------------------------------------------------------
-
+/**
+ * Rebind baseline blocks to the live (structurally equal) node objects so
+ * identity anchoring recognizes untouched surviving blocks. List items are
+ * covered transitively: list alignment reads children of the rebound list
+ * node, which are the live item objects.
+ */
 function rebindParsedToDoc(
 	parsed: ParsedVisualDocument,
 	doc: ProseMirrorNode,
 ): ParsedVisualDocument | null {
 	if (doc === parsed.doc) return parsed;
-	if (
-		parsed.blocks.length !== doc.childCount ||
-		!nodesSemanticallyEqual(doc, parsed.doc)
-	) {
+	if (parsed.blocks.length !== doc.childCount || !doc.eq(parsed.doc)) {
 		return null;
-	}
-	const reboundLinks = parsed.referenceLinks
-		? new Map<Mark, ReferenceLinkOrigin>()
-		: undefined;
-	const reboundImages = parsed.referenceImages
-		? new Map<ProseMirrorNode, ReferenceImageOrigin>()
-		: undefined;
-	const reboundRefDefLabelsByNode = parsed.refDefLabelsByNode
-		? new Map<ProseMirrorNode, ReadonlyArray<string>>()
-		: undefined;
-	const reboundReferencedLabelsByNode = parsed.referencedLabelsByNode
-		? new Map<ProseMirrorNode, ReadonlySet<string>>()
-		: undefined;
-	const reboundBlockquoteSources = parsed.blockquoteSources
-		? new Map<ProseMirrorNode, BuiltVisualBlockSources>()
-		: undefined;
-	const srcToDst = parsed.firstRefDefNodeByLabel
-		? new Map<ProseMirrorNode, ProseMirrorNode>()
-		: undefined;
-
-	const walk = (src: ProseMirrorNode, dst: ProseMirrorNode): void => {
-		if (srcToDst) {
-			srcToDst.set(src, dst);
-		}
-		if (reboundLinks && parsed.referenceLinks && src.marks.length > 0) {
-			const count = Math.min(src.marks.length, dst.marks.length);
-			for (let m = 0; m < count; m += 1) {
-				const srcMark = src.marks[m];
-				const dstMark = dst.marks[m];
-				if (srcMark && dstMark) {
-					const origin = parsed.referenceLinks.get(srcMark);
-					if (origin) reboundLinks.set(dstMark, origin);
-				}
-			}
-		}
-		if (reboundImages && parsed.referenceImages) {
-			const imgOrigin = parsed.referenceImages.get(src);
-			if (imgOrigin) reboundImages.set(dst, imgOrigin);
-		}
-		if (reboundRefDefLabelsByNode && parsed.refDefLabelsByNode) {
-			const labels = parsed.refDefLabelsByNode.get(src);
-			if (labels) reboundRefDefLabelsByNode.set(dst, labels);
-		}
-		if (reboundReferencedLabelsByNode && parsed.referencedLabelsByNode) {
-			const labels = parsed.referencedLabelsByNode.get(src);
-			if (labels) reboundReferencedLabelsByNode.set(dst, labels);
-		}
-		if (reboundBlockquoteSources && parsed.blockquoteSources) {
-			const bqSource = parsed.blockquoteSources.get(src);
-			if (bqSource && bqSource.blocks.length === dst.childCount) {
-				reboundBlockquoteSources.set(dst, {
-					...bqSource,
-					blocks: bqSource.blocks.map((block, i) => ({
-						...block,
-						node: dst.child(i),
-					})),
-				});
-			}
-		}
-		const count = Math.min(src.childCount, dst.childCount);
-		for (let i = 0; i < count; i += 1) {
-			walk(src.child(i), dst.child(i));
-		}
-	};
-	if (
-		reboundLinks ||
-		reboundImages ||
-		reboundRefDefLabelsByNode ||
-		reboundReferencedLabelsByNode ||
-		reboundBlockquoteSources ||
-		srcToDst
-	) {
-		walk(parsed.doc, doc);
-	}
-	let reboundFirstRefDefNodeByLabel: Map<string, ProseMirrorNode> | undefined;
-	if (parsed.firstRefDefNodeByLabel && srcToDst) {
-		reboundFirstRefDefNodeByLabel = new Map<string, ProseMirrorNode>();
-		for (const [label, srcNode] of parsed.firstRefDefNodeByLabel) {
-			const dstNode = srcToDst.get(srcNode);
-			if (dstNode) reboundFirstRefDefNodeByLabel.set(label, dstNode);
-		}
 	}
 	return {
 		...parsed,
-		...(reboundBlockquoteSources
-			? { blockquoteSources: reboundBlockquoteSources }
-			: {}),
-		blocks: parsed.blocks.map((block, i) => ({ ...block, node: doc.child(i) })),
 		doc,
-		...(reboundFirstRefDefNodeByLabel
-			? { firstRefDefNodeByLabel: reboundFirstRefDefNodeByLabel }
-			: {}),
-		...(reboundRefDefLabelsByNode
-			? { refDefLabelsByNode: reboundRefDefLabelsByNode }
-			: {}),
-		...(reboundReferencedLabelsByNode
-			? { referencedLabelsByNode: reboundReferencedLabelsByNode }
-			: {}),
-		...(reboundImages ? { referenceImages: reboundImages } : {}),
-		...(reboundLinks ? { referenceLinks: reboundLinks } : {}),
+		blocks: parsed.blocks.map((block, i) => ({ ...block, node: doc.child(i) })),
 	};
 }
 
@@ -835,9 +924,7 @@ export function createPreservingRoundTripGuard(
 			baselineDoc === computed.doc
 				? computed
 				: (rebindParsedToDoc(computed, baselineDoc) ??
-					(nodesSemanticallyEqual(baselineDoc, computed.doc)
-						? computed
-						: null));
+					(baselineDoc.eq(computed.doc) ? computed : null));
 	}
 	if (liveDoc && liveDoc !== baselineDoc) {
 		const rebound = parsed ? rebindParsedToDoc(parsed, liveDoc) : null;
@@ -847,11 +934,11 @@ export function createPreservingRoundTripGuard(
 		}
 	}
 
+	// ProseMirror nodes are immutable; caching serialized strings per node
+	// avoids re-serializing untouched pasted or newly created blocks on every
+	// subsequent keystroke without weakening baseline raw-slice preservation.
 	const blockSerializationCache = new WeakMap<ProseMirrorNode, string>();
-	const serializeBlockCached: BlockSerializer = (node, mathNewlineToken) => {
-		if (mathNewlineToken !== undefined) {
-			return serializers.serializeBlock(node, mathNewlineToken);
-		}
+	const serializeBlockCached: BlockSerializer = (node) => {
 		const cached = blockSerializationCache.get(node);
 		if (cached !== undefined) {
 			return cached;
@@ -862,36 +949,21 @@ export function createPreservingRoundTripGuard(
 	};
 	const cachedSerializers: MarkdownSerializers = {
 		serializeBlock: serializeBlockCached,
-		...(serializers.serializeBlockWithRefs
-			? {
-					serializeBlockWithRefs: (
-						node,
-						resolveReferences,
-						mathNewlineToken,
-					) => {
-						if (resolveReferences === null) {
-							return serializeBlockCached(node, mathNewlineToken);
-						}
-						return (
-							serializers.serializeBlockWithRefs?.(
-								node,
-								resolveReferences,
-								mathNewlineToken,
-							) ?? serializeBlockCached(node, mathNewlineToken)
-						);
-					},
-				}
-			: {}),
+		serializeBlockLines: serializers.serializeBlockLines,
 		serializeDoc(doc) {
 			if (isEmptyDoc(doc)) {
 				return "";
 			}
-			return joinSerializedBlocks(doc, serializeBlockCached);
+			const blocks: string[] = [];
+			for (let i = 0; i < doc.childCount; i += 1) {
+				blocks.push(serializeBlockCached(doc.child(i)));
+			}
+			return blocks.join("\n\n");
 		},
 	};
 
 	const isUnmodified = (doc: ProseMirrorNode): boolean =>
-		doc === baselineDoc || nodesSemanticallyEqual(doc, baselineDoc);
+		doc === baselineDoc || doc.eq(baselineDoc);
 
 	return {
 		initialDoc: baselineDoc,

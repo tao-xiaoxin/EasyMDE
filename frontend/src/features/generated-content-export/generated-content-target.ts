@@ -1,4 +1,8 @@
 import type { EditorMarkdownMathSpan } from "../../contracts/ports/editor-block-index-port";
+import {
+	mathDomSourceMatchesSpan,
+	VISUAL_MARKDOWN_SOURCE_ATTRIBUTE,
+} from "../../shared/markdown/normalize-math-tex";
 
 export type GeneratedContentKind = "math" | "mermaid";
 
@@ -348,5 +352,32 @@ export function generatedContentTargetMatchesIdentity(
 		target.sourceRevision === identity.sourceRevision &&
 		target.acceptedPreview.revision === identity.acceptedPreview.revision &&
 		target.acceptedPreview.signature === identity.acceptedPreview.signature
+	);
+}
+
+/**
+ * Verifies that a rendered `.easymde-math` DOM element matches a candidate
+ * Markdown math span in both block/inline display mode class and
+ * `data-easymde-visual-markdown-source` content (raw Markdown source,
+ * PHP-normalized TeX, or WordPress `esc_html` + `wp_kses` + HTML5-decoded TeX).
+ */
+export function mathElementMatchesSource(
+	element: Element,
+	span: Readonly<{
+		body: string;
+		displayMode: boolean;
+		full: string;
+	}>,
+): boolean {
+	if (element.classList.contains("easymde-math-block") && !span.displayMode) {
+		return false;
+	}
+	if (element.classList.contains("easymde-math-inline") && span.displayMode) {
+		return false;
+	}
+	const domSource = element.getAttribute(VISUAL_MARKDOWN_SOURCE_ATTRIBUTE);
+	return (
+		domSource === null ||
+		mathDomSourceMatchesSpan(domSource, span.full, span.body, span.displayMode)
 	);
 }

@@ -402,7 +402,8 @@ test.describe('Editor context menu production surfaces', () => {
     await anyMenuItem(page, 'insert-paragraph-above').click();
     await waitForSourceExactValue(
       source,
-      '# prefix\n\n\n  ---  \nsuffix',
+      // Blank-line separation from both the preceding heading and the target thematic break.
+      '# prefix\n\n\n\n  ---  \nsuffix',
       'thematic-break-menu-after'
     );
     await expect(page.locator(menuSelector)).toHaveCount(0);

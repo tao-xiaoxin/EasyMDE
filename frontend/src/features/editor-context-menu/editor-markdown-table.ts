@@ -1,5 +1,3 @@
-import { maskPhpMarkdownMathForTableScan } from "../../shared/markdown/php-markdown-math-mask";
-import { isReservedTableAlignmentMarkerPrefix } from "../../shared/table-alignment-marker";
 import type {
 	EditorMarkdownBlockIndex,
 } from "./editor-markdown-block-index";
@@ -13,21 +11,6 @@ import {
 	linesOf,
 	type MarkdownLine,
 } from "./editor-markdown-lines";
-import {
-	advancePhpTableScanLine,
-	createPhpTableScanState,
-	isBlankLineText,
-	lineBreakCrossedByInlineMath,
-	lineInterruptsCommonMarkTable,
-	lineStartsWithBlockMath,
-	maskDocumentForTableScan,
-	phpTableHeaderCellCount,
-	precedingPhpBlocksAbsorbTableStart,
-	resetPhpTableScanState,
-	rowIndentationIsCode,
-} from "./editor-markdown-php-table-scan";
-
-export { lineInterruptsCommonMarkTable };
 import type {
 	EditorSelection,
 	MarkdownBlock,
@@ -108,7 +91,6 @@ export type ParsedTableCell = Readonly<{
 
 export type ParsedTableRow = Readonly<{
 	cells: ReadonlyArray<ParsedTableCell>;
-	leadingPipe: boolean;
 	lineIndex: number;
 	parsed: boolean;
 }>;
@@ -151,32 +133,27 @@ export type PreparedMarkdownTable = Readonly<{
 	value: string;
 }>;
 
-export function pipePositionsFromMasked(masked: string): number[] {
+export function pipePositions(text: string): number[] {
 	const positions: number[] = [];
+	let escaped = false;
 
-	for (let index = 0; index < masked.length; index += 1) {
-		if ("|" === masked[index] && (0 === index || "\\" !== masked[index - 1])) {
+	for (let index = 0; index < text.length; index += 1) {
+		const character = text[index];
+		if ("\\" === character && !escaped) {
+			escaped = true;
+			continue;
+		}
+		if ("|" === character && !escaped) {
 			positions.push(index);
 		}
+		escaped = false;
 	}
 	return positions;
 }
 
 /**
- * Returns column-delimiter pipe indices matching PHP
- * `MarkdownRenderer::extract_math()`, GFM Section 4.10, and
- * `league/commonmark` `TableParser::split()`: pipes inside PHP-extracted math
- * (`$...$`, `\(...\)`, `$$...$$`, `\[...\]` outside code) are masked first, and
- * any remaining `|` immediately preceded by `\` (including `\\|`, `\\\\|`, etc.)
- * is an escaped literal pipe inside the cell rather than a column delimiter.
- */
-export function pipePositions(text: string): number[] {
-	return pipePositionsFromMasked(maskPhpMarkdownMathForTableScan(text));
-}
-
-/**
- * Table headers allow at most three spaces before a leading pipe. Four spaces
- * or a tab introduce indented code instead, so that prefix is not header table
+ * Table syntax allows at most three spaces before a leading pipe. Four spaces
+ * or a tab introduce indented code instead, so that prefix is not table
  * syntax and its bytes stay inside the following cell.
  */
 function leadingPipePrefix(text: string, firstPipe: number): string | null {
@@ -184,88 +161,68 @@ function leadingPipePrefix(text: string, firstPipe: number): string | null {
 	return /^ {0,3}$/u.test(prefix) ? prefix : null;
 }
 
-function parseTableRow(
-	line: MarkdownLine,
-	lineIndex: number,
-	maskedLine: string,
-	options?: Readonly<{ allowIndentedLeadingPipe?: boolean }>,
-): ParsedTableRow | null {
-	if (maskedLine.includes("\n") || maskedLine.includes("\r")) return null;
-	const positions = pipePositionsFromMasked(maskedLine);
+export function hasLeadingPipe(text: string): boolean {
+	const first = pipePositions(text)[0];
+	return undefined !== first && null !== leadingPipePrefix(text, first);
+}
+
+/**
+ * Four spaces or a tab of leading indentation introduce indented code, so a
+ * line indented that far is never table syntax - with or without a leading
+ * pipe. Rejecting it here keeps the paragraph-to-table promotion from treating
+ * code bytes as cells; a table still needs its own 0-3 space indentation.
+ */
+function rowIndentationIsCode(text: string): boolean {
+	const indentation = text.match(/^[ \t]*/u)?.[0] ?? "";
+	return indentation.includes("\t") || indentation.length > 3;
+}
+
+export function parseTableRowCells(
+	text: string,
+): ReadonlyArray<ParsedTableCell> | null {
+	const positions = pipePositions(text);
 	if (0 === positions.length) return null;
-	const firstPipe = positions[0] ?? 0;
-	const leading = options?.allowIndentedLeadingPipe
-		? /^[ \t]*$/u.test(line.text.slice(0, firstPipe))
-		: null !== leadingPipePrefix(line.text, firstPipe);
+	const leading = null !== leadingPipePrefix(text, positions[0] ?? 0);
 	const lastPipe = positions[positions.length - 1];
 	const trailing =
-		undefined !== lastPipe && /^[ \t]*$/u.test(line.text.slice(lastPipe + 1));
+		undefined !== lastPipe && /^[ \t]*$/u.test(text.slice(lastPipe + 1));
 	const cellCount = positions.length - (leading ? 1 : 0) + (trailing ? 0 : 1);
 	if (cellCount < 1) return null;
 
 	const cells: ParsedTableCell[] = [];
 	for (let index = 0; index < cellCount; index += 1) {
 		const start = leading
-			? (positions[index] ?? line.text.length - 1) + 1
+			? (positions[index] ?? text.length - 1) + 1
 			: 0 === index
 				? 0
-				: (positions[index - 1] ?? line.text.length) + 1;
-		const end = positions[leading ? index + 1 : index] ?? line.text.length;
-		cells.push({ end, raw: line.text.slice(start, end), start });
+				: (positions[index - 1] ?? text.length) + 1;
+		const end = positions[leading ? index + 1 : index] ?? text.length;
+		cells.push({ end, raw: text.slice(start, end), start });
 	}
+	return cells;
+}
 
-	return { cells, leadingPipe: leading, lineIndex, parsed: true };
+function parseTableRow(
+	line: MarkdownLine,
+	lineIndex: number,
+): ParsedTableRow | null {
+	const cells = parseTableRowCells(line.text);
+	return cells ? { cells, lineIndex, parsed: true } : null;
 }
 
 function isTableDelimiter(cell: ParsedTableCell): boolean {
-	return /^[ \t]*:?-{1,}:?[ \t]*$/u.test(cell.raw);
+	return /^\s*:?-{1,}:?\s*$/u.test(cell.raw);
 }
 
-function tableHasMultilineInlineMathRow(
-	lines: ReadonlyArray<MarkdownLine>,
-	startLine: number,
-	endLine: number,
-	mathSpans: EditorMarkdownBlockIndex["mathSpans"] | undefined,
-): boolean {
-	if (!mathSpans || 0 === mathSpans.length) return false;
-	if (
-		startLine > 0 &&
-		lineBreakCrossedByInlineMath(lines[startLine - 1], mathSpans)
-	) {
-		return true;
-	}
-	for (let lineIndex = startLine; lineIndex < endLine; lineIndex += 1) {
-		if (lineBreakCrossedByInlineMath(lines[lineIndex], mathSpans)) return true;
-	}
-	return false;
-}
-
-function logicalMaskedTrailingLine(
-	lines: ReadonlyArray<MarkdownLine>,
-	trailingLineIndex: number,
-	maskedDoc: string,
-	mathSpans: EditorMarkdownBlockIndex["mathSpans"] | undefined,
-): string {
-	const first = lines[trailingLineIndex];
-	if (!first) return "";
-	let logicalEndIndex = trailingLineIndex;
-	while (
-		logicalEndIndex + 1 < lines.length &&
-		lineBreakCrossedByInlineMath(lines[logicalEndIndex], mathSpans)
-	) {
-		logicalEndIndex += 1;
-	}
-	const last = lines[logicalEndIndex] ?? first;
-	return maskedDoc.slice(first.start, last.end);
+export function isTableDelimiterLine(text: string): boolean {
+	const cells = parseTableRowCells(text);
+	return null !== cells && cells.length > 0 && cells.every(isTableDelimiter);
 }
 
 function tableAtLine(
-	value: string,
 	lines: ReadonlyArray<MarkdownLine>,
 	targetLine: number,
 	range?: TableLineRange,
-	blockIndex?: EditorMarkdownBlockIndex,
-	preMaskedDoc?: string,
 ): ParsedMarkdownTable | null {
 	const searchStartLine = Math.max(0, range?.startLine ?? 0);
 	const searchEndLine = Math.min(
@@ -279,18 +236,9 @@ function tableAtLine(
 	)
 		return null;
 
-	const maskedDoc = preMaskedDoc ?? maskDocumentForTableScan(value, blockIndex);
-	const mathSpans = blockIndex?.mathSpans;
-	const maskedSliceFor = (line: MarkdownLine): string =>
-		maskedDoc === value ? line.text : maskedDoc.slice(line.start, line.end);
-
 	// Cache each candidate row once. In a document made of delimiter-looking
 	// rows, every pair can look like a table header and separator. Re-parsing
 	// the complete suffix for each candidate makes the old lookup quadratic.
-	// CommonMark `TableStartParser::parseSeparator()` and `TableParser::split()`
-	// both skip arbitrary leading ASCII spaces/tabs before a leading pipe on
-	// separator and body rows, while any valid header line has at most 3 spaces
-	// (so `allowIndentedLeadingPipe: true` is identical to `false` on headers).
 	const parsedRows = new Array<ParsedTableRow | null>(lines.length).fill(null);
 	const sameWidthRunEnd = new Array<number | undefined>(lines.length);
 	for (
@@ -299,11 +247,7 @@ function tableAtLine(
 		lineIndex -= 1
 	) {
 		const line = lines[lineIndex];
-		const row = line
-			? parseTableRow(line, lineIndex, maskedSliceFor(line), {
-					allowIndentedLeadingPipe: true,
-				})
-			: null;
+		const row = line ? parseTableRow(line, lineIndex) : null;
 		parsedRows[lineIndex] = row;
 		if (!row) continue;
 		const nextRow = parsedRows[lineIndex + 1];
@@ -313,108 +257,34 @@ function tableAtLine(
 				: lineIndex + 1;
 	}
 
-	const scanState = createPhpTableScanState();
-
 	for (
-		let startLine = searchStartLine;
-		startLine <= targetLine;
-		startLine += 1
+		let startLine = targetLine;
+		startLine >= searchStartLine;
+		startLine -= 1
 	) {
-		const headerLine = lines[startLine];
-		const maskedHeaderLine = headerLine ? maskedSliceFor(headerLine) : undefined;
-		if (
-			!advancePhpTableScanLine(
-				scanState,
-				headerLine,
-				startLine,
-				blockIndex,
-				maskedHeaderLine,
-			) ||
-			!headerLine ||
-			undefined === maskedHeaderLine
-		) {
-			continue;
-		}
-		const separator = parsedRows[startLine + 1];
-		if (!separator?.cells.every(isTableDelimiter)) continue;
-
 		const header = parsedRows[startLine];
-		const phpHeaderCells = phpTableHeaderCellCount(
-			maskedHeaderLine,
-			header?.cells.length ?? null,
-		);
-		if (phpHeaderCells > separator.cells.length) continue;
-
-		// PHP `League\CommonMark`'s `TableStartParser::tryStart()` opens a
-		// table whenever the active paragraph contains `|` and
-		// `phpHeaderCells <= separator.cells.length`. Any non-editable PHP
-		// table shape (asymmetric narrow header, standalone single-pipe
-		// 0-column header, pipe-less paragraph continuation header, or
-		// 4-space/tab-indented header after a paragraph) absorbs following
-		// non-interrupting lines as body rows until interrupted, so track that
-		// active PHP table instead of matching a later delimiter inside it.
-		if (
-			!header ||
-			rowIndentationIsCode(maskedHeaderLine) ||
-			header.cells.length < separator.cells.length
-		) {
-			scanState.inPhpTable = true;
-			scanState.inParagraph = false;
-			scanState.paragraphHasPipe = false;
-			startLine += 1;
-			continue;
-		}
+		const separator = parsedRows[startLine + 1];
+		if (!header || !separator) continue;
+		// A candidate whose header line is indented four spaces or a tab is
+		// indented code, not a table. The parser already reports that shape as
+		// code, but a preceding paragraph reaches the promotion below instead,
+		// so the code indent is rejected here where the candidate is chosen.
+		// Rows and separators keep the parser's own admission: only the header
+		// decides whether this candidate is a table at all.
+		const headerLine = lines[startLine];
+		if (headerLine && rowIndentationIsCode(headerLine.text)) continue;
+		if (header.cells.length !== separator.cells.length) continue;
+		if (!separator.cells.every(isTableDelimiter)) continue;
 
 		let endLine = startLine + 2;
 		const firstBody = parsedRows[endLine];
 		if (firstBody && firstBody.cells.length === header.cells.length) {
 			endLine = sameWidthRunEnd[endLine] ?? endLine + 1;
 		}
-		if (tableHasMultilineInlineMathRow(lines, startLine, endLine, mathSpans)) {
-			return null;
-		}
 		const malformedBody = parsedRows[endLine];
-		const trailingLine = lines[endLine];
-		const hasNonBlankTrailingLine =
-			undefined !== trailingLine &&
-			!isBlankLineText(trailingLine.text) &&
-			!lineStartsWithBlockMath(trailingLine, endLine, blockIndex);
-		const maskedTrailingText = hasNonBlankTrailingLine
-			? logicalMaskedTrailingLine(lines, endLine, maskedDoc, mathSpans)
-			: "";
-		const firstTrailingLine =
-			maskedTrailingText.split(/\r\n|\r|\n/u, 1)[0] ?? "";
-		const trailingInterruptedAfterMathMask =
-			hasNonBlankTrailingLine &&
-			maskedTrailingText !== trailingLine.text &&
-			(isBlankLineText(firstTrailingLine) ||
-				(!firstTrailingLine.includes("|") &&
-					lineInterruptsCommonMarkTable(firstTrailingLine)));
-		// Decline whenever the parser-owned block extends past the last
-		// same-width pipe row (including lazy continuation rows or Lezer/PHP
-		// boundary disagreements such as indented code or `2. ordered`, except
-		// when full-document PHP math masking proves the trailing line genuinely
-		// interrupts the PHP table), when a pipe-shaped body row changes width,
-		// or when the immediately following non-blank line would be absorbed by
-		// PHP `League\CommonMark`'s `TableParser::tryContinue()` (any raw `|`
-		// outside extracted math) or `canHaveLazyContinuationLines()` (any
-		// non-interrupting line).
-		if (
-			(undefined !== range &&
-				endLine <= searchEndLine &&
-				!trailingInterruptedAfterMathMask) ||
-			(malformedBody && malformedBody.cells.length !== header.cells.length) ||
-			(hasNonBlankTrailingLine &&
-				!isBlankLineText(firstTrailingLine) &&
-				(firstTrailingLine.includes("|") ||
-					!lineInterruptsCommonMarkTable(firstTrailingLine)))
-		)
+		if (malformedBody && malformedBody.cells.length !== header.cells.length)
 			return null;
-		if (targetLine >= endLine) {
-			resetPhpTableScanState(scanState);
-			startLine = endLine - 1;
-			continue;
-		}
+		if (targetLine >= endLine) continue;
 
 		const tableRows = [header, separator];
 		for (let bodyLine = startLine + 2; bodyLine < endLine; bodyLine += 1) {
@@ -451,7 +321,7 @@ function trustedAnnotationPrefixRange(
 	const between = value.slice(previous.to, lineContentEnd);
 	if (!/^[ \t\r\n]*$/u.test(between)) return undefined;
 	const text = value.slice(previous.from, previous.to);
-	if (null === isReservedTableAlignmentMarkerPrefix(text))
+	if (!text.trimStart().startsWith("<!-- easymde-table-align:"))
 		return undefined;
 	return {
 		from: previous.from,
@@ -556,28 +426,6 @@ function markdownTableBlock(
 	};
 }
 
-/**
- * Checks whether contiguous preceding blocks (with no blank line or interrupting
- * block closing the PHP construct) leave an active `League\CommonMark` table
- * or `list`/`quote` container that absorbs `blockStartLine` instead of letting
- * it start a standalone top-level table.
- */
-function precedingParagraphOpensPhpTable(
-	lines: ReadonlyArray<MarkdownLine>,
-	blockIndex: EditorMarkdownBlockIndex,
-	blockFrom: number,
-	blockStartLine: number,
-	preMaskedDoc?: string,
-): boolean {
-	return precedingPhpBlocksAbsorbTableStart(
-		lines,
-		blockIndex,
-		blockFrom,
-		blockStartLine,
-		preMaskedDoc,
-	);
-}
-
 function preparedMarkdownTable(
 	value: string,
 	position: number,
@@ -590,30 +438,11 @@ function preparedMarkdownTable(
 	)
 		return null;
 	const lines = linesOf(value);
-	const maskedDoc = maskDocumentForTableScan(value, blockIndex);
-	if (
-		precedingParagraphOpensPhpTable(
-			lines,
-			blockIndex,
-			indexed.from,
-			indexed.lineStart,
-			maskedDoc,
-		)
-	) {
-		return null;
-	}
 	const targetLine = lineIndexAt(lines, position);
-	const table = tableAtLine(
-		value,
-		lines,
-		targetLine,
-		{
-			endLine: indexed.lineEnd,
-			startLine: indexed.lineStart,
-		},
-		blockIndex,
-		maskedDoc,
-	);
+	const table = tableAtLine(lines, targetLine, {
+		endLine: indexed.lineEnd,
+		startLine: indexed.lineStart,
+	});
 	if (!table) return null;
 	const metadata = tableAlignmentMetadata(value, lines, table, blockIndex);
 	const tableBlock = markdownTableBlock(value, lines, table, blockIndex);
@@ -854,31 +683,10 @@ export function findMarkdownTableBlock(
 	lineEnd: number,
 	lines: ReadonlyArray<MarkdownLine> = linesOf(value),
 ): MarkdownBlock | null {
-	const startLine = lines[lineStart];
-	const maskedDoc = maskDocumentForTableScan(value, blockIndex);
-	if (
-		startLine &&
-		precedingParagraphOpensPhpTable(
-			lines,
-			blockIndex,
-			startLine.start,
-			lineStart,
-			maskedDoc,
-		)
-	) {
-		return null;
-	}
 	const targetLine = lineIndexAt(lines, position);
-	const table = tableAtLine(
-		value,
-		lines,
-		targetLine,
-		{
-			endLine: lineEnd,
-			startLine: lineStart,
-		},
-		blockIndex,
-		maskedDoc,
-	);
+	const table = tableAtLine(lines, targetLine, {
+		endLine: lineEnd,
+		startLine: lineStart,
+	});
 	return table ? markdownTableBlock(value, lines, table, blockIndex) : null;
 }

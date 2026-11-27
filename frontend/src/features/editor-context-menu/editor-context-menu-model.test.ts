@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   createEditorContextMenuModel,
+  type EditorContextMenuItem,
   type EditorContextMenuLabels
 } from './editor-context-menu-model';
 
@@ -78,13 +79,72 @@ function context(overrides: Partial<Parameters<typeof createEditorContextMenuMod
   };
 }
 
+function collectMenuItemIds(items: ReadonlyArray<EditorContextMenuItem>): string[] {
+  const ids: string[] = [];
+  for (const item of items) {
+    ids.push(item.id);
+    if ('submenu' === item.kind) {
+      ids.push(...collectMenuItemIds(item.children));
+    }
+  }
+  return ids;
+}
+
 describe('createEditorContextMenuModel', () => {
   it('keeps Cut and Copy disabled for a collapsed selection', () => {
     const model = createEditorContextMenuModel(context());
     expect(model.items.find((item) => item.id === 'bold')?.disabled).toBe(true);
     expect(model.items.find((item) => item.id === 'copy')?.disabled).toBe(true);
     expect(model.items.find((item) => item.id === 'cut')?.disabled).toBe(true);
-    expect(model.items.find((item) => item.id === 'paste')?.disabled).toBe(true);
+    expect(model.items.find((item) => item.id === 'paste')?.disabled).toBe(false);
+  });
+
+  it('disables paste actions only when clipboard is confirmed empty, unsupported, or read-only', () => {
+    const cases = [
+      { clipboard: { status: 'empty' as const }, expectedDisabled: true },
+      {
+        clipboard: {
+          code: 'editor-clipboard-unsupported' as const,
+          status: 'unavailable' as const
+        },
+        expectedDisabled: true
+      },
+      { clipboard: { status: 'available' as const }, expectedDisabled: false },
+      { clipboard: { status: 'unknown' as const }, expectedDisabled: false },
+      { clipboard: { status: 'checking' as const }, expectedDisabled: false },
+      {
+        clipboard: {
+          code: 'editor-clipboard-read-failed' as const,
+          status: 'unavailable' as const
+        },
+        expectedDisabled: false
+      }
+    ];
+
+    for (const { clipboard, expectedDisabled } of cases) {
+      const model = createEditorContextMenuModel(context({ clipboard }));
+      const copyPaste = model.items.find((item) => item.id === 'copy-paste-as');
+      if (copyPaste?.kind !== 'submenu') throw new Error('copy-paste-submenu-missing');
+
+      expect(model.items.find((item) => item.id === 'paste')?.disabled).toBe(expectedDisabled);
+      expect(copyPaste.children.find((item) => item.id === 'paste-plain-text')?.disabled).toBe(
+        expectedDisabled
+      );
+
+      const readOnlyModel = createEditorContextMenuModel(
+        context({ clipboard, readOnly: true })
+      );
+      const readOnlyCopyPaste = readOnlyModel.items.find(
+        (item) => item.id === 'copy-paste-as'
+      );
+      if (readOnlyCopyPaste?.kind !== 'submenu') {
+        throw new Error('copy-paste-submenu-missing');
+      }
+      expect(readOnlyModel.items.find((item) => item.id === 'paste')?.disabled).toBe(true);
+      expect(
+        readOnlyCopyPaste.children.find((item) => item.id === 'paste-plain-text')?.disabled
+      ).toBe(true);
+    }
   });
 
   it('enables selected text and readable Clipboard actions', () => {
@@ -574,9 +634,6 @@ describe('createEditorContextMenuModel', () => {
     expect(code?.kind).toBe('submenu');
     if (code?.kind !== 'submenu') throw new Error('code-submenu-missing');
     expect(code.children.map((item) => item.id)).toEqual([
-      'bold',
-      'copy-paste-as',
-      'insert',
       'copy-code-block',
       'copy-code-content',
       'indent-code-block',
@@ -592,9 +649,6 @@ describe('createEditorContextMenuModel', () => {
     const unsupportedCode = unsupported.items.find((item) => item.id === 'code-block');
     if (unsupportedCode?.kind !== 'submenu') throw new Error('code-submenu-missing');
     expect(unsupportedCode.children.map((item) => item.id)).toEqual([
-      'bold',
-      'copy-paste-as',
-      'insert',
       'copy-code-block',
       'indent-code-block',
       'indent-selected-code',
@@ -656,63 +710,151 @@ describe('createEditorContextMenuModel', () => {
     expect(mermaid.items.some((item) => item.id === 'code-block')).toBe(false);
   });
 
-  it('keeps code-block formatting, copy/paste-as, and insert actions inside the code submenu', () => {
-    const collapsed = createEditorContextMenuModel(context({
+  it('keeps code-block menus free of bold, HTML/simplified copy, and nested general submenus for collapsed and selected ranges', () => {
+    for (const hasSelection of [false, true]) {
+      const model = createEditorContextMenuModel(context({
+        block: 'code',
+        canCopySimplified: true,
+        clipboard: { status: 'available' },
+        code: {
+          canCopyContent: true,
+          canIndentBlock: true,
+          canIndentSelection: hasSelection
+        },
+        hasSelection
+      }));
+      const allIds = collectMenuItemIds(model.items);
+
+      expect(allIds).not.toContain('bold');
+      expect(allIds).not.toContain('copy-as-html');
+      expect(allIds).not.toContain('copy-simplified-formatting');
+      expect(allIds.filter((id) => id === 'code-block')).toHaveLength(1);
+
+      expect(model.items.find((item) => item.id === 'cut')?.disabled).toBe(!hasSelection);
+      expect(model.items.find((item) => item.id === 'copy')?.disabled).toBe(!hasSelection);
+      expect(model.items.find((item) => item.id === 'paste')?.disabled).toBe(false);
+
+      const copyPaste = model.items.find((item) => item.id === 'copy-paste-as');
+      if (copyPaste?.kind !== 'submenu') throw new Error('copy-paste-submenu-missing');
+      expect(copyPaste.children.map((item) => item.id)).toEqual([
+        'copy-as-markdown',
+        'paste-plain-text'
+      ]);
+      expect(copyPaste.children.find((item) => item.id === 'copy-as-markdown')?.disabled).toBe(!hasSelection);
+      expect(copyPaste.children.find((item) => item.id === 'paste-plain-text')?.disabled).toBe(false);
+
+      const insert = model.items.find((item) => item.id === 'insert');
+      if (insert?.kind !== 'submenu') throw new Error('insert-submenu-missing');
+      expect(insert.children.map((item) => item.id)).toEqual([
+        'insert-table-above',
+        'insert-table-below',
+        'insert-image-above',
+        'insert-image-below',
+        'insert-paragraph-above',
+        'insert-paragraph-below'
+      ]);
+      expect(insert.children.every((item) => !item.disabled)).toBe(true);
+
+      const code = model.items.find((item) => item.id === 'code-block');
+      if (code?.kind !== 'submenu') throw new Error('code-submenu-missing');
+      expect(code.children.map((item) => item.id)).toEqual([
+        'copy-code-block',
+        'copy-code-content',
+        'indent-code-block',
+        'indent-selected-code',
+        'insert-paragraph-above-code',
+        'insert-paragraph-below-code',
+        'delete-code-block'
+      ]);
+      expect(code.children.some((item) => item.kind === 'submenu')).toBe(false);
+      expect(code.children.find((item) => item.id === 'copy-code-block')?.disabled).toBe(false);
+      expect(code.children.find((item) => item.id === 'copy-code-content')?.disabled).toBe(false);
+      expect(code.children.find((item) => item.id === 'indent-code-block')?.disabled).toBe(false);
+      expect(code.children.find((item) => item.id === 'indent-selected-code')?.disabled).toBe(!hasSelection);
+      expect(code.children.find((item) => item.id === 'insert-paragraph-above-code')?.disabled).toBe(false);
+      expect(code.children.find((item) => item.id === 'insert-paragraph-below-code')?.disabled).toBe(false);
+      expect(code.children.find((item) => item.id === 'delete-code-block')?.disabled).toBe(false);
+    }
+  });
+
+  it('preserves root insert and restricted copy-paste-as for a Mermaid fenced code block without generated context', () => {
+    const mermaid = createEditorContextMenuModel(context({
       block: 'code',
       canCopySimplified: true,
       clipboard: { status: 'available' },
-      code: { canCopyContent: true },
-      hasSelection: false
+      code: { canCopyContent: true, info: 'mermaid' },
+      hasSelection: true
     }));
-    const collapsedCode = collapsed.items.find((item) => item.id === 'code-block');
-    if (collapsedCode?.kind !== 'submenu') throw new Error('code-submenu-missing');
+    const allIds = collectMenuItemIds(mermaid.items);
 
-    expect(collapsed.items.map((item) => item.id)).not.toContain('bold');
-    expect(collapsed.items.map((item) => item.id)).not.toContain('copy-paste-as');
-    expect(collapsed.items.map((item) => item.id)).not.toContain('insert');
-    expect(collapsedCode.children.map((item) => item.id)).toEqual(expect.arrayContaining([
-      'bold',
-      'copy-paste-as',
-      'insert'
-    ]));
-    expect(collapsedCode.children.find((item) => item.id === 'bold')?.disabled).toBe(true);
+    expect(allIds).not.toContain('bold');
+    expect(allIds).not.toContain('code-block');
+    expect(allIds).not.toContain('copy-as-html');
+    expect(allIds).not.toContain('copy-simplified-formatting');
 
-    const copyPaste = collapsedCode.children.find((item) => item.id === 'copy-paste-as');
-    if (copyPaste?.kind !== 'submenu') throw new Error('code-copy-paste-submenu-missing');
+    const copyPaste = mermaid.items.find((item) => item.id === 'copy-paste-as');
+    if (copyPaste?.kind !== 'submenu') throw new Error('copy-paste-submenu-missing');
     expect(copyPaste.children.map((item) => item.id)).toEqual([
       'copy-as-markdown',
-      'copy-as-html',
-      'copy-simplified-formatting',
       'paste-plain-text'
     ]);
-    expect(copyPaste.children.find((item) => item.id === 'copy-as-html')?.disabled).toBe(true);
-    expect(copyPaste.children.find((item) => item.id === 'copy-simplified-formatting')?.disabled).toBe(true);
+    expect(copyPaste.children.find((item) => item.id === 'copy-as-markdown')?.disabled).toBe(false);
+    expect(copyPaste.children.find((item) => item.id === 'paste-plain-text')?.disabled).toBe(false);
 
-    const insert = collapsedCode.children.find((item) => item.id === 'insert');
-    if (insert?.kind !== 'submenu') throw new Error('code-insert-submenu-missing');
+    const insert = mermaid.items.find((item) => item.id === 'insert');
+    if (insert?.kind !== 'submenu') throw new Error('insert-submenu-missing');
     expect(insert.children.map((item) => item.id)).toEqual([
       'insert-table-above',
       'insert-table-below',
       'insert-image-above',
-      'insert-image-below'
+      'insert-image-below',
+      'insert-paragraph-above',
+      'insert-paragraph-below'
     ]);
     expect(insert.children.every((item) => !item.disabled)).toBe(true);
-    expect(collapsedCode.children.find((item) => item.id === 'delete-code-block')?.disabled).toBe(false);
+  });
 
-    const selected = createEditorContextMenuModel(context({
-      block: 'code',
+  it('applies the code-block contract when code.target identifies a nested code block', () => {
+    const nestedTarget = createEditorContextMenuModel(context({
+      block: 'quote',
       canCopySimplified: true,
       clipboard: { status: 'available' },
-      code: { canCopyContent: true },
-      hasSelection: true
+      code: {
+        canCopyContent: true,
+        canIndentBlock: true,
+        canIndentSelection: true,
+        target: { from: 2, to: 20 }
+      },
+      hasSelection: false
     }));
-    const selectedCode = selected.items.find((item) => item.id === 'code-block');
-    if (selectedCode?.kind !== 'submenu') throw new Error('selected-code-submenu-missing');
-    expect(selectedCode.children.map((item) => item.id)).not.toContain('bold');
-    expect(selectedCode.children.map((item) => item.id)).not.toContain('copy-paste-as');
-    expect(selectedCode.children.map((item) => item.id)).not.toContain('insert');
-    expect(selectedCode.children.find((item) => item.id === 'copy-code-block')?.disabled).toBe(false);
-    expect(selectedCode.children.find((item) => item.id === 'delete-code-block')?.disabled).toBe(false);
+    const allIds = collectMenuItemIds(nestedTarget.items);
+
+    expect(allIds).not.toContain('bold');
+    expect(allIds).not.toContain('copy-as-html');
+    expect(allIds).not.toContain('copy-simplified-formatting');
+
+    const copyPaste = nestedTarget.items.find((item) => item.id === 'copy-paste-as');
+    if (copyPaste?.kind !== 'submenu') throw new Error('copy-paste-submenu-missing');
+    expect(copyPaste.children.map((item) => item.id)).toEqual([
+      'copy-as-markdown',
+      'paste-plain-text'
+    ]);
+
+    const insert = nestedTarget.items.find((item) => item.id === 'insert');
+    if (insert?.kind !== 'submenu') throw new Error('insert-submenu-missing');
+    expect(insert.children.every((item) => !item.disabled)).toBe(true);
+
+    const code = nestedTarget.items.find((item) => item.id === 'code-block');
+    if (code?.kind !== 'submenu') throw new Error('code-submenu-missing');
+    expect(code.children.map((item) => item.id)).toEqual([
+      'copy-code-block',
+      'copy-code-content',
+      'indent-code-block',
+      'indent-selected-code',
+      'insert-paragraph-above-code',
+      'insert-paragraph-below-code',
+      'delete-code-block'
+    ]);
   });
 
   it('adds the copy link address action only for a captured link target', () => {

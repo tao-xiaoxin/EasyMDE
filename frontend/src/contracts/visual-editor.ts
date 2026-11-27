@@ -209,6 +209,12 @@ export type VisualToolbarCommandOptions = Readonly<{
 	requestPreviewTransfer?: boolean;
 }>;
 
+export type VisualExpectedSnapshot = Readonly<{
+	revision: number;
+	selection: VisualEditorSelection;
+	value: string;
+}>;
+
 export type VisualCanonicalChangeRequest = Readonly<{
 	change: Readonly<{
 		changes: Readonly<{ from: number; insert: string; to: number }>;
@@ -216,11 +222,14 @@ export type VisualCanonicalChangeRequest = Readonly<{
 		selectionFallback?: "caret" | "reflow-caret";
 		value: string;
 	}>;
-	expected: Readonly<{
-		revision: number;
-		selection: VisualEditorSelection;
-		value: string;
-	}>;
+	expected: VisualExpectedSnapshot;
+}>;
+
+export type VisualInsertParagraphRequest = Readonly<{
+	expected: VisualExpectedSnapshot;
+	nestedCode?: boolean;
+	relative: "after" | "before";
+	targetRange: Readonly<{ from: number; to: number }>;
 }>;
 
 export type ImmersiveVisualEditorRuntime = Readonly<{
@@ -230,6 +239,9 @@ export type ImmersiveVisualEditorRuntime = Readonly<{
 	) => VisualToolbarCommandResult;
 	applyCanonicalChange: (
 		request: VisualCanonicalChangeRequest,
+	) => VisualToolbarCommandResult;
+	insertParagraphRelative?: (
+		request: VisualInsertParagraphRequest,
 	) => VisualToolbarCommandResult;
 	getGeneratedPreviewIdentity: () => VisualEditorGeneratedPreviewIdentity | null;
 	isEditable: () => boolean;

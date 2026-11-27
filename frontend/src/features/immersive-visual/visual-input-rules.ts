@@ -88,7 +88,7 @@ function createBulletListRule(): InputRule {
 }
 
 function createOrderedListRule(): InputRule {
-	return wrappingInputRule(/^(\d{1,9})\.\s$/, {
+	return wrappingInputRule(/^(\d+)\.\s$/, {
 		getAttrs: (match: RegExpMatchArray) => ({
 			order: Number.parseInt(match[1] ?? "1", 10) || 1,
 		}),

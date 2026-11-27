@@ -1,5 +1,4 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
-import { nodesSemanticallyEqual } from "./markdown-node-alignment";
 import {
 	type ParsedVisualDocument,
 	parseMarkdownWithBlockSources,
@@ -150,7 +149,8 @@ function rangesBySerialization(doc: ProseMirrorNode, text: string): Range[] {
 					? ""
 					: serializeVisualDocToMarkdown(doc.type.create(null, [child]));
 		if (serialized.length === 0) {
-			const pos = Math.min(text.length, skipLineBreaks(text, cursor, 2));
+			const pos =
+				i === 0 ? 0 : Math.min(text.length, skipLineBreaks(text, cursor, 2));
 			ranges.push({ end: pos, start: pos });
 			cursor = pos;
 			continue;
@@ -266,10 +266,7 @@ export function deriveVisualSourceIndex(
 	while (
 		prefix < oldCount &&
 		prefix < newCount &&
-		nodesSemanticallyEqual(
-			nextDoc.child(prefix),
-			(oldBlocks[prefix] as VisualSourceBlock).node,
-		)
+		nextDoc.child(prefix).eq((oldBlocks[prefix] as VisualSourceBlock).node)
 	) {
 		prefix += 1;
 	}
@@ -277,10 +274,9 @@ export function deriveVisualSourceIndex(
 	while (
 		suffix < oldCount - prefix &&
 		suffix < newCount - prefix &&
-		nodesSemanticallyEqual(
-			nextDoc.child(newCount - 1 - suffix),
-			(oldBlocks[oldCount - 1 - suffix] as VisualSourceBlock).node,
-		)
+		nextDoc
+			.child(newCount - 1 - suffix)
+			.eq((oldBlocks[oldCount - 1 - suffix] as VisualSourceBlock).node)
 	) {
 		suffix += 1;
 	}
@@ -321,7 +317,7 @@ export function deriveVisualSourceIndex(
 		while (start < end && nextMarkdown[start] === "\n") start += 1;
 		while (end > start && nextMarkdown[end - 1] === "\n") end -= 1;
 		if (start === end) {
-			const pos = Math.min(regionStart + 2, regionEnd);
+			const pos = lastPrefix ? Math.min(regionStart + 2, regionEnd) : 0;
 			ranges.push({ end: pos, start: pos });
 		} else {
 			ranges.push({ end, start });

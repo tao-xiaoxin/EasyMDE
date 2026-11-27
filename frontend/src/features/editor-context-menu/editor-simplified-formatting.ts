@@ -1,9 +1,5 @@
-import {
-	DEFAULT_EDITOR_CLIPBOARD_RICH_MAX_BYTES,
-	type EditorClipboardRichPayload,
-} from "../../contracts/ports/editor-clipboard-port";
+import type { EditorClipboardRichPayload } from "../../contracts/ports/editor-clipboard-port";
 import type { SafePreviewHtml } from "../../contracts/ports/preview-request";
-import { utf8ByteLength } from "../../shared/utf8-byte-length";
 
 export type SimplifiedFormattingFailureCode =
 	| "editor-simplified-formatting-html-invalid"
@@ -33,7 +29,7 @@ export type SimplifiedFormattingOptions = Readonly<{
 	parser: SimplifiedFormattingDomParser;
 }>;
 
-const DEFAULT_MAX_BYTES = DEFAULT_EDITOR_CLIPBOARD_RICH_MAX_BYTES;
+const DEFAULT_MAX_BYTES = 1_048_576;
 const DEFAULT_MAX_NODES = 20_000;
 const BLOCK_TAGS = new Set([
 	"ADDRESS",
@@ -97,6 +93,23 @@ const ALIGNMENT_TAGS = new Set(["COL", "COLGROUP", "TD", "TH", "TABLE"]);
 type PlainTextSegment =
 	| Readonly<{ kind: "text"; value: string }>
 	| Readonly<{ kind: "break"; lines: 1 | 2 }>;
+
+function utf8ByteLength(value: string): number {
+	let bytes = 0;
+	for (let index = 0; index < value.length; index += 1) {
+		const codePoint = value.codePointAt(index) ?? 0;
+		if (codePoint > 0xffff) index += 1;
+		bytes +=
+			codePoint <= 0x7f
+				? 1
+				: codePoint <= 0x7ff
+					? 2
+					: codePoint <= 0xffff
+						? 3
+						: 4;
+	}
+	return bytes;
+}
 
 function validBound(value: number | undefined, fallback: number): boolean {
 	return Number.isSafeInteger(value ?? fallback) && (value ?? fallback) > 0;

@@ -59,6 +59,7 @@ export type CreateContextMenuActionCapabilitiesDeps = Readonly<{
         >['getCurrentContext']
       >
     | null;
+  referenceLabelCaseFoldProfile?: EditorRootProps['referenceLabelCaseFoldProfile'];
   remoteImageImportPort: RemoteImageImportPort;
   reportContextMenuFailure: (code: string, message?: string) => void;
   rootActiveRef: SharedRef<boolean>;
@@ -92,6 +93,7 @@ export function createContextMenuActionCapabilities(
     previewAppearanceRef,
     previewPort,
     readContextMenuCurrentContext,
+    referenceLabelCaseFoldProfile,
     remoteImageImportPort,
     reportContextMenuFailure,
     rootActiveRef,
@@ -248,6 +250,9 @@ export function createContextMenuActionCapabilities(
         return { response, signature, status: 'available' as const };
       }
     },
+    ...(undefined !== referenceLabelCaseFoldProfile
+      ? { referenceLabelCaseFoldProfile }
+      : {}),
     report: reportContextMenuFailure,
     ...(simplifiedFormattingParser ? { simplifiedFormattingParser } : {}),
     toolbar: {
@@ -266,6 +271,22 @@ export function createContextMenuActionCapabilities(
         const runtime = visualEditorRuntimeRef.current;
         if (!runtime) return 'unavailable';
         const result = runtime.executeCommand(command, options);
+        return 'handled' === result ? 'handled' : 'failed';
+      },
+      insertParagraphRelative: (captured, request) => {
+        if ('visual' !== captured.surface) return 'failed';
+        const runtime = visualEditorRuntimeRef.current;
+        if (!runtime) return 'failed';
+        if (!runtime.insertParagraphRelative) return 'unavailable';
+        if (undefined === captured.revision) return 'failed';
+        const result = runtime.insertParagraphRelative({
+          ...request,
+          expected: {
+            revision: captured.revision,
+            selection: captured.selection,
+            value: captured.value
+          }
+        });
         return 'handled' === result ? 'handled' : 'failed';
       },
       isEditable: () => Boolean(visualEditorRuntimeRef.current?.isEditable())

@@ -5,26 +5,32 @@ import {
 } from "prosemirror-model";
 import type { EditorView } from "prosemirror-view";
 import {
-	extractReferenceDefinitionLabels,
 	parseInlineMarkdownFragment,
 	parseMarkdownToVisualDoc,
 } from "../markdown-parser";
-import { FOOTNOTE_DEF_LINE } from "../markdown-prescanner";
+import { matchReferenceDefinition } from "../markdown-prescanner";
+import { FOOTNOTE_DEF_LINE } from "../markdown-prescanner-blocks";
+import {
+	isMarkdownBlankLine,
+	isMarkdownBlankText,
+} from "../markdown-prescanner-containers";
 import { sanitizeDomUrl, visualEditorSchema } from "../visual-schema";
 import {
 	highlightCodeIntoElement,
 	scheduleCodeFrameBackgroundSync,
 } from "./code-block-node-view";
 import { createAtomElement } from "./protected-atom-card-editor";
+import { isDisplayMathMarkdown } from "./protected-atom-runtime";
 import {
+	isHtmlComment,
 	stripCommonMarkHtmlForPreview,
 	stripInlineHtmlOutsideCode,
-} from "./raw-preview-html-strip";
+} from "./raw-html-preview-stripper";
 import { subscribeVisualDocumentUpdate } from "./visual-view-events";
 
 export { stripCommonMarkHtmlForPreview };
 
-const HTML_BLOCK_TAG_OPEN = /^ {0,3}<\/?([a-zA-Z][a-zA-Z0-9-]*)(?=\s|\/?>|$)/;
+const HTML_TAG_HINT_PATTERN = /^ {0,3}<\/?([a-zA-Z][a-zA-Z0-9-]*)(?=[\s>/]|$)/;
 const INLINE_MARKDOWN_SPECIAL = /[*_`[\]!~\\$<&\r\n]/;
 const RAW_BLOCK_HEADINGS_CACHE_MAX = 64;
 
@@ -47,11 +53,6 @@ export type RawBlockPreviewOptions = Readonly<{
 	viewWindow: Window | null;
 }>;
 
-function isHtmlComment(raw: string): boolean {
-	const trimmed = raw.trim();
-	return trimmed.startsWith("<!--") && trimmed.endsWith("-->");
-}
-
 function footnoteDisplayLabel(raw: string): string {
 	const match = /^\[\^([^\s\]]+)\]$/.exec(raw.trim());
 	return match?.[1] ? `^${match[1]}` : raw;
@@ -65,7 +66,6 @@ function createPreviewSerializer(
 	renderNestedMath: NestedMathPreviewRenderer | undefined,
 	labels: Readonly<{ footnotes: string; raw: string }>,
 	depth: number,
-	parentInlineRaw?: string,
 ): DOMSerializer {
 	return new DOMSerializer(
 		{
@@ -144,23 +144,9 @@ function createPreviewSerializer(
 					return renderFootnoteRefPreview(doc, raw);
 				}
 				if (kind === "math-inline" && renderNestedMath) {
-					return renderNestedMath(doc, false, raw);
+					return renderNestedMath(doc, isDisplayMathMarkdown(raw), raw);
 				}
-				if (depth >= 3 || (parentInlineRaw !== undefined && raw === parentInlineRaw)) {
-					return createAtomElement(
-						doc,
-						"span",
-						"easymde-protected-inline-rendered",
-						raw,
-					);
-				}
-				return renderRawInlinePreviewInternal(
-					doc,
-					raw,
-					labels,
-					renderNestedMath,
-					depth + 1,
-				);
+				return renderRawInlinePreview(doc, raw, labels, renderNestedMath);
 			},
 		},
 		{
@@ -203,7 +189,20 @@ function createCollapsedMetaChip(
 }
 
 function collectReferenceLabels(rawMarkdown: string): string[] | null {
-	return extractReferenceDefinitionLabels(rawMarkdown);
+	const lines = rawMarkdown.replace(/\r\n?/g, "\n").split("\n");
+	const labels: string[] = [];
+	let i = 0;
+	while (i < lines.length) {
+		if (isMarkdownBlankLine(lines[i] ?? "")) {
+			i += 1;
+			continue;
+		}
+		const matched = matchReferenceDefinition(lines, i, null, []);
+		if (!matched) return null;
+		labels.push(matched.label);
+		i = matched.end + 1;
+	}
+	return labels.length > 0 ? labels : null;
 }
 
 function collectFootnoteLabels(rawMarkdown: string): string[] {
@@ -215,14 +214,16 @@ function collectFootnoteLabels(rawMarkdown: string): string[] {
 	return labels;
 }
 
-function renderRawInlinePreviewInternal(
+export function renderRawInlinePreview(
 	doc: Document,
 	rawMarkdown: string,
 	labels: Readonly<{ footnotes: string; raw: string }>,
-	renderNestedMath: NestedMathPreviewRenderer | undefined,
-	depth: number,
+	renderNestedMath?: NestedMathPreviewRenderer,
 ): HTMLElement {
-	const visibleMarkdown = stripInlineHtmlOutsideCode(rawMarkdown);
+	const comment = isHtmlComment(rawMarkdown);
+	const visibleMarkdown = comment
+		? ""
+		: stripInlineHtmlOutsideCode(rawMarkdown);
 	if (visibleMarkdown.length === 0) {
 		const hidden = createAtomElement(
 			doc,
@@ -249,28 +250,12 @@ function renderRawInlinePreviewInternal(
 		doc.defaultView,
 		renderNestedMath,
 		labels,
-		depth,
-		rawMarkdown,
+		1,
 	);
 	span.appendChild(
 		serializer.serializeFragment(Fragment.from(nodes), { document: doc }),
 	);
 	return span;
-}
-
-export function renderRawInlinePreview(
-	doc: Document,
-	rawMarkdown: string,
-	labels: Readonly<{ footnotes: string; raw: string }>,
-	renderNestedMath?: NestedMathPreviewRenderer,
-): HTMLElement {
-	return renderRawInlinePreviewInternal(
-		doc,
-		rawMarkdown,
-		labels,
-		renderNestedMath,
-		1,
-	);
 }
 
 export function renderFootnoteRefPreview(
@@ -350,6 +335,7 @@ function extractVisualHeadingText(headingNode: ProseMirrorNode): string {
 			text += raw;
 			return;
 		}
+		if (isHtmlComment(raw)) return;
 		const visible = stripInlineHtmlOutsideCode(raw);
 		if (visible.length === 0) return;
 		if (!INLINE_MARKDOWN_SPECIAL.test(visible)) {
@@ -385,7 +371,7 @@ function extractRawBlockHeadings(
 	}
 	const headings: RawBlockHeading[] = [];
 	const stripped = stripCommonMarkHtmlForPreview(rawMarkdown);
-	if (stripped.trim().length > 0) {
+	if (!isMarkdownBlankText(stripped)) {
 		const parsedDoc = parseMarkdownToVisualDoc(stripped);
 		parsedDoc.descendants((node) => {
 			if (node.type.name === "heading") {
@@ -546,8 +532,15 @@ function renderRawBlockPreviewInternal(
 		);
 	}
 
+	if (isHtmlComment(trimmed)) {
+		return createCollapsedMetaChip(
+			doc,
+			`${options.fallbackLabel} · <!-- … -->`,
+		);
+	}
+
 	const strippedMarkdown = stripCommonMarkHtmlForPreview(rawMarkdown);
-	if (strippedMarkdown.trim().length > 0) {
+	if (!isMarkdownBlankText(strippedMarkdown)) {
 		const parsedDoc = parseMarkdownToVisualDoc(strippedMarkdown);
 		const serializer = createPreviewSerializer(
 			doc,
@@ -565,14 +558,7 @@ function renderRawBlockPreviewInternal(
 		}
 	}
 
-	if (isHtmlComment(trimmed)) {
-		return createCollapsedMetaChip(
-			doc,
-			`${options.fallbackLabel} · <!-- … -->`,
-		);
-	}
-
-	const tagMatch = HTML_BLOCK_TAG_OPEN.exec(trimmed);
+	const tagMatch = HTML_TAG_HINT_PATTERN.exec(trimmed);
 	const tagHint = tagMatch?.[1] ? ` <${tagMatch[1].toLowerCase()}>` : "";
 	return createCollapsedMetaChip(doc, `${options.fallbackLabel}${tagHint}`);
 }

@@ -1,6 +1,9 @@
 import type { EditorRootProps } from '../app/editor/EditorRoot';
 import type { EditorRootBootstrap } from '../contracts/bootstrap/editor-root-bootstrap';
-import { createBrowserEditorClipboard } from '../integrations/browser/clipboard/create-browser-editor-clipboard';
+import {
+  createBrowserClipboardReadPermissionQuery,
+  createBrowserEditorClipboard
+} from '../integrations/browser/clipboard/create-browser-editor-clipboard';
 import type { ClipboardItemConstructor } from '../integrations/browser/wechat/create-browser-wechat-clipboard';
 
 type DeferredClipboardItemConstructor = new (
@@ -280,9 +283,13 @@ export function createAdminEditorClipboardPort(
       return false;
     }
   };
+  const queryReadPermission = createBrowserClipboardReadPermissionQuery(
+    windowRef.navigator
+  );
   return createBrowserEditorClipboard(
     browserClipboard
       ? {
+          ...(queryReadPermission ? { queryReadPermission } : {}),
           readText: () => browserClipboard.readText(),
           supportsPngWrite,
           supportsRichWrite,

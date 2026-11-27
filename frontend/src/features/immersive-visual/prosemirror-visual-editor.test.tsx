@@ -1,5 +1,6 @@
 import { act, cleanup, render } from "@testing-library/react";
 import { createElement } from "@wordpress/element";
+import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { GapCursor, gapCursor } from "prosemirror-gapcursor";
 import { history } from "prosemirror-history";
 import {
@@ -23,16 +24,34 @@ import type {
 } from "../document-source/adapters/code-mirror-document-session";
 import { createCodeMirrorDocumentSession } from "../document-source/adapters/code-mirror-document-session";
 import type { EditorDocumentSession } from "../document-source/editor-document-session";
+import { createEditorMarkdownBlockIndex } from "../editor-context-menu/editor-markdown-block-index";
+import { pairMathSpanIndexToDomIndex } from "../generated-content-export/generated-math-pairing";
 import { MountedProseMirrorVisualEditor } from "./MountedProseMirrorVisualEditor";
-import { parseMarkdownToVisualDoc } from "./markdown-parser";
-import { serializeVisualDocToMarkdown } from "./markdown-serializer";
-import { createProtectedBlockNodeView } from "./node-views/protected-atom-node-view";
+import {
+	parseMarkdownToVisualDoc,
+	parseMarkdownWithBlockSources,
+} from "./markdown-parser";
+import {
+	createMarkdownRoundTripGuard,
+	serializeVisualDocToMarkdown,
+} from "./markdown-serializer";
+import {
+	createProtectedBlockNodeView,
+	extractInlineMathTex,
+	isDisplayMathMarkdown,
+} from "./node-views/protected-atom-node-view";
 import { ProseMirrorVisualEditor } from "./ProseMirrorVisualEditor";
 import {
 	ATOMIC_SELECTION_ANCHOR_ATTRIBUTE,
 	createAtomicSelectionAnchorPlugin,
 } from "./visual-boundary-commands";
 import { createVisualKeymapPlugins } from "./visual-commands";
+import { findGeneratedContentOriginal } from "./visual-context-menu-target-resolution";
+import {
+	captureVisualEmptyParagraphLayout,
+	inferVisualEmptyParagraphLayoutFromCanonical,
+	restoreVisualEmptyParagraphLayout,
+} from "./visual-empty-paragraph-layout";
 import { visualEditorSchema } from "./visual-schema";
 import {
 	assertCanonicalChangePrecondition,
@@ -1962,6 +1981,1784 @@ describe("Wave 5 fixes: block-boundary keyboard and atom selection (R2, R3)", ()
 		expect(setVisualEditingActive).toHaveBeenNthCalledWith(1, true);
 		expect(setVisualEditingActive).toHaveBeenNthCalledWith(2, false);
 	});
+
+	it("inserts standalone paragraphs above and below all 9 block kinds in Visual with typing and byte-exact Undo (D4)", () => {
+		const blockCases = [
+			{
+				label: "paragraph",
+				markdown: "普通段落，包含 **加粗** 结束。",
+			},
+			{
+				label: "heading",
+				markdown: "## 二级标题",
+			},
+			{
+				label: "bullet-list",
+				markdown: "- item 1\n- item 2",
+			},
+			{
+				label: "blockquote",
+				markdown: "> quote line",
+			},
+			{
+				label: "code-block",
+				markdown: "```js\nconst a = 1;\n```",
+			},
+			{
+				label: "table",
+				markdown: "| c1 | c2 |\n| --- | --- |\n| c3 | c4 |",
+			},
+			{
+				label: "block-math",
+				markdown: "$$\nE = mc^2\n$$",
+			},
+			{
+				label: "mermaid",
+				markdown: "```mermaid\ngraph TD;\n  A-->B;\n```",
+			},
+			{
+				label: "thematic-break",
+				markdown: "---",
+			},
+		] as const;
+
+		const fullDoc = [
+			"Lead paragraph",
+			...blockCases.map((entry) => entry.markdown),
+			"Tail paragraph",
+		].join("\n\n");
+
+		for (const entry of blockCases) {
+			const from =
+				entry.label === "thematic-break"
+					? fullDoc.lastIndexOf(entry.markdown)
+					: fullDoc.indexOf(entry.markdown);
+			const to = from + entry.markdown.length;
+			for (const relative of ["before", "after"] as const) {
+				const { session } = createRealSession(fullDoc);
+				const { rt, unmount, view } = mountVisual(session);
+				const initialCount = view.state.doc.childCount;
+				const result = rt.insertParagraphRelative?.({
+					expected: {
+						revision: session.document.getRevision(),
+						selection: session.document.getSelection(),
+						value: session.document.getValue(),
+					},
+					relative,
+					targetRange: { from, to },
+				});
+				expect(result, `${entry.label}:${relative}`).toBe("handled");
+				expect(view.state.doc.childCount).toBe(initialCount + 1);
+				expect(view.state.selection.$from.parent.type.name).toBe("paragraph");
+				expect(view.state.selection.$from.parent.textContent).toBe("");
+
+				// 1-step Undo directly after inserting the empty paragraph restores exact bytes.
+				expect(rt.executeCommand(undoCommand)).toBe("handled");
+				expect(session.document.getValue()).toBe(fullDoc);
+
+				// Insert again and immediately type NEWPARA char-by-char.
+				const secondResult = rt.insertParagraphRelative?.({
+					expected: {
+						revision: session.document.getRevision(),
+						selection: session.document.getSelection(),
+						value: session.document.getValue(),
+					},
+					relative,
+					targetRange: { from, to },
+				});
+				expect(secondResult).toBe("handled");
+				for (const ch of "NEWPARA") {
+					view.dispatch(view.state.tr.insertText(ch));
+				}
+
+				expect(view.state.selection.$from.parent.type.name).toBe("paragraph");
+				expect(view.state.selection.$from.parent.textContent).toBe("NEWPARA");
+				const paragraphs = Array.from(rt.surface.querySelectorAll("p")).map(
+					(p) => p.textContent,
+				);
+				expect(paragraphs).toContain("NEWPARA");
+
+				const expectedMarkdown =
+					relative === "before"
+						? `${fullDoc.slice(0, from)}NEWPARA\n\n${fullDoc.slice(from)}`
+						: `${fullDoc.slice(0, to)}\n\nNEWPARA${fullDoc.slice(to)}`;
+				expect(
+					session.document.getValue(),
+					`${entry.label}:${relative}:markdown`,
+				).toBe(expectedMarkdown);
+
+				// Undo typing, then undo paragraph insertion -> byte-exact original.
+				expect(rt.executeCommand(undoCommand)).toBe("handled");
+				expect(rt.executeCommand(undoCommand)).toBe("handled");
+				expect(session.document.getValue()).toBe(fullDoc);
+				unmount();
+			}
+		}
+	});
+
+	it("inserts standalone paragraphs at Visual document start and end with typing and Undo", () => {
+		const original = "# Heading\n\nFinal block";
+		for (const scenario of [
+			{
+				expectedAfterType: `NEWPARA\n\n${original}`,
+				relative: "before" as const,
+				targetRange: { from: 0, to: "# Heading".length },
+			},
+			{
+				expectedAfterType: `${original}\n\nNEWPARA`,
+				relative: "after" as const,
+				targetRange: {
+					from: original.indexOf("Final block"),
+					to: original.length,
+				},
+			},
+		]) {
+			const { session } = createRealSession(original);
+			const { rt, unmount, view } = mountVisual(session);
+			expect(
+				rt.insertParagraphRelative?.({
+					expected: {
+						revision: session.document.getRevision(),
+						selection: session.document.getSelection(),
+						value: session.document.getValue(),
+					},
+					relative: scenario.relative,
+					targetRange: scenario.targetRange,
+				}),
+			).toBe("handled");
+
+			for (const ch of "NEWPARA") {
+				view.dispatch(view.state.tr.insertText(ch));
+			}
+			expect(session.document.getValue()).toBe(scenario.expectedAfterType);
+			expect(view.state.selection.$from.parent.type.name).toBe("paragraph");
+			expect(view.state.selection.$from.parent.textContent).toBe("NEWPARA");
+
+			expect(rt.executeCommand(undoCommand)).toBe("handled");
+			expect(rt.executeCommand(undoCommand)).toBe("handled");
+			expect(session.document.getValue()).toBe(original);
+			unmount();
+		}
+	});
+
+	it("blocks stale insertParagraphRelative preconditions and preserves nested code containers", () => {
+		const quoteSource = ["> ```js", "> code", "> ```", "> tail"].join("\n");
+		const { session } = createRealSession(quoteSource);
+		const { rt, unmount, view } = mountVisual(session);
+
+		// Stale revision blocks without writing.
+		expect(
+			rt.insertParagraphRelative?.({
+				expected: {
+					revision: session.document.getRevision() + 1,
+					selection: session.document.getSelection(),
+					value: quoteSource,
+				},
+				relative: "before",
+				targetRange: { from: 0, to: quoteSource.length },
+			}),
+		).toBe("blocked");
+		expect(session.document.getValue()).toBe(quoteSource);
+
+		// Place caret inside the nested code block inside blockquote.
+		let codeContentPos = -1;
+		view.state.doc.descendants((node, pos) => {
+			if (node.type.name === "code_block" && codeContentPos < 0) {
+				codeContentPos = pos + 1;
+				return false;
+			}
+			return true;
+		});
+		expect(codeContentPos).toBeGreaterThan(0);
+		view.dispatch(
+			view.state.tr.setSelection(
+				TextSelection.create(view.state.doc, codeContentPos),
+			),
+		);
+		rt.prepareToolbarFallback();
+
+		expect(
+			rt.insertParagraphRelative?.({
+				expected: {
+					revision: session.document.getRevision(),
+					selection: session.document.getSelection(),
+					value: session.document.getValue(),
+				},
+				nestedCode: true,
+				relative: "before",
+				targetRange: { from: 0, to: quoteSource.indexOf("> tail") - 1 },
+			}),
+		).toBe("handled");
+		for (const ch of "NEWPARA") {
+			view.dispatch(view.state.tr.insertText(ch));
+		}
+		expect(view.state.doc.child(0).type.name).toBe("blockquote");
+		expect(session.document.getValue()).toContain("> NEWPARA");
+		expect(session.document.getValue()).toContain("> ```js");
+		unmount();
+	});
+
+	it("preserves exact bytes of untouched blockquote/list content and fence spelling when inserting a paragraph around nested code", () => {
+		const quoteSource = [
+			"> _keep_",
+			">",
+			"> ~~~   js",
+			"> x",
+			"> ~~~~~",
+		].join("\n");
+		const fenceFrom = quoteSource.indexOf("> ~~~   js");
+		const fenceTo = quoteSource.length;
+
+		for (const relative of ["before", "after"] as const) {
+			const { session } = createRealSession(quoteSource);
+			const { rt, unmount, view } = mountVisual(session);
+			let codeContentPos = -1;
+			view.state.doc.descendants((node, pos) => {
+				if (node.type.name === "code_block" && codeContentPos < 0) {
+					codeContentPos = pos + 1;
+					return false;
+				}
+				return true;
+			});
+			expect(codeContentPos).toBeGreaterThan(0);
+			view.dispatch(
+				view.state.tr.setSelection(
+					TextSelection.create(view.state.doc, codeContentPos),
+				),
+			);
+			rt.prepareToolbarFallback();
+
+			expect(
+				rt.insertParagraphRelative?.({
+					expected: {
+						revision: session.document.getRevision(),
+						selection: session.document.getSelection(),
+						value: session.document.getValue(),
+					},
+					nestedCode: true,
+					relative,
+					targetRange: { from: fenceFrom, to: fenceTo },
+				}),
+			).toBe("handled");
+
+			const expectedAfterInsert =
+				relative === "before"
+					? ["> _keep_", ">", "> ", "> ~~~   js", "> x", "> ~~~~~"].join("\n")
+					: ["> _keep_", ">", "> ~~~   js", "> x", "> ~~~~~", "> "].join("\n");
+			expect(session.document.getValue()).toBe(expectedAfterInsert);
+			expect(session.document.getValue()).toContain("> _keep_");
+			expect(session.document.getValue()).toContain("> ~~~   js");
+			expect(session.document.getValue()).toContain("> ~~~~~");
+			expect(view.state.selection.$from.parent.type.name).toBe("paragraph");
+			expect(view.state.selection.$from.parent.textContent).toBe("");
+			expect(view.state.doc.child(0).type.name).toBe("blockquote");
+			expect(view.state.doc.child(0).childCount).toBe(3);
+
+			// 1-step Undo restores exact original Markdown and ProseMirror state.
+			expect(rt.executeCommand(undoCommand)).toBe("handled");
+			expect(session.document.getValue()).toBe(quoteSource);
+			expect(view.state.doc.child(0).childCount).toBe(2);
+			unmount();
+		}
+
+		// Nested fenced code inside a list item preserves untouched list content and fence spelling.
+		const listSource = ["- _keep_", "", "  ~~~   js", "  x", "  ~~~~~"].join(
+			"\n",
+		);
+		const { session: listSession } = createRealSession(listSource);
+		const { rt: listRt, unmount: unmountList, view: listView } =
+			mountVisual(listSession);
+		let listCodePos = -1;
+		listView.state.doc.descendants((node, pos) => {
+			if (node.type.name === "code_block" && listCodePos < 0) {
+				listCodePos = pos + 1;
+				return false;
+			}
+			return true;
+		});
+		listView.dispatch(
+			listView.state.tr.setSelection(
+				TextSelection.create(listView.state.doc, listCodePos),
+			),
+		);
+		listRt.prepareToolbarFallback();
+		expect(
+			listRt.insertParagraphRelative?.({
+				expected: {
+					revision: listSession.document.getRevision(),
+					selection: listSession.document.getSelection(),
+					value: listSession.document.getValue(),
+				},
+				nestedCode: true,
+				relative: "before",
+				targetRange: {
+					from: listSource.indexOf("  ~~~   js"),
+					to: listSource.length,
+				},
+			}),
+		).toBe("handled");
+		expect(listSession.document.getValue()).toBe(
+			["- _keep_", "", "  ", "  ~~~   js", "  x", "  ~~~~~"].join("\n"),
+		);
+		expect(listRt.executeCommand(undoCommand)).toBe("handled");
+		expect(listSession.document.getValue()).toBe(listSource);
+		unmountList();
+	});
+
+	it("updates roundTripGuard atomically after nested-code paragraph insertion so subsequent sibling-block and sibling-list-item edits preserve untouched bytes", () => {
+		const quoteWithTail = [
+			"> _keep_",
+			">",
+			"> ~~~   js",
+			"> x",
+			"> ~~~~~",
+			"",
+			"Tail",
+		].join("\n");
+		const { session: quoteSession } = createRealSession(quoteWithTail);
+		const { rt: quoteRt, unmount: unmountQuote, view: quoteView } =
+			mountVisual(quoteSession);
+		let quoteCodePos = -1;
+		quoteView.state.doc.descendants((node, pos) => {
+			if (node.type.name === "code_block" && quoteCodePos < 0) {
+				quoteCodePos = pos + 1;
+				return false;
+			}
+			return true;
+		});
+		quoteView.dispatch(
+			quoteView.state.tr.setSelection(
+				TextSelection.create(quoteView.state.doc, quoteCodePos),
+			),
+		);
+		quoteRt.prepareToolbarFallback();
+		expect(
+			quoteRt.insertParagraphRelative?.({
+				expected: {
+					revision: quoteSession.document.getRevision(),
+					selection: quoteSession.document.getSelection(),
+					value: quoteSession.document.getValue(),
+				},
+				nestedCode: true,
+				relative: "before",
+				targetRange: {
+					from: quoteWithTail.indexOf("> ~~~   js"),
+					to: quoteWithTail.indexOf("> ~~~~~") + "> ~~~~~".length,
+				},
+			}),
+		).toBe("handled");
+		expect(quoteSession.document.getValue()).toBe(
+			["> _keep_", ">", "> ", "> ~~~   js", "> x", "> ~~~~~", "", "Tail"].join(
+				"\n",
+			),
+		);
+
+		// Edit the unrelated sibling paragraph `Tail` -> `Tail edited`.
+		setCaret(quoteView, textEndOfBlock(quoteView, 1));
+		quoteView.dispatch(quoteView.state.tr.insertText(" edited"));
+		expect(quoteSession.document.getValue()).toBe(
+			[
+				"> _keep_",
+				">",
+				"> ",
+				"> ~~~   js",
+				"> x",
+				"> ~~~~~",
+				"",
+				"Tail edited",
+			].join("\n"),
+		);
+		unmountQuote();
+
+		// Multi-item list: insert paragraph above nested code in item 0, then edit item 1.
+		const multiItemList = [
+			"- _keep_",
+			"",
+			"  ~~~   js",
+			"  x",
+			"  ~~~~~",
+			"- Second item",
+		].join("\n");
+		const { session: listSession } = createRealSession(multiItemList);
+		const { rt: listRt, unmount: unmountList, view: listView } =
+			mountVisual(listSession);
+		let listCodePos = -1;
+		listView.state.doc.descendants((node, pos) => {
+			if (node.type.name === "code_block" && listCodePos < 0) {
+				listCodePos = pos + 1;
+				return false;
+			}
+			return true;
+		});
+		listView.dispatch(
+			listView.state.tr.setSelection(
+				TextSelection.create(listView.state.doc, listCodePos),
+			),
+		);
+		listRt.prepareToolbarFallback();
+		expect(
+			listRt.insertParagraphRelative?.({
+				expected: {
+					revision: listSession.document.getRevision(),
+					selection: listSession.document.getSelection(),
+					value: listSession.document.getValue(),
+				},
+				nestedCode: true,
+				relative: "before",
+				targetRange: {
+					from: multiItemList.indexOf("  ~~~   js"),
+					to: multiItemList.indexOf("  ~~~~~") + "  ~~~~~".length,
+				},
+			}),
+		).toBe("handled");
+		expect(listSession.document.getValue()).toBe(
+			[
+				"- _keep_",
+				"",
+				"  ",
+				"  ~~~   js",
+				"  x",
+				"  ~~~~~",
+				"- Second item",
+			].join("\n"),
+		);
+
+		// Edit `Second item` -> `Second item edited` and verify item 0 stays byte-identical.
+		let secondItemEndPos = -1;
+		listView.state.doc.descendants((node, pos) => {
+			if (node.isText && node.text === "Second item") {
+				secondItemEndPos = pos + node.text.length;
+				return false;
+			}
+			return true;
+		});
+		expect(secondItemEndPos).toBeGreaterThan(0);
+		setCaret(listView, secondItemEndPos);
+		listView.dispatch(listView.state.tr.insertText(" edited"));
+		expect(listSession.document.getValue()).toBe(
+			[
+				"- _keep_",
+				"",
+				"  ",
+				"  ~~~   js",
+				"  x",
+				"  ~~~~~",
+				"- Second item edited",
+			].join("\n"),
+		);
+		unmountList();
+	});
+
+	it("handles quoted indented code with ~~~, list-wrapped quote fences, list-marker indented code, and rejects unrepresentable nested code without outer fall-through", () => {
+		const mountAndFocusFirstCode = (markdown: string) => {
+			const { session } = createRealSession(markdown);
+			const mounted = mountVisual(session);
+			let codePos = -1;
+			mounted.view.state.doc.descendants((node, pos) => {
+				if (node.type.name === "code_block" && codePos < 0) {
+					codePos = pos + 1;
+					return false;
+				}
+				return true;
+			});
+			expect(codePos).toBeGreaterThan(0);
+			mounted.view.dispatch(
+				mounted.view.state.tr.setSelection(
+					TextSelection.create(mounted.view.state.doc, codePos),
+				),
+			);
+			mounted.rt.prepareToolbarFallback();
+			return { ...mounted, session };
+		};
+
+		// 1. Quoted indented code containing literal `~~~` (both `before` and `after`).
+		const quotedIndented = ">     literally ~~~";
+		{
+			const { rt, session, unmount, view } =
+				mountAndFocusFirstCode(quotedIndented);
+			expect(
+				rt.insertParagraphRelative?.({
+					expected: {
+						revision: session.document.getRevision(),
+						selection: session.document.getSelection(),
+						value: session.document.getValue(),
+					},
+					nestedCode: true,
+					relative: "before",
+					targetRange: { from: 0, to: quotedIndented.length },
+				}),
+			).toBe("handled");
+			expect(session.document.getValue()).toBe("> \n>\n>     literally ~~~");
+			expect(view.state.doc.child(0).type.name).toBe("blockquote");
+			expect(view.state.doc.child(0).child(1).textContent).toBe(
+				"literally ~~~",
+			);
+			const caret = session.document.getSelection().start;
+			const typedBefore =
+				session.document.getValue().slice(0, caret) +
+				"NEWPARA" +
+				session.document.getValue().slice(caret);
+			expect(typedBefore).toBe("> NEWPARA\n>\n>     literally ~~~");
+			const reparsedBefore = parseMarkdownToVisualDoc(typedBefore);
+			expect(reparsedBefore.child(0).type.name).toBe("blockquote");
+			expect(reparsedBefore.child(0).child(0).type.name).toBe("paragraph");
+			expect(reparsedBefore.child(0).child(0).textContent).toBe("NEWPARA");
+			expect(reparsedBefore.child(0).child(1).type.name).toBe("code_block");
+			expect(reparsedBefore.child(0).child(1).textContent).toBe(
+				"literally ~~~",
+			);
+			unmount();
+		}
+		{
+			const { rt, session, unmount, view } =
+				mountAndFocusFirstCode(quotedIndented);
+			expect(
+				rt.insertParagraphRelative?.({
+					expected: {
+						revision: session.document.getRevision(),
+						selection: session.document.getSelection(),
+						value: session.document.getValue(),
+					},
+					nestedCode: true,
+					relative: "after",
+					targetRange: { from: 0, to: quotedIndented.length },
+				}),
+			).toBe("handled");
+			expect(session.document.getValue()).toBe(">     literally ~~~\n>\n> ");
+			expect(view.state.doc.child(0).type.name).toBe("blockquote");
+			expect(view.state.doc.child(0).child(0).textContent).toBe(
+				"literally ~~~",
+			);
+			const caret = session.document.getSelection().start;
+			const typedAfter =
+				session.document.getValue().slice(0, caret) +
+				"NEWPARA" +
+				session.document.getValue().slice(caret);
+			expect(typedAfter).toBe(">     literally ~~~\n>\n> NEWPARA");
+			const reparsedAfter = parseMarkdownToVisualDoc(typedAfter);
+			expect(reparsedAfter.child(0).child(0).type.name).toBe("code_block");
+			expect(reparsedAfter.child(0).child(0).textContent).toBe("literally ~~~");
+			expect(reparsedAfter.child(0).child(1).type.name).toBe("paragraph");
+			expect(reparsedAfter.child(0).child(1).textContent).toBe("NEWPARA");
+			unmount();
+		}
+
+		// 2. List item with leading intro + indented code (`- intro\n\n      code`).
+		const listIntroIndented = "- intro\n\n      code";
+		for (const relative of ["before", "after"] as const) {
+			const { rt, session, unmount } =
+				mountAndFocusFirstCode(listIntroIndented);
+			expect(
+				rt.insertParagraphRelative?.({
+					expected: {
+						revision: session.document.getRevision(),
+						selection: session.document.getSelection(),
+						value: session.document.getValue(),
+					},
+					nestedCode: true,
+					relative,
+					targetRange: {
+						from: listIntroIndented.indexOf("      code"),
+						to: listIntroIndented.length,
+					},
+				}),
+			).toBe("handled");
+			const expected =
+				relative === "before"
+					? "- intro\n\n  \n\n      code"
+					: "- intro\n\n      code\n\n  ";
+			expect(session.document.getValue()).toBe(expected);
+			const caret = session.document.getSelection().start;
+			const typed =
+				session.document.getValue().slice(0, caret) +
+				"NEWPARA" +
+				session.document.getValue().slice(caret);
+			const reparsed = parseMarkdownToVisualDoc(typed);
+			const item = reparsed.child(0).child(0);
+			expect(item.childCount).toBe(3);
+			const codeIdx = relative === "before" ? 2 : 1;
+			const paraIdx = relative === "before" ? 1 : 2;
+			expect(item.child(codeIdx).type.name).toBe("code_block");
+			expect(item.child(codeIdx).textContent).toBe("code");
+			expect(item.child(paraIdx).type.name).toBe("paragraph");
+			expect(item.child(paraIdx).textContent).toBe("NEWPARA");
+			unmount();
+		}
+
+		// 3. List-wrapped quote indented code (`- >     literally ~~~`).
+		const listQuoteIndented = "- >     literally ~~~";
+		for (const relative of ["before", "after"] as const) {
+			const { rt, session, unmount } =
+				mountAndFocusFirstCode(listQuoteIndented);
+			expect(
+				rt.insertParagraphRelative?.({
+					expected: {
+						revision: session.document.getRevision(),
+						selection: session.document.getSelection(),
+						value: session.document.getValue(),
+					},
+					nestedCode: true,
+					relative,
+					targetRange: { from: 0, to: listQuoteIndented.length },
+				}),
+			).toBe("handled");
+			const expected =
+				relative === "before"
+					? "- > \n  >\n  >     literally ~~~"
+					: "- >     literally ~~~\n  >\n  > ";
+			expect(session.document.getValue()).toBe(expected);
+			const caret = session.document.getSelection().start;
+			const typed =
+				session.document.getValue().slice(0, caret) +
+				"NEWPARA" +
+				session.document.getValue().slice(caret);
+			const reparsed = parseMarkdownToVisualDoc(typed);
+			const listItem = reparsed.child(0).child(0);
+			// Visual schema `list_item` starts with a phantom empty paragraph when
+			// its first Markdown block is a blockquote.
+			const quote = listItem.child(listItem.childCount - 1);
+			expect(quote.type.name).toBe("blockquote");
+			const codeIdx = relative === "before" ? 1 : 0;
+			const paraIdx = relative === "before" ? 0 : 1;
+			expect(quote.child(codeIdx).type.name).toBe("code_block");
+			expect(quote.child(codeIdx).textContent).toBe("literally ~~~");
+			expect(quote.child(paraIdx).type.name).toBe("paragraph");
+			expect(quote.child(paraIdx).textContent).toBe("NEWPARA");
+			unmount();
+		}
+
+		// 4. List-wrapped quote fence uses `  > ` continuation and never spawns a second list item.
+		const listQuoteFence = ["- > ~~~", "  > x", "  > ~~~"].join("\n");
+		{
+			const { rt, session, unmount, view } =
+				mountAndFocusFirstCode(listQuoteFence);
+			expect(
+				rt.insertParagraphRelative?.({
+					expected: {
+						revision: session.document.getRevision(),
+						selection: session.document.getSelection(),
+						value: session.document.getValue(),
+					},
+					nestedCode: true,
+					relative: "before",
+					targetRange: { from: 0, to: listQuoteFence.length },
+				}),
+			).toBe("handled");
+			expect(session.document.getValue()).toBe(
+				["- > ", "  > ~~~", "  > x", "  > ~~~"].join("\n"),
+			);
+			expect(view.state.doc.child(0).type.name).toBe("bullet_list");
+			expect(view.state.doc.child(0).childCount).toBe(1);
+			unmount();
+		}
+
+		// 5. List-marker indented code `-     code` and `1.     code`: `before` safely
+		// returns "unsupported" (CommonMark §5.2/§4.4) while `after` succeeds cleanly.
+		for (const listMarkerCase of [
+			{
+				after: "-     code\n\n  ",
+				listType: "bullet_list",
+				source: "-     code",
+			},
+			{
+				after: "1.     code\n\n   ",
+				listType: "ordered_list",
+				source: "1.     code",
+			},
+		]) {
+			{
+				const { rt, session, unmount, view } = mountAndFocusFirstCode(
+					listMarkerCase.source,
+				);
+				expect(
+					rt.insertParagraphRelative?.({
+						expected: {
+							revision: session.document.getRevision(),
+							selection: session.document.getSelection(),
+							value: session.document.getValue(),
+						},
+						nestedCode: true,
+						relative: "before",
+						targetRange: { from: 0, to: listMarkerCase.source.length },
+					}),
+				).toBe("unsupported");
+				expect(session.document.getValue()).toBe(listMarkerCase.source);
+				expect(view.state.doc.child(0).type.name).toBe(listMarkerCase.listType);
+				expect(view.state.doc.child(0).childCount).toBe(1);
+				unmount();
+			}
+			{
+				const { rt, session, unmount, view } = mountAndFocusFirstCode(
+					listMarkerCase.source,
+				);
+				expect(
+					rt.insertParagraphRelative?.({
+						expected: {
+							revision: session.document.getRevision(),
+							selection: session.document.getSelection(),
+							value: session.document.getValue(),
+						},
+						nestedCode: true,
+						relative: "after",
+						targetRange: { from: 0, to: listMarkerCase.source.length },
+					}),
+				).toBe("handled");
+				expect(session.document.getValue()).toBe(listMarkerCase.after);
+				expect(view.state.doc.child(0).type.name).toBe(listMarkerCase.listType);
+				expect(view.state.doc.child(0).childCount).toBe(1);
+				const caret = session.document.getSelection().start;
+				const typed =
+					session.document.getValue().slice(0, caret) +
+					"NEWPARA" +
+					session.document.getValue().slice(caret);
+				const reparsed = parseMarkdownToVisualDoc(typed);
+				const listItem = reparsed.child(0).child(0);
+				// Visual schema `list_item` starts with a phantom empty paragraph when
+				// its first Markdown block is a code block.
+				expect(listItem.child(listItem.childCount - 2).type.name).toBe(
+					"code_block",
+				);
+				expect(listItem.child(listItem.childCount - 2).textContent).toBe(
+					"code",
+				);
+				expect(listItem.child(listItem.childCount - 1).type.name).toBe(
+					"paragraph",
+				);
+				expect(listItem.child(listItem.childCount - 1).textContent).toBe(
+					"NEWPARA",
+				);
+				unmount();
+			}
+		}
+
+		// 6. Unclosed quoted fence below fails canonical verification and returns "unsupported"
+		// without falling through to outer-container insertion.
+		const unclosedQuoteFence = ["> ```js", "> code"].join("\n");
+		{
+			const { rt, session, unmount, view } =
+				mountAndFocusFirstCode(unclosedQuoteFence);
+			const initialDocCount = view.state.doc.childCount;
+			expect(
+				rt.insertParagraphRelative?.({
+					expected: {
+						revision: session.document.getRevision(),
+						selection: session.document.getSelection(),
+						value: session.document.getValue(),
+					},
+					nestedCode: true,
+					relative: "after",
+					targetRange: { from: 0, to: unclosedQuoteFence.length },
+				}),
+			).toBe("unsupported");
+			expect(session.document.getValue()).toBe(unclosedQuoteFence);
+			expect(view.state.doc.childCount).toBe(initialDocCount);
+			unmount();
+		}
+	});
+
+	it("preserves untouched list items across consecutive nested-code insertions in one list and across two separate lists, including Undo/Redo", () => {
+		const findCodeContentPositions = (doc: ProseMirrorNode): number[] => {
+			const positions: number[] = [];
+			doc.descendants((node, pos) => {
+				if (node.type.name === "code_block") {
+					positions.push(pos + 1);
+					return false;
+				}
+				return true;
+			});
+			return positions;
+		};
+
+		// 1. Two consecutive insertions in Item 1 and Item 2 of the same list, then edit Item 3.
+		const singleListSource = [
+			"- _keep_",
+			"",
+			"  ~~~   js",
+			"  first",
+			"  ~~~~~",
+			"- _keep_two_",
+			"",
+			"  ~~~   ts",
+			"  second",
+			"  ~~~~~",
+			"- Third item",
+		].join("\n");
+		{
+			const { session } = createRealSession(singleListSource);
+			const { rt, unmount, view } = mountVisual(session);
+
+			// Insert above nested code in Item 1.
+			const [firstCodePos] = findCodeContentPositions(view.state.doc);
+			expect(firstCodePos).toBeDefined();
+			if (firstCodePos === undefined) throw new Error("expected-first-code");
+			view.dispatch(
+				view.state.tr.setSelection(
+					TextSelection.create(view.state.doc, firstCodePos),
+				),
+			);
+			rt.prepareToolbarFallback();
+			expect(
+				rt.insertParagraphRelative?.({
+					expected: {
+						revision: session.document.getRevision(),
+						selection: session.document.getSelection(),
+						value: session.document.getValue(),
+					},
+					nestedCode: true,
+					relative: "before",
+					targetRange: {
+						from: singleListSource.indexOf("  ~~~   js"),
+						to: singleListSource.indexOf("  ~~~~~") + "  ~~~~~".length,
+					},
+				}),
+			).toBe("handled");
+			const afterFirstInsert = session.document.getValue();
+			expect(afterFirstInsert).toBe(
+				[
+					"- _keep_",
+					"",
+					"  ",
+					"  ~~~   js",
+					"  first",
+					"  ~~~~~",
+					"- _keep_two_",
+					"",
+					"  ~~~   ts",
+					"  second",
+					"  ~~~~~",
+					"- Third item",
+				].join("\n"),
+			);
+
+			// Consecutively insert above nested code in Item 2.
+			const [, secondCodePos] = findCodeContentPositions(view.state.doc);
+			expect(secondCodePos).toBeDefined();
+			if (secondCodePos === undefined) throw new Error("expected-second-code");
+			view.dispatch(
+				view.state.tr.setSelection(
+					TextSelection.create(view.state.doc, secondCodePos),
+				),
+			);
+			rt.prepareToolbarFallback();
+			expect(
+				rt.insertParagraphRelative?.({
+					expected: {
+						revision: session.document.getRevision(),
+						selection: session.document.getSelection(),
+						value: session.document.getValue(),
+					},
+					nestedCode: true,
+					relative: "before",
+					targetRange: {
+						from: afterFirstInsert.indexOf("  ~~~   ts"),
+						to: afterFirstInsert.lastIndexOf("  ~~~~~") + "  ~~~~~".length,
+					},
+				}),
+			).toBe("handled");
+			const afterSecondInsert = session.document.getValue();
+			expect(afterSecondInsert).toBe(
+				[
+					"- _keep_",
+					"",
+					"  ",
+					"  ~~~   js",
+					"  first",
+					"  ~~~~~",
+					"- _keep_two_",
+					"",
+					"  ",
+					"  ~~~   ts",
+					"  second",
+					"  ~~~~~",
+					"- Third item",
+				].join("\n"),
+			);
+
+			// Edit Item 3 and verify BOTH Item 1 and Item 2 keep exact original bytes.
+			let thirdItemEndPos = -1;
+			view.state.doc.descendants((node, pos) => {
+				if (node.isText && node.text === "Third item") {
+					thirdItemEndPos = pos + node.text.length;
+					return false;
+				}
+				return true;
+			});
+			expect(thirdItemEndPos).toBeGreaterThan(0);
+			setCaret(view, thirdItemEndPos);
+			view.dispatch(view.state.tr.insertText(" edited"));
+			const afterThirdEdit = session.document.getValue();
+			expect(afterThirdEdit).toBe(
+				[
+					"- _keep_",
+					"",
+					"  ",
+					"  ~~~   js",
+					"  first",
+					"  ~~~~~",
+					"- _keep_two_",
+					"",
+					"  ",
+					"  ~~~   ts",
+					"  second",
+					"  ~~~~~",
+					"- Third item edited",
+				].join("\n"),
+			);
+
+			// Undo/Redo walks back through edit -> second insert -> first insert -> original cleanly.
+			expect(rt.executeCommand(undoCommand)).toBe("handled");
+			expect(session.document.getValue()).toBe(afterSecondInsert);
+			expect(rt.executeCommand(undoCommand)).toBe("handled");
+			expect(session.document.getValue()).toBe(afterFirstInsert);
+			expect(rt.executeCommand(undoCommand)).toBe("handled");
+			expect(session.document.getValue()).toBe(singleListSource);
+			expect(rt.executeCommand(redoCommand)).toBe("handled");
+			expect(session.document.getValue()).toBe(afterFirstInsert);
+			expect(rt.executeCommand(redoCommand)).toBe("handled");
+			expect(session.document.getValue()).toBe(afterSecondInsert);
+			expect(rt.executeCommand(redoCommand)).toBe("handled");
+			expect(session.document.getValue()).toBe(afterThirdEdit);
+			unmount();
+		}
+
+		// 2. Two consecutive insertions across two separate lists, then edit sibling item in List 1.
+		const twoListsSource = [
+			"- _list1_keep_",
+			"",
+			"  ~~~   js",
+			"  one",
+			"  ~~~~~",
+			"- List 1 sibling",
+			"",
+			"Separator paragraph",
+			"",
+			"- _list2_keep_",
+			"",
+			"  ~~~   py",
+			"  two",
+			"  ~~~~~",
+			"- List 2 sibling",
+		].join("\n");
+		{
+			const { session } = createRealSession(twoListsSource);
+			const { rt, unmount, view } = mountVisual(session);
+
+			const [list1CodePos] = findCodeContentPositions(view.state.doc);
+			expect(list1CodePos).toBeDefined();
+			if (list1CodePos === undefined) throw new Error("expected-list1-code");
+			view.dispatch(
+				view.state.tr.setSelection(
+					TextSelection.create(view.state.doc, list1CodePos),
+				),
+			);
+			rt.prepareToolbarFallback();
+			expect(
+				rt.insertParagraphRelative?.({
+					expected: {
+						revision: session.document.getRevision(),
+						selection: session.document.getSelection(),
+						value: session.document.getValue(),
+					},
+					nestedCode: true,
+					relative: "before",
+					targetRange: {
+						from: twoListsSource.indexOf("  ~~~   js"),
+						to: twoListsSource.indexOf("  ~~~~~") + "  ~~~~~".length,
+					},
+				}),
+			).toBe("handled");
+			const afterList1Insert = session.document.getValue();
+
+			const [, list2CodePos] = findCodeContentPositions(view.state.doc);
+			expect(list2CodePos).toBeDefined();
+			if (list2CodePos === undefined) throw new Error("expected-list2-code");
+			view.dispatch(
+				view.state.tr.setSelection(
+					TextSelection.create(view.state.doc, list2CodePos),
+				),
+			);
+			rt.prepareToolbarFallback();
+			expect(
+				rt.insertParagraphRelative?.({
+					expected: {
+						revision: session.document.getRevision(),
+						selection: session.document.getSelection(),
+						value: session.document.getValue(),
+					},
+					nestedCode: true,
+					relative: "before",
+					targetRange: {
+						from: afterList1Insert.indexOf("  ~~~   py"),
+						to: afterList1Insert.lastIndexOf("  ~~~~~") + "  ~~~~~".length,
+					},
+				}),
+			).toBe("handled");
+
+			// Edit sibling item in List 1; untouched items in BOTH List 1 and List 2 stay byte-identical.
+			let siblingEndPos = -1;
+			view.state.doc.descendants((node, pos) => {
+				if (node.isText && node.text === "List 1 sibling") {
+					siblingEndPos = pos + node.text.length;
+					return false;
+				}
+				return true;
+			});
+			expect(siblingEndPos).toBeGreaterThan(0);
+			setCaret(view, siblingEndPos);
+			view.dispatch(view.state.tr.insertText(" edited"));
+			expect(session.document.getValue()).toBe(
+				[
+					"- _list1_keep_",
+					"",
+					"  ",
+					"  ~~~   js",
+					"  one",
+					"  ~~~~~",
+					"- List 1 sibling edited",
+					"",
+					"Separator paragraph",
+					"",
+					"- _list2_keep_",
+					"",
+					"  ",
+					"  ~~~   py",
+					"  two",
+					"  ~~~~~",
+					"- List 2 sibling",
+				].join("\n"),
+			);
+			unmount();
+		}
+	});
+
+	it("restores Visual empty-paragraph target and caret on Redo after Insert Paragraph Above on quoted indented code", () => {
+		const quotedIndented = ">     literally ~~~";
+		const { session } = createRealSession(quotedIndented);
+		const { rt, unmount, view } = mountVisual(session);
+		let codePos = -1;
+		view.state.doc.descendants((node, pos) => {
+			if (node.type.name === "code_block" && codePos < 0) {
+				codePos = pos + 1;
+				return false;
+			}
+			return true;
+		});
+		expect(codePos).toBeGreaterThan(0);
+		view.dispatch(
+			view.state.tr.setSelection(TextSelection.create(view.state.doc, codePos)),
+		);
+		rt.prepareToolbarFallback();
+
+		expect(
+			rt.insertParagraphRelative?.({
+				expected: {
+					revision: session.document.getRevision(),
+					selection: session.document.getSelection(),
+					value: session.document.getValue(),
+				},
+				nestedCode: true,
+				relative: "before",
+				targetRange: { from: 0, to: quotedIndented.length },
+			}),
+		).toBe("handled");
+		expect(session.document.getValue()).toBe("> \n>\n>     literally ~~~");
+		expect(view.state.selection.$from.parent.type.name).toBe("paragraph");
+
+		expect(rt.executeCommand(undoCommand)).toBe("handled");
+		expect(session.document.getValue()).toBe(quotedIndented);
+
+		expect(rt.executeCommand(redoCommand)).toBe("handled");
+		expect(session.document.getValue()).toBe("> \n>\n>     literally ~~~");
+		expect(view.state.selection.$from.parent.type.name).toBe("paragraph");
+		expect(view.state.selection.$from.parent.textContent).toBe("");
+		expect(view.state.doc.child(0).type.name).toBe("blockquote");
+		expect(view.state.doc.child(0).childCount).toBe(2);
+		expect(view.state.doc.child(0).child(1).type.name).toBe("code_block");
+		expect(view.state.doc.child(0).child(1).textContent).toBe("literally ~~~");
+
+		// Typing immediately after Redo inserts prose into the restored paragraph,
+		// NOT into the code block.
+		view.dispatch(view.state.tr.insertText("After redo"));
+		expect(view.state.doc.child(0).type.name).toBe("blockquote");
+		expect(view.state.doc.child(0).child(0).type.name).toBe("paragraph");
+		expect(view.state.doc.child(0).child(0).textContent).toBe("After redo");
+		expect(view.state.doc.child(0).child(1).type.name).toBe("code_block");
+		expect(view.state.doc.child(0).child(1).textContent).toBe("literally ~~~");
+		expect(session.document.getValue()).toContain("> After redo");
+		expect(session.document.getValue()).toContain("literally ~~~");
+		unmount();
+	});
+
+	it("preserves Visual empty-paragraph target and caret on Redo across 35 consecutive quoted-code insertions beyond the old 32-entry cache", () => {
+		const blockCount = 35;
+		const initial = Array.from(
+			{ length: blockCount },
+			(_, idx) => `>     line_${idx}_code`,
+		).join("\n\n");
+		const { session } = createRealSession(initial);
+		const { rt, unmount, view } = mountVisual(session);
+
+		const findNthCodeContentPos = (
+			doc: ProseMirrorNode,
+			index: number,
+		): number => {
+			let seen = 0;
+			let found = -1;
+			doc.descendants((node, pos) => {
+				if (found >= 0) return false;
+				if (node.type.name === "code_block") {
+					if (seen === index) {
+						found = pos + 1;
+						return false;
+					}
+					seen += 1;
+				}
+				return true;
+			});
+			return found;
+		};
+
+		// Insert an empty paragraph above every one of the 35 quoted code blocks.
+		for (let idx = 0; idx < blockCount; idx += 1) {
+			const codePos = findNthCodeContentPos(view.state.doc, idx);
+			expect(codePos).toBeGreaterThan(0);
+			view.dispatch(
+				view.state.tr.setSelection(
+					TextSelection.create(view.state.doc, codePos),
+				),
+			);
+			rt.prepareToolbarFallback();
+			const currentValue = session.document.getValue();
+			const marker = `>     line_${idx}_code`;
+			const from = currentValue.indexOf(marker);
+			expect(from).toBeGreaterThanOrEqual(0);
+			expect(
+				rt.insertParagraphRelative?.({
+					expected: {
+						revision: session.document.getRevision(),
+						selection: session.document.getSelection(),
+						value: currentValue,
+					},
+					nestedCode: true,
+					relative: "before",
+					targetRange: { from, to: from + marker.length },
+				}),
+			).toBe("handled");
+		}
+
+		// Undo all 35 insertions back to the exact initial document.
+		for (let idx = 0; idx < blockCount; idx += 1) {
+			expect(rt.executeCommand(undoCommand)).toBe("handled");
+		}
+		expect(session.document.getValue()).toBe(initial);
+
+		// Redo steps #1..#5 (step #1 would have been evicted by a 32-entry cap).
+		for (let step = 0; step < 5; step += 1) {
+			expect(rt.executeCommand(redoCommand)).toBe("handled");
+			const quote = view.state.doc.child(step);
+			expect(quote.type.name).toBe("blockquote");
+			expect(quote.childCount).toBe(2);
+			expect(quote.child(0).type.name).toBe("paragraph");
+			expect(quote.child(0).textContent).toBe("");
+			expect(quote.child(1).type.name).toBe("code_block");
+			expect(quote.child(1).textContent).toBe(`line_${step}_code`);
+			expect(view.state.selection.$from.parent.type.name).toBe("paragraph");
+			expect(view.state.selection.$from.parent.textContent).toBe("");
+			expect(view.state.selection.$from.index(0)).toBe(step);
+		}
+
+		// Undo back to initial, then Redo #1 and type `NEWPARA` to prove prose
+		// enters the restored empty paragraph while `line_0_code` stays untouched.
+		for (let step = 0; step < 5; step += 1) {
+			expect(rt.executeCommand(undoCommand)).toBe("handled");
+		}
+		expect(session.document.getValue()).toBe(initial);
+		expect(rt.executeCommand(redoCommand)).toBe("handled");
+		expect(view.state.selection.$from.parent.type.name).toBe("paragraph");
+		expect(view.state.selection.$from.index(0)).toBe(0);
+		view.dispatch(view.state.tr.insertText("NEWPARA"));
+		expect(view.state.doc.child(0).child(0).type.name).toBe("paragraph");
+		expect(view.state.doc.child(0).child(0).textContent).toBe("NEWPARA");
+		expect(view.state.doc.child(0).child(1).type.name).toBe("code_block");
+		expect(view.state.doc.child(0).child(1).textContent).toBe("line_0_code");
+		expect(session.document.getValue()).toContain("> NEWPARA");
+		expect(session.document.getValue()).toContain("line_0_code");
+		expect(session.document.getValue()).not.toContain("NEWPARAline_0_code");
+		expect(session.document.getValue()).toContain(">     line_1_code");
+		unmount();
+	});
+
+	it("reconstructs empty container paragraphs and caret via structural fallback even on a cold cache miss", () => {
+		// 1. Direct unit coverage for `inferVisualEmptyParagraphLayoutFromCanonical`
+		// and `restoreVisualEmptyParagraphLayout` across before/after container shapes.
+		const cases: ReadonlyArray<
+			Readonly<{
+				caret: number;
+				expectedCodeText: string;
+				expectedParentName: string;
+				value: string;
+			}>
+		> = [
+			{
+				caret: 2,
+				expectedCodeText: "line_0_code",
+				expectedParentName: "blockquote",
+				value: "> \n>\n>     line_0_code",
+			},
+			{
+				caret: 22,
+				expectedCodeText: "line_0_code",
+				expectedParentName: "blockquote",
+				value: ">     line_0_code\n>\n> ",
+			},
+			{
+				caret: 2,
+				expectedCodeText: "x",
+				expectedParentName: "blockquote",
+				value: "> \n> ~~~   js\n> x\n> ~~~~~",
+			},
+			{
+				caret: 25,
+				expectedCodeText: "x",
+				expectedParentName: "blockquote",
+				value: "> ~~~   js\n> x\n> ~~~~~\n> ",
+			},
+			{
+				caret: 12,
+				expectedCodeText: "first",
+				expectedParentName: "list_item",
+				value: ["- _keep_", "", "  ", "  ~~~   js", "  first", "  ~~~~~"].join(
+					"\n",
+				),
+			},
+			{
+				caret: 39,
+				expectedCodeText: "first",
+				expectedParentName: "list_item",
+				value: ["- _keep_", "", "  ~~~   js", "  first", "  ~~~~~", "  "].join(
+					"\n",
+				),
+			},
+			{
+				caret: 4,
+				expectedCodeText: "literally ~~~",
+				expectedParentName: "blockquote",
+				value: "- > \n  >\n  >     literally ~~~",
+			},
+		];
+
+		for (const testCase of cases) {
+			const selection: VisualEditorSelection = {
+				direction: "none",
+				end: testCase.caret,
+				start: testCase.caret,
+			};
+			const layout = inferVisualEmptyParagraphLayoutFromCanonical(
+				testCase.value,
+				selection,
+			);
+			expect(layout).not.toBeNull();
+			if (!layout) throw new Error("expected-inferred-layout");
+
+			const restored = restoreVisualEmptyParagraphLayout(
+				testCase.value,
+				selection,
+				layout,
+			);
+			expect(restored).not.toBeNull();
+			if (!restored) throw new Error("expected-restored-doc");
+
+			const $pos = restored.doc.resolve(restored.selectionPos);
+			expect($pos.parent.type.name).toBe("paragraph");
+			expect($pos.parent.textContent).toBe("");
+			expect($pos.node($pos.depth - 1).type.name).toBe(
+				testCase.expectedParentName,
+			);
+			const roundTripped = captureVisualEmptyParagraphLayout(
+				restored.doc,
+				restored.selectionPos,
+			);
+			expect(roundTripped).not.toBeNull();
+			let foundCode = "";
+			restored.doc.descendants((node) => {
+				if (node.type.name === "code_block") {
+					foundCode = node.textContent;
+					return false;
+				}
+				return true;
+			});
+			expect(foundCode).toBe(testCase.expectedCodeText);
+		}
+
+		// Negative cases must not synthesize false-positive layouts.
+		expect(
+			inferVisualEmptyParagraphLayoutFromCanonical(">     line_0_code", {
+				direction: "none",
+				end: 6,
+				start: 6,
+			}),
+		).toBeNull();
+		expect(
+			inferVisualEmptyParagraphLayoutFromCanonical("\n>     line_0_code", {
+				direction: "none",
+				end: 0,
+				start: 0,
+			}),
+		).toBeNull();
+		expect(
+			inferVisualEmptyParagraphLayoutFromCanonical("> \n>\n>     line_0_code", {
+				direction: "forward",
+				end: 2,
+				start: 0,
+			}),
+		).toBeNull();
+
+		// 2. End-to-end cold-cache Redo: insert in one Visual instance, Undo, unmount
+		// (clearing the record cache), mount a fresh Visual instance over the same
+		// CodeMirror session, Redo, and type `NEWPARA`.
+		const source = ">     line_0_code";
+		const { session } = createRealSession(source);
+		{
+			const { rt, unmount, view } = mountVisual(session);
+			let codePos = -1;
+			view.state.doc.descendants((node, pos) => {
+				if (node.type.name === "code_block" && codePos < 0) {
+					codePos = pos + 1;
+					return false;
+				}
+				return true;
+			});
+			view.dispatch(
+				view.state.tr.setSelection(
+					TextSelection.create(view.state.doc, codePos),
+				),
+			);
+			rt.prepareToolbarFallback();
+			expect(
+				rt.insertParagraphRelative?.({
+					expected: {
+						revision: session.document.getRevision(),
+						selection: session.document.getSelection(),
+						value: session.document.getValue(),
+					},
+					nestedCode: true,
+					relative: "before",
+					targetRange: { from: 0, to: source.length },
+				}),
+			).toBe("handled");
+			expect(rt.executeCommand(undoCommand)).toBe("handled");
+			expect(session.document.getValue()).toBe(source);
+			unmount();
+		}
+
+		// Fresh Visual mount has an empty record map; Redo must still restore
+		// the empty paragraph via `inferVisualEmptyParagraphLayoutFromCanonical`.
+		{
+			const { rt, unmount, view } = mountVisual(session);
+			expect(rt.executeCommand(redoCommand)).toBe("handled");
+			expect(session.document.getValue()).toBe("> \n>\n>     line_0_code");
+			expect(view.state.selection.$from.parent.type.name).toBe("paragraph");
+			expect(view.state.selection.$from.parent.textContent).toBe("");
+			view.dispatch(view.state.tr.insertText("NEWPARA"));
+			expect(view.state.doc.child(0).child(0).textContent).toBe("NEWPARA");
+			expect(view.state.doc.child(0).child(1).textContent).toBe("line_0_code");
+			expect(session.document.getValue()).not.toContain("NEWPARAline_0_code");
+			unmount();
+		}
+	});
+
+	it("preserves untouched sibling list items byte-identically when editing Item 3 after Redo of Item 1 and Item 2 insertions", () => {
+		const listSource = [
+			"- _keep_",
+			"",
+			"  ~~~   js",
+			"  first",
+			"  ~~~~~",
+			"- _keep_two_",
+			"",
+			"  ~~~   ts",
+			"  second",
+			"  ~~~~~",
+			"- Third item",
+		].join("\n");
+		const { session } = createRealSession(listSource);
+		const { rt, unmount, view } = mountVisual(session);
+
+		const findCodeContentPositions = (doc: ProseMirrorNode): number[] => {
+			const positions: number[] = [];
+			doc.descendants((node, pos) => {
+				if (node.type.name === "code_block") {
+					positions.push(pos + 1);
+					return false;
+				}
+				return true;
+			});
+			return positions;
+		};
+
+		// Insert above code in Item 1.
+		const [firstCodePos] = findCodeContentPositions(view.state.doc);
+		if (firstCodePos === undefined) throw new Error("expected-first-code");
+		view.dispatch(
+			view.state.tr.setSelection(
+				TextSelection.create(view.state.doc, firstCodePos),
+			),
+		);
+		rt.prepareToolbarFallback();
+		expect(
+			rt.insertParagraphRelative?.({
+				expected: {
+					revision: session.document.getRevision(),
+					selection: session.document.getSelection(),
+					value: session.document.getValue(),
+				},
+				nestedCode: true,
+				relative: "before",
+				targetRange: {
+					from: listSource.indexOf("  ~~~   js"),
+					to: listSource.indexOf("  ~~~~~") + "  ~~~~~".length,
+				},
+			}),
+		).toBe("handled");
+		const afterItem1 = session.document.getValue();
+
+		// Insert above code in Item 2.
+		const [, secondCodePos] = findCodeContentPositions(view.state.doc);
+		if (secondCodePos === undefined) throw new Error("expected-second-code");
+		view.dispatch(
+			view.state.tr.setSelection(
+				TextSelection.create(view.state.doc, secondCodePos),
+			),
+		);
+		rt.prepareToolbarFallback();
+		expect(
+			rt.insertParagraphRelative?.({
+				expected: {
+					revision: session.document.getRevision(),
+					selection: session.document.getSelection(),
+					value: session.document.getValue(),
+				},
+				nestedCode: true,
+				relative: "before",
+				targetRange: {
+					from: afterItem1.indexOf("  ~~~   ts"),
+					to: afterItem1.lastIndexOf("  ~~~~~") + "  ~~~~~".length,
+				},
+			}),
+		).toBe("handled");
+		const afterItem2 = session.document.getValue();
+
+		// Undo both insertions, then Redo both insertions.
+		expect(rt.executeCommand(undoCommand)).toBe("handled");
+		expect(rt.executeCommand(undoCommand)).toBe("handled");
+		expect(session.document.getValue()).toBe(listSource);
+		expect(rt.executeCommand(redoCommand)).toBe("handled");
+		expect(session.document.getValue()).toBe(afterItem1);
+		expect(view.state.selection.$from.parent.type.name).toBe("paragraph");
+		expect(rt.executeCommand(redoCommand)).toBe("handled");
+		expect(session.document.getValue()).toBe(afterItem2);
+		expect(view.state.selection.$from.parent.type.name).toBe("paragraph");
+
+		// Edit Item 3 after Redo and verify Item 1 & Item 2 stay byte-identical.
+		let thirdItemEndPos = -1;
+		view.state.doc.descendants((node, pos) => {
+			if (node.isText && node.text === "Third item") {
+				thirdItemEndPos = pos + node.text.length;
+				return false;
+			}
+			return true;
+		});
+		expect(thirdItemEndPos).toBeGreaterThan(0);
+		setCaret(view, thirdItemEndPos);
+		view.dispatch(view.state.tr.insertText(" edited"));
+		expect(session.document.getValue()).toBe(
+			[
+				"- _keep_",
+				"",
+				"  ",
+				"  ~~~   js",
+				"  first",
+				"  ~~~~~",
+				"- _keep_two_",
+				"",
+				"  ",
+				"  ~~~   ts",
+				"  second",
+				"  ~~~~~",
+				"- Third item edited",
+			].join("\n"),
+		);
+		unmount();
+	});
+
+	it("restores outer list-item caret depth (not inner sublist) on cold-cache Redo above outer code block B", () => {
+		const variants = [
+			[
+				"- - ```js",
+				"    A",
+				"    ```",
+				"",
+				"  ```js",
+				"  B",
+				"  ```",
+			].join("\n"),
+			[
+				"- - ```js",
+				"    A",
+				"    ```",
+				"  ```js",
+				"  B",
+				"  ```",
+			].join("\n"),
+		];
+
+		for (const source of variants) {
+			const { session } = createRealSession(source);
+			let originalDepth = -1;
+			{
+				const { rt, unmount, view } = mountVisual(session);
+				let codeBPos = -1;
+				view.state.doc.descendants((node, pos) => {
+					if (node.type.name === "code_block" && node.textContent === "B") {
+						codeBPos = pos + 1;
+						return false;
+					}
+					return true;
+				});
+				expect(codeBPos).toBeGreaterThan(0);
+				view.dispatch(
+					view.state.tr.setSelection(
+						TextSelection.create(view.state.doc, codeBPos),
+					),
+				);
+				rt.prepareToolbarFallback();
+				const codeBFrom = source.indexOf("  ```js");
+				const codeBTo = source.lastIndexOf("  ```") + "  ```".length;
+				expect(
+					rt.insertParagraphRelative?.({
+						expected: {
+							revision: session.document.getRevision(),
+							selection: session.document.getSelection(),
+							value: session.document.getValue(),
+						},
+						nestedCode: true,
+						relative: "before",
+						targetRange: { from: codeBFrom, to: codeBTo },
+					}),
+				).toBe("handled");
+				originalDepth = view.state.selection.$from.depth;
+				expect(originalDepth).toBe(3);
+				expect(view.state.selection.$from.parent.type.name).toBe("paragraph");
+				expect(rt.executeCommand(undoCommand)).toBe("handled");
+				expect(session.document.getValue()).toBe(source);
+				unmount();
+			}
+
+			// Fresh mount with cold visualInsertionRecords cache: Redo must land in
+			// outer list item (depth 3, 2 spaces), NOT inside the inner sublist (depth 5).
+			{
+				const { rt, unmount, view } = mountVisual(session);
+				expect(rt.executeCommand(redoCommand)).toBe("handled");
+				expect(view.state.selection.$from.depth).toBe(originalDepth);
+				expect(view.state.selection.$from.parent.type.name).toBe("paragraph");
+				expect(view.state.selection.$from.parent.textContent).toBe("");
+				view.dispatch(view.state.tr.insertText("NEWPARA"));
+				const finalValue = session.document.getValue();
+				expect(finalValue).toContain("\n  NEWPARA\n  ```js");
+				expect(finalValue).not.toContain("    NEWPARA");
+				unmount();
+			}
+		}
+	});
+
+	it("restores inner sublist caret depth (4 spaces) on cold-cache Redo below inner code block A", () => {
+		const source = [
+			"- - ```js",
+			"    A",
+			"    ```",
+			"",
+			"  ```js",
+			"  B",
+			"  ```",
+		].join("\n");
+		const { session } = createRealSession(source);
+		let originalDepth = -1;
+		{
+			const { rt, unmount, view } = mountVisual(session);
+			let codeAPos = -1;
+			view.state.doc.descendants((node, pos) => {
+				if (node.type.name === "code_block" && node.textContent === "A") {
+					codeAPos = pos + 1;
+					return false;
+				}
+				return true;
+			});
+			expect(codeAPos).toBeGreaterThan(0);
+			view.dispatch(
+				view.state.tr.setSelection(
+					TextSelection.create(view.state.doc, codeAPos),
+				),
+			);
+			rt.prepareToolbarFallback();
+			const codeAFrom = source.indexOf("```js");
+			const codeATo = source.indexOf("    ```") + "    ```".length;
+			expect(
+				rt.insertParagraphRelative?.({
+					expected: {
+						revision: session.document.getRevision(),
+						selection: session.document.getSelection(),
+						value: session.document.getValue(),
+					},
+					nestedCode: true,
+					relative: "after",
+					targetRange: { from: codeAFrom, to: codeATo },
+				}),
+			).toBe("handled");
+			originalDepth = view.state.selection.$from.depth;
+			expect(originalDepth).toBe(5);
+			expect(view.state.selection.$from.parent.type.name).toBe("paragraph");
+			expect(rt.executeCommand(undoCommand)).toBe("handled");
+			expect(session.document.getValue()).toBe(source);
+			unmount();
+		}
+
+		// Cold-cache Redo must restore depth 5 inside the inner sublist (4 spaces).
+		{
+			const { rt, unmount, view } = mountVisual(session);
+			expect(rt.executeCommand(redoCommand)).toBe("handled");
+			expect(view.state.selection.$from.depth).toBe(originalDepth);
+			expect(view.state.selection.$from.parent.type.name).toBe("paragraph");
+			expect(view.state.selection.$from.parent.textContent).toBe("");
+			view.dispatch(view.state.tr.insertText("NEWPARA"));
+			const finalValue = session.document.getValue();
+			expect(finalValue).toContain("    NEWPARA");
+			expect(finalValue).not.toContain("\n  NEWPARA");
+			expect(finalValue.indexOf("    NEWPARA")).toBeGreaterThan(
+				finalValue.indexOf("    A"),
+			);
+			expect(finalValue.indexOf("    NEWPARA")).toBeLessThan(
+				finalValue.indexOf("\n  ```js"),
+			);
+			unmount();
+		}
+	});
+
+	it("restores outer blockquote caret depth (not inner blockquote) on cold-cache Redo above outer code block B", () => {
+		const variants = [
+			[
+				"> > ```js",
+				"> > A",
+				"> > ```",
+				">",
+				"> ```js",
+				"> B",
+				"> ```",
+			].join("\n"),
+			[
+				"> > ```js",
+				"> > A",
+				"> > ```",
+				"> ```js",
+				"> B",
+				"> ```",
+			].join("\n"),
+		];
+
+		for (const source of variants) {
+			const { session } = createRealSession(source);
+			let originalDepth = -1;
+			{
+				const { rt, unmount, view } = mountVisual(session);
+				let codeBPos = -1;
+				view.state.doc.descendants((node, pos) => {
+					if (node.type.name === "code_block" && node.textContent === "B") {
+						codeBPos = pos + 1;
+						return false;
+					}
+					return true;
+				});
+				expect(codeBPos).toBeGreaterThan(0);
+				view.dispatch(
+					view.state.tr.setSelection(
+						TextSelection.create(view.state.doc, codeBPos),
+					),
+				);
+				rt.prepareToolbarFallback();
+				const codeBFrom = source.indexOf("\n> ```js") + 1;
+				const codeBTo = source.lastIndexOf("> ```") + "> ```".length;
+				expect(
+					rt.insertParagraphRelative?.({
+						expected: {
+							revision: session.document.getRevision(),
+							selection: session.document.getSelection(),
+							value: session.document.getValue(),
+						},
+						nestedCode: true,
+						relative: "before",
+						targetRange: { from: codeBFrom, to: codeBTo },
+					}),
+				).toBe("handled");
+				originalDepth = view.state.selection.$from.depth;
+				expect(originalDepth).toBe(2);
+				expect(view.state.selection.$from.parent.type.name).toBe("paragraph");
+				expect(rt.executeCommand(undoCommand)).toBe("handled");
+				expect(session.document.getValue()).toBe(source);
+				unmount();
+			}
+
+			// Cold-cache Redo must place caret in outer blockquote before B (depth 2).
+			{
+				const { rt, unmount, view } = mountVisual(session);
+				expect(rt.executeCommand(redoCommand)).toBe("handled");
+				expect(view.state.selection.$from.depth).toBe(originalDepth);
+				expect(view.state.selection.$from.parent.type.name).toBe("paragraph");
+				expect(view.state.selection.$from.parent.textContent).toBe("");
+				view.dispatch(view.state.tr.insertText("NEWPARA"));
+				const finalValue = session.document.getValue();
+				expect(finalValue).toContain("\n> NEWPARA\n");
+				expect(finalValue).not.toContain("> > NEWPARA");
+				expect(finalValue.indexOf("\n> NEWPARA\n")).toBeLessThan(
+					finalValue.indexOf("\n> ```js"),
+				);
+				unmount();
+			}
+		}
+	});
+
+	it("fast-exits inferVisualEmptyParagraphLayoutFromCanonical in O(line) on normal lines even on large documents", () => {
+		const block = "Normal paragraph content without blank container prefix.\n";
+		const largeDoc = `${block.repeat(4000)}\n> \`\`\`js\n> A\n> \`\`\`\n${block.repeat(1000)}`;
+		const midLineOffset = 20;
+		const endOfLineOffset = block.length - 1;
+		const emptyBlankLineOffset = block.length * 4000;
+
+		const started = performance.now();
+		for (let i = 0; i < 100; i += 1) {
+			expect(
+				inferVisualEmptyParagraphLayoutFromCanonical(largeDoc, {
+					direction: "none",
+					end: midLineOffset,
+					start: midLineOffset,
+				}),
+			).toBeNull();
+			expect(
+				inferVisualEmptyParagraphLayoutFromCanonical(largeDoc, {
+					direction: "none",
+					end: endOfLineOffset,
+					start: endOfLineOffset,
+				}),
+			).toBeNull();
+			expect(
+				inferVisualEmptyParagraphLayoutFromCanonical(largeDoc, {
+					direction: "none",
+					end: emptyBlankLineOffset,
+					start: emptyBlankLineOffset,
+				}),
+			).toBeNull();
+		}
+		// 300 calls over a ~285KB document must stay fast (no full-doc projection/parsing).
+		expect(performance.now() - started).toBeLessThan(150);
+	});
 });
 
 describe("MountedProseMirrorVisualEditor localized protected-card labels", () => {
@@ -2025,5 +3822,1277 @@ describe("MountedProseMirrorVisualEditor localized protected-card labels", () =>
 		).toBe("取消");
 		unmount();
 		expect(onDispose).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("ProseMirrorVisualEditor cross-block and mixed-selection bold", () => {
+	function findTextPos(
+		doc: ProseMirrorNode,
+		target: string,
+	): { from: number; to: number } {
+		let found: { from: number; to: number } | null = null;
+		doc.descendants((node, pos) => {
+			if (found || !node.isText || !node.text) return;
+			const offset = node.text.indexOf(target);
+			if (offset >= 0) {
+				found = { from: pos + offset, to: pos + offset + target.length };
+			}
+		});
+		if (!found) throw new Error(`text-not-found:${target}`);
+		return found;
+	}
+
+	it("bolds cross-heading selections into valid per-heading CommonMark with rendered <strong> and 1-step Undo/Redo", () => {
+		const initial = "# 一级标题 Heading 1\n\n## 二级标题 Heading 2";
+		const { session } = createRealSession(initial);
+		const { rt, unmount, view } = mountVisual(session);
+		const start = findTextPos(view.state.doc, "一级标题 Heading 1");
+		const end = findTextPos(view.state.doc, "二级标题 Heading 2");
+		view.dispatch(
+			view.state.tr.setSelection(
+				TextSelection.create(view.state.doc, start.from, end.to),
+			),
+		);
+
+		expect(
+			rt.executeCommand(makeToolbarCommand({ action: "bold", id: "bold" })),
+		).toBe("handled");
+		const expected = "# **一级标题 Heading 1**\n\n## **二级标题 Heading 2**";
+		expect(session.document.getValue()).toBe(expected);
+		expect(rt.surface.querySelector("h1 strong")?.textContent).toBe(
+			"一级标题 Heading 1",
+		);
+		expect(rt.surface.querySelector("h2 strong")?.textContent).toBe(
+			"二级标题 Heading 2",
+		);
+		expect(rt.surface.querySelector("h1")?.textContent).not.toContain("**");
+		expect(rt.surface.querySelector("h2")?.textContent).not.toContain("**");
+
+		expect(rt.executeCommand(undoCommand)).toBe("handled");
+		expect(session.document.getValue()).toBe(initial);
+		expect(rt.surface.querySelector("h1 strong")).toBeNull();
+		expect(rt.surface.querySelector("h2 strong")).toBeNull();
+
+		expect(rt.executeCommand(redoCommand)).toBe("handled");
+		expect(session.document.getValue()).toBe(expected);
+		expect(rt.surface.querySelector("h1 strong")?.textContent).toBe(
+			"一级标题 Heading 1",
+		);
+		unmount();
+	});
+
+	it("bolds cross-paragraph, list, blockquote, and mixed paragraph+code/HR/math selections without corrupting non-boldable blocks", () => {
+		const initial = [
+			"Para one",
+			"",
+			"```js",
+			"const x = 1;",
+			"```",
+			"",
+			"---",
+			"",
+			"$$",
+			"E = mc^2",
+			"$$",
+			"",
+			"- List item",
+			"",
+			"> Quoted line",
+			"",
+			"Para two",
+		].join("\n");
+		const { session } = createRealSession(initial);
+		const { rt, unmount, view } = mountVisual(session);
+		const start = findTextPos(view.state.doc, "Para one");
+		const end = findTextPos(view.state.doc, "Para two");
+		view.dispatch(
+			view.state.tr.setSelection(
+				TextSelection.create(view.state.doc, start.from, end.to),
+			),
+		);
+
+		expect(
+			rt.executeCommand(makeToolbarCommand({ action: "bold", id: "bold" })),
+		).toBe("handled");
+		const expected = [
+			"**Para one**",
+			"",
+			"```js",
+			"const x = 1;",
+			"```",
+			"",
+			"---",
+			"",
+			"$$",
+			"E = mc^2",
+			"$$",
+			"",
+			"- **List item**",
+			"",
+			"> **Quoted line**",
+			"",
+			"**Para two**",
+		].join("\n");
+		expect(session.document.getValue()).toBe(expected);
+		expect(rt.surface.querySelector("pre code strong")).toBeNull();
+		expect(rt.surface.querySelector("li strong")?.textContent).toBe("List item");
+		expect(rt.surface.querySelector("blockquote strong")?.textContent).toBe(
+			"Quoted line",
+		);
+
+		expect(rt.executeCommand(undoCommand)).toBe("handled");
+		expect(session.document.getValue()).toBe(initial);
+		unmount();
+	});
+
+	it("allows mixed selection starting inside a code block and extending into a paragraph, while blocking pure non-boldable selections", () => {
+		const initial = "```js\nconst a = 1;\n```\n\nAfter code\n\n---\n\n$$\nx^2\n$$";
+		const { session } = createRealSession(initial);
+		const { rt, unmount, view } = mountVisual(session);
+
+		// Pure code-block selection is blocked without mutating Markdown
+		const codePos = findTextPos(view.state.doc, "const a = 1;");
+		view.dispatch(
+			view.state.tr.setSelection(
+				TextSelection.create(view.state.doc, codePos.from, codePos.to),
+			),
+		);
+		expect(
+			rt.executeCommand(makeToolbarCommand({ action: "bold", id: "bold" })),
+		).toBe("blocked");
+		expect(session.document.getValue()).toBe(initial);
+
+		// Pure HR NodeSelection is blocked
+		let hrPos = -1;
+		let mathPos = -1;
+		view.state.doc.descendants((node, pos) => {
+			if (node.type.name === "horizontal_rule") hrPos = pos;
+			if (node.type.name === "protected_block") mathPos = pos;
+		});
+		view.dispatch(
+			view.state.tr.setSelection(NodeSelection.create(view.state.doc, hrPos)),
+		);
+		expect(
+			rt.executeCommand(makeToolbarCommand({ action: "bold", id: "bold" })),
+		).toBe("blocked");
+		expect(session.document.getValue()).toBe(initial);
+
+		// Pure protected math NodeSelection is blocked
+		view.dispatch(
+			view.state.tr.setSelection(NodeSelection.create(view.state.doc, mathPos)),
+		);
+		expect(
+			rt.executeCommand(makeToolbarCommand({ action: "bold", id: "bold" })),
+		).toBe("blocked");
+		expect(session.document.getValue()).toBe(initial);
+
+		// Mixed selection starting in code block and ending in paragraph bolds ONLY the paragraph
+		const afterPos = findTextPos(view.state.doc, "After code");
+		view.dispatch(
+			view.state.tr.setSelection(
+				TextSelection.create(view.state.doc, codePos.from, afterPos.to),
+			),
+		);
+		expect(
+			rt.executeCommand(makeToolbarCommand({ action: "bold", id: "bold" })),
+		).toBe("handled");
+		expect(session.document.getValue()).toBe(
+			"```js\nconst a = 1;\n```\n\n**After code**\n\n---\n\n$$\nx^2\n$$",
+		);
+		unmount();
+	});
+
+	it("bolds across table cells into valid per-cell CommonMark without corrupting table delimiters", () => {
+		const initial = "| Head A | Head B |\n| --- | --- |\n| Cell 1 | Cell 2 |";
+		const { session } = createRealSession(initial);
+		const { rt, unmount, view } = mountVisual(session);
+		const start = findTextPos(view.state.doc, "Head A");
+		const end = findTextPos(view.state.doc, "Cell 2");
+		view.dispatch(
+			view.state.tr.setSelection(
+				TextSelection.create(view.state.doc, start.from, end.to),
+			),
+		);
+
+		expect(
+			rt.executeCommand(makeToolbarCommand({ action: "bold", id: "bold" })),
+		).toBe("handled");
+		const expected =
+			"| **Head A** | **Head B** |\n| --- | --- |\n| **Cell 1** | **Cell 2** |";
+		expect(session.document.getValue()).toBe(expected);
+		expect(rt.surface.querySelectorAll("table strong")).toHaveLength(4);
+		expect(rt.surface.querySelector("table")?.textContent).not.toContain("**");
+
+		expect(rt.executeCommand(undoCommand)).toBe("handled");
+		expect(session.document.getValue()).toBe(initial);
+		unmount();
+	});
+
+	it("adds missing bold on mixed bold+plain selections via toolbar and Ctrl+B instead of removing existing bold", () => {
+		const initial = "First\n\n**Already**\n\nLast";
+		const { session } = createRealSession(initial);
+		const { rt, unmount, view } = mountVisual(session);
+		const start = findTextPos(view.state.doc, "First");
+		const end = findTextPos(view.state.doc, "Last");
+		view.dispatch(
+			view.state.tr.setSelection(
+				TextSelection.create(view.state.doc, start.from, end.to),
+			),
+		);
+
+		// First Bold adds bold to First & Last while keeping Already bold.
+		expect(
+			rt.executeCommand(makeToolbarCommand({ action: "bold", id: "bold" })),
+		).toBe("handled");
+		expect(session.document.getValue()).toBe(
+			"**First**\n\n**Already**\n\n**Last**",
+		);
+		expect(rt.surface.querySelectorAll("strong")).toHaveLength(3);
+
+		// Second Bold (all marked) removes bold from all three.
+		expect(
+			rt.executeCommand(makeToolbarCommand({ action: "bold", id: "bold" })),
+		).toBe("handled");
+		expect(session.document.getValue()).toBe("First\n\nAlready\n\nLast");
+		expect(rt.surface.querySelectorAll("strong")).toHaveLength(0);
+
+		// Undo back to original and test Mod-b keybinding on mixed selection.
+		expect(rt.executeCommand(undoCommand)).toBe("handled");
+		expect(rt.executeCommand(undoCommand)).toBe("handled");
+		expect(session.document.getValue()).toBe(initial);
+
+		const modStart = findTextPos(view.state.doc, "First");
+		const modEnd = findTextPos(view.state.doc, "Last");
+		view.dispatch(
+			view.state.tr.setSelection(
+				TextSelection.create(view.state.doc, modStart.from, modEnd.to),
+			),
+		);
+		expect(dispatchKeyDown(view, "b", { ctrlKey: true })).toBe(true);
+		expect(session.document.getValue()).toBe(
+			"**First**\n\n**Already**\n\n**Last**",
+		);
+		unmount();
+	});
+
+	it("withholds visual generated-content targets when DOM source or count parity disagrees, while matching PHP-normalized TeX (R31A #1)", () => {
+		const initial = "A $y$ and $frac{1}{2}$";
+		const { session } = createRealSession(initial);
+		const { rt, unmount } = mountVisual(session);
+		const mathElements = Array.from(rt.surface.querySelectorAll(".easymde-math"));
+		expect(mathElements).toHaveLength(2);
+		const yStart = initial.indexOf("$y$");
+		const fracStart = initial.indexOf("$frac{1}{2}$");
+		const fullIndex: VisualEditorGeneratedContentTargetIndex = {
+			blocks: [
+				{
+					editable: true,
+					from: 0,
+					kind: "paragraph",
+					lineEnd: 0,
+					lineStart: 0,
+					to: initial.length,
+				},
+			],
+			length: initial.length,
+			mathSpans: [
+				{
+					bodyFrom: yStart + 1,
+					bodyTo: yStart + 2,
+					displayMode: false,
+					from: yStart,
+					to: yStart + 3,
+				},
+				{
+					bodyFrom: fracStart + 1,
+					bodyTo: fracStart + "$frac{1}{2}$".length - 1,
+					displayMode: false,
+					from: fracStart,
+					to: fracStart + "$frac{1}{2}$".length,
+				},
+			],
+			revision: session.document.getRevision(),
+			source: initial,
+		};
+
+		// Valid matching DOM resolves cleanly.
+		const yLease = rt.prepareGeneratedContentTarget({
+			element: mathElements[0] as Element,
+			index: fullIndex,
+			kind: "math",
+			ordinal: 0,
+		});
+		expect(yLease?.target.original.full).toBe("$y$");
+		yLease?.release();
+
+		// Simulated dropped span (DOM has 2 .easymde-math roots, index only has 1): must withhold!
+		const droppedIndex: VisualEditorGeneratedContentTargetIndex = {
+			...fullIndex,
+			mathSpans: fullIndex.mathSpans.slice(1),
+		};
+		expect(
+			rt.prepareGeneratedContentTarget({
+				element: mathElements[0] as Element,
+				index: droppedIndex,
+				kind: "math",
+				ordinal: 0,
+			}),
+		).toBeNull();
+		expect(
+			rt.prepareGeneratedContentTarget({
+				element: mathElements[1] as Element,
+				index: droppedIndex,
+				kind: "math",
+				ordinal: 0,
+			}),
+		).toBeNull();
+		expect(
+			rt.prepareGeneratedContentTargetForSelection({
+				index: droppedIndex,
+				selection: {
+					end: fracStart + "$frac{1}{2}$".length,
+					start: fracStart,
+				},
+			}),
+		).toBeNull();
+
+		// Direct unit checks: PHP-restored \(y\) and normalized \(\frac{1}{2}\) match, while disagreeing domRaw never falls back to ordinal.
+		const pmRoot = document.createElement("div");
+		pmRoot.className = "ProseMirror";
+		const elY = document.createElement("span");
+		elY.className = "easymde-math easymde-math-inline";
+		elY.setAttribute("data-easymde-visual-markdown-source", "\\(y\\)");
+		const elFrac = document.createElement("span");
+		elFrac.className = "easymde-math easymde-math-inline";
+		elFrac.setAttribute(
+			"data-easymde-visual-markdown-source",
+			"\\(\\frac{1}{2}\\)",
+		);
+		pmRoot.append(elY, elFrac);
+
+		expect(
+			findGeneratedContentOriginal(fullIndex, "math", 0, elY)?.original.full,
+		).toBe("$y$");
+		expect(
+			findGeneratedContentOriginal(fullIndex, "math", 1, elFrac)?.original.full,
+		).toBe("$frac{1}{2}$");
+
+		// Disagreeing domRaw with no match in entries must return null, NEVER fall back to ordinal!
+		elY.setAttribute("data-easymde-visual-markdown-source", "\\(missing\\)");
+		expect(findGeneratedContentOriginal(fullIndex, "math", 0, elY)).toBeNull();
+		expect(
+			pairMathSpanIndexToDomIndex(
+				fullIndex.source,
+				[elY, elFrac],
+				fullIndex.mathSpans,
+				0,
+			),
+		).toBeNull();
+
+		// Duplicate identical formulas with broken count parity (DOM has 2 $y$, index only has 1 $y$): must return null!
+		const dupSource = "A < x $y$ > and $y$";
+		const secondYStart = dupSource.lastIndexOf("$y$");
+		const dupDroppedIndex: VisualEditorGeneratedContentTargetIndex = {
+			blocks: [
+				{
+					editable: true,
+					from: 0,
+					kind: "paragraph",
+					lineEnd: 0,
+					lineStart: 0,
+					to: dupSource.length,
+				},
+			],
+			length: dupSource.length,
+			mathSpans: [
+				{
+					bodyFrom: secondYStart + 1,
+					bodyTo: secondYStart + 2,
+					displayMode: false,
+					from: secondYStart,
+					to: secondYStart + 3,
+				},
+			],
+			revision: 0,
+			source: dupSource,
+		};
+		const dupRoot = document.createElement("div");
+		dupRoot.className = "ProseMirror";
+		const dup0 = document.createElement("span");
+		dup0.className = "easymde-math easymde-math-inline";
+		dup0.setAttribute("data-easymde-visual-markdown-source", "$y$");
+		const dup1 = document.createElement("span");
+		dup1.className = "easymde-math easymde-math-inline";
+		dup1.setAttribute("data-easymde-visual-markdown-source", "$y$");
+		dupRoot.append(dup0, dup1);
+		expect(
+			findGeneratedContentOriginal(dupDroppedIndex, "math", 0, dup0),
+		).toBeNull();
+		expect(
+			findGeneratedContentOriginal(dupDroppedIndex, "math", 1, dup1),
+		).toBeNull();
+
+		// R32A #1 / R32B #1: Visual resolver accepts PHP 4-backslash matrices, NBSP, and HTML5-decoded entities while rejecting mismatches.
+		const r32Source =
+			"A $\\text{&alpha;}$ $\u00a0x\u00a0$\n\n$$\\begin{array}{cc}a \\ b \\\\ c \\| d\\end{array}$$";
+		const alphaStart = r32Source.indexOf("$\\text{&alpha;}$");
+		const nbspXStart = r32Source.indexOf("$\u00a0x\u00a0$");
+		const arrayStart = r32Source.indexOf("$$\\begin{array}");
+		const r32Index: VisualEditorGeneratedContentTargetIndex = {
+			blocks: [
+				{
+					editable: true,
+					from: 0,
+					kind: "paragraph",
+					lineEnd: 0,
+					lineStart: 0,
+					to: r32Source.indexOf("\n\n"),
+				},
+				{
+					editable: true,
+					from: arrayStart,
+					kind: "math",
+					lineEnd: 2,
+					lineStart: 2,
+					to: r32Source.length,
+				},
+			],
+			length: r32Source.length,
+			mathSpans: [
+				{
+					bodyFrom: alphaStart + 1,
+					bodyTo: alphaStart + "$\\text{&alpha;}$".length - 1,
+					displayMode: false,
+					from: alphaStart,
+					to: alphaStart + "$\\text{&alpha;}$".length,
+				},
+				{
+					bodyFrom: nbspXStart + 1,
+					bodyTo: nbspXStart + "$\u00a0x\u00a0$".length - 1,
+					displayMode: false,
+					from: nbspXStart,
+					to: nbspXStart + "$\u00a0x\u00a0$".length,
+				},
+				{
+					bodyFrom: arrayStart + 2,
+					bodyTo: r32Source.length - 2,
+					displayMode: true,
+					from: arrayStart,
+					to: r32Source.length,
+				},
+			],
+			revision: 0,
+			source: r32Source,
+		};
+		const r32Root = document.createElement("div");
+		r32Root.className = "ProseMirror";
+		const elAlpha = document.createElement("span");
+		elAlpha.className = "easymde-math easymde-math-inline";
+		elAlpha.setAttribute(
+			"data-easymde-visual-markdown-source",
+			"\\(\\text{\u03b1}\\)",
+		);
+		const elNbspX = document.createElement("span");
+		elNbspX.className = "easymde-math easymde-math-inline";
+		elNbspX.setAttribute(
+			"data-easymde-visual-markdown-source",
+			"\\(\u00a0x\u00a0\\)",
+		);
+		const elArray = document.createElement("div");
+		elArray.className = "easymde-math easymde-math-block";
+		elArray.setAttribute(
+			"data-easymde-visual-markdown-source",
+			"$$\\begin{array}{cc}a \\\\\\\\ b \\\\ c \\\\\\\\| d\\end{array}$$",
+		);
+		r32Root.append(elAlpha, elNbspX, elArray);
+
+		expect(
+			findGeneratedContentOriginal(r32Index, "math", 0, elAlpha)?.original.full,
+		).toBe("$\\text{&alpha;}$");
+		expect(
+			findGeneratedContentOriginal(r32Index, "math", 1, elNbspX)?.original.full,
+		).toBe("$\u00a0x\u00a0$");
+		expect(
+			findGeneratedContentOriginal(r32Index, "math", 2, elArray)?.original.full,
+		).toBe("$$\\begin{array}{cc}a \\ b \\\\ c \\| d\\end{array}$$");
+		expect(
+			pairMathSpanIndexToDomIndex(
+				r32Index.source,
+				[elAlpha, elNbspX, elArray],
+				r32Index.mathSpans,
+				2,
+			),
+		).toBe(2);
+		const mismatchedR32Source = r32Source.replace("$\\text{&alpha;}$", "$z$");
+		const mismatchedZStart = mismatchedR32Source.indexOf("$z$");
+		const mismatchedNbspStart = mismatchedR32Source.indexOf("$\u00a0x\u00a0$");
+		const mismatchedArrayStart = mismatchedR32Source.indexOf("$$\\begin{array}");
+		expect(
+			pairMathSpanIndexToDomIndex(
+				mismatchedR32Source,
+				[elAlpha, elNbspX, elArray],
+				[
+					{
+						bodyFrom: mismatchedZStart + 1,
+						bodyTo: mismatchedZStart + 2,
+						displayMode: false,
+						from: mismatchedZStart,
+						to: mismatchedZStart + 3,
+					},
+					{
+						bodyFrom: mismatchedNbspStart + 1,
+						bodyTo: mismatchedNbspStart + "$\u00a0x\u00a0$".length - 1,
+						displayMode: false,
+						from: mismatchedNbspStart,
+						to: mismatchedNbspStart + "$\u00a0x\u00a0$".length,
+					},
+					{
+						bodyFrom: mismatchedArrayStart + 2,
+						bodyTo: mismatchedR32Source.length - 2,
+						displayMode: true,
+						from: mismatchedArrayStart,
+						to: mismatchedR32Source.length,
+					},
+				],
+				0,
+			),
+		).toBeNull();
+
+		// R34A #1: WP 6.7 LinkTitle stripping in Visual mode resolves unique $x$ and rejects ambiguous duplicate $x$.
+		const buildMathIndex = (src: string) => {
+			const spans: Array<{
+				bodyFrom: number;
+				bodyTo: number;
+				displayMode: boolean;
+				from: number;
+				to: number;
+			}> = [];
+			const re = /\$([^$]+)\$/g;
+			let m: RegExpExecArray | null = re.exec(src);
+			while (m !== null) {
+				spans.push({
+					bodyFrom: m.index + 1,
+					bodyTo: m.index + m[0].length - 1,
+					displayMode: false,
+					from: m.index,
+					to: m.index + m[0].length,
+				});
+				m = re.exec(src);
+			}
+			return {
+				blocks: [
+					{
+						editable: true,
+						from: 0,
+						kind: "paragraph" as const,
+						lineEnd: 0,
+						lineStart: 0,
+						to: src.length,
+					},
+				],
+				length: src.length,
+				mathSpans: spans,
+				revision: 34,
+				source: src,
+			};
+		};
+		const wp67Root = document.createElement("div");
+		wp67Root.className = "ProseMirror";
+		const elX = document.createElement("span");
+		elX.className = "easymde-math easymde-math-inline";
+		elX.setAttribute("data-easymde-visual-markdown-source", "\\(x\\)");
+		wp67Root.append(elX);
+
+		const beforeIdx = buildMathIndex('Before $x$ and [note](/url "year $199$")');
+		expect(findGeneratedContentOriginal(beforeIdx, "math", 0, elX)?.original.full).toBe("$x$");
+		expect(
+			pairMathSpanIndexToDomIndex(beforeIdx.source, [elX], beforeIdx.mathSpans, 0),
+		).toBe(0);
+
+		const afterIdx = buildMathIndex('[note](/url "year $199$") then $x$');
+		expect(findGeneratedContentOriginal(afterIdx, "math", 0, elX)?.original.full).toBe("$x$");
+		expect(
+			pairMathSpanIndexToDomIndex(afterIdx.source, [elX], afterIdx.mathSpans, 1),
+		).toBe(0);
+
+		const ambigIdx = buildMathIndex('[note](/url "cost $x$") and same $x$');
+		expect(findGeneratedContentOriginal(ambigIdx, "math", 0, elX)).toBeNull();
+		expect(
+			pairMathSpanIndexToDomIndex(ambigIdx.source, [elX], ambigIdx.mathSpans, 1),
+		).toBeNull();
+
+		// R35A #2 / R35B #1: Equal-cardinality duplicate $x$ classes resolve cleanly in Visual mode while ambiguous duplicates reject.
+		const dupVisualRoot = document.createElement("div");
+		dupVisualRoot.className = "ProseMirror";
+		const elX0 = document.createElement("span");
+		elX0.className = "easymde-math easymde-math-inline";
+		elX0.setAttribute("data-easymde-visual-markdown-source", "$x$");
+		const elX1 = document.createElement("span");
+		elX1.className = "easymde-math easymde-math-inline";
+		elX1.setAttribute("data-easymde-visual-markdown-source", "$x$");
+		dupVisualRoot.append(elX0, elX1);
+
+		const dupAfterIdx = buildMathIndex('[note](/url "year $199$") then $x$ and $x$');
+		expect(
+			findGeneratedContentOriginal(dupAfterIdx, "math", 0, elX0)?.ordinal,
+		).toBe(1);
+		expect(
+			findGeneratedContentOriginal(dupAfterIdx, "math", 1, elX1)?.ordinal,
+		).toBe(2);
+		expect(
+			pairMathSpanIndexToDomIndex(dupAfterIdx.source, [elX0, elX1], dupAfterIdx.mathSpans, 0),
+		).toBeNull();
+		expect(
+			pairMathSpanIndexToDomIndex(dupAfterIdx.source, [elX0, elX1], dupAfterIdx.mathSpans, 1),
+		).toBe(0);
+		expect(
+			pairMathSpanIndexToDomIndex(dupAfterIdx.source, [elX0, elX1], dupAfterIdx.mathSpans, 2),
+		).toBe(1);
+
+		const dupStraddleIdx = buildMathIndex('Before $x$ and [note](/url "year $199$") and $x$');
+		expect(
+			findGeneratedContentOriginal(dupStraddleIdx, "math", 0, elX0)?.ordinal,
+		).toBe(0);
+		expect(
+			findGeneratedContentOriginal(dupStraddleIdx, "math", 1, elX1)?.ordinal,
+		).toBe(2);
+		expect(
+			pairMathSpanIndexToDomIndex(dupStraddleIdx.source, [elX0, elX1], dupStraddleIdx.mathSpans, 0),
+		).toBe(0);
+		expect(
+			pairMathSpanIndexToDomIndex(dupStraddleIdx.source, [elX0, elX1], dupStraddleIdx.mathSpans, 1),
+		).toBeNull();
+		expect(
+			pairMathSpanIndexToDomIndex(dupStraddleIdx.source, [elX0, elX1], dupStraddleIdx.mathSpans, 2),
+		).toBe(1);
+
+		unmount();
+	});
+
+	it("preserves raw inline HTML attributes without fake math atoms, keeps invalid angle text as math, and renders/resolves mid-line display math in Visual mode (R35A #3, #4)", () => {
+		const katexCalls: Array<{ displayMode: boolean; tex: string }> = [];
+		const mockKatex = {
+			render(
+				tex: string,
+				element: HTMLElement,
+				options: { displayMode: boolean },
+			) {
+				katexCalls.push({ displayMode: options.displayMode, tex });
+				const wrapper = element.ownerDocument.createElement("span");
+				wrapper.className = options.displayMode ? "katex-display" : "katex";
+				const mathml = element.ownerDocument.createElement("span");
+				mathml.className = "katex-mathml";
+				const math = element.ownerDocument.createElement("math");
+				math.textContent = tex;
+				mathml.appendChild(math);
+				wrapper.appendChild(mathml);
+				element.replaceChildren(wrapper);
+			},
+		};
+		const prevKatex = (window as unknown as { katex?: unknown }).katex;
+		(window as unknown as { katex?: unknown }).katex = mockKatex;
+
+		try {
+			// Unit extractor checks for mid-line display math.
+			expect(isDisplayMathMarkdown("$$x$$")).toBe(true);
+			expect(isDisplayMathMarkdown("\\[x\\]")).toBe(true);
+			expect(isDisplayMathMarkdown("$x$")).toBe(false);
+			expect(extractInlineMathTex("$$x$$")).toBe("x");
+			expect(extractInlineMathTex("\\[x\\]")).toBe("x");
+
+			const mountVisualWithRuntime = (source: string) => {
+				const harness = createMockDocumentSession(source);
+				let runtime: ImmersiveVisualEditorRuntime | null = null;
+				const rendered = render(
+					createElement(MountedProseMirrorVisualEditor, {
+						documentSession: harness.session,
+						editable: true,
+						onReady: (rt) => {
+							runtime = rt;
+						},
+					}),
+				);
+				if (!runtime) throw new Error("visual-runtime-missing");
+				const parsed = createEditorMarkdownBlockIndex(source, {
+					referenceLabelCaseFoldProfile: 14,
+				});
+				const index: VisualEditorGeneratedContentTargetIndex = {
+					blocks: parsed.blocks,
+					length: source.length,
+					mathSpans: parsed.mathSpans,
+					revision: harness.session.document.getRevision(),
+					source,
+				};
+				return { index, runtime: runtime as ImmersiveVisualEditorRuntime, unmount: rendered.unmount };
+			};
+
+			// 1. R35A #3: `A <x a="$y$"> and $z$` projects ONLY `$z$` and round-trips `<x a="$y$">` verbatim.
+			{
+				const source = 'A <x a="$y$"> and $z$';
+				const doc = parseMarkdownToVisualDoc(source);
+				expect(serializeVisualDocToMarkdown(doc)).toBe(source);
+
+				const { index, runtime, unmount } = mountVisualWithRuntime(source);
+				try {
+					expect(index.mathSpans).toHaveLength(1);
+					const mathEls = Array.from(
+						runtime.surface.querySelectorAll<HTMLElement>(".easymde-math"),
+					);
+					expect(mathEls).toHaveLength(1);
+					expect(mathEls[0]?.getAttribute("data-easymde-visual-markdown-source")).toBe("$z$");
+					expect(mathEls[0]?.querySelectorAll(".katex-mathml > math")).toHaveLength(1);
+
+					const ptrLease = runtime.prepareGeneratedContentTarget({
+						element: mathEls[0] as Element,
+						index,
+						kind: "math",
+						ordinal: 0,
+					});
+					expect(ptrLease?.target.original.full).toBe("$z$");
+					ptrLease?.release();
+
+					const zSpan = index.mathSpans[0];
+					if (!zSpan) throw new Error("z-span-missing");
+					const selPin = runtime.prepareGeneratedContentTargetForSelection({
+						index,
+						selection: { end: zSpan.to, start: zSpan.from },
+					});
+					expect(selPin?.target.original.full).toBe("$z$");
+					expect(selPin?.getLease()?.root).toBe(mathEls[0]);
+					selPin?.release();
+				} finally {
+					unmount();
+				}
+			}
+
+			// 2. R35A #3 positive control: `A < x $y$ > and $z$` STILL projects BOTH `$y$` and `$z$`.
+			{
+				const source = "A < x $y$ > and $z$";
+				const { index, runtime, unmount } = mountVisualWithRuntime(source);
+				try {
+					expect(index.mathSpans).toHaveLength(2);
+					const mathEls = Array.from(
+						runtime.surface.querySelectorAll<HTMLElement>(".easymde-math"),
+					);
+					expect(mathEls).toHaveLength(2);
+					expect(
+						runtime.prepareGeneratedContentTarget({
+							element: mathEls[0] as Element,
+							index,
+							kind: "math",
+							ordinal: 0,
+						})?.target.original.full,
+					).toBe("$y$");
+					expect(
+						runtime.prepareGeneratedContentTarget({
+							element: mathEls[1] as Element,
+							index,
+							kind: "math",
+							ordinal: 1,
+						})?.target.original.full,
+					).toBe("$z$");
+				} finally {
+					unmount();
+				}
+			}
+
+			// 3. R35A #4: Mid-line display math `Before $$x$$ and $y$` & `Before \[x\] and $y$` render display MathML and resolve pointer & selection targets.
+			for (const [source, expectedFirst] of [
+				["Before $$x$$ and $y$", "$$x$$"],
+				["Before \\[x\\] and $y$", "\\[x\\]"],
+			] as const) {
+				katexCalls.length = 0;
+				const doc = parseMarkdownToVisualDoc(source);
+				expect(serializeVisualDocToMarkdown(doc)).toBe(source);
+
+				const { index, runtime, unmount } = mountVisualWithRuntime(source);
+				try {
+					expect(index.mathSpans).toHaveLength(2);
+					const mathEls = Array.from(
+						runtime.surface.querySelectorAll<HTMLElement>(".easymde-math"),
+					);
+					expect(mathEls).toHaveLength(2);
+					expect(mathEls[0]?.classList.contains("easymde-math-block")).toBe(true);
+					expect(mathEls[0]?.classList.contains("easymde-math-inline")).toBe(false);
+					expect(mathEls[1]?.classList.contains("easymde-math-inline")).toBe(true);
+					expect(mathEls[0]?.querySelectorAll(".katex-mathml > math")).toHaveLength(1);
+					expect(mathEls[1]?.querySelectorAll(".katex-mathml > math")).toHaveLength(1);
+					expect(katexCalls).toContainEqual({ displayMode: true, tex: "x" });
+					expect(katexCalls).toContainEqual({ displayMode: false, tex: "y" });
+
+					for (let i = 0; i < 2; i += 1) {
+						const expectedFull = i === 0 ? expectedFirst : "$y$";
+						const ptrLease = runtime.prepareGeneratedContentTarget({
+							element: mathEls[i] as Element,
+							index,
+							kind: "math",
+							ordinal: i,
+						});
+						expect(ptrLease?.target.original.full).toBe(expectedFull);
+						ptrLease?.release();
+
+						const span = index.mathSpans[i];
+						if (!span) throw new Error("display-math-span-missing");
+						const selPin = runtime.prepareGeneratedContentTargetForSelection({
+							index,
+							selection: { end: span.to, start: span.from },
+						});
+						expect(selPin?.target.original.full).toBe(expectedFull);
+						expect(selPin?.getLease()?.root).toBe(mathEls[i]);
+						selPin?.release();
+					}
+				} finally {
+					unmount();
+				}
+			}
+
+			// 4. R35A #2 / R35B #1: Full mounted Visual runtime on `[note](/url "year $199$") then $x$ and $x$` & `Before $x$ and [note](/url "year $199$") and $x$`, plus rejection on `[note](/url "cost $x$") and same $x$`.
+			for (const scenario of [
+				{
+					expectedSpanIndices: [1, 2],
+					source: '[note](/url "year $199$") then $x$ and $x$',
+					strippedSpanIndex: 0,
+				},
+				{
+					expectedSpanIndices: [0, 2],
+					source: 'Before $x$ and [note](/url "year $199$") and $x$',
+					strippedSpanIndex: 1,
+				},
+			]) {
+				const { index, runtime, unmount } = mountVisualWithRuntime(scenario.source);
+				try {
+					expect(index.mathSpans).toHaveLength(3);
+					const mathEls = Array.from(
+						runtime.surface.querySelectorAll<HTMLElement>(".easymde-math"),
+					);
+					expect(mathEls).toHaveLength(2);
+					for (let domIdx = 0; domIdx < 2; domIdx += 1) {
+						const spanIdx = scenario.expectedSpanIndices[domIdx] as number;
+						const span = index.mathSpans[spanIdx];
+						if (!span) throw new Error("dup-math-span-missing");
+						const ptrLease = runtime.prepareGeneratedContentTarget({
+							element: mathEls[domIdx] as Element,
+							index,
+							kind: "math",
+							ordinal: domIdx,
+						});
+						expect(ptrLease?.target.original.fullRange).toEqual({
+							from: span.from,
+							to: span.to,
+						});
+						ptrLease?.release();
+
+						const selPin = runtime.prepareGeneratedContentTargetForSelection({
+							index,
+							selection: { end: span.to, start: span.from },
+						});
+						expect(selPin?.target.original.fullRange).toEqual({
+							from: span.from,
+							to: span.to,
+						});
+						expect(selPin?.getLease()?.root).toBe(mathEls[domIdx]);
+						selPin?.release();
+					}
+					const stripped = index.mathSpans[scenario.strippedSpanIndex];
+					if (!stripped) throw new Error("stripped-math-span-missing");
+					expect(
+						runtime.prepareGeneratedContentTargetForSelection({
+							index,
+							selection: { end: stripped.to, start: stripped.from },
+						}),
+					).toBeNull();
+				} finally {
+					unmount();
+				}
+			}
+
+			{
+				const source = '[note](/url "cost $x$") and same $x$';
+				const { index, runtime, unmount } = mountVisualWithRuntime(source);
+				try {
+					expect(index.mathSpans).toHaveLength(2);
+					const mathEls = Array.from(
+						runtime.surface.querySelectorAll<HTMLElement>(".easymde-math"),
+					);
+					expect(mathEls).toHaveLength(1);
+					expect(
+						runtime.prepareGeneratedContentTarget({
+							element: mathEls[0] as Element,
+							index,
+							kind: "math",
+							ordinal: 0,
+						}),
+					).toBeNull();
+					for (const span of index.mathSpans) {
+						expect(
+							runtime.prepareGeneratedContentTargetForSelection({
+								index,
+								selection: { end: span.to, start: span.from },
+							}),
+						).toBeNull();
+					}
+				} finally {
+					unmount();
+				}
+			}
+
+			// 5. R36A #1 / R36B #1: Nested math inside inline HTML (`<u>$x$</u>`) and raw HTML blocks (`<div>\n\n$a$\n\n</div>`) carries `data-easymde-visual-markdown-source` so pairing with link-title formulas succeeds while ambiguous duplicates reject cleanly.
+			for (const scenario of [
+				{
+					expectedDomSources: ["$z$", "$x$"],
+					expectedSpanIndices: [1, 2],
+					source: '[note](/url "year $199$") then $z$ and <u>$x$</u>',
+					strippedSpanIndex: 0,
+				},
+				{
+					expectedDomSources: ["$a$", "$b$"],
+					expectedSpanIndices: [0, 2],
+					source: 'A <u>$a$</u> and [note](/url "year $199$") and $b$',
+					strippedSpanIndex: 1,
+				},
+				{
+					expectedDomSources: ["$a$", "$b$"],
+					expectedSpanIndices: [0, 2],
+					source: '<div>\n\n$a$\n\n</div>\n\n[note](/url "year $199$") and $b$',
+					strippedSpanIndex: 1,
+				},
+			]) {
+				const { index, runtime, unmount } = mountVisualWithRuntime(
+					scenario.source,
+				);
+				try {
+					expect(index.mathSpans, scenario.source).toHaveLength(3);
+					const mathEls = Array.from(
+						runtime.surface.querySelectorAll<HTMLElement>(".easymde-math"),
+					);
+					expect(mathEls, scenario.source).toHaveLength(2);
+					for (let domIdx = 0; domIdx < 2; domIdx += 1) {
+						expect(
+							mathEls[domIdx]?.getAttribute(
+								"data-easymde-visual-markdown-source",
+							),
+						).toBe(scenario.expectedDomSources[domIdx]);
+						const spanIdx = scenario.expectedSpanIndices[domIdx] as number;
+						const span = index.mathSpans[spanIdx];
+						if (!span) throw new Error("nested-math-span-missing");
+
+						const ptrLease = runtime.prepareGeneratedContentTarget({
+							element: mathEls[domIdx] as Element,
+							index,
+							kind: "math",
+							ordinal: domIdx,
+						});
+						expect(ptrLease?.target.original.fullRange).toEqual({
+							from: span.from,
+							to: span.to,
+						});
+						ptrLease?.release();
+
+						const selPin = runtime.prepareGeneratedContentTargetForSelection({
+							index,
+							selection: { end: span.to, start: span.from },
+						});
+						expect(selPin?.target.original.fullRange).toEqual({
+							from: span.from,
+							to: span.to,
+						});
+						expect(selPin?.getLease()?.root).toBe(mathEls[domIdx]);
+						selPin?.release();
+					}
+					const stripped = index.mathSpans[scenario.strippedSpanIndex];
+					if (!stripped) throw new Error("stripped-nested-span-missing");
+					expect(
+						runtime.prepareGeneratedContentTargetForSelection({
+							index,
+							selection: { end: stripped.to, start: stripped.from },
+						}),
+					).toBeNull();
+				} finally {
+					unmount();
+				}
+			}
+
+			{
+				const source = '[note](/url "year $x$") then <u>$x$</u>';
+				const { index, runtime, unmount } = mountVisualWithRuntime(source);
+				try {
+					expect(index.mathSpans).toHaveLength(2);
+					const mathEls = Array.from(
+						runtime.surface.querySelectorAll<HTMLElement>(".easymde-math"),
+					);
+					expect(mathEls).toHaveLength(1);
+					expect(
+						mathEls[0]?.getAttribute("data-easymde-visual-markdown-source"),
+					).toBe("$x$");
+					expect(
+						runtime.prepareGeneratedContentTarget({
+							element: mathEls[0] as Element,
+							index,
+							kind: "math",
+							ordinal: 0,
+						}),
+					).toBeNull();
+					for (const span of index.mathSpans) {
+						expect(
+							runtime.prepareGeneratedContentTargetForSelection({
+								index,
+								selection: { end: span.to, start: span.from },
+							}),
+						).toBeNull();
+					}
+				} finally {
+					unmount();
+				}
+			}
+
+			// 6. R36B #2: Case-sensitive League 2.8.2 inline HTML parity in Visual mode (`<SPAN title="$x$">` and `<span TITLE="$x$">` keep 2 math spans while lowercase `<span title="$x$">` suppresses attribute `$x$`).
+			for (const source of [
+				'A <SPAN title="$x$">text</SPAN> and $x$',
+				'A <span TITLE="$x$">text</span> and $x$',
+			]) {
+				const { index, runtime, unmount } = mountVisualWithRuntime(source);
+				try {
+					expect(index.mathSpans, source).toHaveLength(2);
+					const mathEls = Array.from(
+						runtime.surface.querySelectorAll<HTMLElement>(".easymde-math"),
+					);
+					expect(mathEls, source).toHaveLength(2);
+					for (let i = 0; i < 2; i += 1) {
+						const span = index.mathSpans[i];
+						if (!span) throw new Error("upper-html-math-span-missing");
+						const ptrLease = runtime.prepareGeneratedContentTarget({
+							element: mathEls[i] as Element,
+							index,
+							kind: "math",
+							ordinal: i,
+						});
+						expect(ptrLease?.target.original.fullRange).toEqual({
+							from: span.from,
+							to: span.to,
+						});
+						ptrLease?.release();
+
+						const selPin = runtime.prepareGeneratedContentTargetForSelection({
+							index,
+							selection: { end: span.to, start: span.from },
+						});
+						expect(selPin?.target.original.fullRange).toEqual({
+							from: span.from,
+							to: span.to,
+						});
+						expect(selPin?.getLease()?.root).toBe(mathEls[i]);
+						selPin?.release();
+					}
+				} finally {
+					unmount();
+				}
+			}
+
+			{
+				const source = 'A <span title="$x$">text</span> and $x$';
+				const { index, runtime, unmount } = mountVisualWithRuntime(source);
+				try {
+					expect(index.mathSpans).toHaveLength(1);
+					const mathEls = Array.from(
+						runtime.surface.querySelectorAll<HTMLElement>(".easymde-math"),
+					);
+					expect(mathEls).toHaveLength(1);
+					const span = index.mathSpans[0];
+					if (!span) throw new Error("lower-html-math-span-missing");
+					const ptrLease = runtime.prepareGeneratedContentTarget({
+						element: mathEls[0] as Element,
+						index,
+						kind: "math",
+						ordinal: 0,
+					});
+					expect(ptrLease?.target.original.fullRange).toEqual({
+						from: span.from,
+						to: span.to,
+					});
+					ptrLease?.release();
+				} finally {
+					unmount();
+				}
+			}
+
+			// 7. R37A #1: Multiline inline HTML tokens across soft line breaks in Visual
+			// suppress math inside raw HTML attributes/comments/declarations/PI/CDATA,
+			// resolve `$z$` cleanly in both pointer and selection paths, and round-trip verbatim.
+			for (const source of [
+				'A <span\n title="$x$">text</span> and $z$',
+				'A <span\r\n title="$x$">text</span> and $z$',
+				'A <x\n a="$y$"> and $z$',
+				"A <!--\n$x$\n--> and $z$",
+				"A <!doctype\n$x$> and $z$",
+				"A <?\n$x$\n?> and $z$",
+				"A <![CDATA[\n$x$\n]]> and $z$",
+				'> A <span\n>  title="$x$">text</span> and $z$',
+			]) {
+				const parsed = parseMarkdownWithBlockSources(source);
+				const guard = createMarkdownRoundTripGuard(source, parsed);
+				expect(guard.serialize(parsed.doc), `${source} round-trip`).toBe(source);
+				if (!source.includes("\r\n")) {
+					expect(serializeVisualDocToMarkdown(parsed.doc), `${source} serialize`).toBe(
+						source,
+					);
+				}
+
+				const { index, runtime, unmount } = mountVisualWithRuntime(source);
+				try {
+					expect(index.mathSpans, source).toHaveLength(1);
+					const mathEls = Array.from(
+						runtime.surface.querySelectorAll<HTMLElement>(".easymde-math"),
+					);
+					expect(mathEls, source).toHaveLength(1);
+					const span = index.mathSpans[0];
+					if (!span) throw new Error("multiline-html-math-span-missing");
+					expect(source.slice(span.from, span.to)).toBe("$z$");
+
+					const ptrLease = runtime.prepareGeneratedContentTarget({
+						element: mathEls[0] as Element,
+						index,
+						kind: "math",
+						ordinal: 0,
+					});
+					expect(ptrLease?.target.original.fullRange).toEqual({
+						from: span.from,
+						to: span.to,
+					});
+					ptrLease?.release();
+
+					const selPin = runtime.prepareGeneratedContentTargetForSelection({
+						index,
+						selection: { end: span.to, start: span.from },
+					});
+					expect(selPin?.target.original.fullRange).toEqual({
+						from: span.from,
+						to: span.to,
+					});
+					expect(selPin?.getLease()?.root).toBe(mathEls[0]);
+					selPin?.release();
+				} finally {
+					unmount();
+				}
+			}
+
+			// Invalid declaration (`<!\ndoctype $x$>` has `\n` after `<!`, matching League 2.8.2):
+			// both `$x$` and `$z$` render and resolve cleanly.
+			{
+				const source = "A <!\ndoctype $x$> and $z$";
+				const { index, runtime, unmount } = mountVisualWithRuntime(source);
+				try {
+					expect(index.mathSpans).toHaveLength(2);
+					const mathEls = Array.from(
+						runtime.surface.querySelectorAll<HTMLElement>(".easymde-math"),
+					);
+					expect(mathEls).toHaveLength(2);
+					for (let i = 0; i < 2; i += 1) {
+						const span = index.mathSpans[i];
+						if (!span) throw new Error("invalid-decl-math-span-missing");
+						const ptrLease = runtime.prepareGeneratedContentTarget({
+							element: mathEls[i] as Element,
+							index,
+							kind: "math",
+							ordinal: i,
+						});
+						expect(ptrLease?.target.original.fullRange).toEqual({
+							from: span.from,
+							to: span.to,
+						});
+						ptrLease?.release();
+					}
+				} finally {
+					unmount();
+				}
+			}
+
+			// 8. R37A #3 + R37B #1: `stripInlineHtmlOutsideCode()` preserves recognized math spans
+			// (including `<b>` / `</span>` inside TeX) and honors CommonMark backslash escapes on `<` and `` ` ``.
+			for (const scenario of [
+				{
+					expectedTex: ["\\text{<b>yes</b>}", "z"],
+					source: "A <u>$\\text{<b>yes</b>}$</u> and $z$",
+				},
+				{
+					expectedTex: ["\\text{<b>yes</b>}", "z"],
+					source: "A <u>$$\\text{<b>yes</b>}$$</u> and $z$",
+				},
+				{
+					expectedTex: ["\\text{<b>yes</b>}", "z"],
+					source: "A <u>\\(\\text{<b>yes</b>}\\)</u> and $z$",
+				},
+				{
+					expectedTex: ["\\text{</span>}", "z"],
+					source: "A <span>$\\text{</span>}$</span> and $z$",
+				},
+				{
+					expectedTex: ["x"],
+					source: '<span>\\<em title="$x$"></span>',
+				},
+				{
+					expectedTex: ["x"],
+					source: "<span>a\\</span>$x$</span>",
+				},
+				{
+					expectedTex: ["x", "x"],
+					source: "<span>a\\</span>$x$</span> and $x$",
+				},
+				{
+					expectedTex: ["x"],
+					source: "<span>\\`<em>$x$</em>\\`</span>",
+				},
+			]) {
+				katexCalls.length = 0;
+				const { index, runtime, unmount } = mountVisualWithRuntime(
+					scenario.source,
+				);
+				try {
+					expect(index.mathSpans, scenario.source).toHaveLength(
+						scenario.expectedTex.length,
+					);
+					const mathEls = Array.from(
+						runtime.surface.querySelectorAll<HTMLElement>(".easymde-math"),
+					);
+					expect(mathEls, scenario.source).toHaveLength(
+						scenario.expectedTex.length,
+					);
+					expect(
+						katexCalls.map((call) => call.tex),
+						scenario.source,
+					).toEqual(scenario.expectedTex);
+
+					for (let i = 0; i < scenario.expectedTex.length; i += 1) {
+						const span = index.mathSpans[i];
+						if (!span) throw new Error("strip-math-span-missing");
+						const ptrLease = runtime.prepareGeneratedContentTarget({
+							element: mathEls[i] as Element,
+							index,
+							kind: "math",
+							ordinal: i,
+						});
+						expect(ptrLease?.target.original.fullRange, scenario.source).toEqual({
+							from: span.from,
+							to: span.to,
+						});
+						ptrLease?.release();
+
+						const selPin = runtime.prepareGeneratedContentTargetForSelection({
+							index,
+							selection: { end: span.to, start: span.from },
+						});
+						expect(selPin?.target.original.fullRange, scenario.source).toEqual({
+							from: span.from,
+							to: span.to,
+						});
+						expect(selPin?.getLease()?.root).toBe(mathEls[i]);
+						selPin?.release();
+					}
+				} finally {
+					unmount();
+				}
+			}
+		} finally {
+			(window as unknown as { katex?: unknown }).katex = prevKatex;
+		}
 	});
 });

@@ -1,25 +1,28 @@
 import { describe, expect, it } from "vitest";
 import { markdownLanguage } from "@codemirror/lang-markdown";
+import type { MarkdownParser } from "@lezer/markdown";
 
-import { buildWorkerRoundTripBlockIndex } from "./editor-block-index-worker-round-trip.test-harness";
 import {
 	createEditorMarkdownBlockIndex as createProfiledMarkdownBlockIndex,
 	type EditorMarkdownBlockKind,
 	findEditorMarkdownBlock,
 } from "./editor-markdown-block-index";
+import { installLinearInlineResolver } from "./editor-markdown-inline-markers";
+import {
+	createLinearLinkEndParser,
+	parseLinearImage,
+	parseLinearLink,
+} from "./editor-markdown-linear-link-parser";
+import { runGeneratedContextMenuAction } from "./editor-context-menu-generated-actions";
+import type { EditorContextMenuActionSession } from "./editor-context-menu-action-coordinator";
 import {
 	type EditorCodeBodyMap,
 	findEditorCodeContentTarget,
 	readEditorCodeContent,
 } from "./editor-code-content-target";
-import {
-	markdownReferenceLabels,
-	type MarkdownSyntaxNode,
-} from "./editor-markdown-link-preparation";
-import { collectPhpDisplayMathBrokenBlockLinks } from "./editor-markdown-php-inline-links";
-import { scanPhpCommonMarkBlocks } from "../../shared/markdown/php-commonmark-block-scan";
-import { scanPhpMarkdownMathRanges } from "../../shared/markdown/php-markdown-math-mask";
-import { prepareMarkdownTable } from "./editor-markdown-table";
+import { associateGeneratedContentTarget } from "../generated-content-export/generated-content-target";
+import { markdownReferenceLabels, type MarkdownSyntaxNode } from "./editor-markdown-link-preparation";
+import { mathRanges } from "./editor-markdown-math-preparation";
 
 function editorCodeBodyMap(
 	source: string,
@@ -553,40 +556,6 @@ describe("createEditorMarkdownBlockIndex", () => {
 		expect(nestedIndex.imageBlocks?.[0]?.status).toBe("unavailable");
 	});
 
-	it("preserves inline image ranges whose alt text contains backtick code spans, autolinks, HTML tags/comments, or balanced brackets while rejecting reference-image traps", () => {
-		for (const source of [
-			"![A `]` next](/image.png)",
-			"![A `](` next](/image.png)",
-			"![Alt <https://example.test/a[b>](/image.png)",
-			"![Alt <!-- [ -->](/image.png)",
-			"![Alt <!-- ] -->](/image.png)",
-			'![<span title="](">](https://example.com/a.png "{width=50%}")',
-			'![<https://example.com/?a=]>](https://example.com/a.png "{width=50%}")',
-			"![a [b] c](/image.png)",
-		]) {
-			const index = createEditorMarkdownBlockIndex(source);
-			expect(index.imageBlocks?.[0]?.status, source).toBe("ready");
-			expect(index.imageRanges, source).toEqual([{ from: 0, to: source.length }]);
-		}
-
-		// Inline HTML comments and tag attributes must not produce false-positive image ranges.
-		for (const nonImage of [
-			"hi <!-- ![a](https://example.com/a.png) -->",
-			'<span title="![a](https://example.com/a.png) ">hi</span>',
-			'<span title="![a](<https://example.com/a.png>)">hi</span>',
-			`<span title="![a](https://example.com/a.png 't')">hi</span>`,
-		]) {
-			const index = createEditorMarkdownBlockIndex(nonImage);
-			expect(index.imageRanges, nonImage).toEqual([]);
-		}
-
-		// A reference image whose alt contains `` `](` `` must still stay unavailable.
-		const refTrap = "![A `](` next][ref]\n\n[ref]: /image.png";
-		const refIndex = createEditorMarkdownBlockIndex(refTrap);
-		expect(refIndex.imageRanges).toEqual([]);
-		expect(refIndex.imageBlocks?.[0]?.status).toBe("unavailable");
-	});
-
 	it("excludes image-looking syntax inside accepted math while preserving the adjacent image", () => {
 		const source =
 			"$![math](https://img.test/math.png)$ ![real](https://img.test/real.png)";
@@ -684,101 +653,58 @@ describe("createEditorMarkdownBlockIndex", () => {
 		expect(block?.kind).toBe("unavailable");
 	});
 
-	it("computes exact non-overlapping lineStart and lineEnd when splitting blocks around adjacent display math", () => {
-		const tableBeforeMath = "| A | B |\n| --- | --- |\n| 1 | 2 |\n$$x$$";
-		expect(createEditorMarkdownBlockIndex(tableBeforeMath).blocks).toEqual([
-			{
-				editable: true,
-				from: 0,
-				kind: "table",
-				lineEnd: 2,
-				lineStart: 0,
-				to: tableBeforeMath.indexOf("\n$$x$$"),
-			},
-			{
-				editable: true,
-				from: tableBeforeMath.indexOf("$$x$$"),
-				kind: "math",
-				lineEnd: 3,
-				lineStart: 3,
-				to: tableBeforeMath.length,
-			},
+	it("scans all four math delimiter forms linearly with exact masking and escape parity", () => {
+		expect(mathRanges("$$a$$ \\[b\\] \\(c\\) $d$", [])).toEqual([
+			{ block: true, from: 0, to: 5 },
+			{ block: true, from: 6, to: 11 },
+			{ block: false, from: 12, to: 17 },
+			{ block: false, from: 18, to: 21 },
 		]);
 
-		for (const newline of ["\n", "\r\n"] as const) {
-			const surrounded = `Line 0${newline}$$x$$${newline}Line 2`;
-			const blocks = createEditorMarkdownBlockIndex(surrounded).blocks;
-			expect(blocks, JSON.stringify(newline)).toEqual([
-				{
-					editable: true,
-					from: 0,
-					kind: "paragraph",
-					lineEnd: 0,
-					lineStart: 0,
-					to: "Line 0".length,
-				},
-				{
-					editable: true,
-					from: surrounded.indexOf("$$x$$"),
-					kind: "math",
-					lineEnd: 1,
-					lineStart: 1,
-					to: surrounded.indexOf("$$x$$") + "$$x$$".length,
-				},
-				{
-					editable: true,
-					from: surrounded.indexOf("Line 2"),
-					kind: "paragraph",
-					lineEnd: 2,
-					lineStart: 2,
-					to: surrounded.length,
-				},
-			]);
-		}
+		// Empty bodies are rejected while 5-dollar `$$$$$` matches `[0, 5)` like `/\$\$[\s\S]+?\$\$/gu`.
+		expect(mathRanges("$$$$ \\[\\] \\(\\)", [])).toEqual([]);
+		expect(mathRanges("$$$$$", [])).toEqual([{ block: true, from: 0, to: 5 }]);
 
-		const multipleMath = "Line 0\n$$a$$\nLine 2\n\\[b\\]\nLine 4";
-		expect(createEditorMarkdownBlockIndex(multipleMath).blocks).toEqual([
+		// Block math masks its span with a leading newline so outer `$...$` cannot pair across it.
+		expect(mathRanges("$a $$b$$ c$", [])).toEqual([
+			{ block: true, from: 3, to: 8 },
+		]);
+		expect(mathRanges("\\[ $inner$ \\] \\( $inner2$ \\)", [])).toEqual([
+			{ block: true, from: 0, to: 13 },
+			{ block: false, from: 14, to: 28 },
+		]);
+
+		// Escaped dollar signs and adjacent `$$a$` follow exact inline `$...$` semantics.
+		expect(mathRanges("$$a$", [])).toEqual([{ block: false, from: 1, to: 4 }]);
+		expect(mathRanges("$a\\$b$c$", [])).toEqual([
+			{ block: false, from: 5, to: 8 },
+		]);
+		expect(mathRanges("\\$not-math\n$ok$\n$also\\$", [])).toEqual([
+			{ block: false, from: 11, to: 15 },
+		]);
+		expect(mathRanges("\\$a$ $b$", [])).toEqual([
+			{ block: false, from: 3, to: 6 },
+		]);
+		expect(mathRanges("$$😀$$", [])).toEqual([
+			{ block: true, from: 0, to: 6 },
+		]);
+
+		// Linear scaling on 20k unmatched delimiters (no O(N^2) backtracking).
+		const unmatchedBrackets = `${"\\[ ".repeat(20_000)}word`;
+		const unmatchedDollars = `${"$\\$ ".repeat(20_000)}$x$`;
+		const startedAt = performance.now();
+		expect(mathRanges(unmatchedBrackets, [])).toEqual([]);
+		const dollarMatches = mathRanges(unmatchedDollars, []);
+		const elapsedMs = performance.now() - startedAt;
+
+		expect(dollarMatches).toEqual([
 			{
-				editable: true,
-				from: 0,
-				kind: "paragraph",
-				lineEnd: 0,
-				lineStart: 0,
-				to: "Line 0".length,
-			},
-			{
-				editable: true,
-				from: multipleMath.indexOf("$$a$$"),
-				kind: "math",
-				lineEnd: 1,
-				lineStart: 1,
-				to: multipleMath.indexOf("$$a$$") + "$$a$$".length,
-			},
-			{
-				editable: true,
-				from: multipleMath.indexOf("Line 2"),
-				kind: "paragraph",
-				lineEnd: 2,
-				lineStart: 2,
-				to: multipleMath.indexOf("Line 2") + "Line 2".length,
-			},
-			{
-				editable: true,
-				from: multipleMath.indexOf("\\[b\\]"),
-				kind: "math",
-				lineEnd: 3,
-				lineStart: 3,
-				to: multipleMath.indexOf("\\[b\\]") + "\\[b\\]".length,
-			},
-			{
-				editable: true,
-				from: multipleMath.indexOf("Line 4"),
-				kind: "paragraph",
-				lineEnd: 4,
-				lineStart: 4,
-				to: multipleMath.length,
+				block: false,
+				from: unmatchedDollars.length - 3,
+				to: unmatchedDollars.length,
 			},
 		]);
+		expect(elapsedMs).toBeLessThan(100);
 	});
 });
 
@@ -1393,2354 +1319,107 @@ describe("readEditorCodeContent", () => {
 			status: "unavailable",
 		});
 	});
-
-	it("excludes PHP-dropped extra GFM table body cell images and links while keeping valid cells", () => {
-		const twoColExtraImg =
-			"| H | B |\n| --- | --- |\n| a | b | ![extra](https://example.org/i.png) |";
-		const twoColIndex = createEditorMarkdownBlockIndex(twoColExtraImg);
-		expect(twoColIndex.imageBlocks).toEqual([
-			{ count: 0, firstImageIndex: 0, status: "ready" },
-		]);
-		expect(twoColIndex.imageRanges).toEqual([]);
-
-		const oneColMixed =
-			"| A |\n| --- |\n| 1 | ![dropped](https://example.com/dropped.png) |\n| ![real](https://example.com/real.png) |";
-		const oneColIndex = createEditorMarkdownBlockIndex(oneColMixed);
-		expect(oneColIndex.imageBlocks).toEqual([
-			{ count: 1, firstImageIndex: 0, status: "ready" },
-		]);
-		expect(oneColIndex.imageRanges).toHaveLength(1);
-		expect(
-			oneColMixed.slice(
-				oneColIndex.imageRanges?.[0]?.from ?? -1,
-				oneColIndex.imageRanges?.[0]?.to ?? -1,
-			),
-		).toBe("![real](https://example.com/real.png)");
-
-		const asymmetric =
-			"| A |\n| --- | --- |\n| 1 | ![dropped](https://example.com/dropped.png) |";
-		expect(createEditorMarkdownBlockIndex(asymmetric).imageRanges).toEqual([]);
-
-		const zeroCol =
-			"|\n| --- |\n| ![dropped](https://example.com/dropped.png) |";
-		expect(createEditorMarkdownBlockIndex(zeroCol).imageRanges).toEqual([]);
-
-		// Dropped reference image must not poison a valid image in the same table.
-		const droppedRef =
-			"| A |\n| --- |\n| 1 | ![ref][id] |\n| ![real](https://example.com/real.png) |\n\n[id]: https://example.com/ref.png";
-		const droppedRefIndex = createEditorMarkdownBlockIndex(droppedRef);
-		expect(droppedRefIndex.imageBlocks?.[0]).toEqual({
-			count: 1,
-			firstImageIndex: 0,
-			status: "ready",
-		});
-		expect(droppedRefIndex.imageRanges).toHaveLength(1);
-
-		// Extra body-cell links (inline, autolink, bare URL) are excluded; valid cell 0 link is kept.
-		const tableWithLinks =
-			"| A |\n| --- |\n| [kept](https://kept.example) | [dropped](https://dropped.example) |\n| 1 | <https://auto.example> |\n| 2 | https://bare.example |";
-		const linksIndex = createEditorMarkdownBlockIndex(tableWithLinks);
-		expect(linksIndex.linkCandidates).toHaveLength(1);
-		expect(
-			tableWithLinks.slice(
-				linksIndex.linkCandidates?.[0]?.from ?? -1,
-				linksIndex.linkCandidates?.[0]?.to ?? -1,
-			),
-		).toBe("[kept](https://kept.example)");
-
-		// Display math terminates a preceding table just like PHP MarkdownRenderer::extract_math().
-		const afterDisplayMath =
-			"| A |\n| --- |\n$$\nx = 1\n$$\n| 1 | ![ok](https://example.com/ok.png) |";
-		const mathTermIndex = createEditorMarkdownBlockIndex(afterDisplayMath);
-		expect(mathTermIndex.imageRanges).toHaveLength(1);
-		expect(
-			afterDisplayMath.slice(
-				mathTermIndex.imageRanges?.[0]?.from ?? -1,
-				mathTermIndex.imageRanges?.[0]?.to ?? -1,
-			),
-		).toBe("![ok](https://example.com/ok.png)");
-	});
-
-	it("preserves GFM table images and links alongside inline math pipes and drops phantom table-image URL links", () => {
-		const sameCell = "| A |\n| - |\n| $a|b$ ![x](/i) [y](/y) |";
-		const sameCellIndex = createEditorMarkdownBlockIndex(sameCell);
-		expect(
-			(sameCellIndex.imageRanges ?? []).map((r) => sameCell.slice(r.from, r.to)),
-		).toEqual(["![x](/i)"]);
-		expect(
-			(sameCellIndex.linkCandidates ?? []).map((r) =>
-				sameCell.slice(r.from, r.to),
-			),
-		).toEqual(["[y](/y)"]);
-
-		const prevCellImg =
-			"| A | B |\n| --- | --- |\n| $a|b$ | ![img](https://example.com/a.png) |";
-		const prevCellImgIndex = createEditorMarkdownBlockIndex(prevCellImg);
-		expect(
-			(prevCellImgIndex.imageRanges ?? []).map((r) =>
-				prevCellImg.slice(r.from, r.to),
-			),
-		).toEqual(["![img](https://example.com/a.png)"]);
-
-		const prevCellLink =
-			"| A | B |\n| --- | --- |\n| $a|b$ | [link](https://example.com) |";
-		const prevCellLinkIndex = createEditorMarkdownBlockIndex(prevCellLink);
-		expect(
-			(prevCellLinkIndex.linkCandidates ?? []).map((r) =>
-				prevCellLink.slice(r.from, r.to),
-			),
-		).toEqual(["[link](https://example.com)"]);
-
-		const prevCellParen =
-			"| A | B |\n| --- | --- |\n| \\(a|b\\) | ![img](https://example.com/a.png) |";
-		const prevCellParenIndex = createEditorMarkdownBlockIndex(prevCellParen);
-		expect(
-			(prevCellParenIndex.imageRanges ?? []).map((r) =>
-				prevCellParen.slice(r.from, r.to),
-			),
-		).toEqual(["![img](https://example.com/a.png)"]);
-
-		const mathHeader =
-			"| $a|b$ |\n| --- |\n| 1 | ![extra](https://example.com/x.png) |";
-		expect(createEditorMarkdownBlockIndex(mathHeader).imageRanges).toEqual([]);
-
-		// Code-wrapped `$a|b$` is not extracted by PHP, so its pipe splits cells and drops ![img].
-		const codeWrapped =
-			"| A | B |\n| --- | --- |\n| `$a|b$` | ![img](https://example.com/a.png) |";
-		expect(createEditorMarkdownBlockIndex(codeWrapped).imageRanges).toEqual([]);
-
-		// Track B #3: double-backslash pipe inside table image destination must not produce a phantom URL link.
-		const escapedPipeImg =
-			"| A |\n| --- |\n| ![a](https://example.com/a\\\\|b.png) |";
-		expect(createEditorMarkdownBlockIndex(escapedPipeImg).linkCandidates).toEqual(
-			[],
-		);
-
-		const escapedPipeImgWithRealLink =
-			"| A |\n| --- |\n| ![a](https://example.com/a\\\\|b.png) https://real.example.com |";
-		const mixedLinkIndex = createEditorMarkdownBlockIndex(
-			escapedPipeImgWithRealLink,
-		);
-		expect(
-			(mixedLinkIndex.linkCandidates ?? []).map((r) =>
-				escapedPipeImgWithRealLink.slice(r.from, r.to),
-			),
-		).toEqual(["https://real.example.com"]);
-	});
-
-	it("matches PHP extract_math for multiline \\(...\\), surrogate offsets, table-image phantom URLs, and pipe-free display math indented code", () => {
-		// Track A #3 + Track B #4: multiline \(...\) and surrogate pair offsets.
-		const multiHeader =
-			"| A | \\(x\ny\\) | B |\n| --- | --- | --- |\n| 1 | 2 | ![kept](https://example.com/a.png) |";
-		expect(
-			(createEditorMarkdownBlockIndex(multiHeader).imageRanges ?? []).map((r) =>
-				multiHeader.slice(r.from, r.to),
-			),
-		).toEqual(["![kept](https://example.com/a.png)"]);
-
-		const multiBody =
-			"| A | B |\n| --- | --- |\n| 1 | \\(x\ny\\) | ![dropped](https://example.com/b.png) |";
-		expect(createEditorMarkdownBlockIndex(multiBody).imageRanges).toEqual([]);
-
-		const blankInMath =
-			"| A | B |\n| --- | --- |\n| \\(x\n\ny\\) | ![kept](https://example.com/a.png) | ![dropped](https://example.com/b.png) |";
-		expect(
-			(createEditorMarkdownBlockIndex(blankInMath).imageRanges ?? []).map((r) =>
-				blankInMath.slice(r.from, r.to),
-			),
-		).toEqual(["![kept](https://example.com/a.png)"]);
-
-		const surrogateSource =
-			"\\(😀\nx|y\\)\n\n| A |\n| --- |\n| ![kept](https://example.com/a.png) |";
-		expect(
-			(createEditorMarkdownBlockIndex(surrogateSource).imageRanges ?? []).map(
-				(r) => surrogateSource.slice(r.from, r.to),
-			),
-		).toEqual(["![kept](https://example.com/a.png)"]);
-
-		// Track B #5: suppress phantom URL fragments inside linked `\\|` or inline-math-pipe table images.
-		for (const [label, source] of [
-			[
-				"linked image with double-backslash pipe in alt",
-				"| A |\n| --- |\n| [![a\\\\|b](https://example.com/a.png)](https://example.com/x) |",
-			],
-			[
-				"image with inline dollar math pipe in title",
-				'| A |\n| --- |\n| ![alt](https://example.com/a.png "a $x|y$ b") |',
-			],
-			[
-				"image with inline dollar math pipe in alt",
-				"| A |\n| --- |\n| ![a $x|y$ b](https://example.com/a.png) |",
-			],
-			[
-				"image with inline paren math pipe in title",
-				'| A |\n| --- |\n| ![alt](https://example.com/a.png "a \\(x|y\\) b") |',
-			],
-		] as const) {
-			expect(
-				createEditorMarkdownBlockIndex(source).linkCandidates,
-				label,
-			).toEqual([]);
-		}
-
-		// Positive controls: real link after image on a table row remains exposed.
-		for (const positive of [
-			"| A |\n| --- |\n| ![a](https://example.com/a.png) https://example.com/ok |",
-			'| A |\n| --- |\n| ![alt](https://example.com/a.png "a $x|y$ b") https://example.com/ok |',
-		]) {
-			const idx = createEditorMarkdownBlockIndex(positive);
-			expect(
-				(idx.linkCandidates ?? []).map((r) => positive.slice(r.from, r.to)),
-				positive,
-			).toEqual(["https://example.com/ok"]);
-		}
-
-		// Track B #7: display math followed by 4 spaces creates indented code even without `|`.
-		for (const indented of [
-			"$$x$$    ![alt](https://example.com/a.png)",
-			"\\[x\\]    ![alt](https://example.com/a.png)",
-		]) {
-			expect(createEditorMarkdownBlockIndex(indented).imageRanges, indented).toEqual(
-				[],
-			);
-		}
-		expect(
-			createEditorMarkdownBlockIndex("$$x$$    [link](https://example.com)")
-				.linkCandidates,
-		).toEqual([]);
-		for (const singleSpace of [
-			"$$x$$ ![alt](https://example.com/a.png)",
-			"\\[x\\] ![alt](https://example.com/a.png)",
-		]) {
-			const idx = createEditorMarkdownBlockIndex(singleSpace);
-			expect(
-				(idx.imageRanges ?? []).map((r) => singleSpace.slice(r.from, r.to)),
-				singleSpace,
-			).toEqual(["![alt](https://example.com/a.png)"]);
-		}
-	});
-
-	it("preserves bare-CR inline math offsets, recovers PHP-valid \\\\| table-cell images, and scales linearly on 6,000 links in a math table cell (Track A #4, #5a, #5b)", () => {
-		// Track A #5a: bare `\r` inside inline math keeps column 2 link/image intact.
-		const bareCrTable = "| A | B |\n| --- | --- |\n| $a\rb|c$ | [x](/x) |";
-		const bareCrIndex = createEditorMarkdownBlockIndex(bareCrTable);
-		expect(bareCrIndex.mathSpans).toEqual([
-			{
-				bodyFrom: bareCrTable.indexOf("$a") + 1,
-				bodyTo: bareCrTable.indexOf("$ |") ,
-				displayMode: false,
-				from: bareCrTable.indexOf("$a"),
-				to: bareCrTable.indexOf("$ |") + 1,
-			},
-		]);
-		expect(
-			(bareCrIndex.linkCandidates ?? []).map((r) =>
-				bareCrTable.slice(r.from, r.to),
-			),
-		).toEqual(["[x](/x)"]);
-
-		const bareCrTableImg = "| A | B |\n| --- | --- |\n| $a\rb|c$ | ![x](/i) |";
-		const bareCrImgIndex = createEditorMarkdownBlockIndex(bareCrTableImg);
-		expect(
-			(bareCrImgIndex.imageRanges ?? []).map((r) =>
-				bareCrTableImg.slice(r.from, r.to),
-			),
-		).toEqual(["![x](/i)"]);
-
-		// Track A #5b: recover PHP-valid `\\|` table-cell images missed by Lezer.
-		const dblBackslashAlt = "| H |\n| --- |\n| ![x\\\\|y](/i) |";
-		const dblBackslashAltIdx = createEditorMarkdownBlockIndex(dblBackslashAlt);
-		expect(dblBackslashAltIdx.imageBlocks).toEqual([
-			{ count: 1, firstImageIndex: 0, status: "ready" },
-		]);
-		expect(
-			(dblBackslashAltIdx.imageRanges ?? []).map((r) =>
-				dblBackslashAlt.slice(r.from, r.to),
-			),
-		).toEqual(["![x\\\\|y](/i)"]);
-
-		// Mixed Lezer-discovered and Lezer-missed `\\|` images stay sorted and deduplicated; dropped extra column stays excluded.
-		const mixedRecovered =
-			"| H |\n| --- |\n| ![a](/a) ![x\\\\|y](/i) ![b](/b) | ![dropped](/d) |";
-		const mixedRecoveredIdx = createEditorMarkdownBlockIndex(mixedRecovered);
-		expect(
-			(mixedRecoveredIdx.imageRanges ?? []).map((r) =>
-				mixedRecovered.slice(r.from, r.to),
-			),
-		).toEqual(["![a](/a)", "![x\\\\|y](/i)", "![b](/b)"]);
-
-		// Math-wrapped `\\|` image must not be recovered as a live image.
-		const mathWrappedDblPipe = "| H |\n| --- |\n| $![x\\\\|y](/i)$ |";
-		expect(
-			createEditorMarkdownBlockIndex(mathWrappedDblPipe).imageRanges,
-		).toEqual([]);
-
-		// Track A #4: 6,000 links after `![img](/i) $5 ` in one table cell finish well under 2s with all 6,000 links preserved.
-		const links6000 = Array.from({ length: 6_000 }, (_, i) => `[a${i}](/x)`).join(
-			" ",
-		);
-		const heavyTable = `| A | B |\n| --- | --- |\n| ![img](/i) $5 ${links6000} | B |`;
-		const started = performance.now();
-		const heavyIdx = createEditorMarkdownBlockIndex(heavyTable);
-		const elapsedMs = performance.now() - started;
-		expect(heavyIdx.linkCandidates).toHaveLength(6_000);
-		expect(heavyIdx.imageRanges).toHaveLength(1);
-		expect(elapsedMs).toBeLessThan(2_000);
-	});
-
-	it("matches PHP for inline-math-unclosed HTML blocks and recovers \\\\| table images in strictly O(N) time without poisoning sibling rows (Round 25 Track B #3, #4, #5a & Track A #4)", () => {
-		// Track B #3: inline math without pipes masks HTML block closers before table/block parsing.
-		const preTable = "<pre>\n$x</pre>$\n| A |\n| --- |";
-		expect(prepareMarkdownTable(preTable, preTable.indexOf("| A"))).toBeNull();
-
-		const commentTable = "<!-- $-->$\n| A |\n| --- |";
-		expect(
-			prepareMarkdownTable(commentTable, commentTable.indexOf("| A")),
-		).toBeNull();
-
-		// Blank line after unclosed Type 1/2 HTML block still keeps HTML block open in PHP.
-		const preBlankTable = "<pre>\n$x</pre>$\n\n| A |\n| --- |";
-		expect(
-			prepareMarkdownTable(preBlankTable, preBlankTable.indexOf("| A")),
-		).toBeNull();
-		const commentBlankTable = "<!-- $-->$\n\n| A |\n| --- |";
-		expect(
-			prepareMarkdownTable(commentBlankTable, commentBlankTable.indexOf("| A")),
-		).toBeNull();
-
-		// Positive control: a properly closed HTML comment containing inline math allows a following table.
-		const closedCommentTable = "<!-- a $x$ b -->\n\n| A |\n| --- |";
-		expect(
-			prepareMarkdownTable(
-				closedCommentTable,
-				closedCommentTable.indexOf("| A"),
-			),
-		).not.toBeNull();
-
-		// Images and links inside inline-math-unclosed HTML blocks are excluded.
-		const commentImg = "<!-- $-->$\n![alt](/img.png)";
-		expect(createEditorMarkdownBlockIndex(commentImg).imageRanges).toEqual([]);
-		const preImg = "<pre>\n$x</pre>$\n![alt](/img.png)";
-		expect(createEditorMarkdownBlockIndex(preImg).imageRanges).toEqual([]);
-		const commentLink = "<!-- $-->$\n[link](https://example.com)";
-		expect(createEditorMarkdownBlockIndex(commentLink).linkCandidates).toEqual(
-			[],
-		);
-
-		// Track B #4: `\\|` inside bare dest, angle dest, or title recovers BOTH images without poisoning the table.
-		for (const [label, source, expectedSlices] of [
-			[
-				"bare destination with double-backslash pipe",
-				"| A |\n| --- |\n| ![alt](/a\\\\|b.png) |\n| ![ok](/ok.png) |",
-				["![alt](/a\\\\|b.png)", "![ok](/ok.png)"],
-			],
-			[
-				"angle destination with double-backslash pipe",
-				"| A |\n| --- |\n| ![alt](</a\\\\|b.png>) |\n| ![ok](/ok.png) |",
-				["![alt](</a\\\\|b.png>)", "![ok](/ok.png)"],
-			],
-			[
-				"title with double-backslash pipe",
-				'| A |\n| --- |\n| ![alt](/i.png "a\\\\|b") |\n| ![ok](/ok.png) |',
-				['![alt](/i.png "a\\\\|b")', "![ok](/ok.png)"],
-			],
-		] as const) {
-			const idx = createEditorMarkdownBlockIndex(source);
-			expect(idx.imageBlocks?.[0], label).toEqual({
-				count: 2,
-				firstImageIndex: 0,
-				status: "ready",
-			});
-			expect(
-				(idx.imageRanges ?? []).map((r) => source.slice(r.from, r.to)),
-				label,
-			).toEqual(expectedSlices);
-		}
-
-		// Real reference image in a table still marks the table unavailable.
-		const refInTable =
-			"| A |\n| --- |\n| ![ref][id] |\n| ![ok](/ok.png) |\n\n[id]: /ref.png";
-		expect(createEditorMarkdownBlockIndex(refInTable).imageBlocks?.[0]).toEqual({
-			count: 0,
-			firstImageIndex: 0,
-			status: "unavailable",
-		});
-
-		// Track A #4 + Track B #5a: linear O(N) table image recovery on 4,000 `\\|` images and 4,000 unclosed `![a`.
-		const heavyEscaped = `| A |\n| --- |\n| ${"![x\\\\|y](/i) ".repeat(4_000)}|`;
-		const tEscaped = performance.now();
-		const escapedIdx = createEditorMarkdownBlockIndex(heavyEscaped);
-		const elapsedEscaped = performance.now() - tEscaped;
-		expect(escapedIdx.imageBlocks?.[0]?.status).toBe("ready");
-		expect(escapedIdx.imageRanges).toHaveLength(4_000);
-		expect(elapsedEscaped).toBeLessThan(1_000);
-
-		const heavyUnclosed = `| A |\n| --- |\n| ${"![a".repeat(4_000)}|`;
-		const tUnclosed = performance.now();
-		const unclosedIdx = createEditorMarkdownBlockIndex(heavyUnclosed);
-		const elapsedUnclosed = performance.now() - tUnclosed;
-		expect(unclosedIdx.imageRanges).toEqual([]);
-		expect(elapsedUnclosed).toBeLessThan(500);
-	});
-
-	it("matches PHP on inline-math HTML tag masks, cross-cell Lezer table images, unresolved reference images, and escaped leading backtick runs (Round 26)", () => {
-		// 1. Track B F2: `<div$a$>` and `</div$a$>` retain both image and link; `<span $a$="1">` is a Type 7 HTML block.
-		for (const [label, source] of [
-			["open tag with inline math", "<div$a$>\n![a](/x.png)\n[link](https://example.com)"],
-			["close tag with inline math", "</div$a$>\n![a](/x.png)\n[link](https://example.com)"],
-		] as const) {
-			const idx = createEditorMarkdownBlockIndex(source);
-			expect(
-				(idx.imageRanges ?? []).map((r) => source.slice(r.from, r.to)),
-				`img:${label}`,
-			).toEqual(["![a](/x.png)"]);
-			expect(
-				(idx.linkCandidates ?? []).map((r) => source.slice(r.from, r.to)),
-				`link:${label}`,
-			).toEqual(["[link](https://example.com)"]);
-		}
-		const spanAttr = '<span $a$="1">\n![a](/x.png)';
-		expect(createEditorMarkdownBlockIndex(spanAttr).imageRanges).toEqual([]);
-		const declMath = "<!$a$>\n![a](/x.png)";
-		expect(
-			(createEditorMarkdownBlockIndex(declMath).imageRanges ?? []).map((r) =>
-				declMath.slice(r.from, r.to),
-			),
-		).toEqual(["![a](/x.png)"]);
-
-		// 2. Track B F3: cross-cell Lezer images filtered before `coveredRanges` so `/y.png` is recovered.
-		for (const [label, source] of [
-			["title pipe cross-cell", '| h1 | h2 |\n| --- | --- | --- |\n| ![a](/x.png " | ![b](/y.png) ") |'],
-			["code-span pipe cross-cell", "| h1 | h2 |\n| --- | --- | --- |\n| ![a `| ![b](/y.png) `](/x.png) |"],
-			["HTML-attr pipe cross-cell", '| h1 | h2 |\n| --- | --- | --- |\n| ![a <span title="| ![b](/y.png) ">](/x.png) |'],
-		] as const) {
-			const idx = createEditorMarkdownBlockIndex(source);
-			expect(idx.imageBlocks?.[0]?.status, `status:${label}`).toBe("ready");
-			expect(
-				(idx.imageRanges ?? []).map((r) => source.slice(r.from, r.to)),
-				`img:${label}`,
-			).toEqual(["![b](/y.png)"]);
-		}
-
-		// 3. Track A #3: unresolved reference-image syntax stays literal text (`status: "ready"`), while real PHP reference definitions stay `status: "unavailable"`.
-		for (const [label, source] of [
-			["unresolved shortcut ref in table", "| A |\n| --- |\n| ![x] ![ok](/i) |"],
-			["unresolved collapsed ref in table", "| A |\n| --- |\n| ![x][] ![ok](/i) |"],
-			["unresolved full ref in table", "| A |\n| --- |\n| ![alt][x] ![ok](/i) |"],
-			["fenced code refdef does not resolve ![x]", "| A |\n| --- |\n| ![x] ![ok](/i) |\n\n```\n[x]: /x\n```"],
-			["HTML block refdef does not resolve ![x]", "| A |\n| --- |\n| ![x] ![ok](/i) |\n\n<div>\n[x]: /x\n</div>"],
-			["math-mask literal M_M does not collide with [$a$]: /x", "![M_M] ![ok](/i)\n\n[$a$]: /x"],
-			["failed same-line title refdef does not resolve ![x]", '![x] ![ok](/i)\n\n[x]: /x "bad" extra'],
-			["space-only second bracket does not fall back to shortcut [x]", "![x][ ] ![ok](/i)\n\n[x]: /x"],
-		] as const) {
-			const idx = createEditorMarkdownBlockIndex(source);
-			expect(idx.imageBlocks?.[0], `ready:${label}`).toEqual({
-				count: 1,
-				firstImageIndex: 0,
-				status: "ready",
-			});
-			expect(
-				(idx.imageRanges ?? []).map((r) => source.slice(r.from, r.to)),
-				`slice:${label}`,
-			).toEqual(["![ok](/i)"]);
-		}
-
-		for (const [label, source] of [
-			["defined shortcut ref in table", "| A |\n| --- |\n| ![x] ![ok](/i) |\n\n[x]: /x"],
-			["defined collapsed ref with whitespace/case fold", "| A |\n| --- |\n| ![x][] ![ok](/i) |\n\n[  X  ]: /x"],
-			["defined full ref with whitespace/case fold", "| A |\n| --- |\n| ![alt][x] ![ok](/i) |\n\n[  X  ]: /x"],
-			["multiline refdef resolves shortcut", "![foo bar] ![ok](/i)\n\n[foo\nbar]: /x"],
-			["blockquote multiline ref resolves", "> ![foo\n> bar] ![ok](/i)\n\n[foo bar]: /x"],
-			["table escaped pipe ref resolves against unescaped def", "| A |\n| --- |\n| ![a\\|b] ![ok](/i) |\n\n[a|b]: /x"],
-			["2-line title failure still keeps valid line-1 refdef", '![x] ![ok](/i)\n\n[x]: /x\n"bad" extra'],
-			["Unicode case-fold refdef resolves shortcut", "![Stra\u00dfe] ![ok](/i)\n\n[STRASSE]: /x"],
-		] as const) {
-			const idx = createEditorMarkdownBlockIndex(source);
-			expect(idx.imageBlocks?.[0], `unavailable:${label}`).toEqual({
-				count: 0,
-				firstImageIndex: 0,
-				status: "unavailable",
-			});
-			expect(idx.imageRanges, `empty:${label}`).toEqual([]);
-		}
-
-		// Unsupported Unicode case-fold profile: no refdefs stays ready; with refdefs + non-ASCII fails closed without throwing.
-		const unsupportedOpts = { referenceLabelCaseFoldProfile: "unsupported" as const };
-		expect(
-			createEditorMarkdownBlockIndex("![Stra\u00dfe] ![ok](/i)", unsupportedOpts)
-				.imageBlocks?.[0]?.status,
-		).toBe("ready");
-		expect(
-			createEditorMarkdownBlockIndex(
-				"![Stra\u00dfe] ![ok](/i)\n\n[STRASSE]: /x",
-				unsupportedOpts,
-			).imageBlocks?.[0]?.status,
-		).toBe("unavailable");
-
-		// 4. Track B F6b: escaped leading backtick runs preserve full image range in block index.
-		const escapedTickSrc = "![x \\`` `](y.png)`](/z.png)";
-		const escapedTickIdx = createEditorMarkdownBlockIndex(escapedTickSrc);
-		expect(escapedTickIdx.imageBlocks?.[0]?.status).toBe("ready");
-		expect(
-			(escapedTickIdx.imageRanges ?? []).map((r) => escapedTickSrc.slice(r.from, r.to)),
-		).toEqual([escapedTickSrc]);
-	});
-
-	it("matches PHP 4-pass math token numbering for reference labels and preserves live links inside unresolved reference images (Round 27)", () => {
-		// 1. Track A #6 + Track B F6: PHP per-segment 4-pass token numbering ($$ -> \[ -> \( -> $).
-		const repro1 = "![EASYMDE_MATH_1_TOKEN] ![ok](/i)\n\n[$a$]: /x\n\n$$b$$";
-		expect(createEditorMarkdownBlockIndex(repro1).imageBlocks?.[0]).toEqual({
-			count: 0,
-			firstImageIndex: 0,
-			status: "unavailable",
-		});
-
-		const repro2 = "![a][EASYMDE_MATH_1_TOKEN]\n\n[$a$]: /x.png\n$$b$$";
-		expect(createEditorMarkdownBlockIndex(repro2).imageBlocks?.[0]).toEqual({
-			count: 0,
-			firstImageIndex: 0,
-			status: "unavailable",
-		});
-
-		const repro3 = "![a][EASYMDE_MATH_0_TOKEN]\n\n[$a$]: /x.png\n$$b$$";
-		expect(createEditorMarkdownBlockIndex(repro3).imageBlocks?.[0]).toEqual({
-			count: 0,
-			firstImageIndex: 0,
-			status: "ready",
-		});
-
-		// Multi-segment case separated by inline code: segment 0 `$a$` -> TOKEN_0, segment 1 `$$b$$` -> TOKEN_1.
-		const multiSegMatch =
-			"![a][EASYMDE_MATH_0_TOKEN]\n\n[$a$]: /x.png\n\n`code`\n\n$$b$$";
-		expect(createEditorMarkdownBlockIndex(multiSegMatch).imageBlocks?.[0]).toEqual({
-			count: 0,
-			firstImageIndex: 0,
-			status: "unavailable",
-		});
-
-		const multiSegMiss =
-			"![a][EASYMDE_MATH_1_TOKEN]\n\n[$a$]: /x.png\n\n`code`\n\n$$b$$";
-		expect(createEditorMarkdownBlockIndex(multiSegMiss).imageBlocks?.[0]).toEqual({
-			count: 0,
-			firstImageIndex: 0,
-			status: "ready",
-		});
-
-		// Nested math increments PHP counter for both inner $$b$$ (0) and outer \[...\] (1), so $d$ gets TOKEN_2.
-		const nestedMathRef =
-			"![a][EASYMDE_MATH_2_TOKEN]\n\n\\[a $$b$$ c\\]\n\n[$d$]: /x.png";
-		expect(createEditorMarkdownBlockIndex(nestedMathRef).imageBlocks?.[0]).toEqual({
-			count: 0,
-			firstImageIndex: 0,
-			status: "unavailable",
-		});
-
-		// 2. Track B F7: live PHP links nested inside unresolved reference-image syntax stay exposed.
-		for (const [label, source, expectedLinks, expectedImages] of [
-			[
-				"full unresolved ref image with inline link",
-				"![[link](https://example.com)][missing]",
-				["[link](https://example.com)"],
-				[],
-			],
-			[
-				"collapsed unresolved ref image with inline link",
-				"![[link](https://example.com)][]",
-				["[link](https://example.com)"],
-				[],
-			],
-			[
-				"shortcut unresolved ref image with inline link",
-				"![[link](https://example.com)]",
-				["[link](https://example.com)"],
-				[],
-			],
-			[
-				"unresolved ref image with defined reference link",
-				"![[link][ref]][missing]\n\n[ref]: https://example.com",
-				["[link][ref]"],
-				[],
-			],
-			[
-				"unresolved ref image with autolink",
-				"![<https://example.com>][missing]",
-				["<https://example.com>"],
-				[],
-			],
-			[
-				"unresolved ref image with bare URL after space",
-				"![see https://example.com][missing]",
-				["https://example.com"],
-				[],
-			],
-			[
-				"unresolved ref image in GFM table cell",
-				"| A |\n| --- |\n| ![[link](https://example.com)][missing] |",
-				["[link](https://example.com)"],
-				[],
-			],
-			[
-				"CRLF document with unresolved ref image containing link",
-				"intro\r\n\r\n![[link](https://example.com)][missing]",
-				["[link](https://example.com)"],
-				[],
-			],
-			[
-				"unresolved ref image containing both link and real inline image",
-				"![[link](https://example.com) ![ok](/i)][missing]",
-				["[link](https://example.com)"],
-				["![ok](/i)"],
-			],
-		] as const) {
-			const idx = createEditorMarkdownBlockIndex(source);
-			const targetBlockIdx = source.startsWith("intro\r\n") ? 1 : 0;
-			expect(idx.imageBlocks?.[targetBlockIdx], `block:${label}`).toEqual({
-				count: expectedImages.length,
-				firstImageIndex: 0,
-				status: "ready",
-			});
-			expect(
-				(idx.imageRanges ?? []).map((r) => source.slice(r.from, r.to)),
-				`images:${label}`,
-			).toEqual([...expectedImages]);
-			expect(
-				(idx.linkCandidates ?? []).map((r) => source.slice(r.from, r.to)),
-				`links:${label}`,
-			).toEqual([...expectedLinks]);
-		}
-
-		// Positive controls: real defined reference image and real inline image still block nested links.
-		const definedRefImg =
-			"![[link](https://example.com)][defined]\n\n[defined]: /img.png";
-		const definedRefIdx = createEditorMarkdownBlockIndex(definedRefImg);
-		expect(definedRefIdx.imageBlocks?.[0]).toEqual({
-			count: 0,
-			firstImageIndex: 0,
-			status: "unavailable",
-		});
-		expect(definedRefIdx.linkCandidates).toEqual([]);
-
-		const inlineImgWithLink = "![[link](https://example.com)](/img.png)";
-		const inlineImgIdx = createEditorMarkdownBlockIndex(inlineImgWithLink);
-		expect(inlineImgIdx.imageBlocks?.[0]).toEqual({
-			count: 1,
-			firstImageIndex: 0,
-			status: "ready",
-		});
-		expect(inlineImgIdx.linkCandidates).toEqual([]);
-
-		// Nested real inline image inside unresolved ref image still blocks link inside the real image.
-		const realInsideUnresolved =
-			"![![[link](https://example.com)](/img.png)][missing]";
-		const realInsideIdx = createEditorMarkdownBlockIndex(realInsideUnresolved);
-		expect(realInsideIdx.imageBlocks?.[0]).toEqual({
-			count: 1,
-			firstImageIndex: 0,
-			status: "ready",
-		});
-		expect(realInsideIdx.linkCandidates).toEqual([]);
-
-		// Unresolved ref image nested inside a real defined ref image stays blocked.
-		const unresolvedInsideDefined =
-			"![![[link](https://example.com)][missing]][defined]\n\n[defined]: /img.png";
-		const unresolvedInsideDefIdx = createEditorMarkdownBlockIndex(
-			unresolvedInsideDefined,
-		);
-		expect(unresolvedInsideDefIdx.imageBlocks?.[0]).toEqual({
-			count: 0,
-			firstImageIndex: 0,
-			status: "unavailable",
-		});
-		expect(unresolvedInsideDefIdx.linkCandidates).toEqual([]);
-	});
-
-	it("substitutes PHP math tokens in reference-image use labels and treats display-math-broken Lezer images as unresolved (Round 28 Track A #2 + Track B F6)", () => {
-		// 1. Track A #2 + Track B F6a/F6b: reference-image USE labels substitute exact document-level PHP math tokens.
-		const reproFullBottom = "![[x](/u)][$m$]\n\n[EASYMDE_MATH_0_TOKEN]: /i";
-		const reproFullBottomIdx = createEditorMarkdownBlockIndex(reproFullBottom);
-		expect(reproFullBottomIdx.imageBlocks?.[0]).toEqual({
-			count: 0,
-			firstImageIndex: 0,
-			status: "unavailable",
-		});
-		expect(reproFullBottomIdx.linkCandidates).toEqual([]);
-
-		const reproFullTop =
-			"[EASYMDE_MATH_0_TOKEN]: https://example.com/img.png\n\n![[link](https://example.com)][$a$]";
-		const reproFullTopIdx = createEditorMarkdownBlockIndex(reproFullTop);
-		expect(reproFullTopIdx.imageBlocks?.[1]).toEqual({
-			count: 0,
-			firstImageIndex: 0,
-			status: "unavailable",
-		});
-		expect(reproFullTopIdx.linkCandidates).toEqual([]);
-
-		const reproShortcut =
-			"[EASYMDE_MATH_0_TOKEN]: https://example.com/img.png\n\n![$a$]";
-		const reproShortcutIdx = createEditorMarkdownBlockIndex(reproShortcut);
-		expect(reproShortcutIdx.imageBlocks?.[1]).toEqual({
-			count: 0,
-			firstImageIndex: 0,
-			status: "unavailable",
-		});
-		expect(reproShortcutIdx.linkCandidates).toEqual([]);
-
-		// Positive control: unresolved math-containing reference label keeps block ready and exposes nested link.
-		const ctrlUnresolved = "![[x](/u)][$m$]\n\n[other]: /i";
-		const ctrlUnresolvedIdx = createEditorMarkdownBlockIndex(ctrlUnresolved);
-		expect(ctrlUnresolvedIdx.imageBlocks?.[0]).toEqual({
-			count: 0,
-			firstImageIndex: 0,
-			status: "ready",
-		});
-		expect(
-			(ctrlUnresolvedIdx.linkCandidates ?? []).map((r) =>
-				ctrlUnresolved.slice(r.from, r.to),
-			),
-		).toEqual(["[x](/u)"]);
-
-		// Positive control: multi-math 4-pass numbering ($$b$$ -> TOKEN_0, $a$ -> TOKEN_1).
-		const ctrlMultiMath =
-			"[EASYMDE_MATH_1_TOKEN]: /i\n\n$$b$$\n\n![[x](/u)][$a$]";
-		const ctrlMultiMathIdx = createEditorMarkdownBlockIndex(ctrlMultiMath);
-		expect(ctrlMultiMathIdx.imageBlocks?.[2]).toEqual({
-			count: 0,
-			firstImageIndex: 0,
-			status: "unavailable",
-		});
-		expect(ctrlMultiMathIdx.linkCandidates).toEqual([]);
-
-		// Additional PHP parity controls for math in reference-image USE labels:
-		// collapsed ref, table `\|` + math, table math containing `\|`, blockquote multiline + math,
-		// multiline `\(...\)` label, 4-pass multiple math spans in one label, code-separated segments, and case folding.
-		for (const [label, source, expectedBlockIndex] of [
-			[
-				"collapsed reference image with math label",
-				"[EASYMDE_MATH_0_TOKEN]: /i\n\n![$a$][]",
-				1,
-			],
-			[
-				"table cell with escaped pipe and math in label",
-				"| A |\n| --- |\n| ![[x](/u)][a\\|$m$] |\n\n[a|EASYMDE_MATH_0_TOKEN]: /i",
-				0,
-			],
-			[
-				"table cell with escaped pipe inside math label",
-				"| A |\n| --- |\n| ![[x](/u)][$a\\|b$] |\n\n[EASYMDE_MATH_0_TOKEN]: /i",
-				0,
-			],
-			[
-				"blockquote multiline reference label with math on line 2",
-				"> ![[x](/u)][foo\n> $m$]\n\n[foo EASYMDE_MATH_0_TOKEN]: /i",
-				0,
-			],
-			[
-				"multiline paren math reference label with trailing text",
-				"![[x](/u)][\\(a\nb\\)] tail\n\n[EASYMDE_MATH_0_TOKEN]: /i",
-				0,
-			],
-			[
-				"blockquote multiline paren math reference label",
-				"> ![[x](/u)][\\(a\n> b\\)]\n\n[EASYMDE_MATH_0_TOKEN]: /i",
-				0,
-			],
-			[
-				"4-pass paren before dollar numbering in same reference label",
-				"![[x](/u)][$a$ \\(b\\)]\n\n[EASYMDE_MATH_1_TOKEN EASYMDE_MATH_0_TOKEN]: /i",
-				0,
-			],
-			[
-				"code-separated segment numbering keeps $a$ as TOKEN_0",
-				"![[x](/u)][$a$]\n\n`code`\n\n$$b$$\n\n[EASYMDE_MATH_0_TOKEN]: /i",
-				0,
-			],
-			[
-				"case-folded math token reference definition",
-				"![[x](/u)][$a$]\n\n[easymde_math_0_token]: /i",
-				0,
-			],
-		] as const) {
-			const idx = createEditorMarkdownBlockIndex(source);
-			expect(idx.imageBlocks?.[expectedBlockIndex], `status:${label}`).toEqual({
-				count: 0,
-				firstImageIndex: 0,
-				status: "unavailable",
-			});
-			expect(idx.linkCandidates, `links:${label}`).toEqual([]);
-		}
-
-		// Math in both use and def produces distinct token indices (TOKEN_0 vs TOKEN_1), so it stays unresolved.
-		const distinctTokens = "![[x](/u)][$m$]\n\n[$m$]: /i";
-		const distinctTokensIdx = createEditorMarkdownBlockIndex(distinctTokens);
-		expect(distinctTokensIdx.imageBlocks?.[0]?.status).toBe("ready");
-		expect(
-			(distinctTokensIdx.linkCandidates ?? []).map((r) =>
-				distinctTokens.slice(r.from, r.to),
-			),
-		).toEqual(["[x](/u)"]);
-
-		// Math crossing the opening or closing bracket of a reference label swallows the delimiter in PHP -> unresolved.
-		const crossClose = "![a][b $c] d$\n\n[b EASYMDE_MATH_0_TOKEN]: /i";
-		expect(createEditorMarkdownBlockIndex(crossClose).imageBlocks?.[0]?.status).toBe(
-			"ready",
-		);
-		const crossOpen = "![[x](/u) $a][b$]\n\n[EASYMDE_MATH_0_TOKEN]: /i";
-		const crossOpenIdx = createEditorMarkdownBlockIndex(crossOpen);
-		expect(crossOpenIdx.imageBlocks?.[0]?.status).toBe("ready");
-		expect(
-			(crossOpenIdx.linkCandidates ?? []).map((r) => crossOpen.slice(r.from, r.to)),
-		).toEqual(["[x](/u)"]);
-
-		// 2. Track B F6c: display-math-broken Lezer Image nodes (inline and defined reference) do not block live links or mark blocks unavailable.
-		const inlineDisplayBroken =
-			"![[a](https://example.com) $$x$$](https://example.com/img.png)";
-		const inlineDisplayIdx = createEditorMarkdownBlockIndex(inlineDisplayBroken);
-		expect(inlineDisplayIdx.imageBlocks?.[0]).toEqual({
-			count: 0,
-			firstImageIndex: 0,
-			status: "ready",
-		});
-		expect(inlineDisplayIdx.imageRanges).toEqual([]);
-		expect(
-			(inlineDisplayIdx.linkCandidates ?? []).map((r) =>
-				inlineDisplayBroken.slice(r.from, r.to),
-			),
-		).toEqual(["[a](https://example.com)", "https://example.com/img.png"]);
-
-		const refDisplayBroken =
-			"[defined]: https://example.com/img.png\n\n![[a](https://example.com) $$x$$][defined]";
-		const refDisplayIdx = createEditorMarkdownBlockIndex(refDisplayBroken);
-		expect(refDisplayIdx.imageBlocks?.[1]).toEqual({
-			count: 0,
-			firstImageIndex: 0,
-			status: "ready",
-		});
-		expect(refDisplayIdx.imageRanges).toEqual([]);
-		expect(
-			(refDisplayIdx.linkCandidates ?? []).map((r) =>
-				refDisplayBroken.slice(r.from, r.to),
-			),
-		).toEqual(["[a](https://example.com)", "[defined]"]);
-
-		// Bracket display math, inline math before display math, blockquote, table cell, and relative-URL destination without phantom link.
-		for (const [label, source, expectedBlockIndex, expectedLinks, expectedImages] of [
-			[
-				"bracket display math inside inline image",
-				"![[a](https://example.com) \\[x\\]](https://example.com/img.png)",
-				0,
-				["[a](https://example.com)", "https://example.com/img.png"],
-				[],
-			],
-			[
-				"inline math preceding display math inside inline image",
-				"![$m$ [a](https://example.com) $$x$$](https://example.com/img.png)",
-				0,
-				["[a](https://example.com)", "https://example.com/img.png"],
-				[],
-			],
-			[
-				"display math inside reference image label",
-				"[defined]: https://example.com/img.png\n\n![[a](https://example.com)][$$x$$]",
-				1,
-				["[a](https://example.com)"],
-				[],
-			],
-			[
-				"blockquote display-math-broken inline image",
-				"> ![[a](https://example.com) $$x$$](https://example.com/img.png)",
-				0,
-				["[a](https://example.com)", "https://example.com/img.png"],
-				[],
-			],
-			[
-				"display-math-broken inline image with relative destination omits non-autolink destination",
-				"![[a](https://example.com) $$x$$](/img.png)",
-				0,
-				["[a](https://example.com)"],
-				[],
-			],
-			[
-				"table cell display-math-broken inline image exposes live links",
-				"| A |\n| --- |\n| ![[a](https://example.com) $$x$$](https://example.com/img.png) |",
-				0,
-				["[a](https://example.com)", "https://example.com/img.png"],
-				[],
-			],
-			[
-				"sibling real inline image before display-math-broken image stays ready",
-				"![ok](/ok.png) ![[a](https://example.com) $$x$$](https://example.com/img.png)",
-				0,
-				["[a](https://example.com)", "https://example.com/img.png"],
-				["![ok](/ok.png)"],
-			],
-			[
-				"nested real inline image before display math keeps inner link blocked and outer URL live",
-				"![![[a](https://example.com)](https://example.com/inner.png) $$x$$](https://example.com/outer.png)",
-				0,
-				["https://example.com/outer.png"],
-				["![[a](https://example.com)](https://example.com/inner.png)"],
-			],
-		] as const) {
-			const idx = createEditorMarkdownBlockIndex(source);
-			expect(idx.imageBlocks?.[expectedBlockIndex]?.status, `status:${label}`).toBe(
-				"ready",
-			);
-			expect(
-				(idx.imageRanges ?? []).map((r) => source.slice(r.from, r.to)),
-				`images:${label}`,
-			).toEqual([...expectedImages]);
-			expect(
-				(idx.linkCandidates ?? []).map((r) => source.slice(r.from, r.to)),
-				`links:${label}`,
-			).toEqual([...expectedLinks]);
-		}
-
-		// Positive control: inline math ($x$) does NOT break a defined reference image.
-		const refInlineMath =
-			"[defined]: https://example.com/img.png\n\n![[a](https://example.com) $x$][defined]";
-		const refInlineMathIdx = createEditorMarkdownBlockIndex(refInlineMath);
-		expect(refInlineMathIdx.imageBlocks?.[1]?.status).toBe("unavailable");
-		expect(refInlineMathIdx.linkCandidates).toEqual([]);
-	});
-
-	it("matches PHP CommonMark §6.5, UrlAutolinkParser, and EmailAutolinkParser for display-math-broken inline image destinations (Round 29 Track B F5)", () => {
-		const nonAutolinkCases: ReadonlyArray<readonly [string, string]> = [
-			["invalid §6.5 angle email with bang", "![[x](https://a.com) $$m$$](<a@b!c>)"],
-			["bare email ending in underscore", "![[x](https://a.com) $$m$$](a@b.c_)"],
-			["bare email ending in hyphen", "![[x](https://a.com) $$m$$](a@b.c-)"],
-			["root-relative path destination", "![[x](https://a.com) $$m$$](/img.png)"],
-			["relative path destination", "![[x](https://a.com) $$m$$](relative/path.png)"],
-			["fragment anchor destination", "![[x](https://a.com) $$m$$](#anchor)"],
-			["angle email ending in underscore", "![[x](https://a.com) $$m$$](<a@b.c_>)"],
-			["angle email ending in hyphen", "![[x](https://a.com) $$m$$](<a@b.c->)"],
-			["mailto email ending in underscore", "![[x](https://a.com) $$m$$](mailto:a@b.c_)"],
-			["mailto email ending in hyphen", "![[x](https://a.com) $$m$$](mailto:a@b.c-)"],
-			["single-label email without dot", "![[x](https://a.com) $$m$$](a@b)"],
-			["email with trailing dot after single label", "![[x](https://a.com) $$m$$](a@b.)"],
-			["chained email blocked by first trailing underscore", "![[x](https://a.com) $$m$$](a@b.c_@d.e)"],
-			["angle-wrapped bare www rejected by ALLOWED_AFTER", "![[x](https://a.com) $$m$$](<www.example.com>)"],
-			["prefixed URL rejected by ALLOWED_AFTER", "![[x](https://a.com) $$m$$](foohttps://a.com)"],
-			["single-label non-ASCII URL host", "![[x](https://a.com) $$m$$](https://例子)"],
-			["invalid IPv6 URL host", "![[x](https://a.com) $$m$$](http://[invalid]/a)"],
-			["unsupported ftps bare protocol", "![[x](https://a.com) $$m$$](ftps://example.com)"],
-			["bare javascript protocol", "![[x](https://a.com) $$m$$](javascript:alert(1))"],
-			["inline HTML open tag stripped by PHP", '![[x](https://a.com) $$m$$](<span title="user@example.com">)'],
-			["inline HTML comment stripped by PHP", "![[x](https://a.com) $$m$$](<!-- user@example.com -->)"],
-			["inline HTML declaration rejected as autolink", "![[x](https://a.com) $$m$$](<!a@b!c>)"],
-			["inline HTML PI rejected as autolink", "![[x](https://a.com) $$m$$](<?a@b!c?>)"],
-			["backtick code span wrapping URL", "![[x](https://a.com) $$m$$](`https://a.com`)"],
-			["backtick code span wrapping email", "![[x](https://a.com) $$m$$](`user@example.com`)"],
-			["escaped @ in email", "![[x](https://a.com) $$m$$](a\\@b.c)"],
-			["bracket display math with invalid angle destination", "![[x](https://a.com) \\[m\\]](<a@b!c>)"],
-			["table cell display-math-broken invalid angle destination", "| A |\n| --- |\n| ![[x](https://a.com) $$m$$](<a@b!c>) |"],
-		];
-		for (const [label, source] of nonAutolinkCases) {
-			const idx = createEditorMarkdownBlockIndex(source);
-			expect(idx.imageRanges, `images:${label}`).toEqual([]);
-			expect(
-				(idx.linkCandidates ?? []).map((r) => source.slice(r.from, r.to)),
-				`links:${label}`,
-			).toEqual(["[x](https://a.com)"]);
-		}
-
-		// Third column: the exact source range PHP wraps in `<a>` (Round 30 Track A #3).
-		const autolinkCases: ReadonlyArray<readonly [string, string, string]> = [
-			["single-label localhost URL", "![[x](https://a.com) $$m$$](https://localhost/img)", "https://localhost/img"],
-			["ftp URL", "![[x](https://a.com) $$m$$](ftp://example.com/a.png)", "ftp://example.com/a.png"],
-			["trailing-dot host URL", "![[x](https://a.com) $$m$$](https://example.)", "https://example"],
-			["bare email", "![[x](https://a.com) $$m$$](user@example.com)", "user@example.com"],
-			["angle-bracket URI autolink", "![[x](https://a.com) $$m$$](<https://a.com/b>)", "<https://a.com/b>"],
-			["angle-bracket mailto autolink", "![[x](https://a.com) $$m$$](<mailto:user@example.com>)", "<mailto:user@example.com>"],
-			["angle-bracket email autolink", "![[x](https://a.com) $$m$$](<user@example.com>)", "<user@example.com>"],
-			["angle-bracket bang-local email autolink", "![[x](https://a.com) $$m$$](<!@example.com>)", "<!@example.com>"],
-			["bare mailto with valid email", "![[x](https://a.com) $$m$$](mailto:user@example.com)", "user@example.com"],
-			["bare www single-label host", "![[x](https://a.com) $$m$$](www.localhost)", "www.localhost"],
-			["uppercase FTP protocol", "![[x](https://a.com) $$m$$](FTP://EXAMPLE.COM/A)", "FTP://EXAMPLE.COM/A"],
-			["IPv6 bracket host", "![[x](https://a.com) $$m$$](http://[::1]/a)", "http://[::1]/a"],
-			["Unicode multi-label domain", "![[x](https://a.com) $$m$$](https://例子.测试/路径)", "https://例子.测试/路径"],
-			["URL with basic auth and port", "![[x](https://a.com) $$m$$](https://user:pass@localhost:8080/p)", "https://user:pass@localhost:8080/p"],
-			["URL after ALLOWED_AFTER delimiter", "![[x](https://a.com) $$m$$](*https://a.com)", "https://a.com"],
-			["email with trailing dot stripped by PHP", "![[x](https://a.com) $$m$$](a@b.c.)", "a@b.c"],
-			["email with underscore before stripped dot", "![[x](https://a.com) $$m$$](a@b.c_.)", "a@b.c_"],
-			["angle-wrapped email with trailing bang fallback", "![[x](https://a.com) $$m$$](<a@b.c!>)", "a@b.c"],
-			["second email after rejected trailing-underscore email", "![[x](https://a.com) $$m$$](a@b.c_/d@e.f)", "d@e.f"],
-			["email after escaped backslash", "![[x](https://a.com) $$m$$](a\\\\b@c.d)", "b@c.d"],
-			["HTML comment swallowing backtick before email", "![[x](https://a.com) $$m$$](x<!--`-->user@b.c`)", "user@b.c"],
-			["escaped first tick of double-tick run does not open code span", "![[x](https://a.com) $$m$$](\\``user@b.c`)", "user@b.c"],
-			["bracket display math with localhost destination", "![[x](https://a.com) \\[m\\]](https://localhost/img)", "https://localhost/img"],
-			["titled trailing-dot URL destination", '![[x](https://a.com) $$m$$](https://example. "title")', "https://example"],
-			["blockquote ftp destination", "> ![[x](https://a.com) $$m$$](ftp://example.com/a.png)", "ftp://example.com/a.png"],
-			["table cell localhost destination", "| A |\n| --- |\n| ![[x](https://a.com) $$m$$](https://localhost/img) |", "https://localhost/img"],
-			["CRLF document localhost destination", "intro\r\n\r\n![[x](https://a.com) $$m$$](https://localhost/img)", "https://localhost/img"],
-		];
-		for (const [label, source, expectedDest] of autolinkCases) {
-			const idx = createEditorMarkdownBlockIndex(source);
-			expect(idx.imageRanges, `images:${label}`).toEqual([]);
-			expect(
-				(idx.linkCandidates ?? []).map((r) => source.slice(r.from, r.to)),
-				`links:${label}`,
-			).toEqual(["[x](https://a.com)", expectedDest]);
-		}
-	});
-
-	it("keeps only PHP-consumed autolink ranges and evaluates destinations in their post-math inline block (Round 30 Track A #3, Track B F6)", () => {
-		const links = (source: string) =>
-			(createEditorMarkdownBlockIndex(source).linkCandidates ?? []).map((r) => ({
-				kind: r.kind,
-				reference: r.reference,
-				text: source.slice(r.from, r.to),
-			}));
-		// Track A #3: trailing punctuation PHP leaves outside `<a>` is excluded.
-		for (const [source, expected] of [
-			["![[x](/u) $$m$$](https://example.)", "https://example"],
-			["![[x](/u) $$m$$](a@b.c.)", "a@b.c"],
-			// PHP's regex also consumes `)`, so the paren chop runs after punctuation trimming.
-			["![[x](/u) $$m$$](https://a.com/b,)", "https://a.com/b,"],
-			["![[x](/u) $$m$$](https://a.com/b:)", "https://a.com/b:"],
-			["![[x](/u) $$m$$](https://a.com/(x)))", "https://a.com/(x)"],
-			["![[x](/u) $$m$$](https://a.com/a&amp;)", "https://a.com/a&amp;"],
-			["![[x](/u) $$m$$](https://localhost/img)", "https://localhost/img"],
-			["![[x](/u) $$m$$](ftp://example.com/a.png)", "ftp://example.com/a.png"],
-		] as const) {
-			expect(links(source), source).toEqual([
-				{ kind: "link", reference: false, text: "[x](/u)" },
-				{ kind: "link", reference: false, text: expected },
-			]);
-		}
-		// Track B F6: code spans and HTML comments closing after `)` (same or
-		// next line of the same inline block) swallow the destination in PHP.
-		for (const source of [
-			"![$$x$$](`a@b.c) `",
-			"![$$x$$](``a@b.c) ``",
-			"![$$x$$](<` https://example.com>) `",
-			"![$$x$$](x<!--a@b.c) -->",
-			"![$$x$$](`a@b.c)\n`",
-			"![$$x$$](x<!--a@b.c)\n-->",
-			"- ![$$x$$](x<!--a@b.c)\n  -->",
-			'![$$x$$](<a title="a@b.c) ">',
-			"![$$x$$](\\_a@b.c)",
-		]) {
-			expect(links(source), JSON.stringify(source)).toEqual([]);
-		}
-		// The math split ends the blockquote, so a closer in the next `>` block
-		// is a different inline block and PHP still links the email.
-		expect(links("> ![$$x$$](`a@b.c)\n> `").map((l) => l.text)).toEqual(["a@b.c"]);
-		// Track B F6: real inline and defined reference links inside the
-		// destination render in PHP and stay live; plain relative paths do not.
-		expect(links("![$$x$$]([text](/relative))")).toEqual([
-			{ kind: "link", reference: false, text: "[text](/relative)" },
-		]);
-		expect(links("![$$x$$]([ref])\n\n[ref]: /target")).toEqual([
-			{ kind: "link", reference: true, text: "[ref]" },
-		]);
-		expect(links("![$$x$$]([t][r])\n\n[r]: /target")).toEqual([
-			{ kind: "link", reference: true, text: "[t][r]" },
-		]);
-		expect(links('![$$x$$]([t](/u "ti"))')).toEqual([
-			{ kind: "link", reference: false, text: '[t](/u "ti")' },
-		]);
-		expect(links("![$$x$$](<https://a.com/b>)")).toEqual([
-			{ kind: "autolink", reference: false, text: "<https://a.com/b>" },
-		]);
-		for (const source of [
-			"![$$x$$]([nope])",
-			"![$$x$$](/img.png)",
-			"![$$x$$](relative/path.png)",
-			"![$$x$$](#anchor)",
-			"![$$x$$](![a@b.c](/i.png))",
-		]) {
-			expect(links(source), source).toEqual([]);
-		}
-		// A link PHP closes after the destination restores the inner email to text.
-		expect(links("![$$x$$]([a@b.c)](/c)").map((l) => l.text)).not.toContain("a@b.c");
-	});
-
-	it("gives PHP sole link ownership over display-math-broken inline blocks and GFM table cells, preserves CRLF offsets, handles continuation tabs, and scales linearly (Round 31 Track A #3, Track B F4/F5/F6/F7b/F7c/F9)", () => {
-		const links = (source: string) =>
-			(createEditorMarkdownBlockIndex(source).linkCandidates ?? []).map((r) => ({
-				from: r.from,
-				kind: r.kind,
-				reference: r.reference,
-				text: source.slice(r.from, r.to),
-				to: r.to,
-			}));
-
-		// Track A #3 & Track B F4c: code spans and HTML comments closing after `)` suppress later links in the same post-math block.
-		for (const source of [
-			"![$$x$$](`) a@b.c`",
-			"![$$x$$](x<!--)a@b.c -->",
-			"![$$x$$](`a) [bar](https://bar.com) `",
-			"![$$x$$](``a) [bar](https://bar.com) ``",
-			"![$$x$$](<!--a) [bar](https://bar.com) -->",
-			"![$$x$$](`a) [bar](https://bar.com) ` | b\n| - | - |",
-		]) {
-			expect(links(source), JSON.stringify(source)).toEqual([]);
-		}
-
-		// Track B F4a: links starting inside a broken destination and closing after `)` stay owned as full PHP links without phantom Lezer leftovers.
-		expect(links("![$$x$$]([a) b](https://a.com) tail")).toEqual([
-			{
-				from: 9,
-				kind: "link",
-				reference: false,
-				text: "[a) b](https://a.com)",
-				to: 30,
-			},
-		]);
-		const f4aRef = "[a]: https://example.com\n\n![$$x$$]([b)\n][a]\nnext";
-		expect(links(f4aRef)).toEqual([
-			{
-				from: 35,
-				kind: "link",
-				reference: true,
-				text: "[b)\n][a]",
-				to: 43,
-			},
-		]);
-
-		// Track B F4b: links inside titles, multiple links in one destination/title, no-URL broken images, and pre-math/post-math title splits.
-		for (const [label, source, expected] of [
-			[
-				"two URL autolinks across destination and title",
-				'![$$x$$](https://a.com "see https://b.com")',
-				["https://a.com", "https://b.com"],
-			],
-			[
-				"markdown link inside broken image title",
-				'![$$x$$](foo "see [click](https://b.com)")',
-				["[click](https://b.com)"],
-			],
-			[
-				"angle autolink inside broken image title",
-				'![$$x$$](foo "see <https://b.com>")',
-				["<https://b.com>"],
-			],
-			[
-				"empty angle destination with link in title",
-				'![$$x$$](<> "see [click](https://b.com)")',
-				["[click](https://b.com)"],
-			],
-			[
-				"empty parens broken image followed by single-label URL without Lezer URL node",
-				"![$$x$$]() https://x?",
-				["https://x"],
-			],
-			[
-				"empty parens broken image followed by www.localhost without Lezer URL node",
-				"![$$x$$]() www.localhost",
-				["www.localhost"],
-			],
-			[
-				"display math splitting inside image title exposes both pre-math and post-math links",
-				'![a](https://a.com "see [b](https://b.com) $$x$$ [c](https://c.com)")',
-				["https://a.com", "[b](https://b.com)", "[c](https://c.com)"],
-			],
-			[
-				"display math splitting inside image URL exposes pre-math URL",
-				"![a](https://a.com/$$x$$/b)",
-				["https://a.com/"],
-			],
-			[
-				"nested inner link deactivates outer link and exposes tail URL",
-				"![$$x$$]([a) [b](https://b.com)](https://a.com)",
-				["[b](https://b.com)", "https://a.com"],
-			],
-			[
-				"display-math-broken destination ending with query mark inside parens",
-				"![$$x$$](https://x?)",
-				["https://x?"],
-			],
-		] as const) {
-			expect(
-				links(source).map((item) => item.text),
-				label,
-			).toEqual([...expected]);
-		}
-
-		// Track B F5: CRLF multiline links preserve exact [from, to) offsets without +1 overshoot or clipping.
-		const crlfTitle = '![$$x$$]([a](https://example.com\r\n"title"))\r\nnext';
-		expect(links(crlfTitle)).toEqual([
-			{
-				from: 9,
-				kind: "link",
-				reference: false,
-				text: '[a](https://example.com\r\n"title")',
-				to: 42,
-			},
-		]);
-		const crlfAdjacent = "![$$x$$]([a)\r\nb](/rel)[c](/c)";
-		expect(links(crlfAdjacent)).toEqual([
-			{
-				from: 9,
-				kind: "link",
-				reference: false,
-				text: "[a)\r\nb](/rel)",
-				to: 22,
-			},
-			{
-				from: 22,
-				kind: "link",
-				reference: false,
-				text: "[c](/c)",
-				to: 29,
-			},
-		]);
-		const crlfRef = "[a]: https://example.com\r\n\r\n![$$x$$]([b)\r\n][a]\r\nnext";
-		expect(links(crlfRef).map((item) => item.text)).toEqual(["[b)\r\n][a]"]);
-
-		// Track B F6: post-math GFM table header/body cells own their exact links and handle `\|` unescaping and cell isolation.
-		for (const [label, source, expected] of [
-			[
-				"table header row broken image URL",
-				"![$$x$$](https://example.com) | b\n| - | - |",
-				["https://example.com"],
-			],
-			[
-				"table header row broken image plus sibling cell link",
-				"![$$x$$](https://a.com) | https://b.com\n| - | - |",
-				["https://a.com", "https://b.com"],
-			],
-			[
-				"table header row code span masks same cell while keeping next cell link",
-				"![$$x$$](`a) [bar](https://bar.com) ` | [ok](https://ok.com)\n| - | - |",
-				["[ok](https://ok.com)"],
-			],
-			[
-				"table header row escaped pipe in link text",
-				"![$$x$$]([a\\|b](/rel)) | b\n| - | - |",
-				["[a\\|b](/rel)"],
-			],
-			[
-				"table header row escaped pipe in URL path stops before pipe",
-				"![$$x$$](https://example.com/a\\|b) | b\n| - | - |",
-				["https://example.com/a"],
-			],
-			[
-				"table header row unescaped pipe splits cells without crossing into cell 2",
-				"![$$x$$](https://a|b.com)\n| - | - |",
-				["https://a"],
-			],
-			[
-				"table header row escaped pipe in domain matches PHP TableParser unescaping",
-				"![$$x$$](https://a\\|b.com) | c\n| - | - |",
-				["https://a\\|b.com"],
-			],
-			[
-				"table header row double-backslash pipe exposes email",
-				"![$$x$$](a\\\\|b@c.d) | b\n| - | - |",
-				["b@c.d"],
-			],
-			[
-				"table header row escaped pipe reference link resolves unescaped def",
-				"[a|b]: /target\n\n![$$x$$]([a\\|b]) | c\n| - | - |",
-				["[a\\|b]"],
-			],
-			[
-				"table body row display-math-broken image exposes post-math paragraph link",
-				"| a | b |\n| - | - |\n| ![$$x$$](https://example.com) | b |",
-				["https://example.com"],
-			],
-			[
-				"table header row broken image URL with query mark",
-				"![$$x$$](https://x?) | b\n| - | - |",
-				["https://x?"],
-			],
-		] as const) {
-			expect(
-				links(source).map((item) => item.text),
-				label,
-			).toEqual([...expected]);
-		}
-
-		// Track B F9: leading tab on paragraph continuation line inside inline link tail.
-		for (const [label, source, expected] of [
-			[
-				"leading tab before title on continuation line",
-				'![$$x$$]([a](/rel\n\t"title"))',
-				['[a](/rel\n\t"title")'],
-			],
-			[
-				"multiline label with leading tab before title",
-				'![$$x$$]([a)\n](/rel\n\t"title")',
-				['[a)\n](/rel\n\t"title")'],
-			],
-			[
-				"leading tab before destination on continuation line",
-				"![$$x$$]([a](\n\t/rel))",
-				["[a](\n\t/rel)"],
-			],
-			[
-				"leading tab before closing paren on continuation line",
-				"![$$x$$]([a](/rel\n\t))",
-				["[a](/rel\n\t)"],
-			],
-			[
-				"CRLF with leading tab before multiline title",
-				'intro\r\n\r\n![$$x$$]([a)\r\nb](/rel\r\n\t"ti\r\ntle"))\r\n[c](/c)',
-				['[a)\r\nb](/rel\r\n\t"ti\r\ntle")', "[c](/c)"],
-			],
-			[
-				"same-line tab before title stays rejected",
-				'![$$x$$]([a](/rel\t"title"))',
-				[],
-			],
-			[
-				"trailing tab before newline stays rejected",
-				'![$$x$$]([a](/rel\t\n"title"))',
-				[],
-			],
-		] as const) {
-			expect(
-				links(source).map((item) => item.text),
-				label,
-			).toEqual([...expected]);
-		}
-
-		// Track B F7b/F7c: O(N) opener deactivation and zero O(K^2) post-math scanning.
-		// Measure `collectPhpDisplayMathBrokenBlockLinks` directly on 12,000 stacked
-		// `[` and `![` openers (isolating PHP inline replay from `@lezer/markdown`'s
-		// own bracket parser), plus end-to-end block-index probes.
-		for (const openerToken of ["[", "!["] as const) {
-			const manyOpeners = `![$$x$$](foo) ${openerToken.repeat(12_000)}${"[a](/x)".repeat(12_000)}`;
-			const mathRanges = scanPhpMarkdownMathRanges(manyOpeners).filter(
-				(range) => range.block,
-			);
-			const blockScan = scanPhpCommonMarkBlocks(manyOpeners, mathRanges);
-			const tOpeners = performance.now();
-			const owned = collectPhpDisplayMathBrokenBlockLinks({
-				brokenImageRanges: [{ from: 0, to: 13 }],
-				displayMathRanges: mathRanges,
-				isReferenceDefined: () => false,
-				scan: blockScan,
-				source: manyOpeners,
-			});
-			const elapsedOpeners = performance.now() - tOpeners;
-			expect(owned.links, openerToken).toHaveLength(12_000);
-			expect(elapsedOpeners, openerToken).toBeLessThan(1_500);
-		}
-
-		const endToEndOpeners = `![$$x$$](foo) ${"[".repeat(3_000)}${"[a](/x)".repeat(3_000)}`;
-		const tEndToEnd = performance.now();
-		const endToEndIdx = createEditorMarkdownBlockIndex(endToEndOpeners);
-		expect(endToEndIdx.linkCandidates).toHaveLength(3_000);
-		expect(performance.now() - tEndToEnd).toBeLessThan(1_500);
-
-		const manyBrokenDestinations = `${"![$$x$$](https://a.com) ".repeat(1_000)}`;
-		const tManyBroken = performance.now();
-		const manyBrokenIdx = createEditorMarkdownBlockIndex(manyBrokenDestinations);
-		expect(manyBrokenIdx.linkCandidates).toHaveLength(1_000);
-		expect(performance.now() - tManyBroken).toBeLessThan(1_500);
-	});
-
-	it("keeps multi-line display-math-broken scanning strictly linear at 128k lines and indexes escaped-pipe GFM table links (Round 32 Track A #2/#5)", () => {
-		const largeDoc = `![$$x$$](z)\n${"abcdef\n".repeat(128_000)}`;
-		const mathRanges = scanPhpMarkdownMathRanges(largeDoc).filter(
-			(range) => range.block,
-		);
-		const scan = scanPhpCommonMarkBlocks(largeDoc, mathRanges);
-		const tDirect = performance.now();
-		const owned = collectPhpDisplayMathBrokenBlockLinks({
-			brokenImageRanges: [{ from: 0, to: 11 }],
-			displayMathRanges: mathRanges,
-			isReferenceDefined: () => false,
-			scan,
-			source: largeDoc,
-		});
-		expect(owned.links).toEqual([]);
-		expect(performance.now() - tDirect).toBeLessThan(1_500);
-
-		const tFull = performance.now();
-		const idx = createEditorMarkdownBlockIndex(largeDoc);
-		expect(idx.linkCandidates).toEqual([]);
-		expect(performance.now() - tFull).toBeLessThan(1_500);
-
-		const links = (source: string) =>
-			(createEditorMarkdownBlockIndex(source).linkCandidates ?? []).map(
-				(candidate) => ({
-					kind: candidate.kind,
-					reference: candidate.reference,
-					text: source.slice(candidate.from, candidate.to),
-				}),
-			);
-
-		expect(links("| <https://a\\|b.com> |\n| - |")).toEqual([
-			{ kind: "autolink", reference: false, text: "<https://a\\|b.com>" },
-		]);
-		expect(links("| <https://a\\\\|b.com> |\n| - |")).toEqual([
-			{ kind: "autolink", reference: false, text: "<https://a\\\\|b.com>" },
-		]);
-		expect(links("| https://example.com/a\\|b |\n| - |")).toEqual([
-			{ kind: "link", reference: false, text: "https://example.com/a" },
-		]);
-		expect(links("| https://a\\|b.com |\n| - |")).toEqual([
-			{ kind: "link", reference: false, text: "https://a\\|b.com" },
-		]);
-		expect(links("| https://a\\\\|b.com |\n| - |")).toEqual([
-			{ kind: "link", reference: false, text: "https://a" },
-		]);
-		expect(
-			links("| [foo\\|bar] |\n| - |\n\n[foo|bar]: https://pipe-ref.example"),
-		).toEqual([{ kind: "link", reference: true, text: "[foo\\|bar]" }]);
-		expect(
-			links(
-				"| [lbl][foo\\|bar] |\n| - |\n\n[foo|bar]: https://pipe-ref.example",
-			),
-		).toEqual([{ kind: "link", reference: true, text: "[lbl][foo\\|bar]" }]);
-		expect(
-			links(
-				"| [foo\\\\|bar] |\n| - |\n\n[foo\\|bar]: https://dbl-pipe-ref.example",
-			),
-		).toEqual([{ kind: "link", reference: true, text: "[foo\\\\|bar]" }]);
-		expect(
-			links("| [foo\\|bar] |\n| - |\n\n[foo\\|bar]: https://wrong.example"),
-		).toEqual([]);
-	});
-
-	it("aligns bare GFM autolink boundaries in ordinary paragraphs and unescaped tables with PHP AutolinkExtension and tags table-cell metadata (Round 33 Track A #2/#3/#4)", () => {
-		const links = (source: string) =>
-			(createEditorMarkdownBlockIndex(source).linkCandidates ?? []).map(
-				(candidate) => ({
-					from: candidate.from,
-					kind: candidate.kind,
-					reference: candidate.reference,
-					text: source.slice(candidate.from, candidate.to),
-					to: candidate.to,
-				}),
-			);
-
-		// Ordinary paragraphs (without display math)
-		for (const [source, expectedTexts] of [
-			["www.a@b.c_.", ["www.a@b.c_"]],
-			["www.a@b.c-.", ["www.a@b.c-"]],
-			["www.a@b.c..", ["www.a@b.c."]],
-			["www.a@b.c_", ["www.a"]],
-			["(https://a.com/b,)", ["https://a.com/b,"]],
-			["(https://x?)", ["https://x?"]],
-			["(www.example.com?)", ["www.example.com?"]],
-			["https://example.com?&amp;", ["https://example.com?"]],
-			["https://x/))))&lt;)", ["https://x/))))"]],
-			["https://example.com?a)))*x*)))))))", ["https://example.com?a)))"]],
-			["(https://x/a)é)", ["https://x/a)é"]],
-			["(https://x/a)中)", ["https://x/a)中"]],
-			["(https://x/a)𐐀)", ["https://x/a)𐐀"]],
-			["https://a.com/b,", ["https://a.com/b"]],
-			["https://localhost/img", ["https://localhost/img"]],
-			["ftp://example.com/a.png", ["ftp://example.com/a.png"]],
-			["www.localhost", ["www.localhost"]],
-			["http://[::1]/a", ["http://[::1]/a"]],
-			["https://例子.测试/路径", ["https://例子.测试/路径"]],
-			["[label](https://a.com/b,)", ["[label](https://a.com/b,)"]],
-			["<https://a.com/b,>", ["<https://a.com/b,>"]],
-			["## www.a@b.c_. ##", ["www.a@b.c_"]],
-			["> (https://a.com/b,)", ["https://a.com/b,"]],
-			["- (https://x?)", ["https://x?"]],
-			[
-				"www.a@b.c_.\r\n\r\n(https://a.com/b,)\r\n\r\n(https://x/a)é)",
-				["www.a@b.c_", "https://a.com/b,", "https://x/a)é"],
-			],
-		] as const) {
-			expect(
-				links(source).map((item) => item.text),
-				source,
-			).toEqual([...expectedTexts]);
-		}
-
-		// Exact span check for `www.a@b.c_.`: `[0, 10)` covers `www.` and `a@b.c_` as one link.
-		expect(links("www.a@b.c_.")).toEqual([
-			{ from: 0, kind: "link", reference: false, text: "www.a@b.c_", to: 10 },
-		]);
-
-		// Ordinary unescaped tables (without display math or `\|`)
-		for (const [source, expectedTexts] of [
-			["| www.a@b.c_. |\n| - |", ["www.a@b.c_"]],
-			["| (https://a.com/b,) |\n| - |", ["https://a.com/b,"]],
-			["| (https://x?) |\n| - |", ["https://x?"]],
-			["| (https://x/a)é) |\n| - |", ["https://x/a)é"]],
-			[
-				"| h1 | h2 |\n| - | - |\n| (https://a.com/b,) | www.a@b.c_. |",
-				["https://a.com/b,", "www.a@b.c_"],
-			],
-		] as const) {
-			const idx = createEditorMarkdownBlockIndex(source);
-			expect(
-				(idx.linkCandidates ?? []).map((c) => source.slice(c.from, c.to)),
-				source,
-			).toEqual([...expectedTexts]);
-			expect(idx.linkTableCells?.size, `tableCells:${source}`).toBe(
-				expectedTexts.length,
-			);
-		}
-
-		// Plain paragraph containing `|` has empty `linkTableCells` metadata (O(1) non-table proof).
-		const plainPipeIdx = createEditorMarkdownBlockIndex(
-			"https://example.com | note",
-		);
-		expect(plainPipeIdx.linkCandidates?.map((c) => plainPipeIdx.source.slice(c.from, c.to))).toEqual([
-			"https://example.com",
-		]);
-		expect(plainPipeIdx.linkTableCells?.size).toBe(0);
-
-		// Negative controls stay unlinked.
-		for (const source of [
-			"`www.a@b.c_.`",
-			"`(https://a.com/b,)`",
-			"<!-- www.a@b.c_. -->",
-			"a <!-- www.a@b.c_. --> b",
-			"<www.example.com>",
-			"![alt](https://a.com/b,)",
-			"$$www.a@b.c_.$$",
-			"$www.a@b.c_.$",
-			"| h1 |\n| - |\n| 1 | www.a@b.c_. |",
-		]) {
-			expect(links(source), source).toEqual([]);
-		}
-	});
 });
 
-describe("Round 34 PHP table and math link parity", () => {
-	const links = (source: string) =>
-		(createEditorMarkdownBlockIndex(source).linkCandidates ?? []).map(
-			(candidate) => source.slice(candidate.from, candidate.to),
-		);
+describe("createEditorMarkdownBlockIndex canonical raw-backtick protection", () => {
+	// Parser-free PHP `inline_code_ranges()` parity (verified against PHP 8.3.37).
+	const mathTexts = (source: string): string[] =>
+		createEditorMarkdownBlockIndex(source).mathSpans.map((span) => source.slice(span.from, span.to));
 
-	it("reconciles PHP-owned bare autolinks behind cross-pipe Link/LinkReference nodes (Track B #3)", () => {
-		// Verbatim real `MarkdownRenderer::render_preview()` anchor sets.
-		for (const [source, expected] of [
-			['| [text](https://a.com "x | y") |\n| --- | --- | --- |', ["https://a.com"]],
-			[
-				'| [text](mailto:a@b.c "user@example.com | y") |\n| --- | --- |',
-				["a@b.c", "user@example.com"],
-			],
-			['a | b\n[x](https://a.com "p | q")\n| --- | --- |', ["https://a.com"]],
-			["[a | https://example.com\n--- | ---\n]: /u", ["https://example.com"]],
-			[
-				"[a | https://example.com\n--- | ---\n]: /u\n\nafter https://b.example",
-				["https://example.com", "https://b.example"],
-			],
-			// Controls: pipe-free links stay covered; a non-table refdef stays unavailable.
-			['[text](https://a.com "x y") www.b.c', ["[text](https://a.com \"x y\")", "www.b.c"]],
-			["[a | b\n--- | ---\n]: /u", []],
-			["[a]: https://example.com", []],
-		] as const) {
-			expect(links(source), source).toEqual(expected);
-		}
-		const refdefTable = createEditorMarkdownBlockIndex(
-			"[a | https://example.com\n--- | ---\n]: /u",
-		);
-		expect(refdefTable.blocks).toEqual([
-			expect.objectContaining({ editable: true, kind: "table" }),
-		]);
-		// Math keeps the conservative Lezer refdef classification (no candidate).
-		for (const source of ["[a | $x$ https://example.com\n--- | ---\n]: /u"]) {
-			expect(
-				createEditorMarkdownBlockIndex(source).blocks.map((block) => block.kind),
-				source,
-			).toEqual(["unavailable"]);
-		}
+	it("pairs raw backticks across blank lines before extracting math", () => {
+		expect(mathTexts("Para 1 `\n\nPara 2 $x$\n\nPara 3 `")).toEqual([]);
+		expect(mathTexts("``a` $x$ ``")).toEqual([]);
 	});
 
-	it("never fabricates a bare URL whose raw match crosses inline math (Track B #5)", () => {
-		for (const source of [
-			"https://example.com/a))))$x$)",
-			"| a | b |\n| - | - |\n| https://example.com/a))))$x$) | c |",
-			"https://example.com/a$x$",
-			"x a@b.c$x$ y",
-		]) {
-			expect(links(source), source).toEqual([]);
-		}
-		for (const [source, expected] of [
-			["https://example.com $x$", ["https://example.com"]],
-			["$x$ https://example.com", ["https://example.com"]],
-			["https://example.com/a) $x$)", ["https://example.com/a"]],
-			["| a | b |\n| - | - |\n| https://example.com/a) $x$ | c |", ["https://example.com/a"]],
-		] as const) {
-			expect(links(source), source).toEqual(expected);
-		}
-	});
-});
-
-describe("Round 35 exact PHP table reconciliation and PHP-owned reconciled links", () => {
-	it("marks only real table delimiter rows with isTableDelimiter and keeps multi-table HTML/comment and partial refdef spans unavailable (Track B Finding 1)", () => {
-		const multiTableHtml =
-			"| a | b |\n| - | - |\n<pre> | https://a.example\n\nhttps://b.example | </pre>\n| - | - |";
-		const multiTableComment =
-			"| a | b |\n| - | - |\n<!-- | https://a.example\n---\nhttps://b.example | -->\n| - | - |";
-		const partialRefdef = "[a | b]: /ref \"\n| - | - |\n| c | d\"\n| e | f |";
-
-		const htmlScan = scanPhpCommonMarkBlocks(multiTableHtml);
-		expect(htmlScan.lines.map((line) => Boolean(line.isTableDelimiter))).toEqual([
-			false,
-			true,
-			false,
-			false,
-			false,
-			true,
-		]);
-		const commentScan = scanPhpCommonMarkBlocks(multiTableComment);
-		expect(commentScan.lines.map((line) => Boolean(line.isTableDelimiter))).toEqual([
-			false,
-			true,
-			false,
-			false,
-			false,
-			true,
-		]);
-
-		const htmlIdx = createEditorMarkdownBlockIndex(multiTableHtml);
-		expect(
-			htmlIdx.blocks.find((block) => block.lineStart === 2 && block.lineEnd === 4),
-		).toMatchObject({ editable: false, kind: "unavailable" });
-
-		const commentIdx = createEditorMarkdownBlockIndex(multiTableComment);
-		expect(
-			commentIdx.blocks.find(
-				(block) => block.lineStart === 2 && block.lineEnd === 4,
-			),
-		).toMatchObject({ editable: false, kind: "unavailable" });
-
-		const partialIdx = createEditorMarkdownBlockIndex(partialRefdef);
-		expect(partialIdx.blocks[0]).toMatchObject({
-			editable: false,
-			kind: "unavailable",
-			lineEnd: 2,
-			lineStart: 0,
-		});
+	it("skips escaped openers and never pairs across fenced code", () => {
+		expect(mathTexts("\\`$x$`")).toEqual(["$x$"]);
+		expect(mathTexts("` $x$\n\n```\n`\n```")).toEqual(["$x$"]);
 	});
 
-	it("reconciles 2-line and 3-line PHP refdef tables and extracts all PHP-owned cell links (Track B Finding 2)", () => {
-		const cases: ReadonlyArray<
-			Readonly<{
-				expectedLinks: ReadonlyArray<{
-					kind: "autolink" | "link";
-					reference: boolean;
-					text: string;
-				}>;
-				source: string;
-			}>
-		> = [
-			{
-				expectedLinks: [
-					{ kind: "link", reference: false, text: "https://example.com" },
-				],
-				source: "[a|https://example.com]:\n|-|-|",
-			},
-			{
-				expectedLinks: [{ kind: "link", reference: false, text: "[c](/bar)" }],
-				source: '[a | b]: /ref "\n| - | - |\n| [c](/bar) | d"',
-			},
-			{
-				expectedLinks: [
-					{ kind: "link", reference: false, text: "[c](/bar)" },
-					{ kind: "link", reference: false, text: "https://c.example" },
-				],
-				source: '[a | b]: /ref "\n| - | - |\n| [c](/bar) | https://c.example"',
-			},
-			{
-				expectedLinks: [{ kind: "link", reference: true, text: "[c][k]" }],
-				source: '[a | b]: /ref "\n| - | - |\n| [c][k] | d"\n\n[k]: https://k.example',
-			},
-			{
-				expectedLinks: [
-					{ kind: "autolink", reference: false, text: "<tel:12345>" },
-				],
-				source: '[a | b]: /ref "\n| - | - |\n| <tel:12345> | d"',
-			},
-		];
-
-		for (const { expectedLinks, source } of cases) {
-			const idx = createEditorMarkdownBlockIndex(source);
-			expect(idx.blocks[0], source).toMatchObject({
-				editable: true,
-				kind: "table",
-			});
-			expect(
-				(idx.linkCandidates ?? []).map((candidate) => ({
-					kind: candidate.kind,
-					reference: candidate.reference,
-					text: source.slice(candidate.from, candidate.to),
-				})),
-				source,
-			).toEqual(expectedLinks);
-			expect(idx.linkTableCells?.size, source).toBe(expectedLinks.length);
-		}
-	});
-
-	it("retains exact PHP table-cell metadata when multiline paren math crosses Lezer block boundaries (Round 36 Track B Finding 3)", () => {
-		const cases: ReadonlyArray<
-			Readonly<{
-				expectedUnescaped: string;
-				needle: string;
-				source: string;
-			}>
-		> = [
-			{
-				expectedUnescaped: "[x][a|b]",
-				needle: "[x][a\\|b]",
-				source: '[r]: /u "\\(a"\nb\\) [x][a\\|b] | c |\n| --- | --- |\n\n[a|b]: https://example.com/ok',
-			},
-			{
-				expectedUnescaped: "[x][a|b]",
-				needle: "[x][a\\|b]",
-				source: "| [x][a\\|b] \\(m\n\nn\\) | c |\n| --- | --- |\n\n[a|b]: https://example.com/ok",
-			},
-			{
-				expectedUnescaped: "[x](https://example.com/1\\|2)",
-				needle: "[x](https://example.com/1\\\\|2)",
-				source: "| [x](https://example.com/1\\\\|2) \\(m\n\nn\\) | c |\n| --- | --- |",
-			},
-			{
-				expectedUnescaped: "[x](https://example.com/1\\|2)",
-				needle: "[x](https://example.com/1\\\\|2)",
-				source: "| [x](https://example.com/1\\\\|2) \\(m\n# h\nn\\) | c |\n| --- | --- |",
-			},
-			{
-				expectedUnescaped: "[x](https://example.com/1\\|2)",
-				needle: "[x](https://example.com/1\\\\|2)",
-				source: '[r]: /u "\\(a"\nb\\) [x](https://example.com/1\\\\|2) | c |\n| --- | --- |',
-			},
-			{
-				expectedUnescaped: "[x](https://example.com/1\\|2)",
-				needle: "[x](https://example.com/1\\\\|2)",
-				source: "| [x](https://example.com/1\\\\|2) \\(m\n<div>\nn\\) | c |\n| --- | --- |",
-			},
-		];
-
-		for (const { expectedUnescaped, needle, source } of cases) {
-			const idx = createEditorMarkdownBlockIndex(source);
-			const candidateFrom = source.indexOf(needle);
-			expect(
-				(idx.linkCandidates ?? []).map((candidate) =>
-					source.slice(candidate.from, candidate.to),
-				),
-				source,
-			).toEqual([needle]);
-			expect(idx.linkTableCells?.size, source).toBe(1);
-			const cell = idx.linkTableCells?.get(candidateFrom);
-			expect(cell?.unescapedSource, source).toBe(expectedUnescaped);
-			expect(cell?.maskedCellText, source).toBeDefined();
-			expect(cell?.maskedCellText, source).not.toContain("\n");
-		}
-	});
-
-	it("reconciles post-refdef 4-space/tab indented inline math to paragraph while preserving genuine indented code blocks (Round 37 Track B Finding 4)", () => {
-		for (const source of [
-			"[r]: /u\n    $x$\n\n| [a](https://example.com) | b |\n| - | - |",
-			"[r]: /u\n    $x$",
-			"[r]: /u\n\t$x$",
-			"[r]: /u\n    \\(x\\)",
-			"[r]: /u\n    \\(x\n\ny\\)",
-		]) {
-			const idx = createEditorMarkdownBlockIndex(source);
-			expect(
-				idx.blocks.some((block) => "code" === block.kind),
-				source,
-			).toBe(false);
-			expect(idx.blocks[1], source).toMatchObject({
-				editable: true,
-				kind: "paragraph",
-			});
-			expect(idx.mathSpans, source).toHaveLength(1);
-		}
-
-		// Split case: post-refdef indented inline math followed by blank line + genuine indented code.
-		const splitSource = "[r]: /u\n    $x$\n\n    $y$";
-		const splitIdx = createEditorMarkdownBlockIndex(splitSource);
-		expect(splitIdx.blocks.map((block) => block.kind)).toEqual([
-			"unavailable",
-			"paragraph",
-			"code",
-		]);
-		expect(
-			splitIdx.mathSpans.map((span) => splitSource.slice(span.from, span.to)),
-		).toEqual(["$x$"]);
-
-		// Post-refdef 4-space display math reconciles to paragraph before overlayMath -> math block.
-		const displayPostRefdef = "[r]: /u\n    $$x$$";
-		const displayIdx = createEditorMarkdownBlockIndex(displayPostRefdef);
-		expect(displayIdx.blocks.map((block) => block.kind)).toEqual([
-			"unavailable",
-			"math",
-		]);
-		expect(displayIdx.mathSpans).toHaveLength(1);
-
-		// Negative controls: genuine indented code blocks keep kind="code" and 0 math spans.
-		for (const genuineCode of ["\n\n    $x$", "[r]: /u\n\n    $x$"]) {
-			const idx = createEditorMarkdownBlockIndex(genuineCode);
-			expect(
-				idx.blocks.some((block) => "code" === block.kind),
-				genuineCode,
-			).toBe(true);
-			expect(idx.mathSpans, genuineCode).toEqual([]);
-		}
-	});
-
-	it("recovers live PHP table links after multiline paren math containing an HTML block tag while keeping plain HTML blocks unavailable (Round 37 Track A #3)", () => {
-		const cases: ReadonlyArray<
-			Readonly<{
-				expectedLinks: ReadonlyArray<{
-					kind: "autolink" | "link";
-					reference: boolean;
-					text: string;
-				}>;
-				expectedUnescaped?: string;
-				source: string;
-			}>
-		> = [
-			{
-				expectedLinks: [{ kind: "link", reference: false, text: "[x](/u)" }],
-				source: "\\(a\n<div>\nb\\) | [x](/u)\n-|-",
-			},
-			{
-				expectedLinks: [
-					{ kind: "link", reference: false, text: "[x](/a\\\\|b)" },
-				],
-				expectedUnescaped: "[x](/a\\|b)",
-				source: "\\(a\n<div>\nb\\) | [x](/a\\\\|b)\n-|-",
-			},
-			{
-				expectedLinks: [{ kind: "link", reference: true, text: "[x][k]" }],
-				source: "\\(a\n<div>\nb\\) | [x][k]\n-|-\n\n[k]: https://k.example",
-			},
-			{
-				expectedLinks: [
-					{ kind: "link", reference: false, text: "https://a.example" },
-				],
-				source: "\\(a\n<div>\nb\\) | https://a.example\n-|-",
-			},
-			{
-				expectedLinks: [{ kind: "link", reference: false, text: "[x](/u)" }],
-				source: "\\(a\n<div>\nb\\) | c\n-|-\n| [x](/u) | d |",
-			},
-			{
-				expectedLinks: [{ kind: "link", reference: false, text: "[z](/u)" }],
-				source: "| a | b |\n| - | - |\n| \\(x\n<div>\ny\\) | [z](/u) |",
-			},
-			{
-				expectedLinks: [
-					{ kind: "link", reference: false, text: "[x](/a\\\\|b)" },
-				],
-				expectedUnescaped: "[x](/a\\|b)",
-				source: "\\(a\r\n<div>\r\nb\\) | [x](/a\\\\|b)\r\n-|-",
-			},
-			{
-				expectedLinks: [{ kind: "link", reference: false, text: "[z](/u)" }],
-				source: "[r]: /u\n    \\(x\n<div>\ny\\) | [z](/u)\n-|-",
-			},
-		];
-
-		for (const { expectedLinks, expectedUnescaped, source } of cases) {
-			const idx = createEditorMarkdownBlockIndex(source);
-			expect(
-				idx.blocks.some((block) => "table" === block.kind && block.editable),
-				source,
-			).toBe(true);
-			expect(idx.mathSpans.length, source).toBeGreaterThanOrEqual(1);
-			expect(
-				(idx.linkCandidates ?? []).map((candidate) => ({
-					kind: candidate.kind,
-					reference: candidate.reference,
-					text: source.slice(candidate.from, candidate.to),
-				})),
-				source,
-			).toEqual(expectedLinks);
-			expect(idx.linkTableCells?.size, source).toBe(expectedLinks.length);
-			if (expectedUnescaped) {
-				const first = idx.linkCandidates?.[0];
-				const cell = first ? idx.linkTableCells?.get(first.from) : undefined;
-				expect(cell?.unescapedSource, source).toBe(expectedUnescaped);
-			}
-		}
-
-		// Trailing real HTML block after the reconciled table remains unavailable and excluded.
-		const trailingHtml =
-			"\\(a\n<div>\nb\\) | [x](/u)\n-|-\n<div>\n[bad](/no)\n</div>";
-		const trailingIdx = createEditorMarkdownBlockIndex(trailingHtml);
-		expect(trailingIdx.blocks.map((block) => block.kind)).toEqual([
-			"table",
-			"unavailable",
-		]);
-		expect(
-			(trailingIdx.linkCandidates ?? []).map((c) =>
-				trailingHtml.slice(c.from, c.to),
-			),
-		).toEqual(["[x](/u)"]);
-
-		// Negative control: plain HTML block without math stays unavailable with 0 links.
-		const plainHtml = "<div>\n[x](/u)\n</div>";
-		const plainHtmlIdx = createEditorMarkdownBlockIndex(plainHtml);
-		expect(plainHtmlIdx.blocks).toEqual([
-			expect.objectContaining({ editable: false, kind: "unavailable" }),
-		]);
-		expect(plainHtmlIdx.linkCandidates).toEqual([]);
-	});
-
-	it("reconciles post-refdef 4-space/tab indented CodeBlocks against post-math phpBlockScan with full link, table, image, display-math, and nested-refdef parity (Round 38 Track A #4, Track B Finding 2)", () => {
-		const linkTexts = (source: string) =>
-			(createEditorMarkdownBlockIndex(source).linkCandidates ?? []).map((c) =>
-				source.slice(c.from, c.to),
-			);
-
-		// Reproducers 1, 3, 4: post-refdef indented inline paragraphs extract PHP-owned links & bare autolinks.
-		expect(linkTexts("[r]: /u\n    $a$ [x](/v)")).toEqual(["[x](/v)"]);
-		expect(linkTexts("[r]: /u\n    [link](https://example.com)")).toEqual([
-			"[link](https://example.com)",
-		]);
-		expect(linkTexts("[r]: /u\n    https://example.com")).toEqual([
-			"https://example.com",
-		]);
-
-		// Reproducers 2 & 6: post-refdef indented PHP GFM tables become editable `table` blocks with PHP-owned links and table-cell metadata.
-		for (const [source, expectedLink] of [
-			["[r]: /u\n    c | [x](/v)\n-|-", "[x](/v)"],
-			[
-				"[r]: /u\n    | a | b |\n    | --- | --- |\n    | [link](/local) | 2 |",
-				"[link](/local)",
-			],
-			["[r]: /u\n    a | b\n--- | ---\n    [x](/v) | 2", "[x](/v)"],
-			["[r]: /u\n    | [a](/x\\|y) | b |\n    | --- | --- |", "[a](/x\\|y)"],
-		] as const) {
-			const idx = createEditorMarkdownBlockIndex(source);
-			expect(idx.blocks[1], source).toMatchObject({
-				editable: true,
-				kind: "table",
-			});
-			expect(
-				(idx.linkCandidates ?? []).map((c) => source.slice(c.from, c.to)),
-				source,
-			).toEqual([expectedLink]);
-			expect(idx.linkTableCells?.size, source).toBe(1);
-		}
-
-		// Reproducer 5 & image variants: never falsely report `{ count: 0, status: "ready" }` for reconciled PHP images.
-		const inlineImgSrc = "[r]: /u\n    ![alt](https://example.com/a.png)";
-		const inlineImgIdx = createEditorMarkdownBlockIndex(inlineImgSrc);
-		expect(inlineImgIdx.blocks[1]).toMatchObject({
-			editable: true,
-			kind: "paragraph",
-		});
-		expect(inlineImgIdx.imageBlocks[1]).toEqual({
-			count: 1,
-			firstImageIndex: 0,
-			status: "ready",
-		});
-		expect(
-			inlineImgIdx.imageRanges.map((r) => inlineImgSrc.slice(r.from, r.to)),
-		).toEqual(["![alt](https://example.com/a.png)"]);
-
-		const refImgIdx = createEditorMarkdownBlockIndex("[r]: /u\n    ![alt][r]");
-		expect(refImgIdx.imageBlocks[1]).toMatchObject({
-			count: 0,
-			status: "unavailable",
-		});
-		expect(refImgIdx.linkCandidates).toEqual([]);
-
-		// Inline image wrapping a link emits the image and 0 links; unresolved ref image emits the inner link.
-		const imgWrappingLink = createEditorMarkdownBlockIndex(
-			"[r]: /u\n    ![[x](/v)](https://example.com/a.png)",
-		);
-		expect(imgWrappingLink.imageRanges).toHaveLength(1);
-		expect(imgWrappingLink.linkCandidates).toEqual([]);
-		expect(linkTexts("[r]: /u\n    ![[x](/v)][missing]")).toEqual(["[x](/v)"]);
-
-		// Reproducer 7: post-display-math indented code line stays `kind: "code"` with 0 links (and post-display-math indented `$y$` stays code without invalid worker math spans).
-		const postDisplayCode =
-			"[r]: /u\n    $$x$$\n    [link](https://example.com)";
-		const postDisplayIdx = createEditorMarkdownBlockIndex(postDisplayCode);
-		expect(postDisplayIdx.blocks.map((b) => b.kind)).toEqual([
-			"unavailable",
-			"math",
-			"code",
-		]);
-		expect(postDisplayIdx.linkCandidates).toEqual([]);
-		expect(postDisplayIdx.mathSpans).toHaveLength(1);
-
-		const postDisplaySameLine = createEditorMarkdownBlockIndex(
-			"[r]: /u\n    $$x$$ [b](/b)",
-		);
-		expect(postDisplaySameLine.blocks.map((b) => b.kind)).toEqual([
-			"unavailable",
-			"math",
-			"paragraph",
-		]);
-		expect(
-			(postDisplaySameLine.linkCandidates ?? []).map((c) =>
-				postDisplaySameLine.source.slice(c.from, c.to),
-			),
-		).toEqual(["[b](/b)"]);
-
-		const postDisplaySameLineCode = createEditorMarkdownBlockIndex(
-			"[r]: /u\n    $$x$$    [b](/b)",
-		);
-		expect(postDisplaySameLineCode.blocks.map((b) => b.kind)).toEqual([
-			"unavailable",
-			"math",
-			"code",
-		]);
-		expect(postDisplaySameLineCode.linkCandidates).toEqual([]);
-
-		const postDisplayMathInCode = createEditorMarkdownBlockIndex(
-			"[r]: /u\n    $$x$$\n    $y$",
-		);
-		expect(postDisplayMathInCode.blocks.map((b) => b.kind)).toEqual([
-			"unavailable",
-			"math",
-			"code",
-		]);
-		expect(postDisplayMathInCode.mathSpans).toHaveLength(1);
-
-		// Reproducer 8: nested refdef becomes `unavailable` (not editable paragraph), followed by genuine `code`.
-		const nestedRefdef = createEditorMarkdownBlockIndex(
-			"[r]: /u\n    [r2]: /v\n\n    real code",
-		);
-		expect(
-			nestedRefdef.blocks.map((b) => ({ editable: b.editable, kind: b.kind })),
-		).toEqual([
-			{ editable: false, kind: "unavailable" },
-			{ editable: false, kind: "unavailable" },
-			{ editable: true, kind: "code" },
-		]);
-		expect(linkTexts("[r]: /u\n    [r2]: /v\n    [x][r2]")).toEqual([
-			"[x][r2]",
-		]);
-
-		// Cross-line post-refdef link and paren-math hiding `# h` before 4-space link.
-		expect(linkTexts("[r]: /u\n    [a\nb](/u)")).toEqual(["[a\nb](/u)"]);
-		expect(linkTexts("\\(a\n# h\\)\n    [link](https://example.com)")).toEqual([
-			"[link](https://example.com)",
-		]);
-
-		// Genuine indented code controls stay `code` with 0 math spans and 0 links.
-		for (const genuineCode of [
-			"\n\n    $x$",
-			"[r]: /u\n\n    $x$",
-			"[r]: /u\n\n    [x](/v)",
-		]) {
-			const idx = createEditorMarkdownBlockIndex(genuineCode);
-			expect(
-				idx.blocks.some((b) => "code" === b.kind),
-				genuineCode,
-			).toBe(true);
-			expect(idx.mathSpans, genuineCode).toEqual([]);
-			expect(idx.linkCandidates, genuineCode).toEqual([]);
-		}
-	});
-
-	it("allows quote/list lines inside multiline paren math in PHP tables and keeps table reconciliation strictly O(N) at n=8,000 (Round 38 Track B Finding 3)", () => {
-		for (const source of [
-			"| A | B |\n| --- | --- |\n| \\(x\n> quote\n<div>\ny\\) | [link](https://example.com) |",
-			"| A | B |\n| --- | --- |\n| \\(x\n- list\n<div>\ny\\) | [link](https://example.com) |",
-			"| A | B |\n| --- | --- |\n| \\(x\n> quote\n- list\n<div>\ny\\) | [link](https://example.com) |",
-			"| A | B |\n| --- | --- |\n| \\(x\n1. item\n<div>\ny\\) | [link](https://example.com) |",
-		]) {
-			const idx = createEditorMarkdownBlockIndex(source);
-			expect(idx.blocks, source).toEqual([
-				expect.objectContaining({ editable: true, kind: "table" }),
+	it("aligns cross-paragraph inline math and quoted indented math with live PHP two-stage parsing (R23-2a, R23-2b, R24A #1, R30B #1)", () => {
+		for (const crossParagraph of ["\\(a\n\n**word!** \\)", "\\(a\n\nword \\)"]) {
+			const index = createEditorMarkdownBlockIndex(crossParagraph);
+			expect(index.mathSpans).toEqual([
+				{
+					bodyFrom: 2,
+					bodyTo: crossParagraph.length - 2,
+					displayMode: false,
+					from: 0,
+					to: crossParagraph.length,
+				},
 			]);
-			expect(
-				(idx.linkCandidates ?? []).map((c) => source.slice(c.from, c.to)),
-				source,
-			).toEqual(["[link](https://example.com)"]);
-			expect(idx.linkTableCells?.size, source).toBe(1);
+			expect(index.blocks).toEqual([
+				{
+					editable: true,
+					from: 0,
+					kind: "paragraph",
+					lineEnd: 2,
+					lineStart: 0,
+					to: crossParagraph.length,
+				},
+			]);
 		}
 
-		// O(N) regression guard across both accepted (`> quote` tail, `$$z$$` tail) and rejected (`unavailable`-start) 8,000-row tables.
-		const rows8k = "| \\(x\n<!-- c -->\ny\\) | 2 |\n".repeat(8_000);
-		for (const [label, payload, expectedBlocks] of [
-			[
-				"accepted 8k + > quote tail",
-				`| A | B |\n| --- | --- |\n${rows8k}| \\(x\n> quote\ny\\) | 1 |\n`,
-				1,
-			],
-			[
-				"accepted 8k + $$z$$ tail",
-				`| A | B |\n| --- | --- |\n${rows8k}| \\(x\n$$z$$\ny\\) | 1 |\n`,
-				1,
-			],
-			[
-				"rejected 8k refdef-start table",
-				`[a | b]: /x "\n| - | - |\n| c | d"\n${rows8k}`,
-				16_002,
-			],
-		] as const) {
-			const started = performance.now();
-			const idx = createEditorMarkdownBlockIndex(payload);
-			const elapsedMs = performance.now() - started;
-			expect(idx.blocks.length, label).toBe(expectedBlocks);
-			expect(elapsedMs, label).toBeLessThanOrEqual(1_500);
-		}
-	}, 60_000);
-
-	it("keeps reconciled table imageBlocks ready when trailing ordinary images or recovered table images coexist (Round 39 Track B #1)", async () => {
-		// Exact Track B #1 reproducer: post-refdef reconciled table with image + trailing ordinary image.
-		const postRefdefTableWithTrailing =
-			"[r]: /u\n    ![a](https://example.com/a.png) | b\n    --- | ---\n    1 | 2\n\n![b](https://example.com/b.png)";
-		const directPostRefdef = createEditorMarkdownBlockIndex(
-			postRefdefTableWithTrailing,
-		);
-		expect(directPostRefdef.blocks.map((block) => block.kind)).toEqual([
-			"unavailable",
-			"table",
-			"paragraph",
+		const quotedIndented = ">     $$x\n**word**$$";
+		const quotedIndex = createEditorMarkdownBlockIndex(quotedIndented);
+		expect(quotedIndex.mathSpans.map((span) => quotedIndented.slice(span.from, span.to))).toEqual([
+			"$$x\n**word**$$",
 		]);
-		expect(directPostRefdef.imageBlocks).toEqual([
-			{ count: 0, firstImageIndex: 0, status: "unavailable" },
-			{ count: 1, firstImageIndex: 0, status: "ready" },
-			{ count: 1, firstImageIndex: 1, status: "ready" },
-		]);
-		expect(
-			directPostRefdef.imageRanges.map((range) =>
-				postRefdefTableWithTrailing.slice(range.from, range.to),
-			),
-		).toEqual([
-			"![a](https://example.com/a.png)",
-			"![b](https://example.com/b.png)",
-		]);
-
-		// Worker packed-v3 round-trip produces identical imageBlocks & imageRanges.
-		const roundTripPostRefdef = await buildWorkerRoundTripBlockIndex(
-			postRefdefTableWithTrailing,
-		);
-		expect(roundTripPostRefdef.imageBlocks).toEqual(
-			directPostRefdef.imageBlocks,
-		);
-		expect(roundTripPostRefdef.imageRanges).toEqual(
-			directPostRefdef.imageRanges,
-		);
-
-		// Additional Track B #1 variants: escaped pipe `\|`, inline math `$x|y$`, math-bridged table, and mixed recovered + reconciled tables.
-		const variants: ReadonlyArray<
-			Readonly<{
-				expectedImages: ReadonlyArray<string>;
-				label: string;
-				source: string;
-			}>
-		> = [
-			{
-				expectedImages: [
-					"![a](https://example.com/a\\|1.png)",
-					"![b](https://example.com/b.png)",
-				],
-				label: "post-refdef reconciled table with escaped-pipe image + trailing image",
-				source:
-					"[r]: /u\n    ![a](https://example.com/a\\|1.png) | b\n    --- | ---\n    1 | 2\n\n![b](https://example.com/b.png)",
-			},
-			{
-				expectedImages: [
-					"![a](https://example.com/a.png)",
-					"![b](https://example.com/b.png)",
-				],
-				label: "post-refdef reconciled table with $x|y$ math cell + image + trailing image",
-				source:
-					"[r]: /u\n    $x|y$ ![a](https://example.com/a.png) | b\n    --- | ---\n    1 | 2\n\n![b](https://example.com/b.png)",
-			},
-			{
-				expectedImages: [
-					"![m](https://example.com/m.png)",
-					"![b](https://example.com/b.png)",
-				],
-				label: "math-bridged table with image + trailing image",
-				source:
-					"\\(a\n<div>\nb\\) | ![m](https://example.com/m.png)\n-|-\n\n![b](https://example.com/b.png)",
-			},
-			{
-				expectedImages: [
-					"![esc](https://example.com/a\\|b.png)",
-					"![rec](https://example.com/r.png)",
-					"![tail](https://example.com/t.png)",
-				],
-				label: "ordinary escaped-pipe recovered table + post-refdef reconciled table + trailing image",
-				source:
-					"| ![esc](https://example.com/a\\|b.png) | x |\n| --- | --- |\n\n[r]: /u\n    ![rec](https://example.com/r.png) | b\n    --- | ---\n    1 | 2\n\n![tail](https://example.com/t.png)",
-			},
-			{
-				expectedImages: [
-					"![math](https://example.com/m.png)",
-					"![rec](https://example.com/r.png)",
-					"![tail](https://example.com/t.png)",
-				],
-				label: "ordinary $x|y$ recovered table + post-refdef reconciled table + trailing image",
-				source:
-					"| $x|y$ ![math](https://example.com/m.png) | x |\n| --- | --- |\n\n[r]: /u\n    ![rec](https://example.com/r.png) | b\n    --- | ---\n    1 | 2\n\n![tail](https://example.com/t.png)",
-			},
-		];
-
-		for (const { expectedImages, label, source } of variants) {
-			const idx = createEditorMarkdownBlockIndex(source);
-			expect(
-				idx.imageRanges.map((range) => source.slice(range.from, range.to)),
-				label,
-			).toEqual(expectedImages);
-			for (let i = 0; i < idx.blocks.length; i += 1) {
-				const block = idx.blocks[i];
-				const imageBlock = idx.imageBlocks[i];
-				if (block && "unavailable" !== block.kind && "code" !== block.kind) {
-					expect(imageBlock?.status, `${label}:block${i}`).toBe("ready");
-				}
-			}
-		}
+		expect(quotedIndex.blocks.some((block) => "math" === block.kind)).toBe(true);
 	});
 
-	it("reconciles post-refdef nested CodeBlocks inside blockquote and list containers while keeping genuine container indented code excluded (Round 39 Track B #5)", async () => {
-		const linkTexts = (source: string) =>
-			(createEditorMarkdownBlockIndex(source).linkCandidates ?? []).map((c) =>
-				source.slice(c.from, c.to),
-			);
-		const imageTexts = (source: string) =>
-			createEditorMarkdownBlockIndex(source).imageRanges.map((r) =>
-				source.slice(r.from, r.to),
-			);
-
-		// Positive PHP-verified container cases (links, images, nested containers, tables, multiline, math, CRLF).
-		for (const [label, source, expectedLinks, expectedImages] of [
-			[
-				"blockquote post-refdef link",
-				"> [r]: /u\n>     [a](/rel)",
-				["[a](/rel)"],
-				[],
-			],
-			[
-				"blockquote post-refdef image",
-				"> [r]: /u\n>     ![a](/rel.png)",
-				[],
-				["![a](/rel.png)"],
-			],
-			[
-				"list post-refdef link",
-				"- [r]: /u\n      [a](/rel)",
-				["[a](/rel)"],
-				[],
-			],
-			[
-				"list post-refdef image",
-				"- [r]: /u\n      ![a](/rel.png)",
-				[],
-				["![a](/rel.png)"],
-			],
-			[
-				"nested blockquote + list post-refdef link",
-				"> - [r]: /u\n>       [a](/rel)",
-				["[a](/rel)"],
-				[],
-			],
-			[
-				"blockquote post-refdef table link",
-				"> [r]: /u\n>     [a](/rel) | b\n>     --- | ---\n>     1 | 2",
-				["[a](/rel)"],
-				[],
-			],
-			[
-				"blockquote post-refdef table image",
-				"> [r]: /u\n>     ![a](/rel.png) | b\n>     --- | ---\n>     1 | 2",
-				[],
-				["![a](/rel.png)"],
-			],
-			[
-				"list post-refdef table link",
-				"- [r]: /u\n      [a](/rel) | b\n      --- | ---\n      1 | 2",
-				["[a](/rel)"],
-				[],
-			],
-			[
-				"blockquote post-refdef multiline link with container prefix stripping",
-				"> [r]: /u\n>     [a\n> b](/rel)",
-				["[a\n> b](/rel)"],
-				[],
-			],
-			[
-				"list post-refdef multiline link with list prefix stripping",
-				"- [r]: /u\n      [a\n  b](/rel)",
-				["[a\n  b](/rel)"],
-				[],
-			],
-			[
-				"blockquote post-refdef inline math + link",
-				"> [r]: /u\n>     $x$ [a](/rel)",
-				["[a](/rel)"],
-				[],
-			],
-			[
-				"blockquote post-refdef inline code + link",
-				"> [r]: /u\n>     `[no](/x)` [yes](/y)",
-				["[yes](/y)"],
-				[],
-			],
-			[
-				"blockquote post-refdef nested refdef + ref link",
-				"> [r]: /u\n>     [r2]: /v\n>     [a][r2]",
-				["[a][r2]"],
-				[],
-			],
-			[
-				"blockquote post-refdef same-line display math + link",
-				"> [r]: /u\n>     $$x$$ [b](/b)",
-				["[b](/b)"],
-				[],
-			],
-			[
-				"blockquote post-refdef CRLF link",
-				"> [r]: /u\r\n>     [a](/rel)",
-				["[a](/rel)"],
-				[],
-			],
-			[
-				"list post-refdef CRLF image",
-				"- [r]: /u\r\n      ![a](/rel.png)",
-				[],
-				["![a](/rel.png)"],
-			],
-		] as const) {
-			const direct = createEditorMarkdownBlockIndex(source);
-			expect(
-				(direct.linkCandidates ?? []).map((c) => source.slice(c.from, c.to)),
-				`links:${label}`,
-			).toEqual([...expectedLinks]);
-			expect(
-				direct.imageRanges.map((r) => source.slice(r.from, r.to)),
-				`images:${label}`,
-			).toEqual([...expectedImages]);
-			if (expectedImages.length > 0) {
-				expect(direct.imageBlocks[0], `imageBlock:${label}`).toEqual({
-					count: expectedImages.length,
-					firstImageIndex: 0,
-					status: "ready",
-				});
-			}
-		}
-
-		// Reference image inside blockquote post-refdef degrades the quote's imageBlock to unavailable (no false ready count=0).
-		const bqRefImg = createEditorMarkdownBlockIndex("> [r]: /u\n>     ![a][r]");
-		expect(bqRefImg.imageBlocks[0]).toMatchObject({
-			count: 0,
-			status: "unavailable",
-		});
-		expect(bqRefImg.linkCandidates).toEqual([]);
-
-		// Blockquote post-refdef table attaches exact linkTableCells metadata and round-trips through packed-v3 worker.
-		const bqTable =
-			"> [r]: /u\n>     [a](/rel) | b\n>     --- | ---\n>     1 | 2";
-		const bqTableDirect = createEditorMarkdownBlockIndex(bqTable);
-		expect(bqTableDirect.linkTableCells?.size).toBe(1);
-		const bqTableWorker = await buildWorkerRoundTripBlockIndex(bqTable);
-		expect(bqTableWorker.linkCandidates).toEqual(bqTableDirect.linkCandidates);
-		expect(bqTableWorker.linkTableCells).toEqual(bqTableDirect.linkTableCells);
-
-		// Negative controls: genuine indented code inside blockquote/list MUST stay excluded (0 links, 0 images).
-		for (const genuineContainerCode of [
-			">     [not-a-link](/x)",
-			">     ![not-an-image](/x.png)",
-			"- \n      [not-a-link](/x)",
-			"- item\n\n      [not-a-link](/x)",
-			"> [r]: /u\n>\n>     [not-a-link](/x)",
-			"> [r]: /u\n>     $$x$$\n>     [not-a-link](/x)",
-			"> [r]: /u\n>     $$x$$    [not-a-link](/x)",
+	it("aligns empty ListItem blank-line termination and League 2.8.2 single-char-remainder padding with PHP (R25A #1, R26B #1, R26A #2)", () => {
+		for (const source of [
+			"-\n\n    **word** $x$",
+			"-\r\n\r\n    **word** $x$",
+			"1.\n\n    **word** $x$",
+			"- a\n-\n\n    **word** $x$",
+			"-\n\n\t**word** $x$",
+			"-\n\n  para\n\n    **word** $x$",
 		]) {
-			expect(linkTexts(genuineContainerCode), `links:${genuineContainerCode}`).toEqual(
-				[],
-			);
-			expect(
-				imageTexts(genuineContainerCode),
-				`images:${genuineContainerCode}`,
-			).toEqual([]);
+			const index = createEditorMarkdownBlockIndex(source);
+			expect(index.mathSpans, `expected zero mathSpans for ${JSON.stringify(source)}`).toEqual([]);
+			const block = findEditorMarkdownBlock(index, source.indexOf("word"));
+			expect(block?.kind, `expected code block for ${JSON.stringify(source)}`).toBe("code");
+		}
+		for (const source of [
+			"- -\n\n      **word** $x$",
+			"-  -\n\n      **word** $x$",
+			"-  -\r\n\r\n      **word** $x$",
+		]) {
+			const index = createEditorMarkdownBlockIndex(source);
+			expect(index.mathSpans, `expected zero mathSpans for ${JSON.stringify(source)}`).toEqual([]);
+			expect(findEditorMarkdownBlock(index, source.indexOf("word"))?.kind).toBe("list");
+		}
+		// Without a backtick/tilde/top-level 4-space line, PHP skips code-block
+		// scanning so `$$` opens block math spanning `hello **word** $$`.
+		const quotedMath = "> -\n>\n>     $$\n\nhello **word** $$";
+		const quotedMathIndex = createEditorMarkdownBlockIndex(quotedMath);
+		expect(quotedMathIndex.mathSpans.map((span) => quotedMath.slice(span.from, span.to))).toEqual([
+			"$$\n\nhello **word** $$",
+		]);
+		expect(findEditorMarkdownBlock(quotedMathIndex, quotedMath.indexOf("word"))?.kind).toBe("math");
+
+		// Quoted inline math without top-level 4-space/tab line matches live PHP 8.3.37.
+		const quotedInline = "> -\n> \n>     **word** $x$";
+		const quotedInlineIndex = createEditorMarkdownBlockIndex(quotedInline);
+		expect(quotedInlineIndex.mathSpans.map((span) => quotedInline.slice(span.from, span.to))).toEqual([
+			"$x$",
+		]);
+		expect(findEditorMarkdownBlock(quotedInlineIndex, quotedInline.indexOf("word"))?.kind).toBe("quote");
+
+		// Non-code variants keep their PHP-accurate host block and inline math span.
+		const trailingPara = "-\n\n  **word** $x$";
+		const trailingParaIndex = createEditorMarkdownBlockIndex(trailingPara);
+		expect(trailingParaIndex.mathSpans.map((span) => trailingPara.slice(span.from, span.to))).toEqual(["$x$"]);
+		expect(findEditorMarkdownBlock(trailingParaIndex, trailingPara.indexOf("word"))?.kind).toBe("paragraph");
+		for (const source of [
+			"-\n    **word** $x$",
+			"- -\n\n    **word** $x$",
+		]) {
+			const index = createEditorMarkdownBlockIndex(source);
+			expect(index.mathSpans.map((span) => source.slice(span.from, span.to))).toEqual(["$x$"]);
+			expect(findEditorMarkdownBlock(index, source.indexOf("word"))?.kind).toBe("list");
 		}
 	});
 });
@@ -3748,3 +1427,1493 @@ describe("Round 35 exact PHP table reconciliation and PHP-owned reconciled links
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {
   return createProfiledMarkdownBlockIndex(source, options);
 }
+
+describe("editor-markdown-block-index Stage 4 Round 27 unified League block rules (PHP 8.3.37 / League 2.8.2)", () => {
+	it("never lets same-container nested list markers interrupt a paragraph (R27B #2a)", () => {
+		for (const source of [
+			"1. ab\n   2. c\n\n       **word** $x$",
+			"1. ab\r\n   2. c\r\n\r\n       **word** $x$",
+			"1. ab\n   2) c\n\n       **word** $x$",
+			"+ a\n  +\n\n      **word** $x$",
+		]) {
+			const index = createEditorMarkdownBlockIndex(source);
+			expect(index.mathSpans, `expected zero mathSpans for ${JSON.stringify(source)}`).toEqual([]);
+		}
+		for (const source of [
+			"1. ab\n2. c\n\n   **word** $x$",
+			"> para\n2. c\n\n   **word** $x$",
+			"1. ab\n   1. c\n\n      **word** $x$",
+			"- a\n  - b\n\n    **word** $x$",
+		]) {
+			const index = createEditorMarkdownBlockIndex(source);
+			expect(index.mathSpans.map((span) => source.slice(span.from, span.to)), JSON.stringify(source)).toEqual(["$x$"]);
+		}
+	});
+
+	it("applies League HTML block Types 1-7 in the block-index parser (R27B #2b)", () => {
+		for (const source of [
+			"para\n<textarea>\n$x$\n</textarea>",
+			"para\r\n<textarea>\r\n$x$\r\n</textarea>",
+			"<!doctype html\n$x$\n>",
+			"<![cdata[\n$x$\n]]>",
+			"<pre/>\n$x$",
+		]) {
+			const index = createEditorMarkdownBlockIndex(source);
+			expect(index.mathSpans, `expected zero mathSpans for ${JSON.stringify(source)}`).toEqual([]);
+		}
+		const imageSource = "<pre>\n</textarea>\n![alt](https://example.com/a.png)\n</pre>";
+		const imageIndex = createEditorMarkdownBlockIndex(imageSource);
+		expect(imageIndex.imageRanges.map((range) => imageSource.slice(range.from, range.to))).toEqual([
+			"![alt](https://example.com/a.png)",
+		]);
+		// Shared `markdownLanguage.parser` stays on upstream rules.
+		expect(markdownLanguage.parser.parse("<pre/>\n$x$").topNode.firstChild?.name).not.toBe("HTMLBlock");
+	});
+});
+
+describe("editor-markdown-block-index Stage 4 Round 28 HTML block math visibility (PHP 8.3.37 / League 2.8.2)", () => {
+	it("lets block math terminate blank-line HTML blocks (Types 6/7) while inline math stays shielded (R28A #3)", () => {
+		const cases: ReadonlyArray<readonly [string, ReadonlyArray<string>]> = [
+			["<pre/>\n$$x$$", ["$$x$$"]],
+			["<pre/>\n$x$", []],
+			["<div>\n$$x$$", ["$$x$$"]],
+			["<div>\n$x$", []],
+			["<textarea>\n$$x$$\n</textarea>", []],
+			["<!doctype html\n$$x$$\n>", []],
+			["<![cdata[\n$$x$$\n]]>", []],
+			["<!--\n$$x$$\n-->", []],
+			["<pre/>$$x$$", ["$$x$$"]],
+			['<div class="$$x$$">', ["$$x$$"]],
+			["<pre/>\n$$x$$\n**word**", ["$$x$$"]],
+		];
+		for (const [lfSource, expected] of cases) {
+			for (const source of [lfSource, lfSource.replace(/\n/g, "\r\n")]) {
+				const index = createEditorMarkdownBlockIndex(source);
+				expect(index.mathSpans.map((span) => source.slice(span.from, span.to)), JSON.stringify(source)).toEqual(expected);
+				for (const span of index.mathSpans) {
+					expect(index.blocks.some((block) => "math" === block.kind && block.editable && block.from === span.from && block.to === span.to)).toBe(true);
+				}
+			}
+		}
+		expect(createEditorMarkdownBlockIndex("<pre/>\n$$x$$").mathSpans.map((span) => [span.from, span.to])).toEqual([[7, 12]]);
+		expect(createEditorMarkdownBlockIndex("<div>\n$$x$$").mathSpans.map((span) => [span.from, span.to])).toEqual([[6, 11]]);
+		// Remaining HTML pieces stay non-editable.
+		expect(createEditorMarkdownBlockIndex("<pre/>\n$$x$$").blocks.map((block) => [block.kind, block.from, block.to, block.editable])).toEqual([
+			["unavailable", 0, 6, false],
+			["math", 7, 12, true],
+		]);
+	});
+});
+
+describe("editor-markdown-block-index Stage 4 Round 29 blockquote indent & PHP two-stage HTML+math parity (PHP 8.3.37 / League 2.8.2)", () => {
+	it("closes blockquotes on >=4-column indented `>` lines so code-block math/backticks never drift ordinals (R29B #1)", () => {
+		for (const lfSource of [
+			"> a\n>\n    > $x$\n\n$z$",
+			"> a\n>\n\t> $x$\n\n$z$",
+			"> a\n>\n    > `code\n\n$z$\n\n`",
+			"> a\n>\n    > $$\n\n$z$\n\n$$",
+		]) {
+			for (const source of [lfSource, lfSource.replace(/\n/g, "\r\n")]) {
+				const index = createEditorMarkdownBlockIndex(source);
+				expect(
+					index.mathSpans.map((span) => [source.slice(span.from, span.to), span.displayMode]),
+					JSON.stringify(source),
+				).toEqual([["$z$", false]]);
+			}
+		}
+	});
+
+	it("mirrors PHP extract_math() -> parse order when math overlaps HTML/comment/PI blocks (R29A #1, R29A #2, R29B #3)", () => {
+		const cases: ReadonlyArray<readonly [string, ReadonlyArray<readonly [string, boolean]>]> = [
+			["<div>\n$$x$$\n<!-- $$y$$ -->", [["$$x$$", true]]],
+			["<pre/>\n$$x$$\n$y$", [["$$x$$", true], ["$y$", false]]],
+			["<div>\n$$x$$\n$y$\n\n$z$", [["$$x$$", true], ["$y$", false], ["$z$", false]]],
+			["<pre/>\n$$x$$\n$y$\n\n$z$", [["$$x$$", true], ["$y$", false], ["$z$", false]]],
+			["<div> $$x$$ $y$", [["$$x$$", true], ["$y$", false]]],
+			["<div>\n$$x$$\nhello", [["$$x$$", true]]],
+			["<pre>foo</pre> $$x$$\n\n$z$", [["$$x$$", true], ["$z$", false]]],
+			["<!-- c --> $$x$$\n\n$z$", [["$$x$$", true], ["$z$", false]]],
+			["<!DOCTYPE html> $$x$$\n\n$z$", [["$$x$$", true], ["$z$", false]]],
+			["<?php ?> $$x$$\n\n$z$", [["$$x$$", true], ["$z$", false]]],
+			["<![CDATA[x]]> $$x$$\n\n$z$", [["$$x$$", true], ["$z$", false]]],
+			["<pre>foo</pre> $x$", []],
+			["<!--\n$$x\n-->\n$$\n\n$z$", []],
+			["<div>\n$x$\n</div>", []],
+			["<pre/>\n$$x$$", [["$$x$$", true]]],
+			["<pre/>\n$x$", []],
+			["<textarea>\n$$x$$\n</textarea>", []],
+			["<!doctype html\n$$x$$\n>", []],
+			["<![cdata[\n$$x$$\n]]>", []],
+			["<!--\n$$x$$\n-->", []],
+			["> <div>\n> $$x$$\n> $y$", [["$$x$$", true], ["$y$", false]]],
+			["> <!--\n> $x$\n> -->", []],
+		];
+		for (const [lfSource, expected] of cases) {
+			for (const source of [lfSource, lfSource.replace(/\n/g, "\r\n")]) {
+				const index = createEditorMarkdownBlockIndex(source);
+				expect(
+					index.mathSpans.map((span) => [source.slice(span.from, span.to), span.displayMode]),
+					JSON.stringify(source),
+				).toEqual(expected);
+			}
+		}
+
+		// Exact span & block invariants called out by R29A #1, R29A #2, R29B #3.
+		const commentAfterBlock = createEditorMarkdownBlockIndex("<div>\n$$x$$\n<!-- $$y$$ -->");
+		expect(commentAfterBlock.mathSpans.map((span) => [span.from, span.to])).toEqual([[6, 11]]);
+		expect(commentAfterBlock.blocks.map((block) => [block.kind, block.from, block.to, block.editable])).toEqual([
+			["unavailable", 0, 5, false],
+			["math", 6, 11, true],
+			["unavailable", 12, 26, false],
+		]);
+
+		const preBlockInline = createEditorMarkdownBlockIndex("<pre/>\n$$x$$\n$y$");
+		expect(preBlockInline.mathSpans.map((span) => [span.from, span.to])).toEqual([[7, 12], [13, 16]]);
+
+		const divProse = createEditorMarkdownBlockIndex("<div>\n$$x$$\nhello");
+		expect(findEditorMarkdownBlock(divProse, "<div>\n$$x$$\nhello".indexOf("hello"))).toMatchObject({
+			editable: true,
+			kind: "paragraph",
+		});
+
+		const unfragmentedDiv = createEditorMarkdownBlockIndex("<div>\n$x$\n</div>");
+		expect(unfragmentedDiv.mathSpans).toEqual([]);
+		expect(unfragmentedDiv.blocks).toEqual([
+			{ editable: false, from: 0, kind: "unavailable", lineEnd: 2, lineStart: 0, to: 16 },
+		]);
+
+		const unfragmentedDivCrlf = createEditorMarkdownBlockIndex("<div>\r\n$x$\r\n</div>");
+		expect(unfragmentedDivCrlf.mathSpans).toEqual([]);
+		expect(unfragmentedDivCrlf.blocks).toEqual([
+			{ editable: false, from: 0, kind: "unavailable", lineEnd: 2, lineStart: 0, to: 18 },
+		]);
+
+		// Images and links after a block-math-terminated HTML block stay indexed cleanly.
+		const imgDoc = "<div>\n$$x$$\n![alt](https://example.com/a.png)";
+		const imgIndex = createEditorMarkdownBlockIndex(imgDoc);
+		expect(imgIndex.imageRanges.map((range) => imgDoc.slice(range.from, range.to))).toEqual([
+			"![alt](https://example.com/a.png)",
+		]);
+		const linkDoc = "<div>\n$$x$$\n[label](https://example.com)";
+		const linkIndex = createEditorMarkdownBlockIndex(linkDoc);
+		expect(linkIndex.linkCandidates?.map((candidate) => linkDoc.slice(candidate.from, candidate.to))).toEqual([
+			"[label](https://example.com)",
+		]);
+	});
+});
+
+describe("editor-markdown-block-index Stage 4 Round 30 unified PHP two-stage pipeline, inline HTML stripping, and O(1) line end (PHP 8.3.37 / League 2.8.2)", () => {
+	it("mirrors live PHP for math-created HTML blocks, reference definitions, and post-block-math Markdown blocks (R30B #1)", () => {
+		const mathCases: ReadonlyArray<
+			Readonly<{
+				blockKinds?: ReadonlyArray<EditorMarkdownBlockKind>;
+				expectedLinks?: ReadonlyArray<string>;
+				expectedMath: ReadonlyArray<readonly [string, boolean]>;
+				source: string;
+			}>
+		> = [
+			{
+				blockKinds: ["paragraph", "math", "unavailable"],
+				expectedMath: [["$$x$$", true]],
+				source: "para\n$$x$$\n<custom>\n$y$\n</custom>",
+			},
+			{
+				blockKinds: ["paragraph", "math", "unavailable"],
+				expectedMath: [["$$x$$", true]],
+				source: "para $$x$$ <div>\n$y$",
+			},
+			{
+				blockKinds: ["paragraph", "math", "unavailable"],
+				expectedMath: [["$$x$$", true]],
+				source: "para $$x$$ <!--\n$y$\n-->",
+			},
+			{
+				blockKinds: ["paragraph", "math", "unavailable"],
+				expectedMath: [["$$x$$", true]],
+				source: "para $$x$$ <pre>\n$y$\n</pre>",
+			},
+			{
+				expectedLinks: [],
+				expectedMath: [["$$x$$", true]],
+				source: '[a]: /url "$$x$$"\n\n[a]',
+			},
+			{
+				expectedLinks: ["[a]"],
+				expectedMath: [["$$x$$", true]],
+				source: "[a]: /$$x$$\n\n[a]",
+			},
+			{
+				expectedLinks: [],
+				expectedMath: [
+					["$$x$$", true],
+					["$$x$$", true],
+				],
+				source: "[$$x$$]: /url\n\n[$$x$$]",
+			},
+			{
+				expectedLinks: ["[ref]"],
+				expectedMath: [["$$x$$", true]],
+				source: "para $$x$$ [ref]: /url\n\n[ref]",
+			},
+			{
+				blockKinds: ["paragraph", "math", "heading"],
+				expectedMath: [["$$x$$", true]],
+				source: "para $$x$$ # heading",
+			},
+			{
+				blockKinds: ["paragraph", "math", "quote"],
+				expectedMath: [["$$x$$", true]],
+				source: "para $$x$$ > quote",
+			},
+			{
+				blockKinds: ["paragraph", "math", "thematic-break"],
+				expectedMath: [["$$x$$", true]],
+				source: "para $$x$$ ---",
+			},
+			{
+				blockKinds: ["heading", "math", "paragraph"],
+				expectedMath: [["$$b$$", true]],
+				source: "# h $$b$$ t",
+			},
+			{
+				blockKinds: ["quote", "math"],
+				expectedMath: [["$$x$$", true]],
+				source: "> $$x$$",
+			},
+			{
+				blockKinds: ["list", "math"],
+				expectedMath: [["$$x$$", true]],
+				source: "- $$x$$",
+			},
+		];
+
+		for (const testCase of mathCases) {
+			for (const source of [testCase.source, testCase.source.replace(/\n/g, "\r\n")]) {
+				const index = createEditorMarkdownBlockIndex(source);
+				expect(
+					index.mathSpans.map((span) => [source.slice(span.from, span.to), span.displayMode]),
+					JSON.stringify(source),
+				).toEqual(testCase.expectedMath);
+				if (testCase.blockKinds) {
+					expect(
+						index.blocks.map((block) => block.kind),
+						JSON.stringify(source),
+					).toEqual(testCase.blockKinds);
+				}
+				if (testCase.expectedLinks) {
+					expect(
+						(index.linkCandidates ?? []).map((candidate) =>
+							source.slice(candidate.from, candidate.to),
+						),
+						JSON.stringify(source),
+					).toEqual(testCase.expectedLinks);
+				}
+			}
+		}
+	});
+
+	it("preserves non-local invariance when prepending an unrelated HTML+math prefix (R30B #1)", () => {
+		const fixtures = [
+			"para\n$$x$$\n<custom>\n$y$\n</custom>",
+			"para $$x$$ <div>\n$y$",
+			'[a]: /url "$$x$$"\n\n[a]',
+			"[a]: /$$x$$\n\n[a]",
+			"para $$x$$ [ref]: /url\n\n[ref]",
+			"para $$x$$ # heading",
+			"para $$x$$ > quote",
+			"para $$x$$ ---",
+			"# h $$b$$ t",
+			'<span title="$y$">hi</span>',
+			"<span>$y$</span>",
+		];
+		for (const lfBody of fixtures) {
+			for (const newline of ["\n", "\r\n"] as const) {
+				const body = lfBody.replace(/\n/g, newline);
+				const prefix = `<div>${newline}$$a$$${newline}${newline}`;
+				const combined = prefix + body;
+				const standalone = createEditorMarkdownBlockIndex(body);
+				const prefixed = createEditorMarkdownBlockIndex(combined);
+				const offset = prefix.length;
+
+				const downstreamBlocks = prefixed.blocks
+					.filter((block) => block.from >= offset)
+					.map((block) => ({
+						editable: block.editable,
+						from: block.from - offset,
+						kind: block.kind,
+						to: block.to - offset,
+					}));
+				const standaloneBlocks = standalone.blocks.map((block) => ({
+					editable: block.editable,
+					from: block.from,
+					kind: block.kind,
+					to: block.to,
+				}));
+				expect(downstreamBlocks, JSON.stringify(body)).toEqual(standaloneBlocks);
+
+				const downstreamMath = prefixed.mathSpans
+					.filter((span) => span.from >= offset)
+					.map((span) => [combined.slice(span.from, span.to), span.displayMode]);
+				const standaloneMath = standalone.mathSpans.map((span) => [
+					body.slice(span.from, span.to),
+					span.displayMode,
+				]);
+				expect(downstreamMath, JSON.stringify(body)).toEqual(standaloneMath);
+			}
+		}
+	});
+
+	it("excludes stripped inline HTML tags, comments, and processing instructions from math survival while keeping content between tags (R30A #1, R30B #2)", () => {
+		const cases: ReadonlyArray<readonly [string, ReadonlyArray<readonly [string, boolean]>]> = [
+			['<div>\n$$x$$\nA <i title="$y$">word</i> $z$', [["$$x$$", true], ["$z$", false]]],
+			['<div>\n$$x$$\n<span title="$y$">hi</span>', [["$$x$$", true]]],
+			["<div>\n$$x$$\na <!-- $y$ --> b", [["$$x$$", true]]],
+			['<span title="$y$">hi</span>', []],
+			["<span>$y$</span>", [["$y$", false]]],
+			["a <!-- $y$ --> b", []],
+			["a <?php $y$ ?> b", []],
+		];
+		for (const [lfSource, expected] of cases) {
+			for (const source of [lfSource, lfSource.replace(/\n/g, "\r\n")]) {
+				const index = createEditorMarkdownBlockIndex(source);
+				expect(
+					index.mathSpans.map((span) => [source.slice(span.from, span.to), span.displayMode]),
+					JSON.stringify(source),
+				).toEqual(expected);
+			}
+		}
+	});
+
+	it("targets and deletes rendered $z$ without mutating stripped <i title=\"$y$\"> across LF and CRLF (R30A #1, R30B #2)", async () => {
+		for (const newline of ["\n", "\r\n"] as const) {
+			const source = `<div>${newline}$$x$$${newline}A <i title="$y$">word</i> $z$`;
+			const index = createEditorMarkdownBlockIndex(source);
+			const paragraphBlock = index.blocks.find((block) => "paragraph" === block.kind);
+			expect(paragraphBlock).toBeDefined();
+			if (!paragraphBlock) continue;
+
+			const blockMathSpans = index.mathSpans.filter(
+				(span) => span.from >= paragraphBlock.from && span.to <= paragraphBlock.to,
+			);
+			expect(blockMathSpans.map((span) => source.slice(span.from, span.to))).toEqual(["$z$"]);
+
+			const associated = associateGeneratedContentTarget({
+				acceptedPreview: { revision: 1, signature: "r30-inline-html-strip" },
+				blockId: "visual-block-1",
+				kind: "math",
+				mathSpans: blockMathSpans,
+				ordinal: 0,
+				source,
+				sourceRevision: 1,
+			});
+			expect(associated.status).toBe("associated");
+			if ("associated" !== associated.status) continue;
+			expect(associated.target.original.full).toBe("$z$");
+			expect(associated.target.original.body).toBe("z");
+
+			let currentValue = source;
+			const reported: string[] = [];
+			const session = {
+				actionContext: {
+					generated: {
+						canCopyImage: false,
+						canCopyMathMl: false,
+						canUseSource: true,
+						identity: () => null,
+						kind: "math" as const,
+						lease: {
+							isCurrent: () => true,
+							release: () => {},
+							root: {} as Element,
+							target: associated.target,
+						},
+						mode: "split" as const,
+						validateLease: () => true,
+					},
+				},
+				applyEdit(edit: Readonly<{ value: string }>) {
+					currentValue = edit.value;
+				},
+				capabilities: {
+					contextMenuStrings: {},
+					generated: {
+						exportSession: null,
+						prepareSourceNavigation: () => false,
+					},
+				},
+				captured: {
+					direction: "ltr" as const,
+					position: { x: 0, y: 0 },
+					revision: 1,
+					selection: {
+						direction: "none" as const,
+						end: associated.target.original.fullRange.to,
+						start: associated.target.original.fullRange.from,
+					},
+					surface: "preview" as const,
+					value: source,
+				},
+				clipboard: {
+					read: async () => ({ code: "unavailable", status: "unavailable" as const }),
+					write: async () => ({ code: "unavailable", status: "unavailable" as const }),
+				},
+				currentBlockIndex: () => index,
+				document: { revealPosition: () => {} },
+				ensureCurrent: () => true,
+				ensureSelectionFitsTarget: () => true,
+				readValue: () => currentValue,
+				report: (code: string) => {
+					reported.push(code);
+				},
+			} as unknown as EditorContextMenuActionSession;
+
+			await runGeneratedContextMenuAction("delete-generated-content", session);
+			expect(reported).toEqual([]);
+			expect(currentValue).toBe(`<div>${newline}$$x$$${newline}A <i title="$y$">word</i> `);
+			expect(currentValue).toContain('title="$y$"');
+			expect(currentValue).not.toContain("$z$");
+		}
+	});
+
+	it("scales linearly on a 220 KB single-line HTML+math document with O(1) line-end lookups (R30A #2)", () => {
+		const source = `<div> ${"$$x$$ word ".repeat(20_000).trimEnd()}`;
+		expect(source.length).toBe(220_005);
+		const startedAt = performance.now();
+		const index = createEditorMarkdownBlockIndex(source);
+		const elapsedMs = performance.now() - startedAt;
+
+		expect(index.mathSpans).toHaveLength(20_000);
+		expect(index.blocks).toHaveLength(40_001);
+		expect(elapsedMs).toBeLessThan(1_500);
+	});
+
+	it("matches League CommonMark 2.8.2 on all 9 inline-HTML divergence classes and edge cases across LF and CRLF (R31A #1, R31B #1)", () => {
+		const cases: ReadonlyArray<
+			readonly [string, ReadonlyArray<readonly [string, boolean]>]
+		> = [
+			["A < x $y$ > and $z$", [["$y$", false], ["$z$", false]]],
+			['a <SPAN title="$x$">hi</SPAN> b', [["$x$", false]]],
+			['a <span TITLE="$x$">hi</span> b', [["$x$", false]]],
+			["a <!---> $x$ --> b", [["$x$", false]]],
+			["a <!--> $x$ --> b", [["$x$", false]]],
+			["a <!-- -- $x$ --> b", []],
+			["a <!-- $x$ ---> b", []],
+			["a <!doctype $x$> b", []],
+			["a <!DOCTYPE $x$> b", []],
+			['a <br title="$x$"/ > b', [["$x$", false]]],
+			['a <br title="$x$"/> b', []],
+			['a <a_b title="$x$">hi</a_b>', [["$x$", false]]],
+			["a <![CDATA[$x$]]> b", []],
+			["a <? $x$ ?> b", []],
+			["a <??> $x$ ?> b", [["$x$", false]]],
+			["a <?> $x$ ?> b", []],
+			["a <https://example.com/$x$> b", [["$x$", false]]],
+			['a <a href="$x$">hi</a> b', []],
+			['a <span\u00a0title="$x$">hi</span> b', []],
+			['a <span\ufefftitle="$x$">hi</span> b', [["$x$", false]]],
+			["a\n< x $y$ >\nand $z$", [["$y$", false], ["$z$", false]]],
+			['a\n<SPAN title="$x$">\nhi</SPAN>', [["$x$", false]]],
+		];
+		for (const [lfSource, expected] of cases) {
+			for (const source of [lfSource, lfSource.replace(/\n/g, "\r\n")]) {
+				const index = createEditorMarkdownBlockIndex(source);
+				expect(
+					index.mathSpans.map((span) => [
+						source.slice(span.from, span.to),
+						span.displayMode,
+					]),
+					JSON.stringify(source),
+				).toEqual(expected);
+			}
+		}
+	});
+
+	it("stays strictly O(N) on 30 KB and 100 KB space runs (with and without math) and repeated `<` tokens (R31B #2)", () => {
+		const inputs = [
+			{ expectedMath: 0, label: "30KB spaces", source: `a${" ".repeat(30_000)}b` },
+			{ expectedMath: 1, label: "30KB spaces + math", source: `$x$ ${" ".repeat(30_000)}b` },
+			{ expectedMath: 0, label: "100KB spaces", source: `a${" ".repeat(100_000)}b` },
+			{ expectedMath: 1, label: "100KB spaces + math", source: `$x$ ${" ".repeat(100_000)}b` },
+			{ expectedMath: 1, label: "50K angle brackets + math", source: `${"<".repeat(50_000)} $x$ >` },
+		];
+		for (const entry of inputs) {
+			const startedAt = performance.now();
+			const index = createEditorMarkdownBlockIndex(entry.source);
+			const elapsedMs = performance.now() - startedAt;
+			expect(index.mathSpans, entry.label).toHaveLength(entry.expectedMath);
+			expect(elapsedMs, `${entry.label}: ${elapsedMs.toFixed(1)}ms`).toBeLessThan(200);
+		}
+	});
+
+	it("matches upstream @lezer/markdown AST 1:1 across linear Link, Image, and LinkEnd edge cases (R32A #2)", () => {
+		const upstreamParser = markdownLanguage.parser as MarkdownParser;
+		const linearLinkParser = installLinearInlineResolver(
+			upstreamParser.configure({
+				parseInline: [
+					{ name: "Link", parse: parseLinearLink },
+					{ name: "Image", parse: parseLinearImage },
+					{ name: "LinkEnd", parse: createLinearLinkEndParser() },
+				],
+			}),
+		);
+		const dumpTree = (tree: ReturnType<MarkdownParser["parse"]>): string[] => {
+			const out: string[] = [];
+			tree.iterate({
+				enter(node) {
+					out.push(`${node.name}:${node.from}-${node.to}`);
+				},
+			});
+			return out;
+		};
+		const samples: ReadonlyArray<string> = [
+			"[![alt](/img.png)](/link)",
+			"![alt [inner](/a) text](/img.png)",
+			"[outer [inner](/a) tail](/outer)",
+			"[outer [ ]](/outer) [empty]() [ ] []",
+			"[outer ![img [nested](/b)](/img)](/outer)",
+			"[shortcut] [collapsed][] [full][ref]\n\n[shortcut]: /1\n[collapsed]: /2\n[ref]: /3",
+			"[nested parens](/u(a(b))\\)c) [escaped](/u\\(x\\))",
+			"[angled](<https://example.com/a b>) [unclosed](<https://example.com)",
+			"[sq](/u 't\\'1') [dq](/u \"t\\\"2\") [pq](/u (t\\)3)) [unclosed](/u 't)",
+			"unmatched ]]] and [[[ and [a] ] [b](/u) [",
+			"[*em* **strong** ~~strike~~](/u \"title\")",
+			`${"[a](x\\)".repeat(16)}`,
+			`${"[a](x\\)".repeat(16)} ! )`,
+			`${"[a](x()".repeat(16)} ! )`,
+			`${"[a](x(a)(b\\))".repeat(12)} ! )`,
+			`${"[a](x\\\\)".repeat(12)} [b](y())`,
+		];
+		for (const sample of samples) {
+			expect(
+				dumpTree(linearLinkParser.parse(sample)),
+				JSON.stringify(sample),
+			).toEqual(dumpTree(upstreamParser.parse(sample)));
+		}
+	});
+
+	it("stays strictly O(N) on escaped-paren and balanced-paren bare-URL runs (R33A #2, R33B #1)", () => {
+		const runs: ReadonlyArray<
+			Readonly<{ label: string; maxMs: number; source: string }>
+		> = [
+			{
+				label: "32k [a](x\\) (224 KB)",
+				maxMs: 600,
+				source: "[a](x\\)".repeat(32_000),
+			},
+			{
+				label: "32k [a](x\\) + trailing close paren (224 KB)",
+				maxMs: 600,
+				source: `${"[a](x\\)".repeat(32_000)} ! )`,
+			},
+			{
+				label: "16k [a](x() + trailing close paren (112 KB)",
+				maxMs: 400,
+				source: `${"[a](x()".repeat(16_000)} ! )`,
+			},
+		];
+		for (const run of runs) {
+			const startedAt = performance.now();
+			const index = createEditorMarkdownBlockIndex(run.source);
+			const elapsedMs = performance.now() - startedAt;
+			expect(index.length, run.label).toBe(run.source.length);
+			expect(elapsedMs, `${run.label}: ${elapsedMs.toFixed(1)}ms`).toBeLessThan(
+				run.maxMs,
+			);
+		}
+	});
+
+	it("blocks leaf interruption at max container depth 99 while allowing exit-to-98 interruption (R34B #2)", () => {
+		const depth99Blockquote =
+			`${"> ".repeat(99)}a\n${"> ".repeat(99)}<div>\n${"> ".repeat(99)}$x$\n${"> ".repeat(99)}</div>`;
+		const list49PlusBlockquote =
+			`${"- ".repeat(49)}> a\n${"  ".repeat(49)}> <div>\n${"  ".repeat(49)}> $x$\n${"  ".repeat(49)}> </div>`;
+		const exitTo98Control =
+			`${"> ".repeat(99)}a\n${"> ".repeat(98)}<div>\n${"> ".repeat(98)}$x$\n${"> ".repeat(98)}</div>`;
+
+		for (const [label, lfSource, expectedMath] of [
+			["depth-99 blockquote", depth99Blockquote, 1],
+			["49-list + 1-blockquote", list49PlusBlockquote, 1],
+			["exit-to-98 control", exitTo98Control, 0],
+		] as const) {
+			for (const source of [lfSource, lfSource.replace(/\n/g, "\r\n")]) {
+				const index = createEditorMarkdownBlockIndex(source);
+				expect(index.mathSpans, `${label} (${source.includes("\r\n") ? "CRLF" : "LF"})`).toHaveLength(
+					expectedMath,
+				);
+			}
+		}
+	});
+
+	it("matches League 2.8.2 depth-99 leafBlockParsers for Setext, GFM Table, and LinkReference + HTML block on both LF and CRLF (R35B #3)", () => {
+		const p99 = "> ".repeat(99);
+		const p98 = "> ".repeat(98);
+		const cases: ReadonlyArray<
+			Readonly<{
+				expectedLinks: number;
+				expectedMath: number;
+				label: string;
+				lfSource: string;
+			}>
+		> = [
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "depth-99 Setext === followed by <div>$x$</div>",
+				lfSource: `${p99}a\n${p99}===\n${p99}<div>\n${p99}$x$\n${p99}</div>`,
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "depth-99 Setext --- followed by <div>$x$</div>",
+				lfSource: `${p99}a\n${p99}---\n${p99}<div>\n${p99}$x$\n${p99}</div>`,
+			},
+			{
+				expectedLinks: 1,
+				expectedMath: 0,
+				label: "depth-99 GFM table suppressed so [a | b](/u) stays a link",
+				lfSource: `${p99}| a | b |\n${p99}| --- | --- |\n${p99}| [a | b](/u) |`,
+			},
+			{
+				expectedLinks: 2,
+				expectedMath: 1,
+				label: "depth-99 consecutive LinkReference + <div>$x$</div>",
+				lfSource: `${p99}[a]: /1\n${p99}[b]: /2\n${p99}<div>\n${p99}$x$\n${p99}</div>\n${p99}\n${p99}[a] [b]`,
+			},
+			{
+				expectedLinks: 1,
+				expectedMath: 1,
+				label: "depth-99 single-line titled LinkReference + <div>$x$</div>",
+				lfSource: `${p99}[a]: /1 "t"\n${p99}<div>\n${p99}$x$\n${p99}</div>\n${p99}\n${p99}[a]`,
+			},
+			{
+				expectedLinks: 1,
+				expectedMath: 1,
+				label: "depth-99 multi-line titled LinkReference + <div>$x$</div>",
+				lfSource: `${p99}[a]: /1\n${p99}"t"\n${p99}<div>\n${p99}$x$\n${p99}</div>\n${p99}\n${p99}[a]`,
+			},
+			{
+				expectedLinks: 1,
+				expectedMath: 0,
+				label: "depth-99 blank-line exit control [a]: /1\\n\\n<div>$x$</div>",
+				lfSource: `${p99}[a]: /1\n${p99}\n${p99}<div>\n${p99}$x$\n${p99}</div>\n${p99}\n${p99}[a]`,
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 0,
+				label: "depth-98 positive control: GFM table still active",
+				lfSource: `${p98}| a | b |\n${p98}| --- | --- |\n${p98}| [a | b](/u) |`,
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 0,
+				label: "depth-98 positive control: Setext === closes leaf so <div> starts HTMLBlock",
+				lfSource: `${p98}a\n${p98}===\n${p98}<div>\n${p98}$x$\n${p98}</div>`,
+			},
+		];
+
+		for (const item of cases) {
+			for (const source of [
+				item.lfSource,
+				item.lfSource.replace(/\n/g, "\r\n"),
+			]) {
+				const eol = source.includes("\r\n") ? "CRLF" : "LF";
+				const index = createEditorMarkdownBlockIndex(source);
+				expect(index.mathSpans, `${item.label} [${eol}] math`).toHaveLength(
+					item.expectedMath,
+				);
+				expect(index.linkCandidates ?? [], `${item.label} [${eol}] links`).toHaveLength(
+					item.expectedLinks,
+				);
+			}
+		}
+	});
+
+	it("matches League 2.8.2 depth-99/98/97 list continuation and post-paragraph close on both LF and CRLF (R36A #2)", () => {
+		const p99 = "> ".repeat(99);
+		const p98 = "> ".repeat(98);
+		const p97 = "> ".repeat(97);
+		const wrap = (prefix: string, lines: ReadonlyArray<string>): string =>
+			lines.map((line) => `${prefix}${line}`).join("\n");
+
+		const cases: ReadonlyArray<
+			Readonly<{
+				expectedLinks: number;
+				expectedMath: number;
+				label: string;
+				lfSource: string;
+			}>
+		> = [
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "depth-99 empty bullet list + <div>$x$</div>",
+				lfSource: wrap(p99, ["-", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "depth-99 empty bullet list + blank + <div>$x$</div>",
+				lfSource: wrap(p99, ["-", "", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "depth-99 empty bullet list + <div>$x$</div> + blank + <div>$y$</div>",
+				lfSource: wrap(p99, [
+					"-",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"<div>",
+					"$y$",
+					"</div>",
+				]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "depth-99 empty bullet list + blank + <div>$x$</div> + blank + <div>$y$</div>",
+				lfSource: wrap(p99, [
+					"-",
+					"",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"<div>",
+					"$y$",
+					"</div>",
+				]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "depth-99 empty ordered list + <div>$x$</div>",
+				lfSource: wrap(p99, ["1.", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "depth-99 empty ordered list + blank + <div>$x$</div>",
+				lfSource: wrap(p99, ["1.", "", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "depth-99 empty ordered list + <div>$x$</div> + blank + <div>$y$</div>",
+				lfSource: wrap(p99, [
+					"1.",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"<div>",
+					"$y$",
+					"</div>",
+				]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "depth-99 empty bullet list + second item + <div>$x$</div>",
+				lfSource: wrap(p99, ["-", "- b", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 0,
+				label: "depth-99 empty bullet list + second item + blank + <div>$x$</div>",
+				lfSource: wrap(p99, ["-", "- b", "", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 0,
+				label: "depth-99 empty bullet list exiting to depth-98 <div>$x$</div>",
+				lfSource: `${p99}-\n${wrap(p98, ["<div>", "$x$", "</div>"])}`,
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 0,
+				label: "depth-99 empty bullet list + blank exiting to depth-98 <div>$x$</div>",
+				lfSource: `${p99}-\n${p99}\n${wrap(p98, ["<div>", "$x$", "</div>"])}`,
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 0,
+				label: "depth-98 control: empty bullet list + <div>$x$</div>",
+				lfSource: wrap(p98, ["-", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 0,
+				label: "depth-98 control: empty bullet list + blank + <div>$x$</div>",
+				lfSource: wrap(p98, ["-", "", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 0,
+				label: "depth-98 control: empty ordered list + <div>$x$</div>",
+				lfSource: wrap(p98, ["1.", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 2,
+				label: "depth-99 non-empty bullet lazy div + blank + div + blank + html-block div",
+				lfSource: wrap(p99, [
+					"- a",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"<div>",
+					"$y$",
+					"</div>",
+					"",
+					"<div>",
+					"$z$",
+					"</div>",
+				]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "depth-97 nested list + <div>$x$</div> + blank + <div>$y$</div>",
+				lfSource: wrap(p97, [
+					"- -",
+					"  <div>",
+					"  $x$",
+					"  </div>",
+					"  ",
+					"  <div>",
+					"  $y$",
+					"  </div>",
+				]),
+			},
+			{
+				expectedLinks: 1,
+				expectedMath: 1,
+				label: "depth-99 empty bullet + LinkReference + <div>$x$</div>",
+				lfSource: wrap(p99, ["-", "[a]: /1", "<div>", "$x$", "</div>", "", "[a]"]),
+			},
+			{
+				expectedLinks: 1,
+				expectedMath: 0,
+				label: "depth-99 empty bullet + LinkReference + blank + <div>$x$</div>",
+				lfSource: wrap(p99, [
+					"-",
+					"[a]: /1",
+					"",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a]",
+				]),
+			},
+			{
+				expectedLinks: 3,
+				expectedMath: 1,
+				label: "depth-99 empty bullet + 3 consecutive LinkReferences + <div>$x$</div>",
+				lfSource: wrap(p99, [
+					"-",
+					"[a]: /1",
+					"[b]: /2",
+					"[c]: /3",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a] [b] [c]",
+				]),
+			},
+		];
+
+		for (const item of cases) {
+			for (const source of [
+				item.lfSource,
+				item.lfSource.replace(/\n/g, "\r\n"),
+			]) {
+				const eol = source.includes("\r\n") ? "CRLF" : "LF";
+				const index = createEditorMarkdownBlockIndex(source);
+				expect(index.mathSpans, `${item.label} [${eol}] math`).toHaveLength(
+					item.expectedMath,
+				);
+				expect(
+					index.linkCandidates ?? [],
+					`${item.label} [${eol}] links`,
+				).toHaveLength(item.expectedLinks);
+			}
+		}
+	});
+
+	it("matches League 2.8.2 depth-100 -> depth-99 container-exit leaf interruption for Paragraph and LinkReference on LF and CRLF (R37A #2)", () => {
+		const p99 = "> ".repeat(99);
+		const p100 = "> ".repeat(100);
+		const wrap = (prefix: string, lines: ReadonlyArray<string>): string =>
+			lines.map((line) => `${prefix}${line}`).join("\n");
+
+		const cases: ReadonlyArray<
+			Readonly<{
+				expectedLinks: number;
+				expectedMath: number;
+				label: string;
+				lfSource: string;
+			}>
+		> = [
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "Paragraph depth-100 -> depth-99 exit allows <div> HTMLBlock; only final $x$ survives",
+				lfSource: wrap(p99, ["> a", "<div>", "$x$", "</div>", "", "$x$"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 0,
+				label: "Paragraph depth-100 -> depth-99 exit allows <div> HTMLBlock without trailing math",
+				lfSource: wrap(p99, ["> a", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "Paragraph depth-101 -> depth-100 stays capped (matched BQ(100) >= 100)",
+				lfSource: wrap(p100, ["> a", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "Paragraph staying at depth-99 suppresses <div> (matched Paragraph depth = 100)",
+				lfSource: wrap(p99, ["a", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 0,
+				label: "Paragraph depth-100 -> depth-99 exit allows --- thematic break before <div>",
+				lfSource: wrap(p99, ["> a", "---", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "LinkReference depth-100 -> depth-99 exit allows <div> HTMLBlock; only final $x$ survives",
+				lfSource: wrap(p99, ["> [a]: /1", "<div>", "$x$", "</div>", "", "$x$"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 0,
+				label: "LinkReference depth-100 -> depth-99 exit without trailing math",
+				lfSource: wrap(p99, ["> [a]: /1", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "LinkReference with same-line title depth-100 -> depth-99 exit allows <div>",
+				lfSource: wrap(p99, ['> [a]: /1 "t"', "<div>", "$x$", "</div>", "", "$x$"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "LinkReference with multiline title depth-100 -> depth-99 exit allows <div>",
+				lfSource: wrap(p99, [
+					"> [a]: /1",
+					'> "t"',
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"$x$",
+				]),
+			},
+			{
+				expectedLinks: 1,
+				expectedMath: 0,
+				label: "LinkReference depth-100 -> depth-99 lazy title closes cleanly before <div> and preserves ref",
+				lfSource: wrap(p99, [
+					"> [a]: /1",
+					'"t"',
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a]",
+				]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 0,
+				label: "LinkReference unclosed title depth-100 -> depth-99 exit allows <div>",
+				lfSource: wrap(p99, ["> [a]: /1", '> "t', "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "LinkReference depth-101 -> depth-100 stays capped",
+				lfSource: wrap(p100, ["> [a]: /1", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 0,
+				expectedMath: 1,
+				label: "LinkReference staying at depth-99 suppresses <div>",
+				lfSource: wrap(p99, ["[a]: /1", "<div>", "$x$", "</div>"]),
+			},
+			{
+				expectedLinks: 1,
+				expectedMath: 0,
+				label: "LinkReference depth-100 -> depth-99 lazy plain continuation before <div> (R38B #3)",
+				lfSource: wrap(p99, [
+					"> [a]: /1",
+					"plain",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a]",
+				]),
+			},
+			{
+				expectedLinks: 1,
+				expectedMath: 0,
+				label: "LinkReference with same-line title depth-100 -> depth-99 lazy plain continuation before <div> (R38B #3)",
+				lfSource: wrap(p99, [
+					'> [a]: /1 "t"',
+					"plain",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a]",
+				]),
+			},
+			{
+				expectedLinks: 1,
+				expectedMath: 0,
+				label: "LinkReference with lazy title depth-100 -> depth-99 lazy plain continuation before <div> (R38B #3)",
+				lfSource: wrap(p99, [
+					"> [a]: /1",
+					'"t"',
+					"plain",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a]",
+				]),
+			},
+			{
+				expectedLinks: 2,
+				expectedMath: 0,
+				label: "LinkReference depth-100 -> depth-99 lazy second ref before <div> (R39B #4)",
+				lfSource: wrap(p99, [
+					"> [a]: /1",
+					"[b]: /2",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a] [b]",
+				]),
+			},
+			{
+				expectedLinks: 2,
+				expectedMath: 0,
+				label: "LinkReference with same-line title depth-100 -> depth-99 lazy second ref before <div> (R39B #4)",
+				lfSource: wrap(p99, [
+					'> [a]: /1 "t"',
+					"[b]: /2",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a] [b]",
+				]),
+			},
+			{
+				expectedLinks: 3,
+				expectedMath: 0,
+				label: "LinkReference depth-100 -> depth-99 3 chained lazy refs before <div> (R39B #4)",
+				lfSource: wrap(p99, [
+					"> [a]: /1",
+					"[b]: /2",
+					"[c]: /3",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a] [b] [c]",
+				]),
+			},
+			{
+				expectedLinks: 3,
+				expectedMath: 0,
+				label: "LinkReference depth-100 -> depth-99 chained lazy refs with title on middle ref (R39B #4)",
+				lfSource: wrap(p99, [
+					"> [a]: /1",
+					'[b]: /2 "t2"',
+					"[c]: /3",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a] [b] [c]",
+				]),
+			},
+			{
+				expectedLinks: 2,
+				expectedMath: 0,
+				label: "LinkReference depth-100 -> depth-99 lazy second ref with next-line title before <div> (R39B #4)",
+				lfSource: wrap(p99, [
+					"> [a]: /1",
+					"[b]: /2",
+					'"title"',
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a] [b]",
+				]),
+			},
+			{
+				expectedLinks: 1,
+				expectedMath: 0,
+				label: "LinkReference depth-100 -> depth-99 lazy [not-a-ref] before <div> (R39B #4)",
+				lfSource: wrap(p99, [
+					"> [a]: /1",
+					"[not-a-ref]",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a]",
+				]),
+			},
+			{
+				expectedLinks: 1,
+				expectedMath: 0,
+				label: "LinkReference with title depth-100 -> depth-99 lazy [not-a-ref] before <div> (R39B #4)",
+				lfSource: wrap(p99, [
+					'> [a]: /1 "t"',
+					"[not-a-ref]",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a]",
+				]),
+			},
+			{
+				expectedLinks: 2,
+				expectedMath: 0,
+				label: "ListItem depth-98 lazy second ref before <div> (R40B #4)",
+				lfSource: wrap("> ".repeat(98), [
+					"- [a]: /1",
+					"[b]: /2",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a] [b]",
+				]),
+			},
+			{
+				expectedLinks: 1,
+				expectedMath: 0,
+				label: "ListItem depth-98 lazy plain continuation before <div> (R40B #4)",
+				lfSource: wrap("> ".repeat(98), [
+					"- [a]: /1",
+					"plain",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a]",
+				]),
+			},
+			{
+				expectedLinks: 2,
+				expectedMath: 1,
+				label: "ListItem depth-99 lazy second ref stays capped before <div> (R40B #4)",
+				lfSource: wrap(p99, [
+					"- [a]: /1",
+					"[b]: /2",
+					"<div>",
+					"$x$",
+					"</div>",
+					"",
+					"[a] [b]",
+				]),
+			},
+		];
+
+		for (const item of cases) {
+			for (const source of [
+				item.lfSource,
+				item.lfSource.replace(/\n/g, "\r\n"),
+			]) {
+				const eol = source.includes("\r\n") ? "CRLF" : "LF";
+				const index = createEditorMarkdownBlockIndex(source);
+				expect(index.mathSpans, `${item.label} [${eol}] math`).toHaveLength(
+					item.expectedMath,
+				);
+				expect(
+					index.linkCandidates ?? [],
+					`${item.label} [${eol}] links`,
+				).toHaveLength(item.expectedLinks);
+			}
+		}
+	});
+
+	it("preserves CommonMark §6.3 balanced nested brackets inside link labels while suppressing links that contain real inner links", () => {
+		const cases: ReadonlyArray<
+			Readonly<{ expected: ReadonlyArray<{ ref: boolean; src: string }>; md: string }>
+		> = [
+			{
+				md: "[Bracket [Link]](https://example.org/nested)",
+				expected: [
+					{ ref: false, src: "[Bracket [Link]](https://example.org/nested)" },
+				],
+			},
+			{
+				md: "[A [B [C]]](https://example.org/deep)",
+				expected: [{ ref: false, src: "[A [B [C]]](https://example.org/deep)" }],
+			},
+			{
+				md: "[Outer [Inner]](https://outer.test)\n\n[inner]: https://inner.test",
+				expected: [
+					{ ref: true, src: "[Inner]" },
+					{ ref: false, src: "https://outer.test" },
+				],
+			},
+			{
+				md: "[Outer [Inner](https://inner.test)](https://outer.test)",
+				expected: [
+					{ ref: false, src: "[Inner](https://inner.test)" },
+					{ ref: false, src: "https://outer.test" },
+				],
+			},
+			{
+				md: "[Outer [Inner][ref]](https://outer.test)\n\n[ref]: https://inner.test",
+				expected: [
+					{ ref: true, src: "[Inner][ref]" },
+					{ ref: false, src: "https://outer.test" },
+				],
+			},
+			{
+				md: "[Outer [a][b]](https://outer.test)",
+				expected: [{ ref: false, src: "[Outer [a][b]](https://outer.test)" }],
+			},
+			{
+				md: "[Outer [a][b]](https://outer.test)\n\n[b]: https://b.test",
+				expected: [
+					{ ref: true, src: "[a][b]" },
+					{ ref: false, src: "https://outer.test" },
+				],
+			},
+			{
+				md: "[Outer [Inner] text](https://outer.test)",
+				expected: [
+					{ ref: false, src: "[Outer [Inner] text](https://outer.test)" },
+				],
+			},
+			{
+				md: "[Outer [Inner]](https://outer.test) and [tail](https://tail.test)",
+				expected: [
+					{ ref: false, src: "[Outer [Inner]](https://outer.test)" },
+					{ ref: false, src: "[tail](https://tail.test)" },
+				],
+			},
+			{
+				md: "[Outer [https://a.test]](https://b.test)",
+				expected: [
+					{ ref: false, src: "[Outer [https://a.test]](https://b.test)" },
+				],
+			},
+			{
+				md: "[Outer [a] [b]](https://outer.test)\n\n[a]: https://a.test",
+				expected: [
+					{ ref: true, src: "[a]" },
+					{ ref: false, src: "https://outer.test" },
+				],
+			},
+			{
+				md: "[Outer [Inner]][ref]\n\n[ref]: https://outer.test",
+				expected: [{ ref: true, src: "[Outer [Inner]][ref]" }],
+			},
+			{
+				md: '[Outer [Inner]](<https://example.org/a b> "t")',
+				expected: [
+					{ ref: false, src: '[Outer [Inner]](<https://example.org/a b> "t")' },
+				],
+			},
+			{
+				md: "[Outer [Inner]()](https://outer.test)",
+				expected: [{ ref: false, src: "https://outer.test" }],
+			},
+			{
+				md: "> [label](\n> https://example.org)",
+				expected: [{ ref: false, src: "[label](\n> https://example.org)" }],
+			},
+			{
+				md: '> [Bracket [Link]](\n> <https://example.org/a b>\n> "title"\n> )',
+				expected: [
+					{
+						ref: false,
+						src: '[Bracket [Link]](\n> <https://example.org/a b>\n> "title"\n> )',
+					},
+				],
+			},
+			{
+				md: "> [label](\r\n> https://example.org)",
+				expected: [{ ref: false, src: "[label](\r\n> https://example.org)" }],
+			},
+			{
+				md: "[Outer [https://a.test]]()",
+				expected: [{ ref: false, src: "https://a.test" }],
+			},
+			{
+				md: "[outer [a]][b]\n\n[a]: https://a.test\n[b]: https://b.test",
+				expected: [
+					{ ref: true, src: "[a]" },
+					{ ref: true, src: "[b]" },
+				],
+			},
+			{
+				md: "[outer [a]][b](https://b.test)\n\n[a]: https://a.test",
+				expected: [
+					{ ref: true, src: "[a]" },
+					{ ref: false, src: "[b](https://b.test)" },
+				],
+			},
+			{
+				md: "[outer [a]][b]\n\n[b]: https://b.test",
+				expected: [{ ref: true, src: "[outer [a]][b]" }],
+			},
+			{
+				md: "[outer [a][b]][c]\n\n[b]: https://b.test\n[c]: https://c.test",
+				expected: [
+					{ ref: true, src: "[a][b]" },
+					{ ref: true, src: "[c]" },
+				],
+			},
+			{
+				md: "[outer [a][x]][b]\n\n[a]: https://a.test\n[b]: https://b.test",
+				expected: [{ ref: true, src: "[outer [a][x]][b]" }],
+			},
+			{
+				md: "[outer [a][]][b]\n\n[a]: https://a.test\n[b]: https://b.test",
+				expected: [
+					{ ref: true, src: "[a][]" },
+					{ ref: true, src: "[b]" },
+				],
+			},
+			{
+				md: "[outer [a]][b](https://b.test)\n\n[b]: https://ref-b.test",
+				expected: [
+					{ ref: true, src: "[outer [a]][b]" },
+					{ ref: false, src: "https://b.test" },
+				],
+			},
+			{
+				md: "[outer [a]][b](/b)",
+				expected: [{ ref: false, src: "[b](/b)" }],
+			},
+			{
+				md: "[x][b](/b)",
+				expected: [{ ref: false, src: "[b](/b)" }],
+			},
+			{
+				md: "[outer [a]][](/b)",
+				expected: [{ ref: false, src: "[](/b)" }],
+			},
+			{
+				md: "[x][](/b)",
+				expected: [{ ref: false, src: "[](/b)" }],
+			},
+			{
+				// Undefined reference images stay untouched across passes so image
+				// ranges stay consistent and bare text inside `![...]` is never
+				// promoted into a false link candidate.
+				md: "![[a]()][b][a]\n\n[a]: /a",
+				expected: [{ ref: true, src: "[a]" }],
+			},
+			{
+				md: "![https://a.test][b]",
+				expected: [],
+			},
+			{
+				// Linked inline images stay owned by `imageRanges`, so `linkCandidates`
+				// intentionally excludes the overlapping outer link.
+				md: "[![alt](/img)](/link)",
+				expected: [],
+			},
+			{
+				md: "[outer ![inner [a]](/img)](/outer)\n\n[a]: /a",
+				expected: [],
+			},
+			{
+				md: "[foo \\] bar]\n\n[foo \\] bar]: /esc",
+				expected: [{ ref: true, src: "[foo \\] bar]" }],
+			},
+			{
+				md: "[foo \\] bar][]\n\n[foo \\] bar]: /esc",
+				expected: [{ ref: true, src: "[foo \\] bar][]" }],
+			},
+			{
+				md: "[foo \\[ bar]\n\n[foo \\[ bar]: /esc",
+				expected: [{ ref: true, src: "[foo \\[ bar]" }],
+			},
+			{
+				// EasyMDE extracts `\[bar\]` as LaTeX display math before link parsing.
+				md: "[foo \\[bar\\]]\n\n[foo \\[bar\\]]: /esc",
+				expected: [],
+			},
+			{
+				// 500 astral code points = 1000 UTF-16 units: valid PHP reference label.
+				md: `[outer [${"😀".repeat(500)}]](/outer)\n\n[${"😀".repeat(500)}]: /inner`,
+				expected: [{ ref: true, src: `[${"😀".repeat(500)}]` }],
+			},
+			{
+				// Whitespace-padded shortcut label > 999 chars still resolves `[a]`.
+				md: `[${" ".repeat(1000)}a]\n\n[a]: /u`,
+				expected: [{ ref: true, src: `[${" ".repeat(1000)}a]` }],
+			},
+		];
+
+		for (const item of cases) {
+			const index = createEditorMarkdownBlockIndex(item.md);
+			expect(
+				(index.linkCandidates ?? []).map((candidate) => ({
+					ref: candidate.reference,
+					src: item.md.slice(candidate.from, candidate.to),
+				})),
+				item.md,
+			).toEqual(item.expected);
+		}
+
+		// Linear scaling on deeply nested balanced brackets (both Pass 1 and
+		// reference-aware re-parse).
+		const scalingCases: ReadonlyArray<
+			Readonly<{ expected: ReadonlyArray<string>; md: string }>
+		> = [
+			{
+				md: `${"[".repeat(5000)}a${"]".repeat(5000)}(https://example.test)`,
+				expected: [
+					`${"[".repeat(5000)}a${"]".repeat(5000)}(https://example.test)`,
+				],
+			},
+			{
+				md: `[a]: /a\n\n${"[".repeat(8000)}z${"]".repeat(8000)}`,
+				expected: [],
+			},
+			{
+				md: `[outer [a]][b]\n\n[a]: /a\n[b]: /b\n\n${"[".repeat(8000)}z${"]".repeat(8000)}`,
+				expected: ["[a]", "[b]"],
+			},
+		];
+		for (const item of scalingCases) {
+			const startMs = performance.now();
+			const deepIndex = createEditorMarkdownBlockIndex(item.md);
+			expect(performance.now() - startMs).toBeLessThan(1500);
+			expect(
+				(deepIndex.linkCandidates ?? []).map((c) => item.md.slice(c.from, c.to)),
+			).toEqual(item.expected);
+		}
+	});
+});

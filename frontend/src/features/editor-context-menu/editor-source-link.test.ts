@@ -2,14 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import { markdownLanguage } from "@codemirror/lang-markdown";
 
-import type { PreviewResponse, SafePreviewHtml } from "../../contracts/ports/preview-request";
 import { createEditorMarkdownBlockIndex as createProfiledMarkdownBlockIndex } from "./editor-markdown-block-index";
 import {
 	type EditorSourceLinkCandidate,
 	type EditorSourceLinkResolution,
 	findEditorSourceLink,
 } from "./editor-source-link";
-import { createEditorSourceLinkQuery } from "./editor-source-link-query";
 
 function selection(
 	start: number,
@@ -71,12 +69,10 @@ describe("findEditorSourceLink", () => {
 	);
 
 	it.each([
-		["https://example.test/bare", "https://example.test/bare"],
-		["person@example.test", "person@example.test"],
-		// PHP League\CommonMark EmailAutolinkParser leaves the `mailto:` prefix
-		// as plain text outside `<a>`, so only the rendered email range is owned.
-		["mailto:person@example.test", "person@example.test"],
-	] as const)("finds a bare GFM autolink candidate for %s", (source, expected) => {
+		"https://example.test/bare",
+		"person@example.test",
+		"mailto:person@example.test",
+	])("finds a bare GFM URL node for %s", (source) => {
 		const offset = source.indexOf("example") + 2;
 		const result = findEditorSourceLink({
 			blockIndex: createEditorMarkdownBlockIndex(source),
@@ -87,7 +83,7 @@ describe("findEditorSourceLink", () => {
 		expect(candidateOf(result)).toMatchObject({
 			kind: "link",
 			reference: false,
-			source: expected,
+			source,
 		});
 	});
 
@@ -447,9 +443,7 @@ describe("findEditorSourceLink", () => {
 		["https://example.test/bare", "candidate"],
 		["person@example.test", "candidate"],
 		["person@example.test/path", "candidate"],
-		// PHP EmailAutolinkParser leaves `mailto:` outside `<a>`: caret inside
-		// `mailto:` is plain text, while caret inside `person@example.test` owns the link.
-		["mailto:person@example.test", "none"],
+		["mailto:person@example.test", "candidate"],
 		["[标题][引用]", "none"],
 		["[标题][引用]\n\n[引用]: https://example.test", "candidate"],
 		["![image](https://image.test)", "none"],
@@ -561,273 +555,6 @@ describe("findEditorSourceLink", () => {
 			expect(longResult.status).toBe(expected);
 		},
 	);
-
-	it("rejects links in PHP-dropped extra GFM table body cells while keeping valid header and body cell links", () => {
-		for (const [label, source, token] of [
-			[
-				"inline link in extra body cell",
-				"| A |\n| --- |\n| 1 | [dropped](https://example.com) |",
-				"dropped",
-			],
-			[
-				"autolink in extra body cell",
-				"| A |\n| --- |\n| 1 | <https://example.com> |",
-				"example.com",
-			],
-			[
-				"bare GFM URL in extra body cell",
-				"| A |\n| --- |\n| 1 | https://example.com |",
-				"example.com",
-			],
-			[
-				"reference link in extra body cell",
-				"| A |\n| --- |\n| 1 | [dropped][ref] |\n\n[ref]: https://example.com",
-				"dropped",
-			],
-			[
-				"inline link in asymmetric 1-header / 2-separator table extra body cell",
-				"| A |\n| --- | --- |\n| 1 | [dropped](https://example.com) |",
-				"dropped",
-			],
-			[
-				"inline link in 0-col header table body cell",
-				"|\n| --- |\n| [dropped](https://example.com) |",
-				"dropped",
-			],
-			[
-				"inline link in blockquote-nested table extra body cell",
-				"> | A |\n> | --- |\n> | 1 | [dropped](https://example.com) |",
-				"dropped",
-			],
-		] as const) {
-			const result = findEditorSourceLink({
-				blockIndex: createEditorMarkdownBlockIndex(source),
-				selection: selection(source.indexOf(token) + 2),
-				source,
-			});
-			expect(result, label).toEqual({ status: "none" });
-		}
-
-		const validAndDropped =
-			"| [hdr](https://hdr.example) |\n| --- |\n| [kept](https://kept.example) | [dropped](https://dropped.example) |";
-		const blockIndex = createEditorMarkdownBlockIndex(validAndDropped);
-		expect(
-			candidateOf(
-				findEditorSourceLink({
-					blockIndex,
-					selection: selection(validAndDropped.indexOf("hdr") + 1),
-					source: validAndDropped,
-				}),
-			).source,
-		).toBe("[hdr](https://hdr.example)");
-		expect(
-			candidateOf(
-				findEditorSourceLink({
-					blockIndex,
-					selection: selection(validAndDropped.indexOf("kept") + 1),
-					source: validAndDropped,
-				}),
-			).source,
-		).toBe("[kept](https://kept.example)");
-		expect(
-			findEditorSourceLink({
-				blockIndex,
-				selection: selection(validAndDropped.indexOf("dropped") + 1),
-				source: validAndDropped,
-			}),
-		).toEqual({ status: "none" });
-	});
-
-	it("keeps links alongside inline math pipes in GFM tables and suppresses phantom URLs inside double-backslash-pipe table images", () => {
-		const sameCell = "| A |\n| - |\n| $a|b$ ![x](/i) [y](/y) |";
-		expect(
-			candidateOf(
-				findEditorSourceLink({
-					blockIndex: createEditorMarkdownBlockIndex(sameCell),
-					selection: selection(sameCell.indexOf("[y]") + 1),
-					source: sameCell,
-				}),
-			).source,
-		).toBe("[y](/y)");
-
-		const nextCell =
-			"| A | B |\n| --- | --- |\n| $a|b$ | [link](https://example.com) |";
-		expect(
-			candidateOf(
-				findEditorSourceLink({
-					blockIndex: createEditorMarkdownBlockIndex(nextCell),
-					selection: selection(nextCell.indexOf("link") + 2),
-					source: nextCell,
-				}),
-			).source,
-		).toBe("[link](https://example.com)");
-
-		const mathHeaderDrop =
-			"| $a|b$ |\n| --- |\n| 1 | [dropped](https://example.com) |";
-		expect(
-			findEditorSourceLink({
-				blockIndex: createEditorMarkdownBlockIndex(mathHeaderDrop),
-				selection: selection(mathHeaderDrop.indexOf("dropped") + 2),
-				source: mathHeaderDrop,
-			}),
-		).toEqual({ status: "none" });
-
-		// Track B #3: phantom URL fragments inside table images with `\\|` must return status "none".
-		for (const [label, source, probe] of [
-			[
-				"bare image destination with double-backslash pipe",
-				"| A |\n| --- |\n| ![a](https://example.com/a\\\\|b.png) |",
-				"example.com",
-			],
-			[
-				"angle-bracket image destination with double-backslash pipe",
-				"| A |\n| --- |\n| ![a](<https://example.com/a\\\\|b.png>) |",
-				"example.com",
-			],
-			[
-				"URL inside image alt with double-backslash pipe",
-				"| A |\n| --- |\n| ![https://example.com/a\\\\|b](https://example.com/x.png) |",
-				"example.com/a",
-			],
-			[
-				"URL inside image title with double-backslash pipe",
-				'| A |\n| --- |\n| ![a](https://example.com/x.png "https://example.com/a\\\\|b") |',
-				"example.com/a",
-			],
-		] as const) {
-			const idx = createEditorMarkdownBlockIndex(source);
-			expect(
-				findEditorSourceLink({
-					blockIndex: idx,
-					selection: selection(source.indexOf(probe) + 2),
-					source,
-				}),
-				label,
-			).toEqual({ status: "none" });
-		}
-
-		// Real link on the same table row after the `\\|` image remains selectable.
-		const imgAndRealLink =
-			"| A |\n| --- |\n| ![a](https://example.com/a\\\\|b.png) https://real.example.com |";
-		const imgAndRealLinkIndex = createEditorMarkdownBlockIndex(imgAndRealLink);
-		expect(
-			findEditorSourceLink({
-				blockIndex: imgAndRealLinkIndex,
-				selection: selection(22),
-				source: imgAndRealLink,
-			}),
-		).toEqual({ status: "none" });
-		expect(
-			candidateOf(
-				findEditorSourceLink({
-					blockIndex: imgAndRealLinkIndex,
-					selection: selection(imgAndRealLink.indexOf("real.example.com") + 2),
-					source: imgAndRealLink,
-				}),
-			).source,
-		).toBe("https://real.example.com");
-
-		// Track B #5: linked `\\|` table images and inline-math-pipe table images suppress phantom URLs.
-		for (const [label, source, probe] of [
-			[
-				"linked image with double-backslash pipe in alt",
-				"| A |\n| --- |\n| [![a\\\\|b](https://example.com/a.png)](https://example.com/x) |",
-				"example.com/a.png",
-			],
-			[
-				"image with inline dollar math pipe in title",
-				'| A |\n| --- |\n| ![alt](https://example.com/a.png "a $x|y$ b") |',
-				"example.com/a.png",
-			],
-			[
-				"image with inline dollar math pipe in alt",
-				"| A |\n| --- |\n| ![a $x|y$ b](https://example.com/a.png) |",
-				"example.com/a.png",
-			],
-			[
-				"image with inline paren math pipe in title",
-				'| A |\n| --- |\n| ![alt](https://example.com/a.png "a \\(x|y\\) b") |',
-				"example.com/a.png",
-			],
-		] as const) {
-			const idx = createEditorMarkdownBlockIndex(source);
-			expect(
-				findEditorSourceLink({
-					blockIndex: idx,
-					selection: selection(source.indexOf(probe) + 2),
-					source,
-				}),
-				label,
-			).toEqual({ status: "none" });
-		}
-
-		const positiveRealLink =
-			"| A |\n| --- |\n| ![a](https://example.com/a.png) https://example.com/ok |";
-		expect(
-			candidateOf(
-				findEditorSourceLink({
-					blockIndex: createEditorMarkdownBlockIndex(positiveRealLink),
-					selection: selection(positiveRealLink.indexOf("example.com/ok") + 2),
-					source: positiveRealLink,
-				}),
-			).source,
-		).toBe("https://example.com/ok");
-	});
-	// Round 30 Track A #3: PHP leaves trailing punctuation outside `<a>`, so a
-	// display-math-broken destination candidate must carry the exact consumed
-	// range for the real Preview-ownership lookup to resolve.
-	it.each([
-		["![[x](/u) $$m$$](https://example.)", "example", "https://example", "https://example"],
-		["![[x](/u) $$m$$](a@b.c.)", "b.c", "a@b.c", "mailto:a@b.c"],
-	] as const)("resolves the PHP-consumed range of %s through real Preview ownership", async (source, needle, expected, href) => {
-		const tail = (anchor: string) =>
-			`<p data-easymde-visual-block-id="b1">![<a href="/u">x</a></p>\n<div class="easymde-math easymde-math-block" data-easymde-visual-block-id="b2">$$m$$</div>\n<p data-easymde-visual-block-id="b3">](${anchor}.)</p>\n`;
-		const anchor = `<a href="${href}">${expected}</a>`;
-		// Verbatim `MarkdownRenderer::render_preview()` output for the trimmed
-		// candidate and, as a regression guard, for the old untrimmed one.
-		const phpPreview = new Map<string, string>([
-			[`${expected}\n\n${source}`, `<p data-easymde-visual-block-id="b0">${anchor}</p>\n${tail(anchor)}`],
-			[`${expected}.\n\n${source}`, `<p data-easymde-visual-block-id="b0">${anchor}.</p>\n${tail(anchor)}`],
-		]);
-		const caret = source.lastIndexOf(needle) + 1;
-		const blockIndex = createEditorMarkdownBlockIndex(source);
-		expect(candidateOf(findEditorSourceLink({ blockIndex, selection: selection(caret), source })).source).toBe(expected);
-		const session = createEditorSourceLinkQuery({
-			isCurrent: () => true,
-			notify: () => undefined,
-			parser: new DOMParser(),
-			previewPort: {
-				render: async (request): Promise<PreviewResponse> => ({
-					editMap: {
-						blocks: [
-							{ editable: true, endLine: 1, id: "b0", startLine: 0 },
-							{ editable: false, endLine: 3, id: "b1", startLine: 3 },
-							{ editable: false, endLine: 3, id: "b2", startLine: 3 },
-							{ editable: false, endLine: 3, id: "b3", startLine: 3 },
-						],
-						coordinate: "line",
-						signature: "php-preview",
-						version: 1,
-					},
-					features: {},
-					html: (phpPreview.get(request.markdown) ?? "") as SafePreviewHtml,
-				}),
-			},
-			requestFactory: ({ markdown }) => ({
-				codeTheme: "neutral-code",
-				customCssId: "",
-				markdown,
-				markdownTheme: "neutral-source",
-				postId: 0,
-				signature: "source-link",
-			}),
-		});
-		const binding = { menuIdentity: "menu-broken-destination", revision: 1, selection: selection(caret), source };
-		expect(session.ensure({ binding, blockIndex }).status).toBe("pending");
-		await Promise.resolve();
-		await Promise.resolve();
-		expect(session.peek(binding)).toEqual({ href, status: "ready" });
-	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

@@ -1,5 +1,5 @@
 import type { EditorContextMenuActionSession } from "./editor-context-menu-action-coordinator";
-import { insertParagraphRelative } from "./editor-context-menu-rules";
+import { insertParagraphRelativeAction } from "./editor-context-menu-text-actions";
 
 /**
  * Generated-content actions. Their lease is issued and released by the
@@ -153,7 +153,8 @@ export async function runGeneratedContextMenuAction(
 			return;
 		}
 		const value = session.readValue();
-		const position = generated.lease.target.original.fullRange.from;
+		const fullRange = generated.lease.target.original.fullRange;
+		const position = fullRange.from;
 		const blockIndex = session.currentBlockIndex();
 		if (null === blockIndex) {
 			report(
@@ -162,13 +163,15 @@ export async function runGeneratedContextMenuAction(
 			);
 			return;
 		}
-		const edit = insertParagraphRelative(
-			value,
-			{ direction: "none", end: position, start: position },
-			"insert-paragraph-above-generated" === id ? "before" : "after",
-			blockIndex
-		);
-		session.applyEdit(edit);
+		const relative =
+			"insert-paragraph-above-generated" === id ? "before" : "after";
+		insertParagraphRelativeAction(session, {
+			blockIndex,
+			relative,
+			selection: { direction: "none", end: position, start: position },
+			targetRange: { from: fullRange.from, to: fullRange.to },
+			value
+		});
 		return;
 	}
 	if ("delete-generated-content" === id) {

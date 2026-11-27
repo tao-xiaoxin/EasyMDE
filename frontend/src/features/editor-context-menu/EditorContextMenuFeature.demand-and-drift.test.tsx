@@ -3,6 +3,8 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { parseMarkdownImageScale } from '../image-scale/image-scale-contract';
+import type { EditorClipboardPort, EditorClipboardState } from '../../contracts/ports/editor-clipboard-port';
+import * as editorContextMenuModel from './editor-context-menu-model';
 import {
   EditorContextMenuFeature,
   type EditorContextMenuActionContext,
@@ -1767,6 +1769,101 @@ describe('EditorContextMenuFeature', () => {
     } finally {
       view.unmount();
       canvas.remove();
+    }
+  });
+
+  it('does not recreate the menu model on non-substantive clipboard transitions while updating immediately when paste availability changes', async () => {
+    const source = document.createElement('div');
+    source.contentEditable = 'true';
+    source.textContent = 'alpha';
+    layoutSurface(source);
+    document.body.append(source);
+
+    let currentClipboard: EditorClipboardState = { status: 'available' };
+    const clipboardListeners = new Set<() => void>();
+    const setClipboard = (next: EditorClipboardState): void => {
+      currentClipboard = next;
+      for (const listener of [...clipboardListeners]) listener();
+    };
+    const port: EditorClipboardPort = {
+      check: vi.fn(async () => {
+        setClipboard({ status: 'checking' });
+        await Promise.resolve();
+        setClipboard({ status: 'available' });
+        return { status: 'available' as const, text: 'clipboard' };
+      }),
+      dispose: vi.fn(),
+      getState: vi.fn(() => currentClipboard),
+      read: vi.fn().mockResolvedValue({ status: 'available', text: 'clipboard' }),
+      subscribe: vi.fn((listener: () => void) => {
+        clipboardListeners.add(listener);
+        return () => clipboardListeners.delete(listener);
+      }),
+      write: vi.fn().mockResolvedValue({ status: 'written' })
+    };
+    const modelSpy = vi.spyOn(editorContextMenuModel, 'createEditorContextMenuModel');
+
+    const view = render(
+      <EditorContextMenuFeature
+        clipboard={port}
+        direction="ltr"
+        labels={labels}
+        onAction={vi.fn()}
+        onFailure={vi.fn()}
+        source={{
+          boundaryElement: source,
+          element: source,
+          getSnapshot: () => ({
+            revision: 1,
+            selection: { direction: 'none', end: 0, start: 0 },
+            value: 'alpha'
+          }),
+          isEditable: () => true,
+          kind: 'source'
+        }}
+        visual={null}
+      />
+    );
+
+    try {
+      fireEvent.contextMenu(source, { clientX: 20, clientY: 30 });
+      const pasteItem = await screen.findByRole('menuitem', { name: 'Paste' });
+      expect(pasteItem.getAttribute('aria-disabled')).toBe('false');
+      await waitFor(() => expect(port.check).toHaveBeenCalledOnce());
+      const callsAfterOpen = modelSpy.mock.calls.length;
+      expect(callsAfterOpen).toBe(1);
+
+      // Non-substantive readable transitions must not rebuild the menu model.
+      setClipboard({ status: 'checking' });
+      setClipboard({ status: 'unknown' });
+      setClipboard({ status: 'checking' });
+      setClipboard({ status: 'available' });
+      expect(modelSpy).toHaveBeenCalledTimes(callsAfterOpen);
+      expect(pasteItem.getAttribute('aria-disabled')).toBe('false');
+
+      // Transitioning to empty must update immediately and disable Paste.
+      setClipboard({ status: 'empty' });
+      await waitFor(() => expect(pasteItem.getAttribute('aria-disabled')).toBe('true'));
+      expect(modelSpy).toHaveBeenCalledTimes(callsAfterOpen + 1);
+
+      // Transient checking while empty must not flicker Paste back on or rebuild the model.
+      setClipboard({ status: 'checking' });
+      expect(pasteItem.getAttribute('aria-disabled')).toBe('true');
+      expect(modelSpy).toHaveBeenCalledTimes(callsAfterOpen + 1);
+
+      // Transitioning to available re-enables Paste.
+      setClipboard({ status: 'available' });
+      await waitFor(() => expect(pasteItem.getAttribute('aria-disabled')).toBe('false'));
+      expect(modelSpy).toHaveBeenCalledTimes(callsAfterOpen + 2);
+
+      // Transitioning to unsupported disables Paste immediately.
+      setClipboard({ code: 'editor-clipboard-unsupported', status: 'unavailable' });
+      await waitFor(() => expect(pasteItem.getAttribute('aria-disabled')).toBe('true'));
+      expect(modelSpy).toHaveBeenCalledTimes(callsAfterOpen + 3);
+    } finally {
+      modelSpy.mockRestore();
+      view.unmount();
+      source.remove();
     }
   });
 });

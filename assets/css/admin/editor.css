@@ -1588,6 +1588,14 @@ body:has(.easymde-editor.is-immersive) .wrap {
     pointer-events: none;
 }
 
+.easymde-editor-context-menu__submenu-frame[data-easymde-context-menu-overlapped="true"] {
+    filter: drop-shadow(0 18px 36px rgba(15, 23, 42, .26));
+}
+
+.easymde-editor-context-menu__submenu-frame[data-easymde-context-menu-overlapped="true"]::after {
+    mask-image: none;
+}
+
 .easymde-editor-context-menu__submenu {
     --easymde-context-menu-background: #fff;
     --easymde-context-menu-border: #dfe4ea;
@@ -1679,6 +1687,25 @@ body:has(.easymde-editor.is-immersive) .wrap {
 
     .easymde-editor-context-menu::before {
         background: #fff;
+    }
+}
+
+@media (max-width: 640px) {
+    .easymde-editor-context-menu,
+    .easymde-editor-context-menu__submenu {
+        max-inline-size: min(280px, calc(100vw - 16px));
+        min-inline-size: min(168px, calc(100vw - 16px));
+    }
+
+    .easymde-editor-context-menu__button {
+        gap: 10px;
+        padding: 6px 8px;
+    }
+}
+
+@media (max-width: 480px) {
+    .easymde-editor-context-menu__shortcut {
+        display: none;
     }
 }
 

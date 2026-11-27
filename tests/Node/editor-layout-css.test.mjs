@@ -1102,6 +1102,43 @@ test('context submenu border joins the clipped tail without masking its glass or
   assertDeclaration(flipped, '--easymde-context-menu-join-side', '100%');
 });
 
+test('context menu CSS styles overlapped submenus and compacts narrow layouts', () => {
+  const overlappedFrame = cssRule(
+    css,
+    '.easymde-editor-context-menu__submenu-frame[data-easymde-context-menu-overlapped="true"]'
+  );
+  assertDeclaration(
+    overlappedFrame,
+    'filter',
+    'drop-shadow(0 18px 36px rgba(15, 23, 42, .26))'
+  );
+  const overlappedOutline = cssRule(
+    css,
+    '.easymde-editor-context-menu__submenu-frame[data-easymde-context-menu-overlapped="true"]::after'
+  );
+  assertDeclaration(overlappedOutline, 'mask-image', 'none');
+
+  const section7Start = css.indexOf('7. Unified Editor Context Menu');
+  const section8Start = css.indexOf('8. Immersive Font Selector Controls');
+  assert.ok(section7Start > -1 && section8Start > section7Start, 'Missing Section 7/8 CSS markers');
+  const section7Css = css.slice(section7Start, section8Start);
+
+  const narrow640 = cssBlock(section7Css, '@media (max-width: 640px)');
+  const narrowMenuSizing = cssRule(
+    narrow640,
+    '.easymde-editor-context-menu,\n    .easymde-editor-context-menu__submenu'
+  );
+  assertDeclaration(narrowMenuSizing, 'max-inline-size', 'min(280px, calc(100vw - 16px))');
+  assertDeclaration(narrowMenuSizing, 'min-inline-size', 'min(168px, calc(100vw - 16px))');
+  const narrowButton = cssRule(narrow640, '.easymde-editor-context-menu__button');
+  assertDeclaration(narrowButton, 'gap', '10px');
+  assertDeclaration(narrowButton, 'padding', '6px 8px');
+
+  const narrow480 = cssBlock(section7Css, '@media (max-width: 480px)');
+  const narrowShortcut = cssRule(narrow480, '.easymde-editor-context-menu__shortcut');
+  assertDeclaration(narrowShortcut, 'display', 'none');
+});
+
 test('immersive publish CSS preserves reference geometry without hiding the password field', () => {
   assert.match(
     css,

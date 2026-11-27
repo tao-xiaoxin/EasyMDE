@@ -318,7 +318,7 @@ function MenuLayerComponent({
             {'submenu' === item.kind && expanded
               ? createPortal(
                   <Fragment>
-                    {childPosition ? (
+                    {childPosition && !childPosition.overlapped ? (
                       <span
                         aria-hidden="true"
                         className="easymde-editor-context-menu__pointer"
@@ -382,6 +382,7 @@ function MenuLayerComponent({
   return (
     <div
       className="easymde-editor-context-menu__submenu-frame"
+      data-easymde-context-menu-overlapped={submenuPosition?.overlapped ? 'true' : undefined}
       data-easymde-context-menu-placement={submenuPosition?.placement}
       style={frameStyle}
     >

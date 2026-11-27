@@ -215,16 +215,137 @@ function styleHasImportantPadding(
 	return false;
 }
 
-function normalizeKeyframeName(raw: string): string {
-	const trimmed = raw.trim();
-	if (
-		trimmed.length >= 2 &&
-		((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-			(trimmed.startsWith("'") && trimmed.endsWith("'")))
-	) {
-		return trimmed.slice(1, -1);
+function isAsciiHexDigit(code: number): boolean {
+	return (
+		(code >= 0x30 && code <= 0x39) ||
+		(code >= 0x41 && code <= 0x46) ||
+		(code >= 0x61 && code <= 0x66)
+	);
+}
+
+function isCssWhitespaceCode(code: number): boolean {
+	return (
+		0x20 === code ||
+		0x09 === code ||
+		0x0a === code ||
+		0x0c === code ||
+		0x0d === code
+	);
+}
+
+function consumeCssEscape(
+	input: string,
+	backslashIndex: number,
+): Readonly<{ char: string; nextIndex: number }> | null {
+	const after = backslashIndex + 1;
+	if (after >= input.length) return null;
+	const firstCode = input.charCodeAt(after);
+	if (0x0a === firstCode || 0x0c === firstCode || 0x0d === firstCode) {
+		return null;
 	}
-	return trimmed;
+	if (isAsciiHexDigit(firstCode)) {
+		let end = after + 1;
+		const limit = Math.min(input.length, after + 6);
+		while (end < limit && isAsciiHexDigit(input.charCodeAt(end))) {
+			end += 1;
+		}
+		const codePoint = Number.parseInt(input.slice(after, end), 16);
+		if (end < input.length) {
+			const wsCode = input.charCodeAt(end);
+			if (0x0d === wsCode && end + 1 < input.length && 0x0a === input.charCodeAt(end + 1)) {
+				end += 2;
+			} else if (isCssWhitespaceCode(wsCode)) {
+				end += 1;
+			}
+		}
+		const decoded =
+			0 === codePoint ||
+			codePoint > 0x10ffff ||
+			(codePoint >= 0xd800 && codePoint <= 0xdfff)
+				? "\uFFFD"
+				: String.fromCodePoint(codePoint);
+		return { char: decoded, nextIndex: end };
+	}
+	const codePoint = input.codePointAt(after) ?? firstCode;
+	const char = String.fromCodePoint(codePoint);
+	return { char, nextIndex: after + char.length };
+}
+
+/**
+ * Parses a CSS `animation-name` serialized value list (CSS Syntax Level 3),
+ * decoding CSS escapes in both `<custom-ident>` (e.g. `pad\,override`,
+ * `\70 ad\,override`) and quoted `<string>` names while skipping only unquoted
+ * `none` keywords. Returns `null` on malformed input so callers fail closed.
+ */
+function parseCssAnimationNameList(raw: string): readonly string[] | null {
+	const names: string[] = [];
+	let index = 0;
+	const skipWhitespace = (): void => {
+		while (index < raw.length && isCssWhitespaceCode(raw.charCodeAt(index))) {
+			index += 1;
+		}
+	};
+	while (true) {
+		skipWhitespace();
+		if (index >= raw.length) return null;
+		const startCh = raw[index] ?? "";
+		if ("," === startCh) return null;
+		if ('"' === startCh || "'" === startCh) {
+			const quote = startCh;
+			index += 1;
+			let decoded = "";
+			let closed = false;
+			while (index < raw.length) {
+				const ch = raw[index] ?? "";
+				if (ch === quote) {
+					index += 1;
+					closed = true;
+					break;
+				}
+				if ("\\" === ch) {
+					const escaped = consumeCssEscape(raw, index);
+					if (!escaped) return null;
+					decoded += escaped.char;
+					index = escaped.nextIndex;
+					continue;
+				}
+				const code = ch.charCodeAt(0);
+				if (0x0a === code || 0x0c === code || 0x0d === code) return null;
+				decoded += ch;
+				index += 1;
+			}
+			if (!closed) return null;
+			names.push(decoded);
+		} else {
+			let decoded = "";
+			let hadEscape = false;
+			while (index < raw.length) {
+				const ch = raw[index] ?? "";
+				const code = ch.charCodeAt(0);
+				if ("," === ch || isCssWhitespaceCode(code)) break;
+				if ('"' === ch || "'" === ch) return null;
+				if ("\\" === ch) {
+					const escaped = consumeCssEscape(raw, index);
+					if (!escaped) return null;
+					decoded += escaped.char;
+					index = escaped.nextIndex;
+					hadEscape = true;
+					continue;
+				}
+				decoded += ch;
+				index += 1;
+			}
+			if (!decoded) return null;
+			if (hadEscape || "none" !== decoded.toLowerCase()) {
+				names.push(decoded);
+			}
+		}
+		skipWhitespace();
+		if (index >= raw.length) break;
+		if ("," !== raw[index]) return null;
+		index += 1;
+	}
+	return names;
 }
 
 function recordPaddingKeyframesRule(
@@ -250,9 +371,19 @@ function recordPaddingKeyframesRule(
 			}
 		}
 		if (!affectsPadding) return false;
-		const normalizedName = normalizeKeyframeName(rule.name ?? "");
-		if (!normalizedName) return true;
-		outKeyframeNames.add(normalizedName);
+		if ("string" !== typeof rule.name) return true;
+		outKeyframeNames.add(rule.name);
+		const trimmed = rule.name.trim();
+		if (
+			trimmed.startsWith('"') ||
+			trimmed.startsWith("'") ||
+			trimmed.includes("\\")
+		) {
+			const decoded = parseCssAnimationNameList(trimmed);
+			if (decoded && 1 === decoded.length && undefined !== decoded[0]) {
+				outKeyframeNames.add(decoded[0]);
+			}
+		}
 		return false;
 	} catch {
 		return true;
@@ -275,10 +406,10 @@ function elementUsesAnimatedPaddingKeyframes(
 	// Fail closed if animation-name cannot be inspected so padding animations never silently bypass effective pixels.
 	if (0 === animationNames.length) return true;
 	for (const rawList of animationNames) {
-		for (const rawToken of rawList.split(",")) {
-			const trimmed = rawToken.trim();
-			if (!trimmed || "none" === trimmed.toLowerCase()) continue;
-			if (paddingKeyframeNames.has(normalizeKeyframeName(trimmed))) {
+		const parsed = parseCssAnimationNameList(rawList);
+		if (null === parsed) return true;
+		for (const name of parsed) {
+			if (paddingKeyframeNames.has(name)) {
 				return true;
 			}
 		}

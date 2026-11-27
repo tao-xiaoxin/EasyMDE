@@ -52,7 +52,10 @@ async function assertOrdinarySideBySideSplit(page, label) {
       const sourceBox = source.getBoundingClientRect();
       const previewBox = preview.getBoundingClientRect();
       return {
-        hasModeClass: Array.from(owner.classList).some((name) => name.startsWith('is-mode-')),
+        hasModeClass: [
+          ...Array.from(owner.classList),
+          ...Array.from(workspace?.classList ?? [])
+        ].some((name) => name.startsWith('is-mode-')),
         pageOverflow: Math.max(
           0,
           document.documentElement.scrollWidth - document.documentElement.clientWidth

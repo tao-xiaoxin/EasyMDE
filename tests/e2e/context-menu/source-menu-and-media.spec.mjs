@@ -229,7 +229,9 @@ test.describe('Editor context menu production surfaces', () => {
 
     const strings = await enterImmersive(page);
     await page.getByRole('button', { name: strings.split, exact: true }).last().click();
-    await expect(page.locator('.easymde-editor.is-immersive.is-immersive-split')).toBeVisible();
+    await expect(
+      page.locator('#easymde-editor-root [data-easymde-editor-owner="react"].is-immersive.is-immersive-split')
+    ).toBeVisible();
     await exerciseMissingSourceActions(page, {
       markdown,
       mode: 'immersive-split-source',
@@ -533,7 +535,9 @@ test.describe('Editor context menu production surfaces', () => {
     const { fixtureImageUrl, markdown, source, sourceEditor } = await loadCanonicalFixture(page);
     const strings = await enterImmersive(page);
     await page.getByRole('button', { name: strings.split, exact: true }).last().click();
-    await expect(page.locator('.easymde-editor.is-immersive.is-immersive-split')).toBeVisible();
+    await expect(
+      page.locator('#easymde-editor-root [data-easymde-editor-owner="react"].is-immersive.is-immersive-split')
+    ).toBeVisible();
     await expect(source).toHaveValue(markdown);
     await assertSourceCategoryMatrix(page, {
       fixtureImageUrl,
@@ -951,7 +955,9 @@ test.describe('Editor context menu production surfaces', () => {
     await page.setViewportSize(desktop);
     const strings = await enterImmersive(page);
     await page.getByRole('button', { name: strings.split, exact: true }).last().click();
-    await expect(page.locator('.easymde-editor.is-immersive.is-immersive-split')).toBeVisible();
+    await expect(
+      page.locator('#easymde-editor-root [data-easymde-editor-owner="react"].is-immersive.is-immersive-split')
+    ).toBeVisible();
 
     for (const viewport of viewports) {
       await assertWritingViewportContextMenu(viewport, 'immersive-split');

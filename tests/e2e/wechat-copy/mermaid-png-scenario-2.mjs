@@ -281,7 +281,7 @@ export async function runMermaidPngScenario2({ baseURL, context, login, page, te
     });
 
     const wideOrdinaryUploadStart = uploadedPngs.length;
-    const wideViewportWidth = 2880;
+    const wideViewportWidth = 3200;
     await page.setViewportSize({ width: wideViewportWidth, height: 900 });
     await openEasyMdeNewPost(page);
     await assertPngConversionEnabled(page);

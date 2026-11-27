@@ -2706,9 +2706,18 @@ test.describe('EasyMDE editor workflows', () => {
     expect(sourceMode.preview.visible).toBe(false);
     expect(sourceMode.divider.exists).toBe(false);
 
-    const originalDir = await editor.getAttribute('dir');
+    const originalDirs = await editor.evaluate((root) => {
+      const workspace = root.querySelector('.easymde-workspace');
+      return {
+        editor: root.getAttribute('dir'),
+        workspace: workspace?.getAttribute('dir') ?? null
+      };
+    });
     try {
-      await editor.evaluate((root) => root.setAttribute('dir', 'rtl'));
+      await editor.evaluate((root) => {
+        root.setAttribute('dir', 'rtl');
+        root.querySelector('.easymde-workspace')?.setAttribute('dir', 'rtl');
+      });
       await editor.getByRole('button', { name: labels.split, exact: true }).click();
       await expect(editor).toHaveClass(/is-immersive-split/);
       for (const { viewport, overlay } of [
@@ -2723,10 +2732,15 @@ test.describe('EasyMDE editor workflows', () => {
         assertOpenSplit(await geometry(), 'rtl', { overlay });
       }
     } finally {
-      await editor.evaluate((root, dir) => {
-        if (null === dir) root.removeAttribute('dir');
-        else root.setAttribute('dir', dir);
-      }, originalDir);
+      await editor.evaluate((root, dirs) => {
+        if (null === dirs.editor) root.removeAttribute('dir');
+        else root.setAttribute('dir', dirs.editor);
+        const workspace = root.querySelector('.easymde-workspace');
+        if (workspace) {
+          if (null === dirs.workspace) workspace.removeAttribute('dir');
+          else workspace.setAttribute('dir', dirs.workspace);
+        }
+      }, originalDirs);
     }
 
     await page.setViewportSize(desktop);

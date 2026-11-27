@@ -34,6 +34,11 @@ import {
   classifyReadonlyPostRequest
 } from '../helpers/privacy-safe-browser-monitor.mjs';
 
+test.use({
+  trace: 'off',
+  video: 'off'
+});
+
 test.describe('EasyMDE editor workflows', () => {
   registerEditorWorkflowHooks();
 

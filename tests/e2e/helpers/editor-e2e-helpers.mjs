@@ -1,17 +1,18 @@
 import { Buffer } from 'node:buffer';
-import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
 import { runCleanupSteps } from '../support/run-cleanup-steps.mjs';
-
-const wpPath = process.env.EASYMDE_E2E_WP_PATH;
-
-const wpCli = process.env.EASYMDE_E2E_WP_CLI || 'wp';
+import {
+  createWpFixtureUser,
+  runWpCommand
+} from './wp-cli-runner.mjs';
 
 const adminUser = requiredEnvironment('WORDPRESS_ADMIN_USER');
 
-const adminPassword = requiredEnvironment('WORDPRESS_ADMIN_PASSWORD');
+// Enforce the repository's local credential contract before E2E runs; disposable
+// per-test fixture users still receive fresh per-run passwords via WP-CLI stdin.
+requiredEnvironment('WORDPRESS_ADMIN_PASSWORD');
 
 export const fullCapabilityMarkdown = readFileSync(
   new URL('../../../docs/examples/markdown-full-capability-test.md', import.meta.url),
@@ -143,28 +144,7 @@ export function expectRuntimeAssetRequests(requests, expectedKeys, origin) {
 }
 
 export function runWp(args, options = {}) {
-  if (!wpPath) {
-    throw new Error('EASYMDE_E2E_WP_PATH must point to the WordPress install under test.');
-  }
-
-  const result = spawnSync(
-    wpCli,
-    [...args, `--path=${wpPath}`, '--allow-root'],
-    {
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        WP_CLI_CACHE_DIR: process.env.WP_CLI_CACHE_DIR || '/tmp/easymde-wp-cli-cache'
-      },
-      ...options
-    }
-  );
-
-  if (result.status !== 0) {
-    throw new Error(`wp ${args.join(' ')} failed\n${result.stdout}\n${result.stderr}`);
-  }
-
-  return result.stdout.trim();
+  return runWpCommand(args, options);
 }
 
 export function testSlug(testInfo) {
@@ -172,23 +152,12 @@ export function testSlug(testInfo) {
 }
 
 function createUser(slug, role = 'administrator') {
-  const username = `${adminUser}-${slug}-user`;
-  const email = `${slug}@example.test`;
-  const userId = runWp([
-    'user',
-    'create',
-    username,
-    email,
-    `--role=${role}`,
-    `--user_pass=${adminPassword}`,
-    '--porcelain'
-  ]);
-
-  return {
-    id: userId,
-    username,
-    password: adminPassword
-  };
+  return createWpFixtureUser({
+    role,
+    runWpRef: runWp,
+    slug,
+    usernamePrefix: adminUser
+  });
 }
 
 function deleteUserContent(userId) {

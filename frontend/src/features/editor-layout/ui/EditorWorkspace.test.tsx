@@ -276,6 +276,27 @@ describe('EditorWorkspace', () => {
     expect(separator.getAttribute('aria-valuenow')).toBe('66');
     fireEvent.keyDown(separator, { key: 'Home' });
     expect(separator.getAttribute('aria-valuenow')).toBe('50');
+
+    // Leaving splitResizable mid-drag releases active listeners and body overrides.
+    fireEvent.pointerDown(separator, {
+      button: 0,
+      clientX: 500,
+      pointerId: 11,
+      pointerType: 'touch'
+    });
+    expect(document.body.style.userSelect).toBe('none');
+    view.rerender(
+      <EditorWorkspace
+        direction="rtl"
+        splitResizable={false}
+        splitResizeLabel="Resize editor and Preview"
+        source={<section>Source</section>}
+        preview={<section>Preview</section>}
+      />
+    );
+    expect(releasePointerCapture).toHaveBeenCalledWith(11);
+    expect(document.body.style.userSelect).toBe('');
+    expect(document.body.style.cursor).toBe('');
   });
 
   it('notifies the Preview owner after a split layout change', () => {

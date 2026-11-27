@@ -90,6 +90,10 @@ export function EditorWorkspace({
   );
 
   useEffect(() => {
+    if (!splitResizable) releaseDragRef.current?.();
+  }, [splitResizable]);
+
+  useEffect(() => {
     if (!statusDocument) return undefined;
     const publish = () =>
       setCharacterCount(

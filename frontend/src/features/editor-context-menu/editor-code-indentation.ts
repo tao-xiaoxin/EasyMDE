@@ -12,6 +12,7 @@ import { EditorState } from "@codemirror/state";
 
 export const MAX_EDITOR_CODE_INDENTATION_BYTES = 1_048_576;
 export const EDITOR_CODE_INDENTATION_PARSE_TIMEOUT_MS = 50;
+export const EDITOR_CODE_INDENTATION_MAX_PARSE_SLICES = 20;
 
 export type EditorCodeIndentationLineRange = Readonly<{
 	endLine: number;
@@ -334,11 +335,26 @@ export async function indentEditorCode({
 			doc: normalized,
 			extensions: [resolved.support, indentUnit.of("  ")],
 		});
-		const ensured = ensureSyntaxTree(
+		let ensured = ensureSyntaxTree(
 			state,
 			state.doc.length,
 			EDITOR_CODE_INDENTATION_PARSE_TIMEOUT_MS,
 		);
+		for (
+			let slice = 1;
+			(!ensured || ensured.length < state.doc.length) &&
+			slice < EDITOR_CODE_INDENTATION_MAX_PARSE_SLICES;
+			slice += 1
+		) {
+			if (!(await yieldForCancellation(signal))) {
+				return unavailable("editor-code-indentation-cancelled");
+			}
+			ensured = ensureSyntaxTree(
+				state,
+				state.doc.length,
+				EDITOR_CODE_INDENTATION_PARSE_TIMEOUT_MS,
+			);
+		}
 		if (!ensured || ensured.length < state.doc.length) {
 			return unavailable("editor-code-indentation-parse-timeout");
 		}

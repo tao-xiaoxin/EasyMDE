@@ -1416,10 +1416,11 @@ ordinary editor always keeps its fixed side-by-side split workspace across all
 viewport widths. Both ordinary and immersive split layouts remain side-by-side
 across all viewport widths with the immersive split divider preserved
 (single-pane presentation occurs only when the user selects Source-only or
-Preview-only inside Immersive Editing). At narrow widths (`<= 640px`), the
-Outline overlays the full-width workspace. A completed
-transition into editable immersive Preview, or a width crossing into narrow
-layout while Preview is already editable, closes that overlay once as local
+Preview-only inside Immersive Editing). At tablet-portrait widths (`<= 782px`,
+matching WordPress Core's 782px admin breakpoint and covering iPad mini
+portrait `744 × 1133`), the Outline overlays the full-width workspace. A
+completed transition into editable immersive Preview, or a width crossing into
+`<= 782px` while Preview is already editable, closes that overlay once as local
 presentation state. Pending or failed unlocks do not close it; a manual reopen
 at the same width remains open. These changes never write the Outline
 preference.

@@ -67,10 +67,11 @@ cancels any in-flight unlock cleanly without adding an edit or history step.
 
 In immersive Split mode, Source and Preview remain side-by-side with their
 resizable divider across all viewport widths unless you explicitly switch to
-Source-only or Preview-only. On narrow screens (`<= 640px`), the Outline opens
-as an overlay over the writing area. It closes when Preview becomes editable or
-an editable Preview is resized into a narrow screen. Its show control can reopen
-it without changing the saved Outline preference.
+Source-only or Preview-only. On tablet-portrait screens (`<= 782px`, such as
+iPad mini portrait `744 × 1133`), the Outline opens as a floating overlay over
+the writing area. It closes when Preview becomes editable or an editable Preview
+is resized into `<= 782px`. Its show control can reopen it without changing the
+saved Outline preference.
 
 ## Toolbar And Shortcuts
 

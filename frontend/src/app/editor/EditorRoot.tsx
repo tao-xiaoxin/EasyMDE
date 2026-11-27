@@ -580,9 +580,6 @@ export function EditorRoot(props: EditorRootProps) {
       ) : null}
       <EditorWorkspace
         direction={props.layout.direction}
-        {...(!visual.immersive
-          ? { mode: props.settings.general.editingMode }
-          : {})}
         onLayoutChange={visual.scheduleCurrentWechatPreviewPreparation}
         statusBarMode={props.settings.general.statusBarMode}
         {...(!visual.immersive && documentSession

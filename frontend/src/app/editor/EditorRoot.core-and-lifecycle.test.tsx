@@ -91,7 +91,9 @@ describe('EditorRoot core and lifecycle', () => {
     sentinel.focus();
     const previewView = render(<EditorRoot {...previewProps} />);
 
-    expect(document.activeElement).toBe(sentinel);
+    await waitFor(() =>
+      expect(document.activeElement?.closest('.cm-editor')).not.toBeNull()
+    );
     previewView.unmount();
     sentinel.remove();
   });

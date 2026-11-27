@@ -281,53 +281,21 @@ export async function runMermaidPngScenario2({ baseURL, context, login, page, te
     });
 
     const wideOrdinaryUploadStart = uploadedPngs.length;
-    await page.evaluate(() => window.sessionStorage.setItem(
-      'easymde-e2e-editing-mode',
-      'preview'
-    ));
-    const wideViewportWidth = 1920;
+    const wideViewportWidth = 2880;
     await page.setViewportSize({ width: wideViewportWidth, height: 900 });
     await openEasyMdeNewPost(page);
     await assertPngConversionEnabled(page);
-    const wideImmersiveLabels = await page.evaluate(
-      () => window.EasyMDEEditorRootBootstrap.strings.immersive
-    );
     const wideOrdinaryButton = page.locator('.easymde-toolbar-copy-action');
-    await expect(page.locator('.easymde-workspace')).toHaveClass(/is-mode-preview/, {
-      timeout: 30_000
-    });
-    await expect(page.locator('.easymde-pane-source')).toBeHidden({ timeout: 30_000 });
-    await page.locator('.easymde-toolbar-immersive-toggle').click();
-    await expect(page.getByRole('region', {
-      name: wideImmersiveLabels.immersive
-    })).toBeVisible({ timeout: 30_000 });
-    await page.getByRole('button', {
-      name: wideImmersiveLabels.editMode,
-      exact: true
-    }).click();
+    const wideSourcePane = page.locator('.easymde-pane-source');
     const wideSourceEditor = page.locator('.easymde-source-react .cm-content');
-    await expect(wideSourceEditor).toBeVisible({ timeout: 30_000 });
-    await wideSourceEditor.fill(fullMarkdown);
-    await expect(page.locator('#easymde-source')).toHaveValue(fullMarkdown, {
-      timeout: 30_000
-    });
-    await page.getByRole('button', {
-      name: wideImmersiveLabels.previewMode,
-      exact: true
-    }).click();
-    await expect(page.getByText(wideImmersiveLabels.previewContentLoaded))
-      .toBeVisible({ timeout: 30_000 });
-    await page.getByRole('button', {
-      name: wideImmersiveLabels.exit,
-      exact: true
-    }).click();
     const widePreview = page.locator(
       '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
     );
-    await expect(page.locator('.easymde-workspace')).toHaveClass(/is-mode-preview/, {
-      timeout: 30_000
-    });
-    await expect(page.locator('.easymde-pane-source')).toBeHidden({ timeout: 30_000 });
+    await expect(wideSourcePane).toBeVisible({ timeout: 30_000 });
+    await expect(wideSourceEditor).toBeVisible({ timeout: 30_000 });
+    await expect(widePreview).toBeVisible({ timeout: 30_000 });
+    await fillMarkdownAndWaitForPreview(page, fullMarkdown, 'Markdown 全量能力测试文档');
+    await expect(wideSourcePane).toBeVisible({ timeout: 30_000 });
     await expect(widePreview).toBeVisible({ timeout: 30_000 });
     await assertFullCapabilityPreview(widePreview);
     const wideSourceValue = await page.locator('#easymde-source').inputValue();
@@ -408,7 +376,7 @@ export async function runMermaidPngScenario2({ baseURL, context, login, page, te
     const wideOrdinaryPlacements = await readPayloadPngPlacements(
       page,
       wideOrdinaryPayload.html,
-      wideViewportWidth
+      1920
     );
     const wideGanttEvidence = wideOrdinaryPngEvidence[ganttUploadIndex];
     const wideGanttPlacement = wideOrdinaryPlacements.find(
@@ -463,7 +431,6 @@ export async function runMermaidPngScenario2({ baseURL, context, login, page, te
         previewScrollTop: root.scrollTop
       };
     })).toEqual(wideSourceScrollBeforeCopy);
-    await page.evaluate(() => window.sessionStorage.removeItem('easymde-e2e-editing-mode'));
 
     const ordinaryUploadCount = uploadedPngs.length;
     await page.setViewportSize({ width: 677, height: 900 });

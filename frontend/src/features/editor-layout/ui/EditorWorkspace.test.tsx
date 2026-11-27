@@ -16,6 +16,7 @@ describe('EditorWorkspace', () => {
 
     const workspace = view.container.querySelector('.easymde-workspace');
     expect(workspace).not.toBeNull();
+    expect(workspace?.className).toBe('easymde-workspace');
     expect(workspace?.children).toHaveLength(2);
     expect(workspace?.children[0]?.textContent).toBe('Source surface');
     expect(workspace?.children[1]?.textContent).toBe('Preview surface');
@@ -216,5 +217,43 @@ describe('EditorWorkspace', () => {
       />
     );
     expect(view.queryByRole('separator')).toBeNull();
+  });
+
+  it('omits mode classes on the workspace and preserves is-split-resizable only when resizable', () => {
+    const fixedView = render(
+      <EditorWorkspace
+        direction="ltr"
+        source={<section>Source</section>}
+        preview={<section>Preview</section>}
+      />
+    );
+    const fixedWorkspace = fixedView.container.querySelector('.easymde-workspace');
+    expect(fixedWorkspace?.className).toBe('easymde-workspace');
+    expect(
+      Array.from(fixedWorkspace?.classList ?? []).some((name) =>
+        name.startsWith('is-mode-')
+      )
+    ).toBe(false);
+    fixedView.unmount();
+
+    const resizableView = render(
+      <EditorWorkspace
+        direction="ltr"
+        splitResizable
+        splitResizeLabel="Resize editor and Preview"
+        source={<section>Source</section>}
+        preview={<section>Preview</section>}
+      />
+    );
+    const resizableWorkspace =
+      resizableView.container.querySelector('.easymde-workspace');
+    expect(resizableWorkspace?.className).toBe(
+      'easymde-workspace is-split-resizable'
+    );
+    expect(
+      Array.from(resizableWorkspace?.classList ?? []).some((name) =>
+        name.startsWith('is-mode-')
+      )
+    ).toBe(false);
   });
 });

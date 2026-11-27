@@ -373,17 +373,6 @@ function recordPaddingKeyframesRule(
 		if (!affectsPadding) return false;
 		if ("string" !== typeof rule.name) return true;
 		outKeyframeNames.add(rule.name);
-		const trimmed = rule.name.trim();
-		if (
-			trimmed.startsWith('"') ||
-			trimmed.startsWith("'") ||
-			trimmed.includes("\\")
-		) {
-			const decoded = parseCssAnimationNameList(trimmed);
-			if (decoded && 1 === decoded.length && undefined !== decoded[0]) {
-				outKeyframeNames.add(decoded[0]);
-			}
-		}
 		return false;
 	} catch {
 		return true;

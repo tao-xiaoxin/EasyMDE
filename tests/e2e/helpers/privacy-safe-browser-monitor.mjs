@@ -685,11 +685,15 @@ export function attachPrivacySafeBrowserMonitor(
     }
     // WordPress 7.1+ admin injects `@view-transition { navigation: auto; }`;
     // navigating from wp-admin to a frontend post that does not opt in aborts
-    // the browser cross-document transition with a stackless InvalidStateError.
+    // the browser cross-document transition with a stackless DOMException
+    // (`InvalidStateError: ViewTransition opt-in disabled` or `AbortError:
+    // Transition was skipped`).
     if (
-      'InvalidStateError' === rawName
-      && /ViewTransition opt-in disabled/u.test(rawMessage)
-      && '' === rawStack.trim()
+      '' === rawStack.trim()
+      && (
+        ('InvalidStateError' === rawName && /ViewTransition opt-in disabled/u.test(rawMessage))
+        || ('AbortError' === rawName && /Transition was skipped/u.test(rawMessage))
+      )
     ) {
       return;
     }

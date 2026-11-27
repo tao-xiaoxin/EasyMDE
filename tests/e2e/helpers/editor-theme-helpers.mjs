@@ -143,15 +143,9 @@ export async function measureArticleThemeGeometry(
       }
 
       const results = [];
-      for (const scrollPosition of scrollPositions) {
-      const maximumScrollTop = Math.max(
-        0,
-        previewCanvas.scrollHeight - previewCanvas.clientHeight
-      );
-      const targetScrollTop = 'top' === scrollPosition
-        ? 0
-        : ('middle' === scrollPosition ? maximumScrollTop / 2 : maximumScrollTop);
-      previewCanvas.scrollTop = targetScrollTop;
+      if (0 === scrollPositions.length) {
+        return results;
+      }
 
       const rootBox = root.getBoundingClientRect();
       const paneBox = pane.getBoundingClientRect();
@@ -166,19 +160,24 @@ export async function measureArticleThemeGeometry(
       const headingTextRange = document.createRange();
       headingTextRange.selectNodeContents(longHeading);
       const headingTextBox = headingTextRange.getBoundingClientRect();
-      const meaningfulElements = Array.from(root.querySelectorAll(
+      const meaningfulEntries = Array.from(root.querySelectorAll(
         'h1, h2, h3, h4, h5, h6, p, li, blockquote, img, figure, .easymde-toc'
-      )).filter((element) => {
-        if (element.closest('table')) return false;
+      )).reduce((entries, element) => {
+        if (element.closest('table')) return entries;
         const box = element.getBoundingClientRect();
-        return box.width > 0 && box.height > 0;
-      });
-      const topMeaningful = meaningfulElements.reduce((current, element) => {
-        if (!current) return element;
-        return element.getBoundingClientRect().top < current.getBoundingClientRect().top
-          ? element
-          : current;
+        if (box.width > 0 && box.height > 0) {
+          entries.push({ element, box });
+        }
+        return entries;
+      }, []);
+      const topMeaningfulEntry = meaningfulEntries.reduce((current, entry) => {
+        if (!current) return entry;
+        return entry.box.top < current.box.top ? entry : current;
       }, null);
+      const topMeaningful = topMeaningfulEntry?.element ?? null;
+      const topMeaningfulMarginTop = topMeaningful
+        ? getComputedStyle(topMeaningful).marginTop
+        : null;
       const headings = Array.from(root.querySelectorAll('h1, h2, h3, h4, h5, h6'));
       const headingParts = Array.from(root.querySelectorAll(
         'h1 .prefix, h2 .prefix, h3 .prefix, h4 .prefix, h5 .prefix, h6 .prefix, '
@@ -230,6 +229,14 @@ export async function measureArticleThemeGeometry(
             flexBasis
           };
         });
+      const decoration = {
+        headings: headings.length,
+        parts: headingParts.length,
+        pseudo: pseudoCount,
+        styledHeadings: styledHeadingCount,
+        visibleParts: decorationResults.length,
+        boxes: decorationResults
+      };
       const scrollElement = (element) => {
         const original = element.scrollLeft;
         element.scrollLeft = Number.MAX_SAFE_INTEGER;
@@ -316,6 +323,7 @@ export async function measureArticleThemeGeometry(
       });
       const rootScrollLeft = scrollElement(root);
       const paneScrollLeft = scrollElement(pane);
+      const articleStyle = getComputedStyle(root);
       const articleImages = Array.from(root.querySelectorAll('img'))
         .filter((image) => !image.closest('table'));
       const imageResults = articleImages.map((image) => {
@@ -346,9 +354,9 @@ export async function measureArticleThemeGeometry(
             width: rootBox.width,
             clientWidth: root.clientWidth,
             scrollWidth: root.scrollWidth,
-            boxSizing: getComputedStyle(root).boxSizing,
-            paddingLeft: getComputedStyle(root).paddingLeft,
-            paddingRight: getComputedStyle(root).paddingRight
+            boxSizing: articleStyle.boxSizing,
+            paddingLeft: articleStyle.paddingLeft,
+            paddingRight: articleStyle.paddingRight
           },
           parent: parentBox && parentStyle ? {
             tag: parent.tagName.toLowerCase(),
@@ -380,15 +388,8 @@ export async function measureArticleThemeGeometry(
                 return childBox.width <= box.width + tolerance;
               });
         });
-      const actualScrollTop = previewCanvas.scrollTop;
-      const scrollPositionValid = Math.abs(actualScrollTop - targetScrollTop) <= tolerance;
-      const placeholderVisible = Array.from(
-        document.querySelectorAll('.easymde-preview-pending')
-      ).some(isVisible);
-      const topMeaningfulBox = topMeaningful?.getBoundingClientRect();
       const editor = root.closest('[data-easymde-editor-owner="react"]');
       const immersiveCanvasStyle = getComputedStyle(previewCanvas);
-      const articleStyle = getComputedStyle(root);
       const usesSharedImmersiveGrid = articleStyle.backgroundImage.includes(
         'rgba(247, 250, 252, 0.92)'
       ) && articleStyle.backgroundImage.includes(
@@ -418,187 +419,206 @@ export async function measureArticleThemeGeometry(
           width: paneBox.width
         }
       };
-
-      results.push({
-        decoration: {
-          headings: headings.length,
-          parts: headingParts.length,
-          pseudo: pseudoCount,
-          styledHeadings: styledHeadingCount,
-          visibleParts: headingParts.filter(isVisible).length,
-          boxes: decorationResults
-        },
-        failures: [
-          ...(
-            rootBox.left < paneBox.left - tolerance
-            || rootBox.right > paneBox.right + tolerance
-              ? ['article-root-outside-preview-scrollport']
-              : []
-          ),
-          ...(pane.scrollWidth > pane.clientWidth + tolerance || paneScrollLeft > tolerance
-            ? ['preview-pane-horizontal-scroll']
-            : []),
-          ...(root.scrollWidth > root.clientWidth + tolerance || rootScrollLeft > tolerance
-            ? ['article-root-horizontal-scroll']
-            : []),
-          ...(meaningfulElements.some((element) => {
-            const box = element.getBoundingClientRect();
-            return box.left < rootBox.left - tolerance || box.right > rootBox.right + tolerance;
-          }) ? ['meaningful-content-outside-article'] : []),
-          ...(
-            'top' === scrollPosition
-            && topMeaningfulBox
-            && topMeaningfulBox.top < rootBox.top - tolerance
-              ? ['meaningful-content-above-article']
-              : []
-          ),
-          ...(
-            headingBox.left < rootBox.left - tolerance
-            || headingBox.right > rootBox.right + tolerance
-            || headingTextBox.left < rootBox.left - tolerance
-            || headingTextBox.right > rootBox.right + tolerance
-            || headingTextBox.top < headingBox.top - tolerance
-            || headingTextBox.bottom > headingBox.bottom + tolerance
-            || (
-              'visible' !== headingStyle.overflowX
-              && longHeading.scrollWidth > longHeading.clientWidth + tolerance
-            )
-            || (
-              'visible' !== headingStyle.overflowY
-              && longHeading.scrollHeight > longHeading.clientHeight + tolerance
-            )
-            || 'normal' !== headingStyle.whiteSpace
-              ? ['long-heading-clipped-or-unwrapped']
-              : []
-          ),
-          ...(outsideImage
-            ? [`image-outside-article-${JSON.stringify(outsideImage)}`]
-            : []),
-          ...(0 === imageResults.length ? ['article-image-unavailable'] : []),
-          ...(flexGridResults.every(Boolean) ? [] : ['flex-or-grid-descendant-cannot-shrink']),
-          ...(decorationResults.some(({ width, flexBasis }) => (
-            null !== flexBasis && width < flexBasis - tolerance
-          )) ? ['heading-decoration-shrunk'] : []),
-          ...(tableResults.every((result) => (
-            result.contained
-            && result.layoutPreserved
-            && result.localWhenNeeded
-            && result.ownerCount <= 1
-          )) ? [] : ['table-horizontal-scroll-owner-invalid']),
-          ...(codeResults.every((result) => (
-            result.localWhenNeeded
-            && result.ownerCount <= 1
-            && result.ownerIsExpected
-          )) ? [] : ['code-horizontal-scroll-owner-invalid']),
-          ...(scrollPositionValid ? [] : ['preview-scroll-position-invalid']),
-          ...(placeholderVisible ? ['preview-placeholder-visible'] : []),
-          ...(
-            isImmersivePreview
-            && 'rgb(246, 246, 248)' !== surfaces.canvasBackground
-              ? [`immersive-preview-canvas-background-${surfaces.canvasBackground}`]
-              : []
-          ),
-          ...(
-            isImmersivePreview
-            && !surfaces.articleIsDirectCanvasChild
-              ? ['immersive-preview-paper-not-direct-canvas-child']
-              : []
-          ),
-          ...(
-            isImmersivePreview
-            && '28px 20px' !== surfaces.canvasPadding
-              ? [`immersive-preview-canvas-padding-${surfaces.canvasPadding}`]
-              : []
-          ),
-          ...(
-            isImmersivePreview
-            && 'rgb(255, 255, 255)' !== surfaces.articleBackgroundColor
-              ? [`immersive-preview-paper-background-${surfaces.articleBackgroundColor}`]
-              : []
-          ),
-          ...(
-            isImmersivePreview
-            && '760px' !== surfaces.articleMaxWidth
-              ? [`immersive-preview-paper-max-width-${surfaces.articleMaxWidth}`]
-              : []
-          ),
-          ...(
-            isImmersivePreview
-            && 'rgba(15, 23, 42, 0.06) 0px 8px 28px 0px'
-              !== surfaces.articleBoxShadow
-              ? [`immersive-preview-paper-shadow-${surfaces.articleBoxShadow}`]
-              : []
-          ),
-          ...(
-            isImmersivePreview
-            && (
-              (window.innerWidth <= 760 && '520px' !== surfaces.articleMinHeight)
-              || (window.innerWidth > 760 && '680px' !== surfaces.articleMinHeight)
-            )
-              ? [`immersive-preview-paper-min-height-${surfaces.articleMinHeight}`]
-              : []
-          ),
-          ...(
-            isImmersivePreview
-            && '48px' !== surfaces.articleBorderTopLeftRadius
-              ? [`immersive-preview-paper-radius-${surfaces.articleBorderTopLeftRadius}`]
-              : []
-          ),
-          ...(
-            isImmersivePreview
-            && 'auto' !== surfaces.canvasOverflowY
-              ? [`immersive-preview-canvas-scroll-owner-${surfaces.canvasOverflowY}`]
-              : []
-          ),
-          ...(
-            isImmersivePreview
-            && surfaces.articleUsesSharedImmersiveGrid
-              ? ['immersive-preview-shared-article-grid-background']
-              : []
-          ),
-          ...(
-            null !== surfaces.expectedThemeBackgroundImage
-            && surfaces.articleBackgroundImage !== surfaces.expectedThemeBackgroundImage
-              ? ['theme-owned-background-not-preserved']
-              : []
-          ),
-          ...(
-            isImmersiveSplit
-            && 'rgb(255, 255, 255)' !== surfaces.paneBackground
-              ? [`immersive-split-pane-background-${surfaces.paneBackground}`]
-              : []
-          ),
-          ...(
-            (isOrdinary || isImmersiveSplit)
-            && (
-              'rgb(255, 255, 255)' !== surfaces.canvasBackground
-              || '0px' !== surfaces.canvasPadding
-              || 'rgb(255, 255, 255)' !== surfaces.articleBackgroundColor
-              || '0px' !== surfaces.articleBorderTopLeftRadius
-              || 'none' !== surfaces.articleBoxShadow
-              || 'none' !== surfaces.articleMaxWidth
-            )
-              ? [`continuous-preview-surface-invalid-${JSON.stringify(surfaces)}`]
-              : []
+      const preTopContentFailures = [
+        ...(
+          rootBox.left < paneBox.left - tolerance
+          || rootBox.right > paneBox.right + tolerance
+            ? ['article-root-outside-preview-scrollport']
+            : []
+        ),
+        ...(pane.scrollWidth > pane.clientWidth + tolerance || paneScrollLeft > tolerance
+          ? ['preview-pane-horizontal-scroll']
+          : []),
+        ...(root.scrollWidth > root.clientWidth + tolerance || rootScrollLeft > tolerance
+          ? ['article-root-horizontal-scroll']
+          : []),
+        ...(meaningfulEntries.some(({ box }) => (
+          box.left < rootBox.left - tolerance || box.right > rootBox.right + tolerance
+        )) ? ['meaningful-content-outside-article'] : [])
+      ];
+      const midLayoutFailures = [
+        ...(
+          headingBox.left < rootBox.left - tolerance
+          || headingBox.right > rootBox.right + tolerance
+          || headingTextBox.left < rootBox.left - tolerance
+          || headingTextBox.right > rootBox.right + tolerance
+          || headingTextBox.top < headingBox.top - tolerance
+          || headingTextBox.bottom > headingBox.bottom + tolerance
+          || (
+            'visible' !== headingStyle.overflowX
+            && longHeading.scrollWidth > longHeading.clientWidth + tolerance
           )
-        ],
-        scroll: {
-          actual: actualScrollTop,
-          maximum: maximumScrollTop,
-          position: scrollPosition
-        },
-        surfaces,
-        topContent: topMeaningful && topMeaningfulBox ? {
-          tag: topMeaningful.tagName.toLowerCase(),
-          top: topMeaningfulBox.top,
-          bottom: topMeaningfulBox.bottom,
-          gap: topMeaningfulBox.top - rootBox.top,
-          marginTop: getComputedStyle(topMeaningful).marginTop
-        } : null,
-        tableResults,
-        codeResults,
-        imageDiagnostic: outsideImage ?? null
-      });
+          || (
+            'visible' !== headingStyle.overflowY
+            && longHeading.scrollHeight > longHeading.clientHeight + tolerance
+          )
+          || 'normal' !== headingStyle.whiteSpace
+            ? ['long-heading-clipped-or-unwrapped']
+            : []
+        ),
+        ...(outsideImage
+          ? [`image-outside-article-${JSON.stringify(outsideImage)}`]
+          : []),
+        ...(0 === imageResults.length ? ['article-image-unavailable'] : []),
+        ...(flexGridResults.every(Boolean) ? [] : ['flex-or-grid-descendant-cannot-shrink']),
+        ...(decorationResults.some(({ width, flexBasis }) => (
+          null !== flexBasis && width < flexBasis - tolerance
+        )) ? ['heading-decoration-shrunk'] : []),
+        ...(tableResults.every((result) => (
+          result.contained
+          && result.layoutPreserved
+          && result.localWhenNeeded
+          && result.ownerCount <= 1
+        )) ? [] : ['table-horizontal-scroll-owner-invalid']),
+        ...(codeResults.every((result) => (
+          result.localWhenNeeded
+          && result.ownerCount <= 1
+          && result.ownerIsExpected
+        )) ? [] : ['code-horizontal-scroll-owner-invalid'])
+      ];
+      const surfaceFailures = [
+        ...(
+          isImmersivePreview
+          && 'rgb(246, 246, 248)' !== surfaces.canvasBackground
+            ? [`immersive-preview-canvas-background-${surfaces.canvasBackground}`]
+            : []
+        ),
+        ...(
+          isImmersivePreview
+          && !surfaces.articleIsDirectCanvasChild
+            ? ['immersive-preview-paper-not-direct-canvas-child']
+            : []
+        ),
+        ...(
+          isImmersivePreview
+          && '28px 20px' !== surfaces.canvasPadding
+            ? [`immersive-preview-canvas-padding-${surfaces.canvasPadding}`]
+            : []
+        ),
+        ...(
+          isImmersivePreview
+          && 'rgb(255, 255, 255)' !== surfaces.articleBackgroundColor
+            ? [`immersive-preview-paper-background-${surfaces.articleBackgroundColor}`]
+            : []
+        ),
+        ...(
+          isImmersivePreview
+          && '760px' !== surfaces.articleMaxWidth
+            ? [`immersive-preview-paper-max-width-${surfaces.articleMaxWidth}`]
+            : []
+        ),
+        ...(
+          isImmersivePreview
+          && 'rgba(15, 23, 42, 0.06) 0px 8px 28px 0px'
+            !== surfaces.articleBoxShadow
+            ? [`immersive-preview-paper-shadow-${surfaces.articleBoxShadow}`]
+            : []
+        ),
+        ...(
+          isImmersivePreview
+          && (
+            (window.innerWidth <= 760 && '520px' !== surfaces.articleMinHeight)
+            || (window.innerWidth > 760 && '680px' !== surfaces.articleMinHeight)
+          )
+            ? [`immersive-preview-paper-min-height-${surfaces.articleMinHeight}`]
+            : []
+        ),
+        ...(
+          isImmersivePreview
+          && '48px' !== surfaces.articleBorderTopLeftRadius
+            ? [`immersive-preview-paper-radius-${surfaces.articleBorderTopLeftRadius}`]
+            : []
+        ),
+        ...(
+          isImmersivePreview
+          && 'auto' !== surfaces.canvasOverflowY
+            ? [`immersive-preview-canvas-scroll-owner-${surfaces.canvasOverflowY}`]
+            : []
+        ),
+        ...(
+          isImmersivePreview
+          && surfaces.articleUsesSharedImmersiveGrid
+            ? ['immersive-preview-shared-article-grid-background']
+            : []
+        ),
+        ...(
+          null !== surfaces.expectedThemeBackgroundImage
+          && surfaces.articleBackgroundImage !== surfaces.expectedThemeBackgroundImage
+            ? ['theme-owned-background-not-preserved']
+            : []
+        ),
+        ...(
+          isImmersiveSplit
+          && 'rgb(255, 255, 255)' !== surfaces.paneBackground
+            ? [`immersive-split-pane-background-${surfaces.paneBackground}`]
+            : []
+        ),
+        ...(
+          (isOrdinary || isImmersiveSplit)
+          && (
+            'rgb(255, 255, 255)' !== surfaces.canvasBackground
+            || '0px' !== surfaces.canvasPadding
+            || 'rgb(255, 255, 255)' !== surfaces.articleBackgroundColor
+            || '0px' !== surfaces.articleBorderTopLeftRadius
+            || 'none' !== surfaces.articleBoxShadow
+            || 'none' !== surfaces.articleMaxWidth
+          )
+            ? [`continuous-preview-surface-invalid-${JSON.stringify(surfaces)}`]
+            : []
+        )
+      ];
+      const maximumScrollTop = Math.max(
+        0,
+        previewCanvas.scrollHeight - previewCanvas.clientHeight
+      );
+
+      for (const scrollPosition of scrollPositions) {
+        const targetScrollTop = 'top' === scrollPosition
+          ? 0
+          : ('middle' === scrollPosition ? maximumScrollTop / 2 : maximumScrollTop);
+        previewCanvas.scrollTop = targetScrollTop;
+
+        const actualScrollTop = previewCanvas.scrollTop;
+        const scrollPositionValid = Math.abs(actualScrollTop - targetScrollTop) <= tolerance;
+        const placeholderVisible = Array.from(
+          document.querySelectorAll('.easymde-preview-pending')
+        ).some(isVisible);
+        const currentRootBox = root.getBoundingClientRect();
+        const topMeaningfulBox = topMeaningful?.getBoundingClientRect();
+
+        results.push({
+          decoration,
+          failures: [
+            ...preTopContentFailures,
+            ...(
+              'top' === scrollPosition
+              && topMeaningfulBox
+              && topMeaningfulBox.top < currentRootBox.top - tolerance
+                ? ['meaningful-content-above-article']
+                : []
+            ),
+            ...midLayoutFailures,
+            ...(scrollPositionValid ? [] : ['preview-scroll-position-invalid']),
+            ...(placeholderVisible ? ['preview-placeholder-visible'] : []),
+            ...surfaceFailures
+          ],
+          scroll: {
+            actual: actualScrollTop,
+            maximum: maximumScrollTop,
+            position: scrollPosition
+          },
+          surfaces,
+          topContent: topMeaningful && topMeaningfulBox ? {
+            tag: topMeaningful.tagName.toLowerCase(),
+            top: topMeaningfulBox.top,
+            bottom: topMeaningfulBox.bottom,
+            gap: topMeaningfulBox.top - currentRootBox.top,
+            marginTop: topMeaningfulMarginTop
+          } : null,
+          tableResults,
+          codeResults,
+          imageDiagnostic: outsideImage ?? null
+        });
       }
       return results;
     },

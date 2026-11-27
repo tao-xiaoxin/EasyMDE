@@ -192,6 +192,13 @@ test.describe('EasyMDE editor workflows', () => {
       visualFingerprints.set('default', await articleVisualFingerprint(preview));
     }
 
+    let currentViewportWidth = null;
+    const setViewportWidth = async (width) => {
+      if (currentViewportWidth === width) return;
+      await page.setViewportSize({ width, height: 900 });
+      currentViewportWidth = width;
+    };
+
     for (const {
       id,
       label,
@@ -204,7 +211,16 @@ test.describe('EasyMDE editor workflows', () => {
         throw new Error(`${id}-article-theme-swatch-unavailable`);
       }
       const expectedSwatch = hexToRgbCss(swatch);
-      await page.setViewportSize({ width: 1200, height: 900 });
+      const themeBackgroundImagesByWidth = new Map();
+      const getThemeBackgroundImage = async (width) => {
+        if (themeBackgroundImagesByWidth.has(width)) {
+          return themeBackgroundImagesByWidth.get(width);
+        }
+        const backgroundImage = await readArticleThemeBackgroundImage(page, id);
+        themeBackgroundImagesByWidth.set(width, backgroundImage);
+        return backgroundImage;
+      };
+      await setViewportWidth(1200);
       await settingsTrigger.click();
       const settingsDialog = page.getByRole('dialog', {
         name: labels.editorSettings
@@ -227,7 +243,7 @@ test.describe('EasyMDE editor workflows', () => {
       ), cssUrl), {
         message: `${id} article stylesheet should finish loading`
       }).toBe(true);
-      expectedThemeBackgroundImage = await readArticleThemeBackgroundImage(page, id);
+      expectedThemeBackgroundImage = await getThemeBackgroundImage(1200);
       const ordinarySwatch = await articleSelect.locator(
         '.easymde-ordinary-select-swatch'
       ).evaluate((swatchElement) => getComputedStyle(swatchElement).backgroundColor);
@@ -315,8 +331,8 @@ test.describe('EasyMDE editor workflows', () => {
 
       let desktopDecoration;
       for (const width of [1200, 760, 680]) {
-        await page.setViewportSize({ width, height: 900 });
-        expectedThemeBackgroundImage = await readArticleThemeBackgroundImage(page, id);
+        await setViewportWidth(width);
+        expectedThemeBackgroundImage = await getThemeBackgroundImage(width);
         const decoration = await recordGeometry(
           id,
           `ordinary-${width}`,
@@ -328,8 +344,8 @@ test.describe('EasyMDE editor workflows', () => {
         }
       }
 
-      await page.setViewportSize({ width: 1200, height: 900 });
-      expectedThemeBackgroundImage = await readArticleThemeBackgroundImage(page, id);
+      await setViewportWidth(1200);
+      expectedThemeBackgroundImage = await getThemeBackgroundImage(1200);
       await page.getByRole('button', {
         name: labels.immersive.enter,
         exact: true
@@ -422,8 +438,8 @@ test.describe('EasyMDE editor workflows', () => {
         );
       }
 
-      await page.setViewportSize({ width: 680, height: 900 });
-      expectedThemeBackgroundImage = await readArticleThemeBackgroundImage(page, id);
+      await setViewportWidth(680);
+      expectedThemeBackgroundImage = await getThemeBackgroundImage(680);
       await setImmersiveSplitRatio(
         page,
         50,
@@ -445,7 +461,7 @@ test.describe('EasyMDE editor workflows', () => {
         ['top', 'middle', 'bottom'],
         desktopDecoration
       );
-      await page.setViewportSize({ width: 1200, height: 900 });
+      await setViewportWidth(1200);
       await page.getByRole('button', {
         name: labels.immersive.exit,
         exact: true
@@ -537,78 +553,88 @@ test.describe('EasyMDE editor workflows', () => {
     }
     let currentMarkupProfile = selectedTheme.markupProfile;
 
-    for (const width of [1200, 760, 680]) {
-      await page.setViewportSize({ width, height: 900 });
+    let currentViewportWidth = null;
+    for (const { id, label, markupProfile } of targets) {
+      if (1200 !== currentViewportWidth) {
+        await page.setViewportSize({ width: 1200, height: 900 });
+        currentViewportWidth = 1200;
+      }
 
-      for (const { id, label, markupProfile } of targets) {
-        await settingsTrigger.click();
-        const settingsDialog = page.getByRole('dialog', {
-          name: labels.editorSettings
-        });
-        const articleSelect = settingsDialog.getByRole('combobox', {
-          name: labels.articleTheme,
-          exact: true
-        });
-        const previousPreviewSignature = await readyPreviewSignature(preview);
-        const previewRequestsBefore = previewRequests.length;
-        const sameMarkupProfile = currentMarkupProfile === markupProfile;
-        await selectOrdinaryOption(page, articleSelect, label);
-        await expect(preview).toHaveClass(
-          new RegExp(`easymde-markdown-theme-${id}`)
+      await settingsTrigger.click();
+      const settingsDialog = page.getByRole('dialog', {
+        name: labels.editorSettings
+      });
+      const articleSelect = settingsDialog.getByRole('combobox', {
+        name: labels.articleTheme,
+        exact: true
+      });
+      const previousPreviewSignature = await readyPreviewSignature(preview);
+      const previewRequestsBefore = previewRequests.length;
+      const sameMarkupProfile = currentMarkupProfile === markupProfile;
+      await selectOrdinaryOption(page, articleSelect, label);
+      await expect(preview).toHaveClass(
+        new RegExp(`easymde-markdown-theme-${id}`)
+      );
+      await waitForArticleThemeTransition(
+        preview,
+        previousPreviewSignature,
+        currentMarkupProfile,
+        markupProfile,
+        `${id} ordinary preview refresh at 1200px`
+      );
+      await waitForBrowserPaint(page);
+      const requestEvidence = await previewRequests.evidence(
+        previewRequestsBefore,
+        id
+      );
+      const markdownMismatches = requestEvidence.successful.filter(
+        ({ markdownDigest }) => markdownDigest !== expectedMarkdownDigest
+      );
+      if (requestEvidence.invalid.length || requestEvidence.nonTarget.length) {
+        requestFailures.push(
+          `${id}/1200:invalid-preview-request-`
+            + JSON.stringify({
+              invalid: requestEvidence.invalid,
+              nonTarget: requestEvidence.nonTarget
+            })
         );
-        await waitForArticleThemeTransition(
-          preview,
-          previousPreviewSignature,
-          currentMarkupProfile,
-          markupProfile,
-          `${id} ordinary preview refresh at ${width}px`
+      }
+      if (markdownMismatches.length) {
+        requestFailures.push(
+          `${id}/1200:preview-request-markdown-mismatch-`
+            + JSON.stringify(markdownMismatches)
         );
-        await waitForBrowserPaint(page);
-        const requestEvidence = await previewRequests.evidence(
-          previewRequestsBefore,
-          id
+      }
+      if (
+        (sameMarkupProfile && requestEvidence.target.length)
+        || (
+          !sameMarkupProfile
+          && requestEvidence.failed.length
+          && !requestEvidence.nonceRetryIsValid
+        )
+      ) {
+        requestFailures.push(
+          `${id}/1200:unexpected-preview-request-failure-`
+            + JSON.stringify(requestEvidence.target)
         );
-        const markdownMismatches = requestEvidence.successful.filter(
-          ({ markdownDigest }) => markdownDigest !== expectedMarkdownDigest
+      }
+      if (requestEvidence.successful.length !== (sameMarkupProfile ? 0 : 1)) {
+        requestFailures.push(
+          `${id}/1200:preview-success-count-${requestEvidence.successful.length}`
+            + `-expected-${sameMarkupProfile ? 0 : 1}-observed-`
+            + JSON.stringify(requestEvidence.observed)
         );
-        if (requestEvidence.invalid.length || requestEvidence.nonTarget.length) {
-          requestFailures.push(
-            `${id}/${width}:invalid-preview-request-`
-              + JSON.stringify({
-                invalid: requestEvidence.invalid,
-                nonTarget: requestEvidence.nonTarget
-              })
-          );
+      }
+      currentMarkupProfile = markupProfile;
+      await page.keyboard.press('Escape');
+      await expect(settingsDialog).toHaveCount(0);
+
+      for (const width of [1200, 760, 680]) {
+        if (width !== currentViewportWidth) {
+          await page.setViewportSize({ width, height: 900 });
+          currentViewportWidth = width;
+          await waitForBrowserPaint(page);
         }
-        if (markdownMismatches.length) {
-          requestFailures.push(
-            `${id}/${width}:preview-request-markdown-mismatch-`
-              + JSON.stringify(markdownMismatches)
-          );
-        }
-        if (
-          (sameMarkupProfile && requestEvidence.target.length)
-          || (
-            !sameMarkupProfile
-            && requestEvidence.failed.length
-            && !requestEvidence.nonceRetryIsValid
-          )
-        ) {
-          requestFailures.push(
-            `${id}/${width}:unexpected-preview-request-failure-`
-              + JSON.stringify(requestEvidence.target)
-          );
-        }
-        if (requestEvidence.successful.length !== (sameMarkupProfile ? 0 : 1)) {
-          requestFailures.push(
-            `${id}/${width}:preview-success-count-${requestEvidence.successful.length}`
-              + `-expected-${sameMarkupProfile ? 0 : 1}-observed-`
-              + JSON.stringify(requestEvidence.observed)
-          );
-        }
-        currentMarkupProfile = markupProfile;
-        await page.keyboard.press('Escape');
-        await expect(settingsDialog).toHaveCount(0);
 
         const geometry = await preview.evaluate((root) => {
           const pane = root.closest('.easymde-pane-preview');

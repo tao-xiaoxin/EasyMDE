@@ -12,6 +12,7 @@ import {
 	assertSettingsCenterShellAbsent,
 	captureSettingsCenterNavigationEvidence,
 	captureSettingsCenterScreenshot,
+	collectSettingsCenterFirstPaintViewports,
 	matchesSettingsCenterFrame,
 	prepareSettingsCenterFirstPaintCase,
 	restoreSettingsCenterBrowserConditions,
@@ -35,34 +36,45 @@ test("does not paint the WordPress shell across desktop/mobile, cold/warm, norma
 	await cdp.send("Network.enable");
 	const evidence = [];
 	try {
+		for (const viewport of collectSettingsCenterFirstPaintViewports()) {
+			const expectedSize = {
+				width: viewport.width,
+				height: viewport.height,
+			};
+			await page.setViewportSize(expectedSize);
+			await page.goto(SETTINGS_CENTER_FIRST_PAINT_PATH);
+			await waitForSettingsCenterReady(page);
+			const settingsReference = await captureSettingsCenterScreenshot(
+				cdp,
+				decoder,
+				expectedSize,
+			);
+			await page.goto("/wp-admin/profile.php");
+			await expect(page.locator("#wpwrap")).toBeVisible();
+			const nativeWordPressFrame = await captureSettingsCenterScreenshot(
+				cdp,
+				decoder,
+				expectedSize,
+			);
+			expect(
+				matchesSettingsCenterFrame(nativeWordPressFrame, settingsReference),
+			).toBe(false);
+		}
+
 		for (const scenario of SETTINGS_CENTER_FIRST_PAINT_CASES) {
+			const expectedSize = {
+				width: scenario.viewport.width,
+				height: scenario.viewport.height,
+			};
+			await prepareSettingsCenterFirstPaintCase(page, cdp, scenario);
 			await withSettingsCenterBrowserConditions(
 				cdp,
 				scenario.profile,
 				scenario.cacheMode,
 				async () => {
-					await prepareSettingsCenterFirstPaintCase(page, cdp, scenario);
-					const expectedSize = {
-						width: scenario.viewport.width,
-						height: scenario.viewport.height,
-					};
-					const settingsReference = await captureSettingsCenterScreenshot(
-						cdp,
-						decoder,
-						expectedSize,
-					);
-					await page.goto("/wp-admin/profile.php");
-					await expect(page.locator("#wpwrap")).toBeVisible();
-					const nativeWordPressFrame = await captureSettingsCenterScreenshot(
-						cdp,
-						decoder,
-						expectedSize,
-					);
-					expect(
-						matchesSettingsCenterFrame(nativeWordPressFrame, settingsReference),
-					).toBe(false);
-					await page.goto(SETTINGS_CENTER_FIRST_PAINT_PATH);
-					await waitForSettingsCenterReady(page);
+					if (scenario.cacheMode.clearBeforeSetup) {
+						await cdp.send("Network.clearBrowserCache");
+					}
 
 					for (
 						let iteration = 0;

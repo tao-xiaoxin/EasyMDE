@@ -192,20 +192,43 @@ function createUser(slug, role = 'administrator') {
 }
 
 function deleteUserContent(userId) {
-  const postIds = runWp([
-    'post',
-    'list',
-    `--author=${userId}`,
-    '--post_type=post,page,attachment',
-    '--post_status=any',
-    '--format=ids'
-  ]);
-
-  if (postIds) {
-    runWp(['post', 'delete', ...postIds.split(/\s+/), '--force']);
+  const normalizedUserId = String(userId ?? '').trim();
+  if (!/^[1-9]\d*$/.test(normalizedUserId)) {
+    throw new Error(`Invalid E2E user ID for cleanup: ${String(userId)}`);
   }
 
-  runWp(['user', 'delete', userId, '--yes', '--reassign=1']);
+  const numericUserId = Number.parseInt(normalizedUserId, 10);
+  if (!Number.isSafeInteger(numericUserId) || numericUserId <= 1) {
+    throw new Error(`Refusing to delete E2E user ID: ${normalizedUserId}`);
+  }
+
+  runWp([
+    'eval',
+    [
+      `$user_id = (int) ${numericUserId};`,
+      'if ( $user_id <= 1 ) { fwrite( STDERR, "invalid-e2e-cleanup-user-id" ); exit( 1 ); }',
+      '$post_ids = get_posts( array(',
+      '  "author" => $user_id,',
+      '  "post_type" => array( "post", "page", "attachment" ),',
+      '  "post_status" => array_values( get_post_stati() ),',
+      '  "fields" => "ids",',
+      '  "posts_per_page" => -1,',
+      '  "no_found_rows" => true,',
+      '  "suppress_filters" => true',
+      ') );',
+      'foreach ( $post_ids as $post_id ) {',
+      '  if ( false === wp_delete_post( (int) $post_id, true ) ) {',
+      '    fwrite( STDERR, "failed-to-delete-post:" . (int) $post_id );',
+      '    exit( 1 );',
+      '  }',
+      '}',
+      'require_once ABSPATH . "wp-admin/includes/user.php";',
+      'if ( false === wp_delete_user( $user_id, 1 ) ) {',
+      '  fwrite( STDERR, "failed-to-delete-user:" . $user_id );',
+      '  exit( 1 );',
+      '}'
+    ].join(' ')
+  ]);
 }
 
 export async function login(page, user) {

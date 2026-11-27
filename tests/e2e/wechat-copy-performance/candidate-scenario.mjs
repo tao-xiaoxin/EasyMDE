@@ -195,7 +195,7 @@ export async function runCandidateCaptureScenario({ baseURL, context, createOwne
 			page,
 			testInfo,
 			{
-				capture: page.locator(".easymde-immersive-preview-canvas").first(),
+				capture: page.locator('[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas'),
 				markers: page
 					.locator(previewSelector)
 					.locator('input[type="checkbox"]'),
@@ -227,7 +227,7 @@ export async function runCandidateCaptureScenario({ baseURL, context, createOwne
 					sourceRestorePhase = { ...phase, restored };
 				},
 				peer: { selector: ".easymde-source-react .cm-scroller" },
-				scrollRootSelector: ".easymde-immersive-preview-canvas",
+				scrollRootSelector: '[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas',
 				stem: "source-task",
 			},
 		);

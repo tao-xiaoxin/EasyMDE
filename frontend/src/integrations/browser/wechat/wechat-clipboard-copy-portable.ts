@@ -6,6 +6,7 @@ import type {
 } from "./wechat-clipboard-copy-transaction";
 import type { WechatDimensionSemanticsContext } from "./wechat-dimension-semantics";
 import { preparedLayoutSignature } from "./wechat-fidelity-signature";
+import type { MermaidContentBoxLease } from "./wechat-mermaid-content-box";
 import { WECHAT_CLIPBOARD_TRANSACTION_TIMEOUT_MS } from "./wechat-png-conversion-policy";
 import {
 	type PreparedClipboardPayload,
@@ -65,6 +66,8 @@ export function createPortableCopyTransaction(
 		prepared: PreparedClipboardPayload;
 	} | null = null;
 	let disposePortableActiveOwner: (() => void) | undefined;
+	let heldPortableContentBoxes: MermaidContentBoxLease | null = null;
+	let releasePortableContentBoxes: (() => void) | undefined;
 	let portableMeasurement: WechatPreviewMeasurementLease | null = null;
 	let portableDimensionSemantics: WechatDimensionSemanticsContext | null = null;
 	let portableFidelitySignature: string | null = null;
@@ -72,6 +75,19 @@ export function createPortableCopyTransaction(
 		typeof createWechatTableNativeGridGuard
 	> | null = null;
 	let portableTransactionOpen = true;
+
+	const adoptPortableContentBoxes = (
+		boxes: MermaidContentBoxLease | null | undefined,
+	): void => {
+		if (!boxes || heldPortableContentBoxes === boxes) return;
+		if (!portableTransactionOpen) {
+			throw new Error("wechat-copy-cancelled");
+		}
+		const release = boxes.acquire();
+		releasePortableContentBoxes?.();
+		heldPortableContentBoxes = boxes;
+		releasePortableContentBoxes = release;
+	};
 
 	const disposePortablePreparation = (): void => {
 		const owned = portablePreparation;
@@ -182,6 +198,7 @@ export function createPortableCopyTransaction(
 				if (!portableTransactionOpen) {
 					throw new Error("wechat-copy-cancelled");
 				}
+				adoptPortableContentBoxes(prepared.contentBoxes);
 				portablePreparation = {
 					preview: preparedPreview,
 					prepared,
@@ -204,7 +221,9 @@ export function createPortableCopyTransaction(
 			(signature) => {
 				portableFidelitySignature = signature;
 			},
+			adoptPortableContentBoxes,
 		).then((prepared) => {
+			adoptPortableContentBoxes(prepared.contentBoxes);
 			portablePrepared = prepared;
 			return prepared.promise;
 		});
@@ -286,9 +305,13 @@ export function createPortableCopyTransaction(
 		disposePortablePreparation();
 		const cleanupActiveOwner = disposePortableActiveOwner;
 		disposePortableActiveOwner = undefined;
+		const releaseContentBoxes = releasePortableContentBoxes;
+		heldPortableContentBoxes = null;
+		releasePortableContentBoxes = undefined;
 		portableMeasurement = null;
 		portableDimensionSemantics = null;
 		cleanupActiveOwner?.();
+		releaseContentBoxes?.();
 	};
 
 	return {

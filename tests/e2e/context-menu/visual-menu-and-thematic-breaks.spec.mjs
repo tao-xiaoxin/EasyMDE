@@ -4,10 +4,9 @@ import {
   assertSourceExactValue,
   expectMenuItemState,
   loadCanonicalFixture,
-  login,
+  loginAndOpenNewPost,
   menuSelector,
   occurrenceOffset,
-  openNewPost,
   openRootSubmenu,
   openSourceNativeMenu,
   replaceSourceWithNativeInput,
@@ -48,8 +47,7 @@ test.use({
 
 test.describe('Editor context menu production surfaces', () => {
   test('accepts short-document Visual list Cut through accepted Preview and native Undo', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, source } = await loadCanonicalFixture(page);
     const full = await enterFullVisual(page);
     const selectedText = '前端开发';
@@ -72,8 +70,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('accepts long-document (>160-block) Visual list Cut through accepted Preview and native Undo', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, source } = await loadCanonicalFixture(page, 2);
     // Two canonical fixtures form a long (>160-block) document; ADR-002 keeps
     // it one unified, fully live ProseMirror surface.
@@ -139,8 +136,7 @@ test.describe('Editor context menu production surfaces', () => {
         const observations = {};
         let phase = 'setup';
         try {
-          await login(page);
-          await openNewPost(page);
+          await loginAndOpenNewPost(page);
           const expectedBuild = process.env.EASYMDE_E2E_EXPECT_EDITOR_BUILD;
           if (expectedBuild) {
             await expect.poll(() => page.evaluate(() => [...new Set(performance.getEntriesByType('resource')
@@ -237,8 +233,7 @@ test.describe('Editor context menu production surfaces', () => {
     const matrixSuffix = 'short' === size ? 'full' : 'windowed';
     for (const group of ['text', 'list', 'link', 'cross-heading', 'image', 'table']) {
       test(`accepts ${size}-document Visual ${group} actions and history through formal Preview re-entry`, async ({ page }) => {
-        await login(page);
-        await openNewPost(page);
+        await loginAndOpenNewPost(page);
         const { markdown, source } = await loadCanonicalFixture(page, 'short' === size ? 1 : 2);
         const visual = await enterFullVisual(page);
         await expectUnifiedVisualSurface(visual.visualEditor, 'long' === size ? 160 : 0);
@@ -250,8 +245,7 @@ test.describe('Editor context menu production surfaces', () => {
   }
 
   test('retains the same document and root when a short document grows past 160 blocks in the unified Visual editor and through formal Preview re-entry', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, preview, source, sourceEditor } = await loadCanonicalFixture(page);
     const liveRootSelector = '#easymde-editor-root:has(> [data-easymde-editor-owner="react"])';
     const root = await page.locator(liveRootSelector).elementHandle();
@@ -281,8 +275,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('accepts a Full Visual selection spanning text and an inline formula without exposing object actions', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, source } = await loadCanonicalFixture(page);
     const full = await enterFullVisual(page);
     await waitForVisualPreviewAccepted(full.visualEditor, 'mixed-formula-before');
@@ -336,8 +329,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('inventories body, text, heading, link, image, table, list, code, math, and Mermaid in full Visual', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, source } = await loadCanonicalFixture(page);
     const { visualEditor } = await enterFullVisual(page);
     await expect(source).toHaveValue(markdown);
@@ -346,15 +338,14 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('keeps the context menu usable on a long-document (>160-block) Visual surface after two canonical fixtures', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, source } = await loadCanonicalFixture(page, 2);
     const { visualEditor } = await enterFullVisual(page);
     await expect(source).toHaveValue(markdown);
     // ADR-002: two canonical fixtures stay one unified, fully live surface.
     await expectUnifiedVisualSurface(visualEditor, 160);
 
-    const canvas = page.locator('.easymde-immersive-preview-canvas');
+    const canvas = page.locator('[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas');
     await canvas.evaluate((element) => {
       element.scrollTop = 0;
       element.dispatchEvent(new Event('scroll', { bubbles: true }));
@@ -383,8 +374,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('inserts a paragraph above a standalone thematic break without changing its Markdown marker', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const markdown = '# prefix\n  ---  \nsuffix';
     const source = page.locator('#easymde-source');
     const sourceEditor = page.locator('.easymde-source-react .cm-content');
@@ -411,8 +401,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('inserts above a thematic break from Full Visual through the same source owner', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const markdown = '# prefix\n\n---\n\nsuffix';
     const source = page.locator('#easymde-source');
     const sourceEditor = page.locator('.easymde-source-react .cm-content');
@@ -457,8 +446,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('deletes a standalone thematic break from ordinary and immersive split Source with Undo', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const markdown = 'before\n\n  ---  \nafter';
     const expected = 'before\n\n\nafter';
     const source = page.locator('#easymde-source');
@@ -475,7 +463,7 @@ test.describe('Editor context menu production surfaces', () => {
 
     const strings = await enterImmersive(page);
     await page.getByRole('button', { name: strings.split, exact: true }).last().click();
-    await expect(page.locator('.easymde-editor.is-immersive.is-immersive-split')).toBeVisible();
+    await expect(page.locator('[data-easymde-editor-owner="react"].easymde-editor.is-immersive.is-immersive-split')).toBeVisible();
     sourceEditor = page.locator('.easymde-source-react .cm-content').last();
     await replaceSourceWithNativeInput(page, sourceEditor, source, markdown, 'split-source-thematic-break-input');
     await waitForSourceExactValue(source, markdown, 'immersive-split-source-thematic-break-before');
@@ -489,8 +477,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('deletes a standalone thematic break from Full Visual with Undo', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const markdown = 'before\n\n  ---  \nafter';
     const expected = 'before\n\n\nafter';
     const source = page.locator('#easymde-source');
@@ -515,8 +502,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('deletes a standalone thematic break from a long-document (>160-block) Visual surface with Undo', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const leading = Array.from(
       { length: 220 },
       (_, index) => `long paragraph ${index}`
@@ -537,7 +523,7 @@ test.describe('Editor context menu production surfaces', () => {
     const full = await enterFullVisual(page);
     // ADR-002: the synthetic long source stays one unified, fully live surface.
     await expectUnifiedVisualSurface(full.visualEditor, 160);
-    const canvas = page.locator('.easymde-immersive-preview-canvas');
+    const canvas = page.locator('[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas');
     await canvas.evaluate((element) => {
       element.scrollTop = element.scrollHeight;
       element.dispatchEvent(new Event('scroll', { bubbles: true }));
@@ -566,8 +552,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('deletes a long-document (>160-block) Visual thematic break through native Backspace and restores Undo/Redo selection', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, preview, source, sourceEditor } = await loadCanonicalFixture(page);
     const longMarkdown = `${markdown}\n${markdown}`;
     await replaceSourceWithNativeInput(page, sourceEditor, source, longMarkdown, 'long-hr-fixture-input');

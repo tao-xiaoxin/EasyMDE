@@ -94,8 +94,11 @@ export function occurrenceOffset(source, value, occurrence = 0) {
   return offset;
 }
 
-export async function login(page) {
-  await page.goto('/wp-login.php');
+export async function login(page, { redirectTo } = {}) {
+  const loginUrl = typeof redirectTo === 'string' && redirectTo.length > 0
+    ? `/wp-login.php?redirect_to=${encodeURIComponent(redirectTo)}`
+    : '/wp-login.php';
+  await page.goto(loginUrl);
   await page.locator('#loginform').evaluate((form, credentials) => {
     const username = form.elements.namedItem('log');
     const password = form.elements.namedItem('pwd');
@@ -110,6 +113,13 @@ export async function login(page) {
     form.requestSubmit(submit);
   }, { password: adminPassword, username: adminUser });
   await expect(page.locator('#wpadminbar')).toBeVisible();
+  await page.waitForLoadState('load');
+  if (!redirectTo) {
+    // WordPress 7.1+ Dashboard triggers post-load emoji/thickbox asset fetches;
+    // wait briefly when landing on Dashboard so subsequent navigation does not
+    // abort in-flight same-origin scripts under privacy-safe monitoring.
+    await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
+  }
 }
 
 /**
@@ -181,6 +191,11 @@ export async function ensureSecondWordPressUser(page) {
 
 export async function openNewPost(page) {
   await page.goto('/wp-admin/post-new.php');
+  await expect(page.locator('#easymde-editor')).toBeVisible();
+}
+
+export async function loginAndOpenNewPost(page) {
+  await login(page, { redirectTo: '/wp-admin/post-new.php' });
   await expect(page.locator('#easymde-editor')).toBeVisible();
 }
 
@@ -943,7 +958,7 @@ export async function startContextMenuDiagnostics(page, categoryId, targetMetada
       if (selectionApiEvents.length > 64) selectionApiEvents.shift();
     };
     const canvasScrollState = () => {
-      const canvas = document.querySelector('.easymde-immersive-preview-canvas');
+      const canvas = document.querySelector('[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas');
       return canvas
         ? { left: canvas.scrollLeft, top: canvas.scrollTop }
         : null;
@@ -971,7 +986,7 @@ export async function startContextMenuDiagnostics(page, categoryId, targetMetada
       };
     };
     const windowGeometryState = () => {
-      const canvas = document.querySelector('.easymde-immersive-preview-canvas');
+      const canvas = document.querySelector('[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas');
       if (!canvas) return null;
       const scrollTop = canvas.scrollTop;
       // ADR-002: every top-level ProseMirror block is live; the retired
@@ -1178,7 +1193,7 @@ export async function startContextMenuDiagnostics(page, categoryId, targetMetada
       stop: null,
       targetMetadata: currentTargetMetadata,
       windowEvents,
-      workspaceElement: document.querySelector('.easymde-workspace')
+      workspaceElement: document.querySelector('[data-easymde-editor-owner="react"] .easymde-workspace')
     };
     const observer = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
@@ -1255,7 +1270,7 @@ export async function startContextMenuDiagnostics(page, categoryId, targetMetada
       });
     }
     state.preparationObserver = preparationObserver;
-    const canvas = document.querySelector('.easymde-immersive-preview-canvas');
+    const canvas = document.querySelector('[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas');
     const canvasObserver = canvas
       ? new MutationObserver(() => {
           appendWindowEvent({ state: windowGeometryState(), type: 'canvas-child-list' });
@@ -1386,7 +1401,7 @@ export async function readContextMenuDiagnostics(
       : null;
     const currentSourceElement = document.querySelector('.easymde-source-react .cm-content');
     const sourceValueElement = document.querySelector('#easymde-source');
-    const currentWorkspaceElement = document.querySelector('.easymde-workspace');
+    const currentWorkspaceElement = document.querySelector('[data-easymde-editor-owner="react"] .easymde-workspace');
     const editorRoot = document.querySelector('[data-easymde-editor-owner="react"]');
     const previewSurface = document.querySelector('[data-easymde-preview-html-sink="1"]');
     const previewError = previewSurface?.getAttribute('data-easymde-preview-error');
@@ -1481,18 +1496,18 @@ export async function readContextMenuDiagnostics(
         : [],
       target: state?.targetMetadata ?? null,
       scrollOffsets: {
-        canvas: scrollState(document.querySelector('.easymde-immersive-preview-canvas')),
+        canvas: scrollState(document.querySelector('[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas')),
         cmScroller: scrollState(document.querySelector('.cm-scroller')),
         document: {
           left: document.documentElement.scrollLeft,
           top: document.documentElement.scrollTop
         },
-        preview: scrollState(document.querySelector('.easymde-pane-preview')),
+        preview: scrollState(document.querySelector('[data-easymde-editor-owner="react"] .easymde-pane-preview')),
         window: {
           left: globalThis.scrollX,
           top: globalThis.scrollY
         },
-        workspace: scrollState(document.querySelector('.easymde-workspace'))
+        workspace: scrollState(document.querySelector('[data-easymde-editor-owner="react"] .easymde-workspace'))
       },
       scrollEvents: Array.isArray(state?.events) ? state.events.slice() : [],
       steps: stepStates,
@@ -1660,7 +1675,7 @@ async function readRootSubmenuGeometry(page, itemId) {
       item: describe(item),
       root: describe(root),
       viewport: describe(document.querySelector('[data-easymde-context-menu-viewport="true"]')),
-      workspace: describe(document.querySelector('.easymde-workspace'))
+      workspace: describe(document.querySelector('[data-easymde-editor-owner="react"] .easymde-workspace'))
     };
   }, itemId);
 }

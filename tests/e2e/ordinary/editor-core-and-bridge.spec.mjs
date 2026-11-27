@@ -293,8 +293,8 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(splitDivider).toHaveAttribute('aria-valuenow', '50');
     const dividerBox = await splitDivider.boundingBox();
     if (!dividerBox) throw new Error('immersive-split-divider-unavailable');
-    const splitSourceBox = await page.locator('.easymde-pane-source').boundingBox();
-    const splitPreviewBox = await page.locator('.easymde-pane-preview').boundingBox();
+    const splitSourceBox = await editorOwner.locator('.easymde-pane-source').boundingBox();
+    const splitPreviewBox = await editorOwner.locator('.easymde-pane-preview').boundingBox();
     if (!splitSourceBox || !splitPreviewBox) {
       throw new Error('immersive-split-adjacent-region-unavailable');
     }
@@ -900,27 +900,28 @@ test.describe('EasyMDE editor workflows', () => {
     await login(page, user);
     await openEasyMdeNewPost(page);
 
-    const sourcePane = page.locator('.easymde-pane-source');
-    const reactSource = page.locator('.easymde-source-react');
+    const editorOwner = page.locator('[data-easymde-editor-owner="react"]');
+    const sourcePane = editorOwner.locator('.easymde-pane-source');
+    const reactSource = editorOwner.locator('.easymde-source-react');
     const nativeSource = page.locator('#easymde-source');
     const sourceEditor = reactSource.locator('.cm-content');
-    const activePreview = page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]');
-    const activePreviewCanvas = page.locator(
+    const activePreview = editorOwner.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]');
+    const activePreviewCanvas = editorOwner.locator(
       '.easymde-pane-preview .easymde-immersive-preview-canvas'
     );
 
     await expect(sourcePane).toHaveAttribute('data-easymde-document-owner', 'react');
-    await expect(page.locator('[data-easymde-editor-owner="react"]')).toHaveCount(1);
+    await expect(editorOwner).toHaveCount(1);
     await expect(reactSource).toBeVisible();
     await expect(sourceEditor).toHaveAttribute('contenteditable', 'true');
     await expect(page.locator('#wp-emoji-settings')).toHaveCount(0);
     await expect(nativeSource).toBeHidden();
-    await expect(page.locator('.easymde-pane-source .easymde-source:visible')).toHaveCount(1);
+    await expect(editorOwner.locator('.easymde-pane-source .easymde-source:visible')).toHaveCount(1);
     await expect(activePreview).toBeVisible();
     await expect(activePreviewCanvas).toBeVisible();
     await expect(activePreviewCanvas).toHaveCount(1);
     await expect(
-      page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]')
+      editorOwner.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]')
     ).toHaveCount(1);
 
     await sourceEditor.fill('# React source\n\nBridge value 中文');
@@ -1032,7 +1033,7 @@ test.describe('EasyMDE editor workflows', () => {
       }));
     });
     const editorMessageHost = page.locator(
-      '.easymde-editor > .easymde-editor-message-alert-host'
+      '[data-easymde-editor-owner="react"] > .easymde-editor-message-alert-host'
     );
     await expect(editorMessageHost.getByRole('alert')).toContainText(
       await page.evaluate(() => window.EasyMDEEditorRootBootstrap.imageUpload.strings.dropFailed)
@@ -1365,7 +1366,9 @@ test.describe('EasyMDE editor workflows', () => {
       const lineNumber = document.querySelector(
         '.easymde-source-react .cm-lineNumbers .cm-gutterElement'
       );
-      const preview = document.querySelector('.easymde-pane-preview .easymde-preview');
+      const preview = document.querySelector(
+        '[data-easymde-editor-owner="react"] .easymde-pane-preview [data-easymde-preview-html-sink="1"]'
+      );
       if (
         !(gutter instanceof HTMLElement)
         || !(lineNumber instanceof HTMLElement)
@@ -1511,7 +1514,8 @@ test.describe('EasyMDE editor workflows', () => {
     }
 
     await page.setViewportSize(desktop);
-    const desktopGeometry = await page.locator('.easymde-workspace').evaluate((workspace) => {
+    const workspaceLocator = page.locator('[data-easymde-editor-owner="react"] .easymde-workspace');
+    const desktopGeometry = await workspaceLocator.evaluate((workspace) => {
       const source = workspace.querySelector('.easymde-pane-source').getBoundingClientRect();
       const preview = workspace.querySelector('.easymde-pane-preview').getBoundingClientRect();
       return { delta: Math.abs(source.width - preview.width), sameRow: source.top === preview.top };
@@ -1532,8 +1536,10 @@ test.describe('EasyMDE editor workflows', () => {
       return toolbar.getBoundingClientRect().right - finalControl.getBoundingClientRect().right;
     });
     expect(Math.abs(secondaryToolbarEndGap - 10)).toBeLessThanOrEqual(1);
-    await expect(page.locator('[data-easymde-layout-owner="react"]')).toHaveAttribute('dir', 'rtl');
-    const rtlDivider = await page.locator('.easymde-workspace').evaluate((workspace) => {
+    await expect(
+      page.locator('[data-easymde-editor-owner="react"] [data-easymde-layout-owner="react"]')
+    ).toHaveAttribute('dir', 'rtl');
+    const rtlDivider = await workspaceLocator.evaluate((workspace) => {
       const source = workspace.querySelector('.easymde-pane-source');
       const preview = workspace.querySelector('.easymde-pane-preview');
       if (!(source instanceof HTMLElement) || !(preview instanceof HTMLElement)) {
@@ -1557,7 +1563,7 @@ test.describe('EasyMDE editor workflows', () => {
 
     for (const viewport of editorWritingViewports) {
       await page.setViewportSize(viewport);
-      await expect.poll(() => page.locator('.easymde-workspace').evaluate((workspace) => {
+      await expect.poll(() => workspaceLocator.evaluate((workspace) => {
         const sourcePane = workspace.querySelector('.easymde-pane-source');
         const previewPane = workspace.querySelector('.easymde-pane-preview');
         if (!(sourcePane instanceof HTMLElement) || !(previewPane instanceof HTMLElement)) {

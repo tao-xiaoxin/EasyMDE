@@ -83,6 +83,7 @@ export async function preparedClipboardPayloadAfterWrite(
 	mathVectorAtlasLoader: WechatMathVectorAtlasLoader | undefined = undefined,
 	onSerializationReady?: (ready: PreparedClipboardSerializationReady) => void,
 	onPreparedFidelitySignature?: (signature: string) => void,
+	onContentBoxesAdopted?: (boxes: MermaidContentBoxLease | null) => void,
 ): Promise<PreparedClipboardPayload> {
 	// Keep the click task free of computed-style and geometry work. The first
 	// await is intentional: modern Clipboard write() must receive its deferred
@@ -293,9 +294,14 @@ export async function preparedClipboardPayloadAfterWrite(
 					Boolean(contentBoxes?.isCurrent()) &&
 					currentSignatures.contentBoxInputLayout ===
 						existingHiddenEvidence.inputSignature);
+			const liveContentBoxesCurrent =
+				null !== existingHiddenEvidence ||
+				!current?.contentBoxes ||
+				current.contentBoxes.isCurrent();
 			if (
 				current?.payload &&
 				hiddenEvidenceMatches &&
+				liveContentBoxesCurrent &&
 				current.mathSourceAdmission.sourceFingerprint ===
 					mathSourceCaptureResult.sourceFingerprint &&
 				current.mathSourceAdmission.rawDimensionGeometrySignature ===
@@ -305,6 +311,11 @@ export async function preparedClipboardPayloadAfterWrite(
 				current.dimensionSignature === currentDimensionSignature &&
 				current.layoutSignature === layoutSignature
 			) {
+				const adopted =
+					null !== existingHiddenEvidence
+						? { ...current, contentBoxes }
+						: current;
+				onContentBoxesAdopted?.(adopted.contentBoxes ?? null);
 				onPreparedFidelitySignature?.(current.layoutSignature);
 				if (!activeOwnerCleanupAccepted) {
 					if (measurement) measurement.cleanup();
@@ -312,9 +323,7 @@ export async function preparedClipboardPayloadAfterWrite(
 				}
 				measurement = null;
 				transition = null;
-				return null !== existingHiddenEvidence
-					? { ...current, contentBoxes }
-					: current;
+				return adopted;
 			}
 		}
 
@@ -345,6 +354,7 @@ export async function preparedClipboardPayloadAfterWrite(
 			sourceFreshness.current(),
 			onPreparedFidelitySignature,
 			contentBoxes,
+			onContentBoxesAdopted,
 		);
 		contentBoxesTransferred = true;
 		if (!activeOwnerCleanupAccepted) dimensionSemantics = null;

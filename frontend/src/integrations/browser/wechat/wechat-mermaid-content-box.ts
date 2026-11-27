@@ -4,6 +4,7 @@ import { backgroundPreparationAbortError } from './wechat-clipboard-runtime';
 export type MermaidContentBox = Readonly<{ width: number; height: number }>;
 
 export type MermaidContentBoxLease = Readonly<{
+  acquire: () => () => void;
   cleanup: () => void;
   get: (source: Element) => MermaidContentBox | null;
   isCurrent: () => boolean;
@@ -26,6 +27,8 @@ export function createMermaidContentBoxLease(root: Element, signal?: AbortSignal
   let observedRoot: Element | null = root;
   let observer: ResizeObserver | null = null;
   let timeout: ReturnType<typeof setTimeout> | null = null;
+  let ownerReleased = false;
+  let activeHolds = 0;
   let closed = false;
   let stale = false;
   let settled = false;
@@ -45,7 +48,7 @@ export function createMermaidContentBoxLease(root: Element, signal?: AbortSignal
     if (error) rejectReady(error);
     else resolveReady();
   };
-  const cleanup = (): void => {
+  const close = (): void => {
     if (closed) return;
     closed = true;
     observer?.disconnect();
@@ -56,6 +59,24 @@ export function createMermaidContentBoxLease(root: Element, signal?: AbortSignal
     boxes.clear();
     finish(backgroundPreparationAbortError());
   };
+  const cleanup = (): void => {
+    if (ownerReleased) return;
+    ownerReleased = true;
+    signal?.removeEventListener('abort', onAbort);
+    if (activeHolds === 0) close();
+  };
+  const acquire = (): (() => void) => {
+    if (closed) return () => undefined;
+    activeHolds += 1;
+    signal?.removeEventListener('abort', onAbort);
+    let released = false;
+    return (): void => {
+      if (released) return;
+      released = true;
+      activeHolds = Math.max(0, activeHolds - 1);
+      if (ownerReleased && activeHolds === 0) close();
+    };
+  };
   const onAbort = (): void => cleanup();
   const isCurrent = (): boolean => {
     if (closed || stale || !settled || !observedRoot || boxes.size !== owners.length) return false;
@@ -63,6 +84,7 @@ export function createMermaidContentBoxLease(root: Element, signal?: AbortSignal
     return currentOwners.length === owners.length && owners.every((owner, index) => currentOwners[index] === owner);
   };
   const lease: MermaidContentBoxLease = {
+    acquire,
     cleanup,
     get: (source) => isCurrent() ? boxes.get(source) ?? null : null,
     isCurrent,

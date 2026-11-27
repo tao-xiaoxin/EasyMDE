@@ -145,6 +145,7 @@ export function createPreparedClipboardPayload(
 	onPreparedFidelitySignature?: (signature: string) => void,
 	suppliedContentBoxes: MermaidContentBoxLease | null = null,
 	deferContentBoxCleanup = false,
+	onContentBoxesAdopted?: (boxes: MermaidContentBoxLease | null) => void,
 ): PreparedClipboardPayload {
 	let prepared: PreparedClipboardPayload;
 	let released = false;
@@ -231,6 +232,7 @@ export function createPreparedClipboardPayload(
 					signal,
 				);
 				prepared.contentBoxes = contentBoxes;
+				onContentBoxesAdopted?.(contentBoxes);
 				await contentBoxes.ready;
 				assertNotReleased();
 				if (!contentBoxes.isCurrent()) throw new Error("wechat-copy-stale");
@@ -639,6 +641,7 @@ export function createPreparedClipboardPayload(
 			sourceFingerprint: "",
 		},
 	};
+	if (contentBoxes) onContentBoxesAdopted?.(contentBoxes);
 	preparedPayloads.set(preview, prepared);
 	return prepared;
 }
@@ -667,6 +670,7 @@ export function preparedClipboardPayload(
 	> | null = null,
 	onPreparedFidelitySignature?: (signature: string) => void,
 	suppliedContentBoxes: MermaidContentBoxLease | null = null,
+	onContentBoxesAdopted?: (boxes: MermaidContentBoxLease | null) => void,
 ): PreparedClipboardPayload {
 	throwIfBackgroundPreparationAborted(signal);
 	const measurement =
@@ -812,6 +816,7 @@ export function preparedClipboardPayload(
 			onPreparedFidelitySignature,
 			suppliedContentBoxes,
 			deferActiveOwnerCleanup,
+			onContentBoxesAdopted,
 		);
 		if (!deferActiveOwnerCleanup && (measurement || transition)) {
 			let cleanupCalled = false;

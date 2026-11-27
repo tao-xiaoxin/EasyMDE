@@ -112,4 +112,42 @@ describe('Mermaid content-box observation', () => {
     timedOut.cleanup();
     expect(disconnect).toHaveBeenCalledTimes(1);
   });
+
+  it('keeps an acquired lease alive across owner cleanup and background abort until all holds release, while still invalidating on real changes', async () => {
+    installObserver();
+    const root = document.createElement('article');
+    root.innerHTML = '<div class="easymde-mermaid" data-easymde-mermaid-layout="timeline"></div>';
+    const owner = root.firstElementChild as Element;
+    const controller = new AbortController();
+    const lease = createMermaidContentBoxLease(root, controller.signal);
+    deliver([entry(owner, 481.5, 510.71875)], {} as ResizeObserver);
+    await lease.ready;
+
+    const releaseFirst = lease.acquire();
+    const releaseSecond = lease.acquire();
+    controller.abort();
+    lease.cleanup();
+    lease.cleanup();
+
+    expect(lease.isCurrent()).toBe(true);
+    expect(lease.get(owner)).toEqual({ width: 481.5, height: 510.71875 });
+    expect(disconnect).not.toHaveBeenCalled();
+
+    // Idempotent release of the first hold keeps the second hold active.
+    releaseFirst();
+    releaseFirst();
+    expect(lease.isCurrent()).toBe(true);
+    expect(disconnect).not.toHaveBeenCalled();
+
+    // A genuine ResizeObserver dimension change must still invalidate immediately while held.
+    deliver([entry(owner, 481.5, 520)], {} as ResizeObserver);
+    expect(lease.isCurrent()).toBe(false);
+    expect(lease.get(owner)).toBeNull();
+    expect(disconnect).not.toHaveBeenCalled();
+
+    // Final hold release tears down the observer once ownerReleased && activeHolds === 0.
+    releaseSecond();
+    releaseSecond();
+    expect(disconnect).toHaveBeenCalledTimes(1);
+  });
 });

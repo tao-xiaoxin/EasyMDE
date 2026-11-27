@@ -75,7 +75,7 @@ export async function runCopyModeScenario2({ baseURL, context, login, page, test
       );
       await page.locator('.easymde-toolbar-immersive-toggle').click();
       await expect(page.getByRole('region', { name: coldLabels.immersive })).toBeVisible();
-      await expect(page.locator('.easymde-editor')).toHaveClass(/is-immersive-source/);
+      await expect(page.locator('[data-easymde-editor-owner="react"]')).toHaveClass(/is-immersive-source/);
       await expect(coldPreview).toBeHidden();
       await assertSourcePresentation(page, coldPreview, 'split');
       await assertFullCapabilityPreview(coldPreview);

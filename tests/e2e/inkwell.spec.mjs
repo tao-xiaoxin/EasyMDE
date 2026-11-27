@@ -59,7 +59,7 @@ test('matches the Inkwell light palette across the full Markdown fixture', async
     fixtureImageUrl
   );
   const source = page.locator('.easymde-source-react .cm-content');
-  const preview = page.locator('.easymde-pane-preview article');
+  const preview = page.locator('[data-easymde-editor-owner="react"] .easymde-pane-preview article[data-easymde-preview-html-sink="1"]');
   await source.fill(markdown);
   await expect(preview).toContainText('Markdown 全量能力测试文档');
   await expect(preview.locator('table').first()).toBeVisible();

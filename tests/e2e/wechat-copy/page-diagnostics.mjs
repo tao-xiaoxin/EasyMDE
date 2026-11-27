@@ -6,7 +6,10 @@ export const visibleSelectorDiagnosticsByPage = new WeakMap();
 export function visibleSelectorRole(selector) {
   if (selector === '#wpadminbar') return 'adminbar';
   if (selector === '#easymde-editor') return 'editor';
-  if (selector === '.easymde-editor > .easymde-editor-message-alert-host') return 'status';
+  if (
+    selector === '.easymde-editor > .easymde-editor-message-alert-host'
+    || selector === '[data-easymde-editor-owner="react"] > .easymde-editor-message-alert-host'
+  ) return 'status';
   return 'unknown';
 }
 
@@ -422,7 +425,7 @@ export async function collectFailureDiagnostics(page) {
         '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
       );
       const alertHost = document.querySelector(
-        '.easymde-editor > .easymde-editor-message-alert-host'
+        '[data-easymde-editor-owner="react"] > .easymde-editor-message-alert-host'
       );
       const bootstrap = window.EasyMDEEditorRootBootstrap;
       const loaderBootstrap = window.EasyMDEAdminEditorLoaderBootstrap;

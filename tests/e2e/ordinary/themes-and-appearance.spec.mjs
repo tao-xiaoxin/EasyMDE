@@ -77,9 +77,9 @@ test.describe('EasyMDE editor workflows', () => {
       markdown,
       longFixtureHeadingPrefix
     );
-    await expect(page.locator('.easymde-pane-preview .katex').first()).toBeVisible();
-    await expect(page.locator('.easymde-pane-preview .easymde-mermaid').first()).toBeVisible();
-    const authoritativeImage = page.locator('.easymde-pane-preview')
+    await expect(page.locator('[data-easymde-editor-owner="react"] .easymde-pane-preview .katex').first()).toBeVisible();
+    await expect(page.locator('[data-easymde-editor-owner="react"] .easymde-pane-preview .easymde-mermaid').first()).toBeVisible();
+    const authoritativeImage = page.locator('[data-easymde-editor-owner="react"] .easymde-pane-preview')
       .getByAltText('占位测试图片', { exact: true });
     await expect(authoritativeImage).toHaveCount(1);
     await expect.poll(() => authoritativeImage.evaluate(

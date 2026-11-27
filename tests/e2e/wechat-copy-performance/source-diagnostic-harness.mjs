@@ -113,7 +113,7 @@ export async function readCandidateSourceH3Sample(page, ordinal) {
 			const { ordinal, selector } = selection;
 			const root = document.querySelector(selector);
 			const canvas = document.querySelector(
-				".easymde-immersive-preview-canvas",
+				'[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas',
 			);
 			if (!(root instanceof HTMLElement)) {
 				throw new Error("wechat-copy-candidate-source-h3-root-unavailable");
@@ -309,7 +309,7 @@ export async function startCandidateSourceDiagnostic(page) {
 			".easymde-source-react .cm-scroller",
 		);
 		const previewCanvas = document.querySelector(
-			".easymde-immersive-preview-canvas",
+			'[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas',
 		);
 		const preview = document.querySelector(
 			'.easymde-pane-preview [data-easymde-preview-html-sink="1"]',
@@ -610,7 +610,7 @@ export async function restoreCandidateSourceDiagnosticScroll(page, diagnostic) {
 	}
 	await page.evaluate((expected) => {
 		const cm = document.querySelector(".easymde-source-react .cm-scroller");
-		const preview = document.querySelector(".easymde-immersive-preview-canvas");
+		const preview = document.querySelector('[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas');
 		if (!(cm instanceof HTMLElement) || !(preview instanceof HTMLElement)) {
 			throw new Error("wechat-copy-candidate-source-scroll-owner-unavailable");
 		}

@@ -244,7 +244,7 @@ export async function installClipboardInstrumentation(page) {
     globalThis.__easymdeWechatCopyTrace = trace;
     const observeStatus = () => {
       const host = document.querySelector(
-        '.easymde-editor > .easymde-editor-message-alert-host'
+        '[data-easymde-editor-owner="react"] > .easymde-editor-message-alert-host'
       );
       const node = host?.querySelector('[role="status"], [role="alert"]');
       if (!(node instanceof HTMLElement)) return;

@@ -1,6 +1,6 @@
 // Complete theme projection scenario owner.
 import { expect } from '@playwright/test';
-import { assertPngConversionDisabled } from "./page-diagnostics.mjs";
+import { assertPngConversionDisabled, installWechatConsoleDiagnostics } from "./page-diagnostics.mjs";
 import { fillMarkdownAndWaitForPreview } from "./editor-session.mjs";
 import { installClipboardInstrumentation } from "./clipboard-instrumentation.mjs";
 import { installEditorBootstrapOverride } from "./editor-session.mjs";
@@ -23,6 +23,7 @@ export async function runThemeProjectionScenario6({ baseURL, context, login, pag
       origin: new URL(page.url()).origin
     });
     await installClipboardInstrumentation(page);
+    await installWechatConsoleDiagnostics(page);
     await installEditorBootstrapOverride(page, false);
     const cacheSession = await context.newCDPSession(page);
     await cacheSession.send('Network.enable');

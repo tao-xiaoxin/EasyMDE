@@ -232,6 +232,7 @@ export async function runCopyFeedbackScenario2({ baseURL, context, login, page, 
     const origin = new URL(page.url()).origin;
     await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
     await installClipboardInstrumentation(page);
+    await installWechatConsoleDiagnostics(page);
     await installEditorBootstrapOverride(page, false);
     await openEasyMdeNewPost(page);
     await assertPngConversionDisabled(page);
@@ -241,7 +242,7 @@ export async function runCopyFeedbackScenario2({ baseURL, context, login, page, 
     await fillMarkdownAndWaitForPreview(page, mediumMarkdown, 'Medium WeChat copy fixture');
 
     const copyButton = page.locator('.easymde-toolbar-copy-action');
-    const editorStatus = page.locator('.easymde-editor > .easymde-editor-message-alert-host');
+    const editorStatus = page.locator('[data-easymde-editor-owner="react"] > .easymde-editor-message-alert-host');
     await expect(copyButton).toHaveCount(1);
     await expect(editorStatus).toHaveCount(0);
     await movePointerNeutral(page);
@@ -393,6 +394,7 @@ export async function runCopyFeedbackScenario3({ baseURL, context, login, page, 
     const origin = new URL(page.url()).origin;
     await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
     await installClipboardInstrumentation(page);
+    await installWechatConsoleDiagnostics(page);
     await installEditorBootstrapOverride(page, false);
     await openEasyMdeNewPost(page);
     await assertPngConversionDisabled(page);

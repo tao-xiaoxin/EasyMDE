@@ -1,7 +1,16 @@
 import { expect, test } from "@playwright/test";
+import {
+	login as loginIsolatedUser,
+	registerEditorWorkflowHooks,
+	startWordPressSessionKeepalive,
+} from "./helpers/editor-e2e-helpers.mjs";
 import { selectOrdinaryOption } from "./helpers/ordinary-select.mjs";
 
-const postUrl = "/wp-admin/post.php?post=5&action=edit";
+const hasIsolatedWordPressCli = Boolean(process.env.EASYMDE_E2E_WP_PATH);
+
+if (hasIsolatedWordPressCli) {
+	registerEditorWorkflowHooks();
+}
 
 function requiredEnvironment(name) {
 	const value = process.env[name];
@@ -13,7 +22,7 @@ function requiredEnvironment(name) {
 	return value;
 }
 
-async function login(page) {
+async function loginStandalone(page) {
 	await page.goto("/wp-login.php");
 	await page
 		.locator("#user_login")
@@ -23,6 +32,8 @@ async function login(page) {
 		.fill(requiredEnvironment("WORDPRESS_ADMIN_PASSWORD"));
 	await page.locator("#wp-submit").click();
 	await expect(page.locator("#wpadminbar")).toBeVisible();
+	await page.waitForLoadState("load");
+	await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined);
 }
 
 async function waitForPreviewIdle(preview) {
@@ -50,7 +61,9 @@ async function chooseTheme(page, theme) {
 		exact: true,
 	});
 	await selectOrdinaryOption(page, select, theme.label);
-	await expect(page.locator(".easymde-pane-preview article")).toHaveClass(
+	await expect(
+		page.locator('[data-easymde-editor-owner="react"] .easymde-pane-preview article[data-easymde-preview-html-sink="1"]'),
+	).toHaveClass(
 		new RegExp(`easymde-markdown-theme-${theme.id}`),
 	);
 	await waitForStylesheet(
@@ -324,17 +337,25 @@ function readPhycatTaskLayoutEvidence(root) {
 	};
 }
 
-test("keeps Phycat task markers aligned across host form styles and narrow Chromium widths", async ({ page }) => {
+test("keeps Phycat task markers aligned across host form styles and narrow Chromium widths", async ({ page }, testInfo) => {
 	test.setTimeout(20 * 60_000);
 	await page.setViewportSize({ width: 430, height: 900 });
-	await login(page);
-	const response = await page.goto(postUrl);
+	let sessionKeepalive = null;
+	if (hasIsolatedWordPressCli) {
+		const user = testInfo.easymdeUser;
+		await loginIsolatedUser(page, user);
+		sessionKeepalive = startWordPressSessionKeepalive(page, user);
+		testInfo.easymdeStopSessionKeepalive = sessionKeepalive.stop;
+	} else {
+		await loginStandalone(page);
+	}
+	const response = await page.goto("/wp-admin/post-new.php");
 	if (!response || !response.ok()) {
 		throw new Error(`phycat-task-layout-post-unavailable:${response?.status() ?? "no-response"}`);
 	}
 	const editor = page.locator('[data-easymde-editor-owner="react"]');
 	await expect(editor).toBeVisible();
-	const preview = page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]');
+	const preview = editor.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]');
 	await waitForPreviewIdle(preview);
 	await page.locator(".easymde-source-react .cm-content").fill(PHY_CAT_TASK_LAYOUT_MARKDOWN);
 	await expect(page.locator("#easymde-source")).toHaveValue(PHY_CAT_TASK_LAYOUT_MARKDOWN);
@@ -347,10 +368,11 @@ test("keeps Phycat task markers aligned across host form styles and narrow Chrom
 			.map(({ id, label, cssUrl }) => ({ cssUrl, id, label }))
 	), PHY_CAT_TASK_THEME_IDS);
 	expect(themes.map(({ id }) => id)).toEqual(PHY_CAT_TASK_THEME_IDS);
-	const sourceSelector = '.easymde-immersive-preview-canvas [data-easymde-preview-html-sink="1"]';
+	const sourceSelector = '[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas [data-easymde-preview-html-sink="1"]';
 	const evidenceByCase = new Map();
 
 	for (const theme of themes) {
+		await sessionKeepalive?.assertHealthy();
 		await setViewportForThemeSelection(page, 430);
 		await setMode(page, "ordinary", labels);
 		await chooseTheme(page, theme);
@@ -377,6 +399,8 @@ test("keeps Phycat task markers aligned across host form styles and narrow Chrom
 			}
 		}
 	}
+
+	await sessionKeepalive?.assertHealthy();
 
 	for (const theme of themes) {
 		for (const width of PHY_CAT_TASK_LAYOUT_WIDTHS) {

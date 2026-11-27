@@ -127,12 +127,12 @@ export async function configurePerformanceMode(page, mode) {
 export async function readPerformanceModeState(page) {
 	return page.evaluate(() => {
 		const bootstrap = window.EasyMDEEditorRootBootstrap;
-		const editor = document.querySelector(".easymde-editor");
-		const workspace = document.querySelector(".easymde-workspace");
+		const editor = document.querySelector('[data-easymde-editor-owner="react"]');
+		const workspace = editor?.querySelector(".easymde-workspace") ?? null;
 		const preview = document.querySelector(
 			'.easymde-pane-preview [data-easymde-preview-html-sink="1"]',
 		);
-		const source = document.querySelector(".easymde-pane-source");
+		const source = editor?.querySelector(".easymde-pane-source") ?? null;
 		if (!(editor instanceof HTMLElement)) {
 			throw new Error("wechat-copy-performance-editor-owner-unavailable");
 		}
@@ -199,7 +199,7 @@ export async function readBrowserConfiguration(page) {
 		const codeStylesheet = document.querySelector(
 			"#easymde-highlight-theme-css",
 		);
-		const editor = document.querySelector(".easymde-editor");
+		const editor = document.querySelector('[data-easymde-editor-owner="react"]');
 		const preview = document.querySelector(
 			'.easymde-pane-preview [data-easymde-preview-html-sink="1"]',
 		);
@@ -232,7 +232,7 @@ export async function readBrowserConfiguration(page) {
 			previewVisible: visible(preview),
 			previewPresentation:
 				editor?.getAttribute("data-easymde-preview-presentation") ?? null,
-			sourceVisible: visible(document.querySelector(".easymde-pane-source")),
+			sourceVisible: visible(editor?.querySelector(".easymde-pane-source") ?? null),
 		};
 	});
 }

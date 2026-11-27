@@ -293,6 +293,7 @@ describe('mermaidAdmissionSignature', () => {
         ? {
             ...afterRuntime,
             mermaidContentBoxes: {
+              acquire: () => () => undefined,
               cleanup: () => undefined,
               get: (source) => source === parts.root ? { width: 130.5, height: 235.25 } : null,
               isCurrent: () => true,
@@ -312,6 +313,7 @@ describe('mermaidAdmissionSignature', () => {
     const withContentBox = {
       ...runtime(root, svg, source, svgStyle),
       mermaidContentBoxes: {
+        acquire: () => () => undefined,
         cleanup: () => undefined,
         get: (candidate: Element) => candidate === root ? { width: 481.5, height } : null,
         isCurrent: () => true,

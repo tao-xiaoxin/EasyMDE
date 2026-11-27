@@ -100,10 +100,10 @@ export async function waitForPendingMeasurement(page) {
 }
 
 export async function dismissEditorStatus(page) {
-  const host = page.locator('.easymde-editor > .easymde-editor-message-alert-host');
+  const host = page.locator('[data-easymde-editor-owner="react"] > .easymde-editor-message-alert-host');
   await waitForVisibleSelector(
     page,
-    '.easymde-editor > .easymde-editor-message-alert-host',
+    '[data-easymde-editor-owner="react"] > .easymde-editor-message-alert-host',
     'wechat-editor-status-host-unavailable'
   );
   await host.locator('.easymde-editor-message-alert__close').click();
@@ -168,7 +168,7 @@ export async function copyExpectPngFailure(page, button, expectedCode) {
       const trace = globalThis.__easymdeWechatCopyTrace;
       const write = trace.writes.at(-1);
       const host = document.querySelector(
-        '.easymde-editor > .easymde-editor-message-alert-host'
+        '[data-easymde-editor-owner="react"] > .easymde-editor-message-alert-host'
       );
       const node = host?.querySelector('[role="status"], [role="alert"]');
       const text = node?.textContent ?? '';

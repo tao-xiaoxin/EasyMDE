@@ -347,8 +347,8 @@ export async function runCopyModeScenario6({ baseURL, context, login, page, test
     await expect(
       page.getByRole('region', { name: initialImmersiveLabels.immersive })
     ).toBeVisible();
-    await expect(page.locator('.easymde-editor')).toHaveClass(/is-immersive-source/);
-    const availableSourceWidth = await page.locator('.easymde-workspace').evaluate((workspace) => {
+    await expect(page.locator('[data-easymde-editor-owner="react"]')).toHaveClass(/is-immersive-source/);
+    const availableSourceWidth = await page.locator('[data-easymde-editor-owner="react"] .easymde-workspace').evaluate((workspace) => {
       const rect = workspace.getBoundingClientRect();
       const style = getComputedStyle(workspace);
       const horizontalEdges = [

@@ -200,8 +200,11 @@ function deleteUserContent(userId) {
   ]);
 }
 
-export async function login(page, user) {
-  await page.goto('/wp-login.php');
+export async function login(page, user, { redirectTo } = {}) {
+  const loginUrl = typeof redirectTo === 'string' && redirectTo.length > 0
+    ? `/wp-login.php?redirect_to=${encodeURIComponent(redirectTo)}`
+    : '/wp-login.php';
+  await page.goto(loginUrl);
   await page.locator('#loginform').evaluate((form, credentials) => {
     const username = form.elements.namedItem('log');
     const password = form.elements.namedItem('pwd');
@@ -219,10 +222,12 @@ export async function login(page, user) {
   }, user);
   await expect(page.locator('#wpadminbar')).toBeVisible();
   await page.waitForLoadState('load');
-  // WordPress 7.1+ Dashboard triggers post-load emoji/thickbox asset fetches;
-  // give them a short bounded settle window so navigation to post-new.php does
-  // not abort them under privacy-safe monitoring without hanging on slow widgets.
-  await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
+  if (!redirectTo) {
+    // WordPress 7.1+ Dashboard triggers post-load emoji/thickbox asset fetches;
+    // give them a short bounded settle window so navigation to post-new.php does
+    // not abort them under privacy-safe monitoring without hanging on slow widgets.
+    await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
+  }
 }
 
 async function pulseWordPressHeartbeat(page) {

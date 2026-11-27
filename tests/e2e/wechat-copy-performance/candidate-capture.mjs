@@ -642,8 +642,7 @@ export async function renderCandidateSerializedOutput(page, html) {
 		throw new Error("wechat-copy-candidate-serialized-content-width-invalid");
 	}
 	const viewportHeight = await page
-		.locator(".easymde-immersive-preview-canvas")
-		.first()
+		.locator('[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas')
 		.evaluate((element) => {
 			const value = element.clientHeight;
 			if (!Number.isFinite(value) || value <= 0) {

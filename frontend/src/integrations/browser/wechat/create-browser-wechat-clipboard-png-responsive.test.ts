@@ -941,6 +941,7 @@ describe('createBrowserWechatClipboard', () => {
         document,
         ...('source-layout-marker' === property ? {
           mermaidContentBoxes: {
+            acquire: () => () => undefined,
             cleanup: () => undefined,
             get: (candidate: Element) => candidate === root ? { width: 920, height: 725.734375 } : null,
             isCurrent: () => true,

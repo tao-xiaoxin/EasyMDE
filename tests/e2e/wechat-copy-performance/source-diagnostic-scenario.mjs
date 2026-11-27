@@ -92,7 +92,7 @@ export async function runSourceDiagnosticScenario({ baseURL, createOwnedPost, lo
 			page,
 			testInfo,
 			{
-				capture: page.locator(".easymde-immersive-preview-canvas").first(),
+				capture: page.locator('[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas'),
 				markers: page
 					.locator(previewSelector)
 					.locator('input[type="checkbox"]'),
@@ -124,7 +124,7 @@ export async function runSourceDiagnosticScenario({ baseURL, createOwnedPost, lo
 					});
 				},
 				peer: { selector: ".easymde-source-react .cm-scroller" },
-				scrollRootSelector: ".easymde-immersive-preview-canvas",
+				scrollRootSelector: '[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas',
 				stem: "source-diagnostic-task",
 			},
 		);

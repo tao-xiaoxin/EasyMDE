@@ -1518,6 +1518,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: null,
       document,
       mermaidContentBoxes: {
+        acquire: () => () => undefined,
         cleanup: () => undefined,
         get: (candidate: Element) => candidate === owner ? { width: 335, height: 268 } : null,
         isCurrent: () => true,

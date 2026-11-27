@@ -1012,7 +1012,7 @@ test.describe('EasyMDE editor workflows', () => {
     expect(pasteToSettled).toBeLessThanOrEqual(syntheticLargePasteSettledLimitMs);
 
     const unifiedMountedBlockCount = await visualEditor.locator(':scope > *').count();
-    const canvas = page.locator('.easymde-immersive-preview-canvas');
+    const canvas = page.locator('[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas');
     await canvas.evaluate((element) => {
       if (!(element instanceof HTMLElement)) {
         throw new Error('immersive-preview-canvas-unavailable');

@@ -114,7 +114,7 @@ test.describe('EasyMDE editor workflows', () => {
       labels.publishFailed
     );
     await expect(
-      page.locator('.easymde-editor > .easymde-editor-message-alert-host')
+      page.locator('[data-easymde-editor-owner="react"] > .easymde-editor-message-alert-host')
     ).toHaveCount(0);
     await expect(page.locator('#excerpt')).toHaveValue('');
     await expect(page.locator('#tax-input-post_tag')).toHaveValue('');
@@ -991,7 +991,7 @@ JSON text: {"path":"C:\\Temp\\file","quote":"\"value\""}
     await expect.poll(() => page.evaluate(() => window.__easymdeClipboardWrites.length)).toBe(1);
     expect(await page.evaluate(() => window.__easymdeClipboardActivation)).toEqual([true]);
     const editorMessageHost = page.locator(
-      '.easymde-editor > .easymde-editor-message-alert-host'
+      '[data-easymde-editor-owner="react"] > .easymde-editor-message-alert-host'
     );
     await expect(editorMessageHost.getByRole('status')).toContainText(
       await page.evaluate(() => window.EasyMDEEditorRootBootstrap.wechatExport.strings.success)

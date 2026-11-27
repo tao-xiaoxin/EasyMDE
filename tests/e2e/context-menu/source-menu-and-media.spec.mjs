@@ -9,10 +9,10 @@ import {
   imageSourceAlt,
   loadCanonicalFixture,
   login,
+  loginAndOpenNewPost,
   menuSelector,
   moveSourceCaret,
   occurrenceOffset,
-  openNewPost,
   openRootSubmenu,
   openSourceMenu,
   openSourceNativeMenu,
@@ -65,8 +65,7 @@ test.use({
 
 test.describe('Editor context menu production surfaces', () => {
   test('moves the native Source caret relative and through the fallback to an exact UTF-16 offset', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, source } = await loadCanonicalFixture(page);
     const sourceEditor = page.locator('.easymde-source-react .cm-content');
     const line = '普通文本、**粗体文本**、*斜体文本*、***粗斜体文本***。';
@@ -123,8 +122,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('opens the generic Source menu when the caret is after the final rendered block', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, sourceEditor } = await loadCanonicalFixture(page);
 
     await sourceEditor.focus();
@@ -144,8 +142,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('keeps ordinary Source source-exact through inventory, copy/cancel, Bold Undo, table, and image actions', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { fixtureImageUrl, markdown, source, sourceEditor } = await loadCanonicalFixture(page);
     await assertSourceCategoryMatrix(page, {
       fixtureImageUrl,
@@ -217,8 +214,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('covers missing Source copy, cut, paste, link, and code actions in ordinary and immersive split modes', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, source, sourceEditor } = await loadCanonicalFixture(page);
     await exerciseMissingSourceActions(page, {
       markdown,
@@ -243,8 +239,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('inserts a real WordPress media attachment from Source without saving the article', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, source, sourceEditor } = await loadCanonicalFixture(page);
     const insertionOffset = occurrenceOffset(markdown, '普通文本');
     const consoleProbe = startSourceMediaConsoleProbe(page);
@@ -317,8 +312,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('rejects formatted Source context media insertion after readOnly permission loss without changing history', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, preview, source, sourceEditor } = await loadCanonicalFixture(page);
     const consoleProbe = startSourceMediaConsoleProbe(page);
     const mutationProbe = await startSourceMediaMutationProbe(page);
@@ -426,8 +420,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('rejects formatted Source context media insertion after disabled permission loss without changing history', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, preview, source, sourceEditor } = await loadCanonicalFixture(page);
     const consoleProbe = startSourceMediaConsoleProbe(page);
     const mutationProbe = await startSourceMediaMutationProbe(page);
@@ -531,8 +524,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('keeps immersive split Source interactive without changing the canonical source on dismissal', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { fixtureImageUrl, markdown, source, sourceEditor } = await loadCanonicalFixture(page);
     const strings = await enterImmersive(page);
     await page.getByRole('button', { name: strings.split, exact: true }).last().click();
@@ -855,8 +847,7 @@ test.describe('Editor context menu production surfaces', () => {
       baseURL: testInfo.project.use.baseURL
     });
     try {
-      await login(page);
-      await openNewPost(page);
+      await loginAndOpenNewPost(page);
       const { markdown, source } = await loadCanonicalFixture(page);
 
       const assertWritingViewportContextMenu = async (viewport, modeLabel) => {

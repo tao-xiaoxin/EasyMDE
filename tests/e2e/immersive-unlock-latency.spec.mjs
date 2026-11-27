@@ -774,7 +774,7 @@ async function attachTiming(testInfo, name, value) {
 
 async function readPreviewScrollAnchor(page) {
   return page.evaluate(() => {
-    const canvas = document.querySelector('.easymde-immersive-preview-canvas');
+    const canvas = document.querySelector('[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas');
     const visibleSurface = canvas?.querySelector('.easymde-prosemirror-surface')
       ?? canvas?.querySelector('[data-easymde-preview-html-sink="1"]:not(.easymde-preview-surface-hidden)');
     const firstParagraph = visibleSurface?.querySelector('p') ?? canvas?.querySelector('p');
@@ -970,7 +970,7 @@ test('cancels a pending cold unlock when immersive mode changes', async ({ page 
     const pendingFrameMs = await waitForPendingFrame(page);
     expect(pendingFrameMs).toBeLessThanOrEqual(100);
     await page.getByRole('button', { name: labels.splitMode }).click();
-    await expect(page.locator('.easymde-editor')).toHaveClass(/is-immersive-split/u);
+    await expect(page.locator('[data-easymde-editor-owner="react"]')).toHaveClass(/is-immersive-split/u);
     await expect(page.getByRole('textbox', {
       name: labels.previewEditorLabel
     })).toHaveCount(0);

@@ -77,12 +77,13 @@ export function createWordPressFixture({
   cleanupFailureCode,
   cleanupPostTypes,
   cleanupReassignUserId,
-  loginWaitForVisibleSelector
+  loginWaitForVisibleSelector,
+  spawnSyncRef = defaultSpawnSync
 }) {
   function runWp(args, { allowEmpty = false } = {}) {
     if (!wpPath || !wpPath.trim()) throw new Error(errorCode(prefix, 'wp-path-missing'));
     if (!wpCli || !wpCli.trim()) throw new Error(errorCode(prefix, 'wp-cli-missing'));
-    const result = defaultSpawnSync(
+    const result = spawnSyncRef(
       wpCli,
       [...args, `--path=${wpPath}`, '--allow-root'],
       {
@@ -161,20 +162,63 @@ export function createWordPressFixture({
     return postId;
   }
 
+  function parseCleanupPostTypes(rawPostTypes) {
+    const entries = Array.isArray(rawPostTypes)
+      ? rawPostTypes
+      : typeof rawPostTypes === 'string'
+        ? rawPostTypes.split(',')
+        : [];
+    const normalized = entries
+      .map((entry) => String(entry ?? '').trim())
+      .filter((entry) => entry.length > 0);
+    if (
+      normalized.length === 0
+      || normalized.some((entry) => !/^[a-z0-9_-]{1,20}$/u.test(entry))
+    ) {
+      throw new Error(errorCode(prefix, 'cleanup-post-types-invalid'));
+    }
+    return [...new Set(normalized)];
+  }
+
   function deleteOwnedUserContent(userId) {
     if (!cleanupPostTypes) return;
-    const postIds = runWp(
+    const normalizedUserId = String(userId ?? '').trim();
+    if (!/^[1-9]\d*$/u.test(normalizedUserId)) {
+      throw new Error(errorCode(prefix, 'cleanup-user-id-invalid'));
+    }
+    const numericUserId = Number.parseInt(normalizedUserId, 10);
+    if (!Number.isSafeInteger(numericUserId) || numericUserId <= 1) {
+      throw new Error(errorCode(prefix, 'cleanup-user-id-invalid'));
+    }
+    const postTypes = parseCleanupPostTypes(cleanupPostTypes);
+    const phpPostTypes = postTypes
+      .map((type) => JSON.stringify(type))
+      .join(', ');
+    runWp(
       [
-        'post',
-        'list',
-        `--author=${userId}`,
-        `--post_type=${cleanupPostTypes}`,
-        '--post_status=any',
-        '--format=ids'
+        'eval',
+        [
+          `$user_id = (int) ${numericUserId};`,
+          'if ( $user_id <= 1 ) { fwrite( STDERR, "invalid-e2e-cleanup-user-id" ); exit( 1 ); }',
+          '$post_ids = get_posts( array(',
+          '  "author" => $user_id,',
+          `  "post_type" => array( ${phpPostTypes} ),`,
+          '  "post_status" => array_values( get_post_stati() ),',
+          '  "fields" => "ids",',
+          '  "posts_per_page" => -1,',
+          '  "no_found_rows" => true,',
+          '  "suppress_filters" => true',
+          ') );',
+          'foreach ( $post_ids as $post_id ) {',
+          '  if ( false === wp_delete_post( (int) $post_id, true ) ) {',
+          '    fwrite( STDERR, "failed-to-delete-post:" . (int) $post_id );',
+          '    exit( 1 );',
+          '  }',
+          '}'
+        ].join(' ')
       ],
       { allowEmpty: true }
     );
-    if (postIds) runWp(['post', 'delete', ...postIds.split(/\s+/u), '--force']);
   }
 
   function deleteOwnedUser(userId) {
@@ -282,6 +326,7 @@ export function createWordPressFixture({
     testSlug,
     createOwnedUser,
     createOwnedPost,
+    deleteOwnedUserContent,
     cleanupOwnedRecords,
     login
   };

@@ -232,7 +232,7 @@ test.describe('Unified ProseMirror visual editor rich blocks and long documents'
       await mathTextarea.fill('$$\nunsaved = 0\n$$');
       await page.keyboard.press('Escape');
       await expect(mathTextarea).toHaveCount(0);
-      await expect(page.locator('.easymde-editor.is-immersive')).toBeVisible();
+      await expect(page.locator('[data-easymde-editor-owner="react"].easymde-editor.is-immersive')).toBeVisible();
       await expect(visualEditor).toHaveAttribute('contenteditable', 'true');
       await expect(source).toHaveValue(afterNeighborEdit);
 

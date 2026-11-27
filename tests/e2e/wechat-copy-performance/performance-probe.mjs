@@ -259,8 +259,8 @@ export function installPerformanceProbe(page) {
 			const observeStatus = () => {
 				if (!state.active) return;
 				const node = document.querySelector(
-					'.easymde-editor > .easymde-editor-message-alert-host [role="status"],' +
-						' .easymde-editor > .easymde-editor-message-alert-host [role="alert"]',
+					'[data-easymde-editor-owner="react"] > .easymde-editor-message-alert-host [role="status"],' +
+						' [data-easymde-editor-owner="react"] > .easymde-editor-message-alert-host [role="alert"]',
 				);
 				if (!(node instanceof HTMLElement)) return;
 				const bootstrap = window.EasyMDEEditorRootBootstrap;

@@ -6,9 +6,11 @@ import {
 } from "./wechat-clone-metadata";
 import { appendDeclarations } from "./wechat-style-policy";
 import {
+	type AuthorPseudoWidthRulesScan,
 	collectWechatTableNativeGridEvidence,
 	planWechatTableNativeGridApply,
 	readWechatTableNativeGridInput,
+	scanAuthorPseudoWidthRules,
 	type WechatTableNativeGridInput,
 	type WechatTableNativeGridPlan,
 } from "./wechat-table-native-grid";
@@ -61,11 +63,13 @@ function explicitTableGridIssue(
 function readTableInput(
 	source: HTMLTableElement,
 	runtime: BrowserWechatClipboardRuntime,
+	preScannedRules?: AuthorPseudoWidthRulesScan,
 ): WechatTableNativeGridInput {
 	return readWechatTableNativeGridInput(
 		source,
 		runtime.getComputedStyle(source),
 		runtime,
+		preScannedRules,
 	);
 }
 
@@ -134,12 +138,17 @@ export function wechatTableNativeGridAuxiliarySignature(
 	source: Element,
 	runtime: BrowserWechatClipboardRuntime,
 	computed?: CSSStyleDeclaration,
+	getPreScannedRules?: () => AuthorPseudoWidthRulesScan,
 ): string {
 	if ("TABLE" !== source.tagName) return "";
+	const style = computed ?? runtime.getComputedStyle(source);
 	const input = readWechatTableNativeGridInput(
 		source,
-		computed ?? runtime.getComputedStyle(source),
+		style,
 		runtime,
+		getPreScannedRules && "block" === style.getPropertyValue("display").trim().toLowerCase()
+			? getPreScannedRules()
+			: undefined,
 	);
 	return `table-native-grid:${tableInputSignature(input)}`;
 }
@@ -154,6 +163,11 @@ export function createWechatTableNativeGridGuard(
 	conversionActive = false,
 ): WechatTableNativeGridGuard {
 	const tables = sourceTables(sourceRoot);
+	let baselineScan: AuthorPseudoWidthRulesScan | null = null;
+	const getBaselineScan = (): AuthorPseudoWidthRulesScan => {
+		baselineScan ??= scanAuthorPseudoWidthRules(runtime);
+		return baselineScan;
+	};
 	const baseline: readonly TableBaseline[] = Object.freeze(
 		tables.map((source) => {
 			const omitted = guardSourceTableIsOmitted(
@@ -163,7 +177,7 @@ export function createWechatTableNativeGridGuard(
 				conversionActive,
 			);
 			if (omitted) return Object.freeze({ input: null, omitted, source });
-			const input = readTableInput(source, runtime);
+			const input = readTableInput(source, runtime, getBaselineScan());
 			const issue = explicitTableGridIssue(input);
 			if (issue) {
 				throw new Error(`wechat-table-native-grid-${issue}`);
@@ -181,6 +195,11 @@ export function createWechatTableNativeGridGuard(
 			if (currentTables.length !== baseline.length) {
 				throw new Error("wechat-table-native-grid-source-changed");
 			}
+			let currentScan: AuthorPseudoWidthRulesScan | null = null;
+			const getCurrentScan = (): AuthorPseudoWidthRulesScan => {
+				currentScan ??= scanAuthorPseudoWidthRules(runtime);
+				return currentScan;
+			};
 			currentTables.forEach((source, index) => {
 				const frozen = baseline[index];
 				if (!frozen || frozen.source !== source) {
@@ -194,7 +213,7 @@ export function createWechatTableNativeGridGuard(
 				);
 				if (frozen.omitted) {
 					if (omitted) return;
-					const input = readTableInput(source, runtime);
+					const input = readTableInput(source, runtime, getCurrentScan());
 					const issue = explicitTableGridIssue(input);
 					throw new Error(
 						`wechat-table-native-grid-${issue ?? "source-changed"}`,
@@ -203,7 +222,7 @@ export function createWechatTableNativeGridGuard(
 				if (omitted) {
 					throw new Error("wechat-table-native-grid-source-changed");
 				}
-				const current = readTableInput(source, runtime);
+				const current = readTableInput(source, runtime, getCurrentScan());
 				const issue = explicitTableGridIssue(current);
 				if (issue) {
 					throw new Error(`wechat-table-native-grid-${issue}`);
@@ -226,12 +245,21 @@ export function planWechatTableNativeGridForSerialization(
 	runtime: BrowserWechatClipboardRuntime,
 ): readonly WechatTableNativeGridSerializationPlan[] {
 	const plans: WechatTableNativeGridSerializationPlan[] = [];
+	let scan: AuthorPseudoWidthRulesScan | null = null;
+	const getScan = (): AuthorPseudoWidthRulesScan => {
+		scan ??= scanAuthorPseudoWidthRules(runtime);
+		return scan;
+	};
 	sourceTables(sourceRoot).forEach((source) => {
 		if (plannedSourceTableIsOmitted(source, sourceRoot, cloneIdentity)) return;
+		const style = runtime.getComputedStyle(source);
 		const evidence = collectWechatTableNativeGridEvidence(
 			source,
-			runtime.getComputedStyle(source),
+			style,
 			runtime,
+			"block" === style.getPropertyValue("display").trim().toLowerCase()
+				? getScan()
+				: undefined,
 		);
 		if (!evidence) return;
 		const target = cloneIdentity.get(source);

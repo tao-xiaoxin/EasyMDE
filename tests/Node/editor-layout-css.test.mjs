@@ -462,12 +462,13 @@ test('shared Preview task markers override WordPress checkbox geometry', () => {
     `.easymde-editor .easymde-rendered-content :where(
   .task-list-item > input[type="checkbox"],
   .task-list-item > p > input[type="checkbox"]
-):is(:checked, :not(:checked))::before`
+):is(:checked, :not(:checked)):is(:disabled, :enabled)::before`
   );
-  assertDeclaration(pseudoRule, 'width', '1rem');
-  assertDeclaration(pseudoRule, 'height', '1rem');
+  assertDeclaration(pseudoRule, 'width', '100%');
+  assertDeclaration(pseudoRule, 'height', '100%');
   assertDeclaration(pseudoRule, 'margin', '0');
   assertDeclaration(pseudoRule, 'float', 'none');
+  assertDeclaration(pseudoRule, 'opacity', '1');
 });
 
 test('shared rendered list baselines survive the WordPress admin reset without overriding list owners', () => {

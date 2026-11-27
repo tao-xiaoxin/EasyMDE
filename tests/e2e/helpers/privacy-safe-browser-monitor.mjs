@@ -673,13 +673,27 @@ export function attachPrivacySafeBrowserMonitor(
     }
   };
   const onPageError = (error) => {
-    counts.pageErrors += 1;
     let rawName = null;
+    let rawMessage = '';
+    let rawStack = '';
     try {
       rawName = error?.name;
+      rawMessage = 'string' === typeof error?.message ? error.message : '';
+      rawStack = 'string' === typeof error?.stack ? error.stack : '';
     } catch {
       rawName = null;
     }
+    // WordPress 7.1+ admin injects `@view-transition { navigation: auto; }`;
+    // navigating from wp-admin to a frontend post that does not opt in aborts
+    // the browser cross-document transition with a stackless InvalidStateError.
+    if (
+      'InvalidStateError' === rawName
+      && /ViewTransition opt-in disabled/u.test(rawMessage)
+      && '' === rawStack.trim()
+    ) {
+      return;
+    }
+    counts.pageErrors += 1;
     const errorName = SAFE_BROWSER_ERROR_NAMES.has(rawName) ? rawName : 'Error';
     record(`pageerror:${errorName}`);
   };

@@ -218,6 +218,7 @@ export function EditorRoot(props: EditorRootProps) {
     visualEditorRuntimeRef,
     visualPreviewEditingRef,
     wechatClipboard: props.wechatClipboard,
+    wechatCopyPendingRef,
     wechatExport: props.wechatExport
   });
 
@@ -283,6 +284,7 @@ export function EditorRoot(props: EditorRootProps) {
   const media = useEditorMediaUploadBridge({
     appearanceTransitionPendingRef,
     applyVisualCanonicalChange: visual.applyVisualCanonicalChange,
+    clearScheduledWechatPreparation: visual.clearScheduledWechatPreparation,
     documentSession: session.documentSession,
     executeExternalCommand: props.executeExternalCommand,
     imageUpload: props.imageUpload,

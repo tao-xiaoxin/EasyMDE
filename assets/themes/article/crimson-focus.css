@@ -424,7 +424,7 @@
 
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus table {
   width: 100%;
-  min-width: 520px;
+  min-width: max(100%, 520px);
   margin: 18.75px 0;
   border-collapse: collapse;
   font-family: var(--easymde-content-font-family, "EasyMDE Inter", system-ui, sans-serif);

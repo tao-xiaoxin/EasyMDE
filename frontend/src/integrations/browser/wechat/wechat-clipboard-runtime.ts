@@ -96,7 +96,7 @@ export function createSerializationYield(
     if (Date.now() - lastYieldAt < BACKGROUND_SERIALIZATION_YIELD_BUDGET_MS) {
       return;
     }
-    await waitForBrowserTask(runtime);
+    await yieldMacrotask(runtime);
     lastYieldAt = Date.now();
     throwIfBackgroundPreparationAborted(signal);
   }) as SerializationYield;
@@ -128,6 +128,38 @@ export function createRasterizationYield(
     },
     { shouldYield: () => yieldToBrowser.shouldYield() }
   );
+}
+
+const macrotaskChannels = new WeakMap<
+  Window,
+  Readonly<{ port: MessagePort; queue: Array<() => void> }>
+>();
+
+function yieldMacrotask(runtime: BrowserWechatClipboardRuntime): Promise<void> {
+  const browserWindow = runtime.document.defaultView;
+  if (
+    browserWindow &&
+    'function' === typeof browserWindow.MessageChannel &&
+    'function' === typeof browserWindow.setTimeout &&
+    Function.prototype.toString.call(browserWindow.setTimeout).includes('[native code]')
+  ) {
+    let entry = macrotaskChannels.get(browserWindow);
+    if (!entry) {
+      const channel = new browserWindow.MessageChannel();
+      const queue: Array<() => void> = [];
+      channel.port1.onmessage = () => {
+        const next = queue.shift();
+        next?.();
+      };
+      entry = { port: channel.port2, queue };
+      macrotaskChannels.set(browserWindow, entry);
+    }
+    return new Promise<void>((resolve) => {
+      entry.queue.push(resolve);
+      entry.port.postMessage(undefined);
+    });
+  }
+  return waitForBrowserTask(runtime);
 }
 
 export function waitForBrowserTask(runtime: BrowserWechatClipboardRuntime): Promise<void> {

@@ -88,6 +88,7 @@ export type UseEditorVisualPreviewBridgeOptions = Readonly<{
   visualEditorRuntimeRef: SharedRef<ImmersiveVisualEditorRuntime | null>;
   visualPreviewEditingRef: SharedRef<boolean>;
   wechatClipboard: EditorRootProps['wechatClipboard'];
+  wechatCopyPendingRef: SharedRef<boolean>;
   wechatExport: EditorRootProps['wechatExport'];
 }>;
 
@@ -121,6 +122,7 @@ export function useEditorVisualPreviewBridge({
   visualEditorRuntimeRef,
   visualPreviewEditingRef,
   wechatClipboard,
+  wechatCopyPendingRef,
   wechatExport
 }: UseEditorVisualPreviewBridgeOptions) {
   const lastVisualFailureRef = useRef<string | null>(null);
@@ -216,6 +218,7 @@ export function useEditorVisualPreviewBridge({
 
   const {
     cancelWechatBackgroundPreparation,
+    clearScheduledWechatPreparation,
     rememberWechatPreviewWidth,
     scheduleCurrentWechatPreviewPreparation,
     scheduleWechatPreviewPreparation
@@ -232,6 +235,7 @@ export function useEditorVisualPreviewBridge({
     visualPreviewLockingRef,
     visualPreviewUnlockingRef,
     wechatClipboard,
+    wechatCopyPendingRef,
     wechatExportEnabled: wechatExport.enabled,
     wechatPngConversionEnabled: wechatExport.pngConversionEnabled
   });
@@ -676,6 +680,7 @@ export function useEditorVisualPreviewBridge({
     cancelVisualUnlockPreparation,
     cancelWechatBackgroundPreparation,
     changeImmersiveMode,
+    clearScheduledWechatPreparation,
     enterImmersive,
     executeVisualToolbarCommand: visualHandlers.executeVisualToolbarCommand,
     exitImmersive,

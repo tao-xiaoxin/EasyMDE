@@ -45,6 +45,7 @@ import type {
 export type UseEditorMediaUploadBridgeOptions = Readonly<{
   appearanceTransitionPendingRef: SharedRef<number | null>;
   applyVisualCanonicalChange: ApplyVisualCanonicalChange;
+  clearScheduledWechatPreparation: () => void;
   documentSession: EditorDocumentSession | null;
   executeExternalCommand: EditorRootProps['executeExternalCommand'];
   imageUpload: EditorRootProps['imageUpload'];
@@ -80,6 +81,7 @@ export type UseEditorMediaUploadBridgeOptions = Readonly<{
 export function useEditorMediaUploadBridge({
   appearanceTransitionPendingRef,
   applyVisualCanonicalChange,
+  clearScheduledWechatPreparation,
   documentSession,
   executeExternalCommand,
   imageUpload,
@@ -314,6 +316,7 @@ export function useEditorMediaUploadBridge({
     }
     const sequence = ++wechatCopySequenceRef.current;
     wechatCopyPendingRef.current = true;
+    clearScheduledWechatPreparation();
     let operation: ReturnType<typeof wechatSession.copy>;
     try {
       // Keep the session call in the originating click/key activation task. The
@@ -340,15 +343,19 @@ export function useEditorMediaUploadBridge({
         ) {
           wechatCopyPendingRef.current = false;
           wechatCopyStatus.setPending(false);
-          scheduleWechatPreparationAfterCopyRef.current?.();
+          if (!wechatExport.pngConversionEnabled) {
+            scheduleWechatPreparationAfterCopyRef.current?.();
+          }
         }
       });
   }, [
     appearanceTransitionPendingRef,
+    clearScheduledWechatPreparation,
     rootActiveRef,
     wechatCopyPendingRef,
     wechatCopySequenceRef,
     wechatCopyStatus,
+    wechatExport.pngConversionEnabled,
     wechatSession
   ]);
 

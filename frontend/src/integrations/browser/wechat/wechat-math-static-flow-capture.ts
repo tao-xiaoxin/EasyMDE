@@ -77,6 +77,15 @@ export type WechatMathStaticFlowSourceCapture = Readonly<{
 const RELATIVE_COORDINATE_GRID = 1e-6;
 
 const RELATIVE_COORDINATE_STEPS_PER_PIXEL = 1 / RELATIVE_COORDINATE_GRID;
+const EMPTY_CLASS_SET: ReadonlySet<string> = Object.freeze(new Set<string>());
+const EMPTY_CHILDREN: readonly Element[] = Object.freeze([]);
+const DEFAULT_EMPTY_TYPED_TOKENS: Readonly<Record<string, string>> = Object.freeze({});
+const DEFAULT_NONE_PSEUDOS: Readonly<
+  Record<(typeof PSEUDO_ELEMENTS)[number], Readonly<{ content: string; position: string }>>
+> = Object.freeze({
+  '::before': Object.freeze({ content: 'none', position: 'static' }),
+  '::after': Object.freeze({ content: 'none', position: 'static' })
+});
 
 function canonicalRelativeCoordinate(value: number): number {
   const snapped = Math.round(value * RELATIVE_COORDINATE_STEPS_PER_PIXEL) / RELATIVE_COORDINATE_STEPS_PER_PIXEL;
@@ -86,7 +95,7 @@ function canonicalRelativeCoordinate(value: number): number {
 function isR1RelevantNode(element: Element, sourceRoot: Element): boolean {
   if (element === sourceRoot) return true;
   if ('http://www.w3.org/2000/svg' === element.namespaceURI || 'svg' === element.localName.toLowerCase()) {
-    return true;
+    return Boolean(element.closest?.('.katex-html, .katex, .vlist, .easymde-math-block, .easymde-math-inline, .svg-align'));
   }
   const className = (element as HTMLElement).className;
   if (typeof className === 'string') {
@@ -335,21 +344,15 @@ export function createWechatMathStaticFlowSourceCapture(
     }
 
     const style = computed ?? runtime.getComputedStyle(source);
-    const styles = Object.freeze(
-      Object.fromEntries(
-        CAPTURE_STYLE_PROPERTIES.map((property) => [
-          property,
-          style.getPropertyValue(property).trim().toLowerCase()
-        ])
-      )
-    );
+    const stylesRecord: Record<string, string> = {};
+    for (const property of CAPTURE_STYLE_PROPERTIES) {
+      stylesRecord[property] = style.getPropertyValue(property).trim().toLowerCase();
+    }
+    const styles = Object.freeze(stylesRecord);
 
     const relevant = isR1RelevantNode(source, sourceRoot);
-    let typedTokens: Readonly<Record<string, string>> = Object.freeze({});
-    let pseudos: Readonly<Record<(typeof PSEUDO_ELEMENTS)[number], Readonly<{ content: string; position: string }>>> = Object.freeze({
-      '::before': Object.freeze({ content: 'none', position: 'static' }),
-      '::after': Object.freeze({ content: 'none', position: 'static' })
-    });
+    let typedTokens: Readonly<Record<string, string>> = DEFAULT_EMPTY_TYPED_TOKENS;
+    let pseudos = DEFAULT_NONE_PSEUDOS;
     let hasAnimation = false;
 
     if (relevant) {
@@ -391,21 +394,33 @@ export function createWechatMathStaticFlowSourceCapture(
       hasAnimation = animationIntersects(source);
     }
 
-    const holderTextFlag = Array.from(source.childNodes).some(
-      (node) => node.nodeType === Node.TEXT_NODE && Boolean(node.textContent?.trim())
-    );
-    const hasChildNodes = source.childNodes.length !== 0;
+    let holderTextFlag = false;
+    for (let child = source.firstChild; child; child = child.nextSibling) {
+      if (child.nodeType === Node.TEXT_NODE && child.textContent?.trim()) {
+        holderTextFlag = true;
+        break;
+      }
+    }
+    const hasChildNodes = null !== source.firstChild;
+    const classList =
+      source.classList && source.classList.length > 0
+        ? Object.freeze(new Set(Array.from(source.classList)))
+        : EMPTY_CLASS_SET;
+    const orderedChildren =
+      source.children.length > 0
+        ? Object.freeze(Array.from(source.children))
+        : EMPTY_CHILDREN;
 
     const node: WechatMathFrozenNode = Object.freeze({
       animationIntersects: hasAnimation,
       key: elementKey(source),
-      classList: Object.freeze(new Set(Array.from(source.classList ?? []))),
+      classList,
       element: source,
       hasChildNodes,
       holderTextFlag,
       localName: source.localName.toLowerCase(),
       namespaceURI: source.namespaceURI ?? '',
-      orderedChildren: Object.freeze(Array.from(source.children)),
+      orderedChildren,
       parent: source.parentElement,
       pseudos,
       rectEvidence,

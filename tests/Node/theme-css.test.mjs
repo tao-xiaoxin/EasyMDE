@@ -735,7 +735,7 @@ test('Crimson focus follows the reference light surface and preserves code-theme
   assert.match(css, /\.easymde-rendered-content\.easymde-markdown-theme-crimson-focus img\s*\{[\s\S]*display:\s*block;[\s\S]*margin:\s*11\.25px auto;/);
   assert.match(
     css,
-    /\.easymde-rendered-content\.easymde-markdown-theme-crimson-focus table\s*\{[\s\S]*min-width:\s*520px;/
+    /\.easymde-rendered-content\.easymde-markdown-theme-crimson-focus table\s*\{[\s\S]*min-width:\s*max\(100%,\s*520px\);/
   );
   assert.match(
     css,

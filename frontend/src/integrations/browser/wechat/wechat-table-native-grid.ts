@@ -176,11 +176,6 @@ export type WechatTableNativeGridPlan = Readonly<{
   sourceKey: string;
 }>;
 
-type PseudoRuleWidths = {
-  explicitWidth: boolean;
-  values: string[];
-};
-
 function tableGridError(code: string): Error {
   return new Error(`wechat-table-native-grid-${code}`);
 }
@@ -364,47 +359,59 @@ function activeSupportsRule(rule: CSSSupportsRule, runtime: BrowserWechatClipboa
   }
 }
 
-function styleRulePseudoWidths(source: Element, rule: CSSStyleRule): PseudoRuleWidths | null {
-  if (!matchingPseudoSelector(source, rule.selectorText)) return null;
+export type AuthorPseudoWidthCandidate = Readonly<{
+  active: boolean;
+  explicitWidth: boolean;
+  selectorText: string;
+  values: readonly string[];
+}>;
+
+export type AuthorPseudoWidthRulesScan = Readonly<{
+  candidates: readonly AuthorPseudoWidthCandidate[];
+  error: unknown;
+}>;
+
+function styleRulePseudoWidthCandidate(rule: CSSStyleRule, active: boolean): AuthorPseudoWidthCandidate | null {
+  const selectorText = rule.selectorText;
+  if (!/before|\\/iu.test(selectorText)) return null;
+  if (!styleDeclaresWidthOrAll(rule.style)) return null;
   const all = rule.style.getPropertyValue('all').trim().toLowerCase();
-  const result: PseudoRuleWidths = { explicitWidth: false, values: [] };
-  if (all) result.values.push(`all:${all}`);
+  const values: string[] = [];
+  let explicitWidth = false;
+  if (all) values.push(`all:${all}`);
   for (const property of WIDTH_PROPERTIES) {
     const value = rule.style.getPropertyValue(property).trim().toLowerCase();
     if (!value) continue;
-    result.values.push(value);
-    if ('width' === property || 'inline-size' === property) result.explicitWidth = true;
+    values.push(value);
+    if ('width' === property || 'inline-size' === property) explicitWidth = true;
   }
-  return result.values.length ? result : null;
+  return values.length ? { active, explicitWidth, selectorText, values } : null;
 }
 
 /**
- * Reads every possibly participating author declaration without deciding which
- * declaration wins or whether its value is admissible. Unknown or unreadable
- * CSS remains an explicit failure to preserve fail-fast evidence.
+ * Scans the document stylesheets once for author rules that may declare width
+ * or `all` on a `::before` pseudo-element, preserving fail-fast errors for
+ * unreadable/unsupported rules. Pass-local callers may share one scan across
+ * multiple tables within the same synchronous/yielded walk.
  */
-function readAuthorPseudoWidths(source: Element, runtime: BrowserWechatClipboardRuntime): AuthorWidthInput {
-  const activeValues: string[] = [];
-  const potentialValues: string[] = [];
-  let explicitActiveWidth = false;
-  let explicitPotentialWidth = false;
+export function scanAuthorPseudoWidthRules(
+  runtime: BrowserWechatClipboardRuntime
+): AuthorPseudoWidthRulesScan {
+  const candidates: AuthorPseudoWidthCandidate[] = [];
   const visitedSheets = new Set<CSSStyleSheet>();
-
-  const record = (widthRule: PseudoRuleWidths, active: boolean): void => {
-    potentialValues.push(...widthRule.values);
-    explicitPotentialWidth ||= widthRule.explicitWidth;
-    if (!active) return;
-    activeValues.push(...widthRule.values);
-    explicitActiveWidth ||= widthRule.explicitWidth;
-  };
+  const defaultView = runtime.document.defaultView;
+  const styleRuleCtor =
+    defaultView && 'function' === typeof defaultView.CSSStyleRule ? defaultView.CSSStyleRule : null;
 
   const visitRules = (rules: CSSRuleList, active: boolean): void => {
-    for (const rule of Array.from(rules)) {
-      const defaultView = runtime.document.defaultView;
-      if (isCssStyleRule(rule, defaultView)) {
-        const nested = nestedRuleContainer(rule);
+    for (let index = 0; index < rules.length; index += 1) {
+      const rule = rules[index];
+      if (!rule) continue;
+      if ((styleRuleCtor && rule instanceof styleRuleCtor) || isCssStyleRule(rule, defaultView)) {
+        const styleRule = rule as CSSStyleRule;
+        const nested = nestedRuleContainer(styleRule);
         if (nested) {
-          const parentHasPseudoBefore = selectorListHasPseudoBefore(rule.selectorText);
+          const parentHasPseudoBefore = selectorListHasPseudoBefore(styleRule.selectorText);
           if (
             null === parentHasPseudoBefore ||
             nestedSubtreeCouldAffectPseudoBeforeWidth(nested, parentHasPseudoBefore, defaultView)
@@ -412,8 +419,8 @@ function readAuthorPseudoWidths(source: Element, runtime: BrowserWechatClipboard
             throw tableGridError('nested-rule-unreadable');
           }
         }
-        const widthRule = styleRulePseudoWidths(source, rule);
-        if (widthRule) record(widthRule, active);
+        const candidate = styleRulePseudoWidthCandidate(styleRule, active);
+        if (candidate) candidates.push(candidate);
         continue;
       }
 
@@ -440,23 +447,55 @@ function readAuthorPseudoWidths(source: Element, runtime: BrowserWechatClipboard
     }
   };
 
-  let sheets: CSSStyleSheet[];
   try {
-    sheets = Array.from(runtime.document.styleSheets);
-    const adopted = (runtime.document as Document & { adoptedStyleSheets?: readonly CSSStyleSheet[] }).adoptedStyleSheets;
-    if (adopted) sheets.push(...Array.from(adopted));
-  } catch {
-    throw tableGridError('stylesheet-unreadable');
-  }
-  for (const sheet of sheets) {
-    if (visitedSheets.has(sheet)) throw tableGridError('stylesheet-repeat');
-    visitedSheets.add(sheet);
+    let sheets: CSSStyleSheet[];
     try {
-      visitRules(sheet.cssRules, sheetIsActive(sheet, runtime));
-    } catch (error) {
-      if (error instanceof Error && error.message.startsWith('wechat-table-native-grid-')) throw error;
+      sheets = Array.from(runtime.document.styleSheets);
+      const adopted = (runtime.document as Document & { adoptedStyleSheets?: readonly CSSStyleSheet[] })
+        .adoptedStyleSheets;
+      if (adopted) sheets.push(...Array.from(adopted));
+    } catch {
       throw tableGridError('stylesheet-unreadable');
     }
+    for (const sheet of sheets) {
+      if (visitedSheets.has(sheet)) throw tableGridError('stylesheet-repeat');
+      visitedSheets.add(sheet);
+      try {
+        visitRules(sheet.cssRules, sheetIsActive(sheet, runtime));
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith('wechat-table-native-grid-')) throw error;
+        throw tableGridError('stylesheet-unreadable');
+      }
+    }
+    return { candidates, error: null };
+  } catch (error) {
+    return { candidates: [], error };
+  }
+}
+
+/**
+ * Reads every possibly participating author declaration without deciding which
+ * declaration wins or whether its value is admissible. Unknown or unreadable
+ * CSS remains an explicit failure to preserve fail-fast evidence.
+ */
+function readAuthorPseudoWidths(
+  source: Element,
+  runtime: BrowserWechatClipboardRuntime,
+  preScanned?: AuthorPseudoWidthRulesScan
+): AuthorWidthInput {
+  const scan = preScanned ?? scanAuthorPseudoWidthRules(runtime);
+  if (scan.error) throw scan.error;
+  const activeValues: string[] = [];
+  const potentialValues: string[] = [];
+  let explicitActiveWidth = false;
+  let explicitPotentialWidth = false;
+  for (const candidate of scan.candidates) {
+    if (!matchingPseudoSelector(source, candidate.selectorText)) continue;
+    potentialValues.push(...candidate.values);
+    explicitPotentialWidth ||= candidate.explicitWidth;
+    if (!candidate.active) continue;
+    activeValues.push(...candidate.values);
+    explicitActiveWidth ||= candidate.explicitWidth;
   }
 
   return Object.freeze({
@@ -560,7 +599,8 @@ function inputIssue(error: unknown): string {
 export function readWechatTableNativeGridInput(
   source: Element,
   computed: CSSStyleDeclaration,
-  runtime: BrowserWechatClipboardRuntime
+  runtime: BrowserWechatClipboardRuntime,
+  preScannedRules?: AuthorPseudoWidthRulesScan
 ): WechatTableNativeGridInput {
   if ('TABLE' !== source.tagName || 'block' !== normalizedValue(computed, 'display')) {
     return Object.freeze({ issues: Object.freeze([]), key: null, snapshot: null, state: 'non-target' });
@@ -585,7 +625,7 @@ export function readWechatTableNativeGridInput(
     const parentWidth =
       parentRect && Number.isFinite(parentRect.width) && parentRect.width > 0 ? parentRect.width : null;
     const snapshot: InputSnapshot = Object.freeze({
-      authorWidths: readAuthorPseudoWidths(table, runtime),
+      authorWidths: readAuthorPseudoWidths(table, runtime, preScannedRules),
       parentWidth,
       pseudoStyles: readStyle(pseudo, PSEUDO_INPUT_PROPERTIES),
       source: table,
@@ -763,9 +803,10 @@ function validateNativeGridInput(input: WechatTableNativeGridInput): WechatTable
 export function collectWechatTableNativeGridEvidence(
   source: Element,
   computed: CSSStyleDeclaration,
-  runtime: BrowserWechatClipboardRuntime
+  runtime: BrowserWechatClipboardRuntime,
+  preScannedRules?: AuthorPseudoWidthRulesScan
 ): WechatTableNativeGridEvidence | null {
-  return validateNativeGridInput(readWechatTableNativeGridInput(source, computed, runtime));
+  return validateNativeGridInput(readWechatTableNativeGridInput(source, computed, runtime, preScannedRules));
 }
 
 export function planWechatTableNativeGridApply(

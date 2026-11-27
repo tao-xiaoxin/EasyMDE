@@ -42,6 +42,8 @@ import { useImmersiveDocumentDerivations } from './use-immersive-document-deriva
 export type { ImmersiveStrings } from './immersive-editor-ui-types';
 export { useImmersiveDocumentDerivations } from './use-immersive-document-derivations';
 
+const COMPACT_OUTLINE_MAX_WIDTH = 782;
+
 type Props = Readonly<{
   direction: 'ltr' | 'rtl';
   generalSettings: GeneralSettings;
@@ -151,7 +153,8 @@ export function ImmersiveEditor({
       || !visualPreviewEditable
       || 'preview' !== mode
     ) return;
-    const isCompactViewport = environment.viewportWidth() <= 640;
+    const isCompactViewport =
+      environment.viewportWidth() <= COMPACT_OUTLINE_MAX_WIDTH;
     previousViewportCompactRef.current = isCompactViewport;
     if (!isCompactViewport) {
       outlineAutoClosedInCompactVisitRef.current = false;
@@ -170,13 +173,15 @@ export function ImmersiveEditor({
 
   useLayoutEffect(() => {
     const initialWidth = environment.viewportWidth();
-    previousViewportCompactRef.current = initialWidth <= 640;
-    if (initialWidth > 640) {
+    previousViewportCompactRef.current =
+      initialWidth <= COMPACT_OUTLINE_MAX_WIDTH;
+    if (initialWidth > COMPACT_OUTLINE_MAX_WIDTH) {
       outlineAutoClosedInCompactVisitRef.current = false;
     }
 
     return environment.subscribeResize(() => {
-      const isCompactViewport = environment.viewportWidth() <= 640;
+      const isCompactViewport =
+        environment.viewportWidth() <= COMPACT_OUTLINE_MAX_WIDTH;
       const wasCompactViewport = previousViewportCompactRef.current;
       previousViewportCompactRef.current = isCompactViewport;
       if (!isCompactViewport) {

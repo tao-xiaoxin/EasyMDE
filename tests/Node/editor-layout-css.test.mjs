@@ -322,47 +322,106 @@ test('ordinary React editor CSS owns the historical fixed 50/50 workspace', () =
     'intermediate immersive breakpoint must not hide the split divider'
   );
 
-  const narrowLayoutMedia = cssBlock(
-    css,
-    '@media (max-width: 640px)',
-    css.lastIndexOf('@media (max-width: 640px)')
+  const section19Start = css.lastIndexOf('19. Immersive Mode Responsive Breakpoints');
+  const section20Start = css.lastIndexOf('20. Unified ProseMirror Immersive Visual Editor Surface');
+  assert.ok(
+    section19Start > -1 && section20Start > section19Start,
+    'Missing Section 19/20 CSS markers'
   );
-  const narrowOrdinaryWorkspace = cssRule(
-    narrowLayoutMedia,
-    '.easymde-editor:not(.is-immersive) .easymde-workspace'
-  );
-  assertDeclaration(narrowOrdinaryWorkspace, 'height', 'clamp(420px, 64vh, 720px)');
-  assertDeclaration(narrowOrdinaryWorkspace, 'min-height', '420px');
+  const section19Css = css.slice(section19Start, section20Start);
 
-  const narrowOrdinaryPreviewPaper = cssRule(
-    narrowLayoutMedia,
+  const tabletPortraitMedia = cssBlock(
+    section19Css,
+    '@media (max-width: 782px)'
+  );
+  assertDeclaration(
+    cssRule(tabletPortraitMedia, '.easymde-editor.is-immersive'),
+    'grid-template-columns',
+    'minmax(0, 1fr)'
+  );
+  assertDeclaration(
+    cssRule(tabletPortraitMedia, '.easymde-immersive-header'),
+    'grid-template-columns',
+    'auto minmax(0, 1fr) auto'
+  );
+  assertDeclaration(
+    cssRule(tabletPortraitMedia, '.easymde-immersive-stats'),
+    'display',
+    'none'
+  );
+  assertDeclaration(
+    cssRule(tabletPortraitMedia, '.easymde-editor.is-immersive > .easymde-workspace'),
+    'grid-column',
+    '1'
+  );
+
+  const tabletOrdinaryPreviewPaper = cssRule(
+    tabletPortraitMedia,
     `.easymde-editor:not(.is-immersive) .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview${wechatExportPaperSelector}`
   );
-  assertDeclaration(narrowOrdinaryPreviewPaper, 'padding', '16px 14px 20px');
+  assertDeclaration(tabletOrdinaryPreviewPaper, 'padding', '18px 18px 24px');
 
-  const narrowSplitPreviewPaper = cssRule(
-    narrowLayoutMedia,
+  const tabletSplitPreviewPaper = cssRule(
+    tabletPortraitMedia,
     `.easymde-editor[data-easymde-preview-presentation="split"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview${wechatExportPaperSelector}`
   );
-  assertDeclaration(narrowSplitPreviewPaper, 'padding', '16px 14px 20px');
+  assertDeclaration(tabletSplitPreviewPaper, 'padding', '18px 18px 24px');
 
-  const narrowOutlineOverlay = cssRule(
-    narrowLayoutMedia,
-    '.easymde-editor.is-immersive .easymde-immersive-outline'
-  );
-  assertDeclaration(narrowOutlineOverlay, 'position', 'absolute');
   assertDeclaration(
     cssRule(
-      narrowLayoutMedia,
+      tabletPortraitMedia,
+      '.easymde-editor.is-immersive.is-immersive-split .easymde-pane-header'
+    ),
+    'padding-inline',
+    '12px'
+  );
+
+  const tabletOutlineOverlay = cssRule(
+    tabletPortraitMedia,
+    '.easymde-editor.is-immersive .easymde-immersive-outline'
+  );
+  assertDeclaration(tabletOutlineOverlay, 'position', 'absolute');
+  assertDeclaration(tabletOutlineOverlay, 'min-width', '0');
+  assertDeclaration(
+    tabletOutlineOverlay,
+    'max-width',
+    'min(240px, calc(100% - 22.5px))'
+  );
+  assertDeclaration(
+    cssRule(
+      tabletPortraitMedia,
+      '.easymde-editor.is-immersive .easymde-immersive-outline-show'
+    ),
+    'position',
+    'absolute'
+  );
+  assertDeclaration(
+    cssRule(
+      tabletPortraitMedia,
       '.easymde-editor.is-immersive .easymde-immersive-outline-resizer'
     ),
     'display',
     'none'
   );
   assert.doesNotMatch(
-    narrowLayoutMedia,
+    tabletPortraitMedia,
     /\.easymde-immersive-pane-divider/,
-    'narrow immersive breakpoint must hide only the outline resizer, never the split divider'
+    'tablet-portrait immersive breakpoint must hide only the outline resizer, never the split divider'
+  );
+  assert.doesNotMatch(
+    section19Css,
+    /@media \(max-width:\s*640px\)/,
+    'Section 19 must not retain the obsolete phone-writing 640px breakpoint'
+  );
+  assert.doesNotMatch(
+    css,
+    /\.easymde-immersive-publish\s*\{[^}]*font-size:\s*0;/s,
+    'obsolete phone-only icon-only publish button rule must be removed'
+  );
+  assert.doesNotMatch(
+    css,
+    /@media \(max-width:\s*480px\)/,
+    'obsolete phone-only 480px breakpoint must be removed'
   );
 });
 
@@ -1102,7 +1161,7 @@ test('context submenu border joins the clipped tail without masking its glass or
   assertDeclaration(flipped, '--easymde-context-menu-join-side', '100%');
 });
 
-test('context menu CSS styles overlapped submenus and compacts narrow layouts', () => {
+test('context menu CSS styles overlapped submenus without phone-only breakpoints', () => {
   const overlappedFrame = cssRule(
     css,
     '.easymde-editor-context-menu__submenu-frame[data-easymde-context-menu-overlapped="true"]'
@@ -1118,25 +1177,21 @@ test('context menu CSS styles overlapped submenus and compacts narrow layouts', 
   );
   assertDeclaration(overlappedOutline, 'mask-image', 'none');
 
-  const section7Start = css.indexOf('7. Unified Editor Context Menu');
-  const section8Start = css.indexOf('8. Immersive Font Selector Controls');
+  const section7Start = css.lastIndexOf('7. Unified Editor Context Menu');
+  const section8Start = css.lastIndexOf('8. Immersive Font Selector Controls');
   assert.ok(section7Start > -1 && section8Start > section7Start, 'Missing Section 7/8 CSS markers');
   const section7Css = css.slice(section7Start, section8Start);
 
-  const narrow640 = cssBlock(section7Css, '@media (max-width: 640px)');
-  const narrowMenuSizing = cssRule(
-    narrow640,
-    '.easymde-editor-context-menu,\n    .easymde-editor-context-menu__submenu'
+  assert.doesNotMatch(
+    section7Css,
+    /@media \(max-width:\s*640px\)/,
+    'Section 7 must not retain the obsolete phone-only 640px context-menu breakpoint'
   );
-  assertDeclaration(narrowMenuSizing, 'max-inline-size', 'min(280px, calc(100vw - 16px))');
-  assertDeclaration(narrowMenuSizing, 'min-inline-size', 'min(168px, calc(100vw - 16px))');
-  const narrowButton = cssRule(narrow640, '.easymde-editor-context-menu__button');
-  assertDeclaration(narrowButton, 'gap', '10px');
-  assertDeclaration(narrowButton, 'padding', '6px 8px');
-
-  const narrow480 = cssBlock(section7Css, '@media (max-width: 480px)');
-  const narrowShortcut = cssRule(narrow480, '.easymde-editor-context-menu__shortcut');
-  assertDeclaration(narrowShortcut, 'display', 'none');
+  assert.doesNotMatch(
+    section7Css,
+    /@media \(max-width:\s*480px\)/,
+    'Section 7 must not retain the obsolete phone-only 480px context-menu breakpoint'
+  );
 });
 
 test('immersive publish CSS preserves reference geometry without hiding the password field', () => {

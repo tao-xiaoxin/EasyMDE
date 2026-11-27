@@ -1350,6 +1350,73 @@ describe("responsive portable padding semantics", () => {
 		}
 	});
 
+	it("does not double-decode CSSKeyframesRule.name into a false alias for a distinct opacity-only animation", () => {
+		const fixture = portableQuoteFixture();
+		const animSheet = document.createElement("style");
+		animSheet.textContent = `
+			@keyframes literal-backslash-placeholder {
+				to { padding-left: 10px; }
+			}
+			@keyframes pad {
+				to { opacity: 0.75; }
+			}
+		`;
+		document.head.append(animSheet);
+		const rules = animSheet.sheet?.cssRules;
+		if (rules?.[0]) {
+			// Browser CSSOM already exposes the decoded logical name `\70 ad` for `@keyframes "\\70 ad"`.
+			Object.defineProperty(rules[0], "name", {
+				configurable: true,
+				value: "\\70 ad",
+			});
+		}
+		try {
+			fixture.source.style.setProperty("animation-name", "none");
+			const measured = style({
+				padding: "18px 20px 18px 40px",
+				"padding-left": "40px",
+				position: "static",
+			});
+
+			// Running the distinct opacity-only `pad` animation keeps portable 10% (no false alias from `\70 ad`).
+			const padOnlySemantics = paddingSemantics("10%", "5%", {
+				"animation-name": "pad",
+				"padding-left": "40px",
+			});
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					padOnlySemantics,
+					padOnlySemantics.getComputedStyle(fixture.source),
+				),
+			).toBe("10%");
+
+			// Running the actual `\70 ad` animation (serialized as CSS ident or quoted string) preserves effective pixels.
+			for (const serializedLiteralName of ['"\\\\70 ad"', "\\5c 70\\ ad"]) {
+				const literalAnimSemantics = paddingSemantics("10%", "5%", {
+					"animation-name": serializedLiteralName,
+					"padding-left": "10px",
+				});
+				expect(
+					semanticPaddingValue(
+						"padding-left",
+						fixture.source,
+						measured,
+						literalAnimSemantics,
+						literalAnimSemantics.getComputedStyle(fixture.source),
+					),
+					`expected effective pixel fallback for animation-name=${serializedLiteralName}`,
+				).toBeNull();
+			}
+		} finally {
+			fixture.source.style.removeProperty("animation-name");
+			animSheet.remove();
+			fixture.cleanup();
+		}
+	});
+
 	it("changes dimension freshness when token and effective semantics differ at equal used pixels", () => {
 		const fixture = portableQuoteFixture();
 		try {

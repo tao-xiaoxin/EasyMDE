@@ -84,13 +84,17 @@ const frontendEnhancementsEntry = 'frontend/src/entrypoints/frontend-enhancement
 const frontendBootstrapEntry = 'frontend/src/entrypoints/frontend-bootstrap.ts';
 const frontendMermaidEntry = 'frontend/src/entrypoints/frontend-mermaid-runtime.ts';
 const mediaPickerFrontendEntry = 'frontend/src/entrypoints/media-picker-bridge.ts';
+const editorBlockIndexWorkerEntry = 'frontend/src/entrypoints/editor-block-index-worker.ts';
 const productionFrontendBuilds = [
   {
+    allowDynamicChunks: true,
     buildRoot: 'assets/build',
+    chunkFilePattern: /^assets\/admin-editor-chunk-[A-Za-z0-9_-]+\.js$/,
     dependencies: ['wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n'],
     entry: productionFrontendEntry,
     filePattern: /^assets\/admin-editor-[A-Za-z0-9_-]+\.js$/,
-    handle: 'easymde-admin-editor-toolbar'
+    handle: 'easymde-admin-editor-toolbar',
+    moduleFormat: 'esm'
   },
   {
     buildRoot: 'assets/build/admin-editor-loader',
@@ -140,6 +144,13 @@ const productionFrontendBuilds = [
     entry: mediaPickerFrontendEntry,
     filePattern: /^assets\/media-picker-bridge-[A-Za-z0-9_-]+\.js$/,
     handle: 'easymde-media-picker-bridge'
+  },
+  {
+    buildRoot: 'assets/build/editor-block-index-worker',
+    dependencies: [],
+    entry: editorBlockIndexWorkerEntry,
+    filePattern: /^assets\/editor-block-index-worker-[A-Za-z0-9_-]+\.js$/,
+    handle: 'easymde-editor-block-index-worker'
   },
 ];
 
@@ -589,11 +600,12 @@ function productionFrontendRequirements(root) {
       throw new Error('Release build requires valid production frontend manifests.');
     }
 
+    const manifestKeys = Object.keys(manifest || {});
     const viteEntry = manifest && manifest[build.entry];
     const entries = wordpressManifest && wordpressManifest.entries;
     const wordpressEntry = entries && entries[build.entry];
     if (
-      1 !== Object.keys(manifest || {}).length
+      (!build.allowDynamicChunks && 1 !== manifestKeys.length)
       || 1 !== wordpressManifest.schemaVersion
       || !entries
       || 1 !== Object.keys(entries).length
@@ -613,9 +625,69 @@ function productionFrontendRequirements(root) {
       throw new Error('Release build requires matching production frontend manifest contracts.');
     }
 
+    let chunks = [];
+    if (build.allowDynamicChunks) {
+      const declaredChunks = wordpressEntry.chunks;
+      if (
+        build.moduleFormat !== wordpressEntry.moduleFormat
+        || !Array.isArray(declaredChunks)
+        || 0 === declaredChunks.length
+        || declaredChunks.some(
+          (chunk) => 'string' !== typeof chunk || !build.chunkFilePattern.test(chunk)
+        )
+      ) {
+        throw new Error('Release build requires matching production frontend manifest contracts.');
+      }
+      const sortedUniqueChunks = [...new Set(declaredChunks)].sort();
+      if (JSON.stringify(sortedUniqueChunks) !== JSON.stringify(declaredChunks)) {
+        throw new Error('Release build requires matching production frontend manifest contracts.');
+      }
+      if (
+        !Array.isArray(viteEntry.dynamicImports)
+        || 0 === viteEntry.dynamicImports.length
+        || viteEntry.dynamicImports.some(
+          (key) =>
+            'string' !== typeof key
+            || key === build.entry
+            || !Object.hasOwn(manifest, key)
+        )
+      ) {
+        throw new Error('Release build requires matching production frontend manifest contracts.');
+      }
+      const chunkRecords = manifestKeys
+        .filter((key) => key !== build.entry)
+        .map((key) => manifest[key]);
+      if (
+        chunkRecords.some(
+          (record) =>
+            !record
+            || 'object' !== typeof record
+            || true === record.isEntry
+            || 'string' !== typeof record.file
+            || !build.chunkFilePattern.test(record.file)
+        )
+      ) {
+        throw new Error('Release build requires matching production frontend manifest contracts.');
+      }
+      const recordedChunkFiles = [...new Set(chunkRecords.map((record) => record.file))].sort();
+      if (JSON.stringify(sortedUniqueChunks) !== JSON.stringify(recordedChunkFiles)) {
+        throw new Error('Release build requires matching production frontend manifest contracts.');
+      }
+      chunks = sortedUniqueChunks;
+    } else if (
+      undefined !== wordpressEntry.chunks
+      || undefined !== wordpressEntry.moduleFormat
+    ) {
+      throw new Error('Release build requires matching production frontend manifest contracts.');
+    }
+
     managedRequirements.push(
       { path: `${build.buildRoot}/${wordpressEntry.file}`, type: 'file' },
-      { path: `${build.buildRoot}/${wordpressEntry.asset}`, type: 'file' }
+      { path: `${build.buildRoot}/${wordpressEntry.asset}`, type: 'file' },
+      ...chunks.map((chunk) => ({
+        path: `${build.buildRoot}/${chunk}`,
+        type: 'file'
+      }))
     );
   }
 

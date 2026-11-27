@@ -114,7 +114,9 @@ export function createWordPressEditorSessionPort({
   let connected = true;
   let locked = false;
   let nonceFresh = true;
-  let sentLockRequest = false;
+  // The outgoing Heartbeat payload that carried this owner's lock request
+  // and has not been answered yet; null when no hooked lock request is open.
+  let sentLockRequest: Record<string, unknown> | null = null;
   let snapshot = SNAPSHOTS.ready;
   let attached = false;
   const syncAutosaveContent = () => {
@@ -170,12 +172,18 @@ export function createWordPressEditorSessionPort({
   const send = (value: unknown) => {
     const data = record(value);
     if (!data) return;
+    // WordPress Heartbeat serializes its requests: a new send means the
+    // previous request has either ticked or failed. Forget any unanswered
+    // lock request first so a send that throws during autosave preparation,
+    // or omits the lock request, can never pair a later lock-free tick with
+    // an older request and invent a capability loss.
+    sentLockRequest = null;
     prepareAutosave(data);
     if (!monitorsLock || !postIdField?.value) return;
     const request: Record<string, string> = { post_id: postIdField.value };
     if (lockField?.value) request.lock = lockField.value;
     data['wp-refresh-post-lock'] = request;
-    sentLockRequest = true;
+    sentLockRequest = data;
   };
   const tick = (value: unknown) => {
     const data = record(value);
@@ -191,6 +199,12 @@ export function createWordPressEditorSessionPort({
       nonceFresh = false;
     }
 
+    // Only a tick answering a lock request this owner sent after attaching
+    // can prove capability loss. A tick for a request already in flight
+    // before attach (or one whose lock request a later hook removed from the
+    // outgoing payload) carries no lock evidence either way.
+    const answeredLockRequest = sentLockRequest;
+    sentLockRequest = null;
     if (Object.getOwnPropertyDescriptor(data, 'wp-refresh-post-lock')) {
       capable = true;
       const lock = record(data['wp-refresh-post-lock']);
@@ -198,10 +212,13 @@ export function createWordPressEditorSessionPort({
       if ('string' === typeof lock?.new_lock && lock.new_lock && lockField) {
         lockField.value = lock.new_lock;
       }
-      sentLockRequest = false;
-    } else if (sentLockRequest && authenticated && !data.nonces_expired) {
+    } else if (
+      answeredLockRequest
+      && Object.getOwnPropertyDescriptor(answeredLockRequest, 'wp-refresh-post-lock')
+      && authenticated
+      && !data.nonces_expired
+    ) {
       capable = false;
-      sentLockRequest = false;
     }
     publish();
   };
@@ -233,7 +250,7 @@ export function createWordPressEditorSessionPort({
   const detach = () => {
     if (!attached) return;
     attached = false;
-    sentLockRequest = false;
+    sentLockRequest = null;
     autosaveFields.markdown.removeEventListener('input', syncAutosaveContent);
     for (const hook of HOOKS) hooks.removeAction(hook, namespace);
   };

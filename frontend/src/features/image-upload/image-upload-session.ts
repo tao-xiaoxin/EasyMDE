@@ -44,10 +44,20 @@ export type RemoteImageImportCoordinator = Readonly<{
   }>) => void;
 }>;
 
+export type ImageUploadSessionController = Readonly<{
+  dispose: () => void;
+  uploadFiles: (
+    files: ReadonlyArray<File>,
+    source: ImageUploadSource,
+    event?: ClipboardEvent | DragEvent,
+  ) => void;
+}>;
+
 type CreateImageUploadSessionOptions = Readonly<{
   allowedExtensions: ReadonlyArray<ImageUploadExtension>;
   allowedMimeTypes: ReadonlyArray<ImageUploadMimeType>;
   autoUploadPastedImages: boolean;
+  delegateLocalFileEvents?: boolean;
   document: ImageUploadDocumentPort;
   enabled: boolean;
   insertion: ImageUploadInsertion;
@@ -323,10 +333,11 @@ export function createRemoteImageImportCoordinator({
   };
 }
 
-export function createImageUploadSession({
+export function createImageUploadSessionController({
   allowedExtensions,
   allowedMimeTypes,
   autoUploadPastedImages,
+  delegateLocalFileEvents = false,
   document,
   enabled,
   insertion,
@@ -341,7 +352,7 @@ export function createImageUploadSession({
   strings,
   target,
   upload,
-}: CreateImageUploadSessionOptions): () => void {
+}: CreateImageUploadSessionOptions): ImageUploadSessionController {
   let active = true;
   const activeUploads = new Set<AbortController>();
 
@@ -362,7 +373,7 @@ export function createImageUploadSession({
   };
 
   const handleFile = async (
-    event: ClipboardEvent | DragEvent,
+    event: ClipboardEvent | DragEvent | undefined,
     file: File,
     source: ImageUploadSource,
   ): Promise<void> => {
@@ -371,8 +382,8 @@ export function createImageUploadSession({
     const reportCompletion = () => {
       reportStatus(statusMessage(strings, source, 'Uploaded'), 'success');
     };
-    event.preventDefault();
-    const dropTransfer = 'drop' === source ? (event as DragEvent).dataTransfer : null;
+    event?.preventDefault();
+    const dropTransfer = 'drop' === source && event ? (event as DragEvent).dataTransfer : null;
     if (dropTransfer) {
       dropTransfer.dropEffect = 'copy';
     }
@@ -504,6 +515,9 @@ export function createImageUploadSession({
       });
       return;
     }
+    if (delegateLocalFileEvents) {
+      return;
+    }
     void handleFile(event, file, 'paste');
   };
   const onDragOver = (event: DragEvent) => {
@@ -516,7 +530,7 @@ export function createImageUploadSession({
     }
   };
   const onDrop = (event: DragEvent) => {
-    if (!enabled) {
+    if (!enabled || delegateLocalFileEvents) {
       return;
     }
     const file = firstImageFile(event.dataTransfer);
@@ -529,7 +543,7 @@ export function createImageUploadSession({
   target.addEventListener('dragover', onDragOver);
   target.addEventListener('drop', onDrop);
 
-  return () => {
+  const dispose = () => {
     if (!active) {
       return;
     }
@@ -542,4 +556,37 @@ export function createImageUploadSession({
     target.removeEventListener('dragover', onDragOver);
     target.removeEventListener('drop', onDrop);
   };
+
+  const uploadFiles = (
+    files: ReadonlyArray<File>,
+    source: ImageUploadSource,
+    event?: ClipboardEvent | DragEvent,
+  ): void => {
+    if (!active || !enabled || 0 === files.length) {
+      return;
+    }
+    if ('paste' === source && !autoUploadPastedImages) {
+      event?.preventDefault();
+      onStatus({
+        message: strings.pasteUploadDisabled,
+        operationId: nextOperationId(),
+        type: 'info',
+      });
+      return;
+    }
+    void (async () => {
+      for (const file of files) {
+        if (!active) break;
+        await handleFile(event, file, source);
+      }
+    })();
+  };
+
+  return { dispose, uploadFiles };
+}
+
+export function createImageUploadSession(
+  options: CreateImageUploadSessionOptions,
+): () => void {
+  return createImageUploadSessionController(options).dispose;
 }

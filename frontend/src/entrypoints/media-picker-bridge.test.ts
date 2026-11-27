@@ -44,7 +44,7 @@ afterEach(() => {
 describe("startMediaPickerBridge", () => {
 	it("opens the native WordPress frame and sends one validated attachment", () => {
 		const handlers = new Map<string, () => void>();
-		const close = vi.fn();
+		const close = vi.fn(() => handlers.get("close")?.());
 		const open = vi.fn();
 		const media = vi.fn(() => ({
 			close,
@@ -70,6 +70,7 @@ describe("startMediaPickerBridge", () => {
 
 		connect(window, messagePort);
 		expect(media).toHaveBeenCalledWith({
+			button: { close: false },
 			multiple: false,
 			title: "Insert Media",
 		});
@@ -91,12 +92,67 @@ describe("startMediaPickerBridge", () => {
 			operationId: 9,
 			type: "selected",
 		});
-
-		handlers.get("close")?.();
-		expect(messagePort.postMessage).toHaveBeenLastCalledWith({
+		expect(close).toHaveBeenCalledOnce();
+		expect(messagePort.postMessage).not.toHaveBeenCalledWith({
 			operationId: 9,
 			type: "cancelled",
 		});
+		expect(messagePort.close).toHaveBeenCalledOnce();
+	});
+
+	it("keeps a selected attachment when WordPress closes the frame before the parent observes it", () => {
+		const handlers = new Map<string, () => void>();
+		const close = vi.fn(() => handlers.get("close")?.());
+		const media = vi.fn(() => ({
+			close,
+			on: (name: string, handler: () => void) => handlers.set(name, handler),
+			open: vi.fn(),
+			state: () => ({
+				get: () => ({
+					first: () => ({
+						toJSON: () => ({
+							alt: "Alternative",
+							filename: "sample.png",
+							id: 37,
+							title: "Sample",
+							url: "https://example.test/uploads/sample.png",
+						}),
+					}),
+				}),
+			}),
+		}));
+		(window as TestWindow).wp = { media };
+		teardowns.push(startMediaPickerBridge(window as TestWindow));
+		const messagePort = port();
+
+		connect(window, messagePort);
+		expect(media).toHaveBeenCalledWith({
+			button: { close: false },
+			multiple: false,
+			title: "Insert Media",
+		});
+
+		handlers.get("select")?.();
+		const selectedCall = messagePort.postMessage.mock.calls.find(
+			([value]) =>
+				value && "object" === typeof value && value.type === "selected",
+		);
+		const cancelledCall = messagePort.postMessage.mock.calls.find(
+			([value]) =>
+				value && "object" === typeof value && value.type === "cancelled",
+		);
+		const selectedCallIndex = messagePort.postMessage.mock.calls.findIndex(
+			([value]) =>
+				value && "object" === typeof value && value.type === "selected",
+		);
+		expect(selectedCall).toBeDefined();
+		expect(cancelledCall).toBeUndefined();
+		expect(
+			messagePort.postMessage.mock.invocationCallOrder[selectedCallIndex],
+		).toBeLessThan(
+			close.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER,
+		);
+		expect(close).toHaveBeenCalledOnce();
 		expect(messagePort.close).toHaveBeenCalledOnce();
 	});
 

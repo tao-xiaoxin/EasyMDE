@@ -13,8 +13,36 @@ const settingsRootSource = readFileSync(
 	join(repoRoot, "frontend/src/app/settings/SettingsCenterRoot.tsx"),
 	"utf8",
 );
+const settingsNavigationSource = readFileSync(
+	join(repoRoot, "frontend/src/app/settings/use-settings-center-navigation.ts"),
+	"utf8",
+);
+const settingsPersistenceSource = readFileSync(
+	join(repoRoot, "frontend/src/app/settings/use-settings-center-persistence.ts"),
+	"utf8",
+);
+const settingsSearchSource = readFileSync(
+	join(repoRoot, "frontend/src/app/settings/settings-center-search.tsx"),
+	"utf8",
+);
 const imagesSettingsSource = readFileSync(
 	join(repoRoot, "frontend/src/app/settings/ImagesSettingsPage.tsx"),
+	"utf8",
+);
+const imageFileNameRuleEditorSource = readFileSync(
+	join(repoRoot, "frontend/src/app/settings/ImageFileNameRuleEditor.tsx"),
+	"utf8",
+);
+const imageHostingProviderFieldsSource = readFileSync(
+	join(repoRoot, "frontend/src/app/settings/ImageHostingProviderFields.tsx"),
+	"utf8",
+);
+const imageUploadVerificationSource = readFileSync(
+	join(repoRoot, "frontend/src/app/settings/ImageUploadVerification.tsx"),
+	"utf8",
+);
+const secretCredentialInputSource = readFileSync(
+	join(repoRoot, "frontend/src/app/settings/SecretCredentialInput.tsx"),
 	"utf8",
 );
 const transferSettingsSource = readFileSync(
@@ -81,7 +109,18 @@ test("Settings Center feedback reuses the shared editor message alert", () => {
 	}
 	assert.match(imagesSettingsSource, /className="easymde-settings-center__upload-format-error"/);
 	assert.match(imagesSettingsSource, /role="alert"/);
-	assert.doesNotMatch(imagesSettingsSource, /SettingsFeedbackAlert/);
+	for (const source of [
+		imagesSettingsSource,
+		imageFileNameRuleEditorSource,
+		imageHostingProviderFieldsSource,
+		imageUploadVerificationSource,
+		secretCredentialInputSource,
+		settingsNavigationSource,
+		settingsPersistenceSource,
+		settingsSearchSource,
+	]) {
+		assert.doesNotMatch(source, /SettingsFeedbackAlert/);
+	}
 	assert.doesNotMatch(settingsCss, /easymde-settings-center__transfer-feedback/);
 });
 
@@ -241,9 +280,10 @@ test("Settings Center selectors use one translucent white viewport-owned popup",
 		settingsCss,
 		/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.easymde-settings-center__select-listbox\s*\{[^}]*animation:\s*none;/,
 	);
-	assert.match(settingsRootSource, /scrollSpyFrameRef/);
+	assert.match(settingsRootSource, /useSettingsCenterNavigation/);
+	assert.match(settingsNavigationSource, /scrollSpyFrameRef/);
 	assert.match(
-		settingsRootSource,
+		settingsNavigationSource,
 		/scrollSpyFrameRef\.current\s*=\s*windowRef\.requestAnimationFrame/,
 	);
 });

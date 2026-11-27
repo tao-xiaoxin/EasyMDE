@@ -30,6 +30,7 @@ import {
   shouldCopyReleaseFile
 } from '../../scripts/build-release.mjs';
 import {
+  bundledFrontendLicensePaths,
   bundledFrontendPackages,
   renderNotices
 } from '../../scripts/third-party-notices.mjs';
@@ -224,16 +225,23 @@ function createFrontendAssetSources(root) {
       resolved: `https://registry.npmjs.org/${packageName}/fixture.tgz`,
       license: 'MIT'
     };
+    const licensePath =
+      bundledFrontendLicensePaths[packageName] || `node_modules/${packageName}/LICENSE`;
     writeText(
       root,
-      `node_modules/${packageName}/LICENSE`,
-      `MIT License\n\nCopyright fixture for ${packageName}\n`
+      licensePath,
+      `MIT License\n\nCopyright fixture for ${packageName}\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the "Software"), to deal\nin the Software without restriction.\n`
     );
   }
   writeText(
     root,
     'scripts/vendor-licenses/mermaid-LICENSE',
     'MIT License\n\nCopyright fixture for mermaid\n'
+  );
+  writeText(
+    root,
+    'scripts/vendor-licenses/unicode-LICENSE',
+    'Unicode License\n\nCopyright fixture for unicode data files\n'
   );
   writeFileSync(packageJsonPath, JSON.stringify(packageJson));
   writeText(
@@ -274,6 +282,8 @@ function createCompleteFixture(root) {
   const frontendEntry = 'frontend/src/entrypoints/admin-editor.tsx';
   const frontendScript = 'assets/admin-editor-fixture.js';
   const frontendMetadata = 'assets/admin-editor-fixture.asset.php';
+  const frontendDynamicSource = 'frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts';
+  const frontendChunk = 'assets/admin-editor-chunk-fixture.js';
   const adminEditorLoaderEntry = 'frontend/src/entrypoints/admin-editor-loader.ts';
   const adminEditorLoaderScript = 'assets/admin-editor-loader-fixture.js';
   const adminEditorLoaderMetadata = 'assets/admin-editor-loader-fixture.asset.php';
@@ -295,15 +305,24 @@ function createCompleteFixture(root) {
   const mediaPickerEntry = 'frontend/src/entrypoints/media-picker-bridge.ts';
   const mediaPickerScript = 'assets/media-picker-bridge-fixture.js';
   const mediaPickerMetadata = 'assets/media-picker-bridge-fixture.asset.php';
+  const editorBlockIndexWorkerEntry = 'frontend/src/entrypoints/editor-block-index-worker.ts';
+  const editorBlockIndexWorkerScript = 'assets/editor-block-index-worker-fixture.js';
+  const editorBlockIndexWorkerMetadata = 'assets/editor-block-index-worker-fixture.asset.php';
 
   writeText(
     root,
     'assets/build/manifest.json',
     JSON.stringify({
       [frontendEntry]: {
+        dynamicImports: [frontendDynamicSource],
         file: frontendScript,
         isEntry: true,
         src: frontendEntry
+      },
+      [frontendDynamicSource]: {
+        file: frontendChunk,
+        isDynamicEntry: true,
+        src: frontendDynamicSource
       }
     })
   );
@@ -317,13 +336,16 @@ function createCompleteFixture(root) {
           handle: 'easymde-admin-editor-toolbar',
           file: frontendScript,
           asset: frontendMetadata,
+          moduleFormat: 'esm',
           dependencies: ['wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n'],
-          resources: []
+          resources: [],
+          chunks: [frontendChunk]
         }
       }
     })
   );
   writeText(root, `assets/build/${frontendScript}`, 'window.EasyMDEEditorRootBootstrap = {};\n');
+  writeText(root, `assets/build/${frontendChunk}`, 'export const chunkFixture = true;\n');
   writeText(
     root,
     `assets/build/${frontendMetadata}`,
@@ -442,6 +464,14 @@ function createCompleteFixture(root) {
       handle: 'easymde-media-picker-bridge',
       dependencies: ['media-editor'],
       source: 'window.EasyMDEMediaPickerBridge = {}; easymde-media-picker-connect;\n'
+    },
+    {
+      root: 'assets/build/editor-block-index-worker',
+      entry: editorBlockIndexWorkerEntry,
+      script: editorBlockIndexWorkerScript,
+      metadata: editorBlockIndexWorkerMetadata,
+      handle: 'easymde-editor-block-index-worker',
+      source: 'editor-block-index; createEditorMarkdownBlockIndex;\n'
     }
   ]) {
     writeText(
@@ -518,6 +548,16 @@ function zipEntries(root) {
   assert.equal(result.status, 0, result.stderr);
 
   return result.stdout.trim().split(/\r?\n/).filter(Boolean);
+}
+
+function zipFileContent(root, entry) {
+  const result = spawnSync('unzip', ['-p', releaseZipPath(root), entry], {
+    encoding: 'utf8'
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+
+  return result.stdout;
 }
 
 function updatePackageLock(root, update) {
@@ -695,6 +735,7 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.ok(entries.includes('easymde/languages/easymde-zh_CN-easymde-admin-editor-toolbar.json'));
     assert.ok(entries.includes('easymde/assets/build/wordpress-manifest.json'));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/assets\/admin-editor-[A-Za-z0-9_-]+\.js$/.test(entry)));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/assets\/admin-editor-chunk-[A-Za-z0-9_-]+\.js$/.test(entry)));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/assets\/admin-editor-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
     assert.ok(entries.includes('easymde/assets/build/admin-editor-loader/manifest.json'));
     assert.ok(entries.includes('easymde/assets/build/admin-editor-loader/wordpress-manifest.json'));
@@ -723,6 +764,9 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.ok(entries.includes('easymde/assets/build/media-picker/wordpress-manifest.json'));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/media-picker\/assets\/media-picker-bridge-[A-Za-z0-9_-]+\.js$/.test(entry)));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/media-picker\/assets\/media-picker-bridge-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
+    assert.ok(entries.includes('easymde/assets/build/editor-block-index-worker/wordpress-manifest.json'));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/editor-block-index-worker\/assets\/editor-block-index-worker-[A-Za-z0-9_-]+\.js$/.test(entry)));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/editor-block-index-worker\/assets\/editor-block-index-worker-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
     assert.ok(entries.includes('easymde/assets/build/settings-center/wordpress-manifest.json'));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/settings-center\/assets\/settings-center-[A-Za-z0-9_-]+\.js$/.test(entry)));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/settings-center\/assets\/settings-center-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
@@ -745,6 +789,87 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.equal(existsSync(join(packageRoot, 'assets/vendor/lora')), false);
     assert.equal(existsSync(join(packageRoot, 'assets/vendor/lucide')), false);
     assert.deepEqual(findMissingReleaseRequirements(root), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release ZIP ships third-party notices with every compiled parser license', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+
+    buildRelease({ root });
+
+    const entries = zipEntries(root);
+    assert.ok(entries.includes('easymde/THIRD-PARTY-NOTICES.md'));
+
+    // Read the notice artifact out of the actual release archive and compare it
+    // with the generator so the packaged file cannot drift from its source data.
+    const packaged = zipFileContent(root, 'easymde/THIRD-PARTY-NOTICES.md');
+    assert.equal(packaged, renderNotices(root));
+    assert.equal(packaged, readFileSync(join(root, 'THIRD-PARTY-NOTICES.md'), 'utf8'));
+
+    // The compiled Unicode case-fold data ships its own required notice section.
+    assert.match(packaged, /## Unicode Character Database/);
+    assert.ok(
+      packaged.includes(
+        readFileSync(join(root, 'scripts/vendor-licenses/unicode-LICENSE'), 'utf8').trim()
+      ),
+      'ZIP notices miss the compiled Unicode data license'
+    );
+
+    const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
+    // Derive the required parser set from the real entrypoint imports and their
+    // locked dependency edges rather than trusting the registry itself.
+    const indentationSource = readFileSync(
+      join(repoRoot, 'frontend/src/features/editor-context-menu/editor-code-indentation.ts'),
+      'utf8'
+    );
+    const repoLock = JSON.parse(readFileSync(join(repoRoot, 'package-lock.json'), 'utf8'));
+    const parsers = new Set();
+
+    for (const [, languagePackage] of indentationSource.matchAll(
+      /['"](@codemirror\/lang-[a-z]+)['"]/g
+    )) {
+      const metadata = repoLock.packages[`node_modules/${languagePackage}`];
+      assert.ok(metadata, `missing ${languagePackage} in package-lock.json`);
+      for (const dependency of Object.keys(metadata.dependencies || {})) {
+        if (dependency.startsWith('@lezer/') || '@codemirror/autocomplete' === dependency) {
+          parsers.add(dependency);
+        }
+      }
+    }
+
+    assert.ok(parsers.size >= 8, 'expected the compiled parser set to be registered');
+    for (const name of parsers) {
+      assert.ok(
+        Object.hasOwn(bundledFrontendPackages, name),
+        `${name} is compiled but has no notice ownership`
+      );
+      assert.ok(lock.packages[`node_modules/${name}`], `${name} should stay a locked dependency`);
+      const license = readFileSync(join(root, 'node_modules', name, 'LICENSE'), 'utf8');
+      assert.ok(packaged.includes(`### ${name}\n`), `ZIP notices miss section for ${name}`);
+      assert.ok(
+        packaged.includes(license.trim()),
+        `ZIP notices miss upstream permission text for ${name}`
+      );
+      assert.match(
+        license,
+        /Permission is hereby granted, free of charge/,
+        `${name} should ship the upstream permission grant`
+      );
+      // The real shipped artifact must carry the real installed upstream text.
+      const installedLicense = readFileSync(
+        join(repoRoot, 'node_modules', name, 'LICENSE'),
+        'utf8'
+      );
+      assert.ok(
+        renderNotices(repoRoot).includes(installedLicense.trim()),
+        `repository notices miss the installed upstream license for ${name}`
+      );
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -792,6 +917,14 @@ test('release build rejects frontend artifacts outside the production manifests'
     assert.throws(
       () => buildRelease({ root }),
       /unexpected production frontend artifacts:[\s\S]*admin-editor-stale\.js/
+    );
+
+    rmSync(join(root, 'assets/build/assets/admin-editor-stale.js'), { force: true });
+    writeText(root, 'assets/build/assets/admin-editor-chunk-orphan.js', 'export {};\n');
+
+    assert.throws(
+      () => buildRelease({ root }),
+      /unexpected production frontend artifacts:[\s\S]*admin-editor-chunk-orphan\.js/
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -931,6 +1064,7 @@ test('release build fails when required runtime assets or templates are missing'
     rmSync(join(root, 'assets/build/media-picker/assets/media-picker-bridge-fixture.js'), { force: true });
     rmSync(join(root, 'assets/css/frontend/code-copy.css'), { force: true });
     rmSync(join(root, 'assets/build/assets/admin-editor-fixture.js'), { force: true });
+    rmSync(join(root, 'assets/build/assets/admin-editor-chunk-fixture.js'), { force: true });
     rmSync(join(root, 'assets/build/code-copy/assets/frontend-code-copy-fixture.js'), { force: true });
     rmSync(join(root, 'assets/images/easymde-editor-icon.png'), { force: true });
     rmSync(join(root, 'THIRD-PARTY-NOTICES.md'), { force: true });
@@ -945,6 +1079,7 @@ test('release build fails when required runtime assets or templates are missing'
     assert.ok(missing.includes('assets/build/media-picker/assets/media-picker-bridge-fixture.js'));
     assert.ok(missing.includes('assets/css/frontend/code-copy.css'));
     assert.ok(missing.includes('assets/build/assets/admin-editor-fixture.js'));
+    assert.ok(missing.includes('assets/build/assets/admin-editor-chunk-fixture.js'));
     assert.ok(missing.includes('assets/build/code-copy/assets/frontend-code-copy-fixture.js'));
     assert.ok(missing.includes('assets/images/easymde-editor-icon.png'));
     assert.ok(missing.includes('THIRD-PARTY-NOTICES.md'));

@@ -2,11 +2,7 @@
 
 namespace EasyMDE\Support;
 
-use EasyMDE\ImageHosting\ImageHostDestinationIdentity;
-use EasyMDE\ImageHosting\ImageHostException;
-use EasyMDE\ImageHosting\ImageHostProviderSupport;
 use EasyMDE\ImageHosting\ImageUploadExtensionPolicy;
-use EasyMDE\ImageHosting\ObjectKeyBuilder;
 use WP_Error;
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -18,11 +14,13 @@ final class SettingsCenterRepository {
 	const CONFIGURATION_ERROR_CODE = 'easymde_settings_configuration_invalid';
 
 	private $options;
-	private $toolbar_registry;
+	private $shortcuts;
+	private $sanitizer;
 
 	public function __construct( Options $options, ToolbarRegistry $toolbar_registry ) {
-		$this->options          = $options;
-		$this->toolbar_registry = $toolbar_registry;
+		$this->options   = $options;
+		$this->shortcuts = new SettingsCenterShortcuts( $toolbar_registry );
+		$this->sanitizer = new SettingsCenterSanitizer();
 	}
 
 	public function get_settings( $refresh_cache = false ) {
@@ -43,15 +41,15 @@ final class SettingsCenterRepository {
 		$settings = isset( $stored['settings_center'] ) && is_array( $stored['settings_center'] )
 			? $stored['settings_center']
 			: array();
-		$settings = $this->migrate_legacy_image_settings( $settings );
-		$this->assert_canonical_image_settings( $settings );
+		$settings = $this->sanitizer->migrate_legacy_image_settings( $settings );
+		$this->sanitizer->assert_canonical_image_settings( $settings );
 
-		$settings                             = $this->normalize_enum_settings( $this->merge_settings( $defaults, $settings ) );
-		$settings['images']['endpoint']       = $this->sanitize_endpoint( $settings['images']['endpoint'] );
-		$settings['images']['domain']         = $this->sanitize_domain( $settings['images']['domain'] );
-		$settings['images']['backupEndpoint'] = $this->sanitize_endpoint( $settings['images']['backupEndpoint'] );
-		$settings['images']['backupDomain']   = $this->sanitize_domain( $settings['images']['backupDomain'] );
-		if ( ! $this->is_valid_file_name_rule( $settings['images']['storagePath'], $settings['images']['fileNameRule'] ) ) {
+		$settings                             = $this->sanitizer->normalize_enum_settings( $this->sanitizer->merge_settings( $defaults, $settings ) );
+		$settings['images']['endpoint']       = $this->sanitizer->sanitize_endpoint( $settings['images']['endpoint'] );
+		$settings['images']['domain']         = $this->sanitizer->sanitize_domain( $settings['images']['domain'] );
+		$settings['images']['backupEndpoint'] = $this->sanitizer->sanitize_endpoint( $settings['images']['backupEndpoint'] );
+		$settings['images']['backupDomain']   = $this->sanitizer->sanitize_domain( $settings['images']['backupDomain'] );
+		if ( ! $this->sanitizer->is_valid_file_name_rule( $settings['images']['storagePath'], $settings['images']['fileNameRule'] ) ) {
 			// phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Stable internal configuration code, not output.
 			throw new \RuntimeException( self::CONFIGURATION_ERROR_CODE );
 		}
@@ -65,7 +63,7 @@ final class SettingsCenterRepository {
 	}
 
 	public function get_default_settings() {
-		$settings = $this->normalize_enum_settings( $this->get_defaults() );
+		$settings = $this->sanitizer->normalize_enum_settings( $this->get_defaults() );
 		foreach ( array( 'accessKey', 'secretKey', 'backupAccessKey', 'backupSecretKey' ) as $secret_key ) {
 			$settings['images'][ $secret_key ] = '';
 		}
@@ -101,49 +99,13 @@ final class SettingsCenterRepository {
 	}
 
 	public function get_shortcut_config_for_script() {
-		$settings  = $this->get_settings();
-		$registry  = $this->toolbar_registry->get_command_registry();
-		$shortcuts = array();
+		$settings = $this->get_settings();
 
-		foreach ( $registry as $command_id => $command ) {
-			$center_id = $this->center_shortcut_id( $command_id );
-			if ( $center_id && isset( $settings['shortcuts']['values'][ $center_id ] ) ) {
-				$shortcuts[ $command_id ] = array(
-					'win' => $settings['shortcuts']['values'][ $center_id ]['windows'],
-					'mac' => $settings['shortcuts']['values'][ $center_id ]['mac'],
-				);
-				continue;
-			}
-
-			$shortcuts[ $command_id ] = array(
-				'win' => $this->validated_registry_shortcut( $command, 'defaultShortcutWin', false ),
-				'mac' => $this->validated_registry_shortcut( $command, 'defaultShortcutMac', true ),
-			);
-		}
-
-		return $shortcuts;
+		return $this->shortcuts->get_shortcut_config_for_script( $settings['shortcuts']['values'] );
 	}
 
 	public function get_reserved_shortcuts_for_script() {
-		$reserved = array();
-
-		foreach ( $this->toolbar_registry->get_commands_for_script() as $command ) {
-			$command_id = isset( $command['id'] ) ? (string) $command['id'] : '';
-			$windows    = $this->validated_registry_shortcut( $command, 'defaultShortcutWin', false );
-			$mac        = $this->validated_registry_shortcut( $command, 'defaultShortcutMac', true );
-			if ( $this->center_shortcut_id( $command_id ) || ( '' === $windows && '' === $mac ) ) {
-				continue;
-			}
-
-			$reserved[] = array(
-				'id'      => $command_id,
-				'label'   => isset( $command['label'] ) ? (string) $command['label'] : $command_id,
-				'windows' => $windows,
-				'mac'     => $mac,
-			);
-		}
-
-		return $reserved;
+		return $this->shortcuts->get_reserved_shortcuts_for_script();
 	}
 
 	public function get_allowed_image_mime_types() {
@@ -224,7 +186,7 @@ final class SettingsCenterRepository {
 
 		$stored_field = $field_map[ $target ][ $field ];
 		$value        = isset( $stored['settings_center']['images'][ $stored_field ] )
-			? $this->bounded_text( $stored['settings_center']['images'][ $stored_field ], 255 )
+			? $this->sanitizer->bounded_text( $stored['settings_center']['images'][ $stored_field ], 255 )
 			: '';
 
 		return '' !== $value ? $value : $this->secret_unavailable_error();
@@ -234,22 +196,22 @@ final class SettingsCenterRepository {
 		$settings = isset( $stored['settings_center'] ) && is_array( $stored['settings_center'] )
 			? $stored['settings_center']
 			: array();
-		$settings = $this->migrate_legacy_image_settings( $settings );
-		$this->assert_canonical_image_settings( $settings );
-		$settings = $this->normalize_enum_settings( $this->merge_settings( $this->get_defaults(), $settings ) );
+		$settings = $this->sanitizer->migrate_legacy_image_settings( $settings );
+		$this->sanitizer->assert_canonical_image_settings( $settings );
+		$settings = $this->sanitizer->normalize_enum_settings( $this->sanitizer->merge_settings( $this->get_defaults(), $settings ) );
 		$images   = $settings['images'];
 
-		$images['endpoint']        = $this->sanitize_endpoint( $images['endpoint'] );
-		$images['bucket']          = $this->bounded_text( $images['bucket'], 128 );
-		$images['domain']          = $this->sanitize_domain( $images['domain'] );
-		$images['accessKey']       = $this->bounded_text( $images['accessKey'], 255 );
-		$images['secretKey']       = $this->bounded_text( $images['secretKey'], 255 );
-		$images['backupBucket']    = $this->bounded_text( $images['backupBucket'], 128 );
-		$images['backupEndpoint']  = $this->sanitize_endpoint( $images['backupEndpoint'] );
-		$images['backupDomain']    = $this->sanitize_domain( $images['backupDomain'] );
-		$images['backupAccessKey'] = $this->bounded_text( $images['backupAccessKey'], 255 );
-		$images['backupSecretKey'] = $this->bounded_text( $images['backupSecretKey'], 255 );
-		if ( ! $this->is_valid_file_name_rule( $images['storagePath'], $images['fileNameRule'] ) ) {
+		$images['endpoint']        = $this->sanitizer->sanitize_endpoint( $images['endpoint'] );
+		$images['bucket']          = $this->sanitizer->bounded_text( $images['bucket'], 128 );
+		$images['domain']          = $this->sanitizer->sanitize_domain( $images['domain'] );
+		$images['accessKey']       = $this->sanitizer->bounded_text( $images['accessKey'], 255 );
+		$images['secretKey']       = $this->sanitizer->bounded_text( $images['secretKey'], 255 );
+		$images['backupBucket']    = $this->sanitizer->bounded_text( $images['backupBucket'], 128 );
+		$images['backupEndpoint']  = $this->sanitizer->sanitize_endpoint( $images['backupEndpoint'] );
+		$images['backupDomain']    = $this->sanitizer->sanitize_domain( $images['backupDomain'] );
+		$images['backupAccessKey'] = $this->sanitizer->bounded_text( $images['backupAccessKey'], 255 );
+		$images['backupSecretKey'] = $this->sanitizer->bounded_text( $images['backupSecretKey'], 255 );
+		if ( ! $this->sanitizer->is_valid_file_name_rule( $images['storagePath'], $images['fileNameRule'] ) ) {
 			// phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Stable internal configuration code, not output.
 			throw new \RuntimeException( self::CONFIGURATION_ERROR_CODE );
 		}
@@ -329,11 +291,7 @@ final class SettingsCenterRepository {
 
 	private function persist_settings( $input, $reset_secrets = false ) {
 		if ( ! is_array( $input ) || ! array_key_exists( 'revision', $input ) || ! is_int( $input['revision'] ) || $input['revision'] < 0 ) {
-			return new WP_Error(
-				'easymde_settings_invalid_payload',
-				__( 'The settings payload is invalid.', 'easymde' ),
-				array( 'status' => 400 )
-			);
+			return $this->invalid_payload_error();
 		}
 
 		$expected = $this->options->get_editor_settings_snapshot();
@@ -353,8 +311,14 @@ final class SettingsCenterRepository {
 				}
 			}
 		}
-		$stored_settings = $this->migrate_legacy_image_settings( $this->stored_settings_for_write( $stored ) );
-		$settings        = $this->sanitize_settings( $input, $stored_settings, (bool) $reset_secrets );
+		$stored_settings = $this->sanitizer->migrate_legacy_image_settings( $this->stored_settings_for_write( $stored ) );
+		$settings        = $this->sanitizer->sanitize_settings(
+			$input,
+			$this->get_defaults(),
+			$stored_settings,
+			(bool) $reset_secrets,
+			$this->shortcuts
+		);
 		if ( is_wp_error( $settings ) ) {
 			return $settings;
 		}
@@ -391,70 +355,6 @@ final class SettingsCenterRepository {
 		return $settings;
 	}
 
-	private function migrate_legacy_image_settings( array $settings ) {
-		if ( ! isset( $settings['images'] ) || ! is_array( $settings['images'] ) ) {
-			return $settings;
-		}
-
-		if ( array_key_exists( 'uploadFormats', $settings['images'] ) ) {
-			$formats = ImageUploadExtensionPolicy::normalize( $settings['images']['uploadFormats'] );
-			if ( false === $formats ) {
-				// phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Stable internal configuration code, not output.
-				throw new \RuntimeException( self::CONFIGURATION_ERROR_CODE );
-			}
-			$settings['images']['uploadFormats'] = $formats;
-		}
-
-		if ( ! array_key_exists( 'titleDisplay', $settings['images'] ) && isset( $settings['images']['captionMode'] ) ) {
-			$settings['images']['titleDisplay'] = 'filename' === $settings['images']['captionMode'] ? 'filename' : 'none';
-		}
-
-		if ( ! array_key_exists( 'storagePath', $settings['images'] ) && array_key_exists( 'fileNameRule', $settings['images'] ) ) {
-			$split = ObjectKeyBuilder::split_legacy_template( $settings['images']['fileNameRule'] );
-			if ( ! is_array( $split ) ) {
-				// phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Stable internal configuration code, not output.
-				throw new \RuntimeException( self::CONFIGURATION_ERROR_CODE );
-			}
-			$settings['images']['storagePath']  = $split[0];
-			$settings['images']['fileNameRule'] = $split[1];
-		} elseif (
-			array_key_exists( 'storagePath', $settings['images'] ) &&
-			array_key_exists( 'fileNameRule', $settings['images'] ) &&
-			is_string( $settings['images']['storagePath'] ) &&
-			is_string( $settings['images']['fileNameRule'] ) &&
-			false !== strpos( $settings['images']['fileNameRule'], '{ext}' )
-		) {
-			$legacy_template = ( new ObjectKeyBuilder() )->combine(
-				$settings['images']['storagePath'],
-				$settings['images']['fileNameRule']
-			);
-			$split           = ObjectKeyBuilder::split_legacy_template( $legacy_template );
-			if ( ! is_array( $split ) || $split[0] !== $settings['images']['storagePath'] ) {
-				// phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Stable internal configuration code, not output.
-				throw new \RuntimeException( self::CONFIGURATION_ERROR_CODE );
-			}
-			$settings['images']['fileNameRule'] = $split[1];
-		}
-
-		return $settings;
-	}
-
-	private function assert_canonical_image_settings( array $settings ) {
-		if ( ! isset( $settings['images'] ) || ! is_array( $settings['images'] ) || ! array_key_exists( 'storagePath', $settings['images'] ) ) {
-			return;
-		}
-
-		if (
-			! array_key_exists( 'fileNameRule', $settings['images'] ) ||
-			! is_string( $settings['images']['storagePath'] ) ||
-			! is_string( $settings['images']['fileNameRule'] ) ||
-			! $this->is_valid_file_name_rule( $settings['images']['storagePath'], $settings['images']['fileNameRule'] )
-		) {
-			// phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Stable internal configuration code, not output.
-			throw new \RuntimeException( self::CONFIGURATION_ERROR_CODE );
-		}
-	}
-
 	private function conflict_error() {
 		return new WP_Error(
 			'easymde_settings_conflict',
@@ -487,7 +387,6 @@ final class SettingsCenterRepository {
 		);
 	}
 
-
 	private function revision_from_stored( array $stored ) {
 		return isset( $stored['settings_center_revision'] ) && is_numeric( $stored['settings_center_revision'] )
 			? max( 0, absint( $stored['settings_center_revision'] ) )
@@ -495,19 +394,6 @@ final class SettingsCenterRepository {
 	}
 
 	private function get_defaults() {
-		$shortcuts = array();
-		foreach ( $this->toolbar_registry->get_command_registry() as $command_id => $command ) {
-			$center_id = $this->center_shortcut_id( $command_id );
-			if ( ! $center_id ) {
-				continue;
-			}
-
-			$shortcuts[ $center_id ] = array(
-				'windows' => $this->validated_registry_shortcut( $command, 'defaultShortcutWin', false ),
-				'mac'     => $this->validated_registry_shortcut( $command, 'defaultShortcutMac', true ),
-			);
-		}
-
 		return array(
 			'general'   => array(
 				'interfaceLanguage'           => 'zh-CN',
@@ -558,7 +444,7 @@ final class SettingsCenterRepository {
 				'pasteAsMarkdown'  => true,
 			),
 			'shortcuts' => array(
-				'values' => $shortcuts,
+				'values' => $this->shortcuts->get_default_values(),
 			),
 		);
 	}
@@ -579,516 +465,6 @@ final class SettingsCenterRepository {
 			),
 		);
 
-		return $this->normalize_enum_settings( $this->merge_settings( $defaults, $settings ) );
-	}
-
-	private function merge_settings( array $defaults, array $stored ) {
-		$result = $defaults;
-		foreach ( $defaults as $section => $section_defaults ) {
-			if ( ! isset( $stored[ $section ] ) || ! is_array( $stored[ $section ] ) ) {
-				continue;
-			}
-
-			foreach ( $section_defaults as $key => $default ) {
-				if ( 'shortcuts' === $section && 'values' === $key ) {
-					if ( ! is_array( $stored[ $section ][ $key ] ?? null ) ) {
-						continue;
-					}
-					foreach ( $default as $shortcut_id => $shortcut_default ) {
-						if ( isset( $stored[ $section ][ $key ][ $shortcut_id ] ) && is_array( $stored[ $section ][ $key ][ $shortcut_id ] ) ) {
-							$result[ $section ][ $key ][ $shortcut_id ] = array_merge(
-								$shortcut_default,
-								$stored[ $section ][ $key ][ $shortcut_id ]
-							);
-						}
-					}
-					continue;
-				}
-
-				if ( array_key_exists( $key, $stored[ $section ] ) && gettype( $stored[ $section ][ $key ] ) === gettype( $default ) ) {
-					$result[ $section ][ $key ] = $stored[ $section ][ $key ];
-				}
-			}
-		}
-
-		return $result;
-	}
-
-	private function sanitize_settings( array $input, array $stored_settings = array(), $reset_secrets = false ) {
-		$defaults = $this->get_defaults();
-		if ( isset( $input['general'] ) && is_array( $input['general'] ) ) {
-			foreach ( array( 'applyEditorThemeToFrontend', 'showPublishedCodeCopyButton' ) as $boolean_field ) {
-				if ( array_key_exists( $boolean_field, $input['general'] ) && ! is_bool( $input['general'][ $boolean_field ] ) ) {
-					return $this->invalid_payload_error();
-				}
-			}
-		}
-		if ( isset( $input['images'] ) && is_array( $input['images'] ) ) {
-			if (
-				array_key_exists( 'imageHostingEnabled', $input['images'] ) && ! is_bool( $input['images']['imageHostingEnabled'] )
-			) {
-				return $this->invalid_payload_error();
-			}
-			if (
-				array_key_exists( 'wechatPngExportEnabled', $input['images'] ) && ! is_bool( $input['images']['wechatPngExportEnabled'] )
-			) {
-				return $this->invalid_payload_error();
-			}
-			foreach ( array( 'uploadRetryCount' ) as $retry_field ) {
-				if (
-					array_key_exists( $retry_field, $input['images'] ) &&
-					(
-						! is_int( $input['images'][ $retry_field ] ) ||
-						$input['images'][ $retry_field ] < 0 ||
-						$input['images'][ $retry_field ] > 5
-					)
-				) {
-					return new WP_Error(
-						'easymde_settings_invalid_payload',
-						__( 'The settings payload is invalid.', 'easymde' ),
-						array( 'status' => 400 )
-					);
-				}
-			}
-			if (
-				array_key_exists( 'maxImageSizeMb', $input['images'] ) &&
-				( ! is_int( $input['images']['maxImageSizeMb'] ) || $input['images']['maxImageSizeMb'] < 1 || $input['images']['maxImageSizeMb'] > 10 )
-			) {
-				return $this->invalid_payload_error();
-			}
-			if (
-				array_key_exists( 'titleDisplay', $input['images'] ) &&
-				! in_array( $input['images']['titleDisplay'], array( 'filename', 'none' ), true )
-			) {
-				return $this->invalid_payload_error();
-			}
-			if (
-				array_key_exists( 'remoteImageUploadMode', $input['images'] ) &&
-				! in_array( $input['images']['remoteImageUploadMode'], array( 'both', 'visual', 'source', 'off' ), true )
-			) {
-				return $this->invalid_payload_error();
-			}
-		}
-		if ( isset( $input['images']['uploadFormats'] ) ) {
-			$formats = ImageUploadExtensionPolicy::normalize( $input['images']['uploadFormats'] );
-			if ( false === $formats ) {
-				return $this->invalid_payload_error();
-			}
-			$input['images']['uploadFormats'] = $formats;
-		}
-		$stored_settings = $this->migrate_legacy_image_settings( $stored_settings );
-		$input           = $this->migrate_legacy_image_settings( $input );
-		$base            = $this->merge_settings( $defaults, $stored_settings );
-		$settings        = $this->merge_settings( $base, $input );
-		$settings        = $this->normalize_enum_settings( $settings );
-		if (
-			! $this->is_valid_provider_coordinates( $settings['images']['service'], $settings['images']['endpoint'] ) ||
-			! $this->is_valid_provider_coordinates( $settings['images']['backupService'], $settings['images']['backupEndpoint'] ) ||
-			! $this->is_valid_file_name_rule( $settings['images']['storagePath'], $settings['images']['fileNameRule'] )
-		) {
-			return new WP_Error(
-				'easymde_settings_invalid_payload',
-				__( 'The settings payload is invalid.', 'easymde' ),
-				array( 'status' => 400 )
-			);
-		}
-
-		foreach ( $settings['general'] as $key => $value ) {
-			$settings['general'][ $key ] = is_bool( $value ) ? $value : $this->bounded_text( $value, 80 );
-		}
-		foreach ( $settings['markdown'] as $key => $value ) {
-			$settings['markdown'][ $key ] = is_bool( $value ) ? $value : $this->bounded_text( $value, 120 );
-		}
-		foreach ( $settings['images'] as $key => $value ) {
-			if ( in_array( $key, array( 'accessKey', 'secretKey', 'backupAccessKey', 'backupSecretKey' ), true ) ) {
-				$submitted = trim( (string) $value );
-				if ( ! $reset_secrets && '' === $submitted && isset( $stored_settings['images'] ) && is_array( $stored_settings['images'] ) && array_key_exists( $key, $stored_settings['images'] ) ) {
-					$value = $stored_settings['images'][ $key ];
-				}
-				$settings['images'][ $key ] = $this->bounded_text( $value, 255 );
-			} elseif ( 'uploadFormats' === $key ) {
-					// The exact six-key map was validated before sanitization.
-					$settings['images']['uploadFormats'] = ImageUploadExtensionPolicy::normalize( $value );
-			} elseif ( in_array( $key, array( 'domain', 'backupDomain' ), true ) ) {
-				$settings['images'][ $key ] = $this->sanitize_domain( $value );
-			} elseif ( 'endpoint' === $key || 'backupEndpoint' === $key ) {
-				$settings['images'][ $key ] = $this->sanitize_endpoint( $value );
-			} elseif ( in_array( $key, array( 'uploadRetryCount', 'maxImageSizeMb' ), true ) ) {
-				$settings['images'][ $key ] = $value;
-			} elseif ( is_bool( $value ) ) {
-				$settings['images'][ $key ] = $value;
-			} else {
-				$settings['images'][ $key ] = $this->bounded_text( $value, 160 );
-			}
-		}
-
-		foreach ( $settings['shortcuts']['values'] as $shortcut_id => $shortcut ) {
-			foreach ( array( 'windows', 'mac' ) as $platform ) {
-				$normalized = $this->normalize_shortcut( $shortcut[ $platform ], 'mac' === $platform );
-				if ( false === $normalized ) {
-					return new WP_Error(
-						'easymde_settings_invalid_shortcut',
-						__( 'One or more shortcut values are invalid.', 'easymde' ),
-						array( 'status' => 400 )
-					);
-				}
-				$settings['shortcuts']['values'][ $shortcut_id ][ $platform ] = $normalized;
-			}
-		}
-		$shortcut_conflict = $this->find_shortcut_conflict( $settings['shortcuts']['values'] );
-		if ( $shortcut_conflict ) {
-			return new WP_Error(
-				'easymde_settings_shortcut_conflict',
-				__( 'One or more shortcut values conflict.', 'easymde' ),
-				array(
-					'status'   => 409,
-					'platform' => $shortcut_conflict['platform'],
-					'shortcut' => $shortcut_conflict['shortcut'],
-					'bindings' => $shortcut_conflict['bindings'],
-				)
-			);
-		}
-
-		if (
-			! empty( $settings['images']['backupEnabled'] ) &&
-			ImageHostDestinationIdentity::are_same(
-				$this->destination_config( $settings['images'], false ),
-				$this->destination_config( $settings['images'], true )
-			)
-		) {
-			return new WP_Error(
-				'easymde_settings_duplicate_image_host_destination',
-				__( 'The primary and backup image hosts must use different storage destinations.', 'easymde' ),
-				array( 'status' => 409 )
-			);
-		}
-
-		return $settings;
-	}
-	private function normalize_enum_settings( array $settings ) {
-		$defaults = array(
-			'general'  => array(
-				'interfaceLanguage' => 'zh-CN',
-				'editingMode'       => 'live-preview',
-				'statusBarMode'     => 'detailed',
-				'autoSaveInterval'  => '30',
-				'publishVisibility' => 'public',
-				'summaryMode'       => 'auto-55',
-			),
-			'images'   => array(
-				'service'               => 'cloudflare-r2',
-				'backupService'         => 'qiniu-kodo',
-				'remoteImageUploadMode' => 'both',
-				'titleDisplay'          => 'none',
-			),
-			'markdown' => array(
-				'tableAlignment'  => 'center',
-				'codeLineNumbers' => 'show',
-			),
-		);
-		$aliases  = array(
-			'general'  => array(
-				'interfaceLanguage' => array(
-					'zh-CN' => 'zh-CN',
-					'zh-TW' => 'zh-TW',
-					'en-US' => 'en-US',
-				),
-				'editingMode'       => array(
-					'live-preview' => 'live-preview',
-					'source'       => 'source',
-					'preview'      => 'preview',
-				),
-				'statusBarMode'     => array(
-					'detailed'           => 'detailed',
-					'compact'            => 'compact',
-					'words-reading-time' => 'detailed',
-					'words'              => 'compact',
-					'hidden'             => 'hidden',
-				),
-				'autoSaveInterval'  => array(
-					'5'   => '5',
-					'30'  => '30',
-					'60'  => '60',
-					'120' => '120',
-					'300' => '300',
-				),
-				'publishVisibility' => array(
-					'public'   => 'public',
-					'private'  => 'private',
-					'password' => 'password',
-				),
-				'summaryMode'       => array(
-					'auto-55'  => 'auto-55',
-					'auto-100' => 'auto-100',
-					'manual'   => 'manual',
-				),
-			),
-			'images'   => array(
-				'service'               => array(
-					'cloudflare-r2' => 'cloudflare-r2',
-					'qiniu-kodo'    => 'qiniu-kodo',
-					'aliyun-oss'    => 'aliyun-oss',
-					'tencent-cos'   => 'tencent-cos',
-				),
-				'backupService'         => array(
-					'qiniu-kodo'    => 'qiniu-kodo',
-					'cloudflare-r2' => 'cloudflare-r2',
-					'aliyun-oss'    => 'aliyun-oss',
-					'tencent-cos'   => 'tencent-cos',
-				),
-				'remoteImageUploadMode' => array(
-					'both'   => 'both',
-					'visual' => 'visual',
-					'source' => 'source',
-					'off'    => 'off',
-				),
-				'titleDisplay'          => array(
-					'none'          => 'none',
-					'Do not insert' => 'none',
-					'filename'      => 'filename',
-					'Use file name' => 'filename',
-				),
-			),
-			'markdown' => array(
-				'tableAlignment'  => array(
-					'auto'                  => 'auto',
-					'Auto align by content' => 'auto',
-					'left'                  => 'left',
-					'Align left'            => 'left',
-					'center'                => 'center',
-					'Align center'          => 'center',
-				),
-				'codeLineNumbers' => array(
-					'show' => 'show',
-					'Show' => 'show',
-					'hide' => 'hide',
-					'Hide' => 'hide',
-				),
-			),
-		);
-
-		foreach ( $aliases as $section => $section_aliases ) {
-			foreach ( $section_aliases as $key => $value_aliases ) {
-				if ( ! isset( $settings[ $section ][ $key ] ) ) {
-					continue;
-				}
-				$value                        = (string) $settings[ $section ][ $key ];
-				$settings[ $section ][ $key ] = isset( $value_aliases[ $value ] )
-					? $value_aliases[ $value ]
-					: $defaults[ $section ][ $key ];
-			}
-		}
-
-		return $settings;
-	}
-
-
-	private function bounded_text( $value, $length ) {
-		$value = sanitize_text_field( (string) $value );
-
-		return function_exists( 'mb_substr' ) ? mb_substr( $value, 0, $length ) : substr( $value, 0, $length );
-	}
-
-	private function sanitize_domain( $value ) {
-		$value = trim( (string) $value );
-		if ( '' === $value ) {
-			return '';
-		}
-		$parts = wp_parse_url( $value );
-		if ( ! is_array( $parts ) || ! isset( $parts['scheme'], $parts['host'] ) || isset( $parts['user'] ) || isset( $parts['pass'] ) || isset( $parts['port'] ) || isset( $parts['query'] ) || isset( $parts['fragment'] ) || ( isset( $parts['path'] ) && '' !== $parts['path'] && '/' !== $parts['path'] ) ) {
-			return '';
-		}
-		if ( ! in_array( strtolower( (string) $parts['scheme'] ), array( 'http', 'https' ), true ) ) {
-			return '';
-		}
-		$url = esc_url_raw( $value, array( 'http', 'https' ) );
-
-		return is_string( $url ) ? $this->bounded_text( $url, 255 ) : '';
-	}
-
-	private function sanitize_endpoint( $value ) {
-		$value = strtolower( rtrim( trim( (string) $value ), '/' ) );
-
-		return $this->is_valid_endpoint( $value ) ? $this->bounded_text( $value, 255 ) : '';
-	}
-
-	private function is_valid_endpoint( $value ) {
-		return is_string( $value ) && ( '' === $value || ImageHostProviderSupport::validate_r2_endpoint( $value ) || ImageHostProviderSupport::validate_oss_endpoint( $value ) || ImageHostProviderSupport::validate_cos_endpoint( $value ) );
-	}
-
-	private function is_valid_provider_coordinates( $service, $endpoint ) {
-		if ( 'qiniu-kodo' === $service ) {
-			return '' === $endpoint;
-		}
-		if ( in_array( $service, array( 'cloudflare-r2', 'aliyun-oss', 'tencent-cos' ), true ) ) {
-			return '' === $endpoint || ImageHostProviderSupport::validate_provider_endpoint( $service, $endpoint );
-		}
-
-		return false;
-	}
-
-	private function destination_config( array $images, $backup ) {
-		return array(
-			'service'  => $images[ $backup ? 'backupService' : 'service' ],
-			'endpoint' => $images[ $backup ? 'backupEndpoint' : 'endpoint' ],
-			'bucket'   => $images[ $backup ? 'backupBucket' : 'bucket' ],
-		);
-	}
-
-	private function is_valid_file_name_rule( $storage_path, $file_name_rule ) {
-		try {
-			( new ObjectKeyBuilder() )->validate( $storage_path, $file_name_rule );
-
-			return true;
-		} catch ( ImageHostException $exception ) {
-			return false;
-		}
-	}
-
-	private function normalize_shortcut( $value, $is_mac ) {
-		if ( ! is_string( $value ) ) {
-			return false;
-		}
-		if ( '' === $value ) {
-			return '';
-		}
-		$parts = explode( '+', $value );
-		if ( count( $parts ) < 2 || count( $parts ) > 5 ) {
-			return false;
-		}
-		$key = array_pop( $parts );
-		if ( ! $this->is_canonical_shortcut_key( $key ) ) {
-			return false;
-		}
-
-		$order      = $is_mac ? array( 'Cmd', 'Ctrl', 'Option', 'Shift' ) : array( 'Ctrl', 'Alt', 'Shift', 'Meta' );
-		$last_index = -1;
-		$has_owner  = false;
-		foreach ( $parts as $modifier ) {
-			$index = array_search( $modifier, $order, true );
-			if ( false === $index || $index <= $last_index ) {
-				return false;
-			}
-			$last_index = $index;
-			$has_owner  = $has_owner || 'Shift' !== $modifier;
-		}
-
-		return $has_owner ? $value : false;
-	}
-
-	private function is_canonical_shortcut_key( $value ) {
-		$named_keys = array(
-			'Space',
-			'Enter',
-			'Backspace',
-			'Delete',
-			'Insert',
-			'Home',
-			'End',
-			'PageUp',
-			'PageDown',
-			'ArrowUp',
-			'ArrowDown',
-			'ArrowLeft',
-			'ArrowRight',
-			'Backquote',
-			'Minus',
-			'Equal',
-			'BracketLeft',
-			'BracketRight',
-			'Backslash',
-			'Semicolon',
-			'Quote',
-			'Comma',
-			'Period',
-			'Slash',
-		);
-
-		return 1 === preg_match( '/^[A-Z0-9]$/D', $value )
-			|| 1 === preg_match( '/^F(?:[1-9]|1[0-2])$/D', $value )
-			|| in_array( $value, $named_keys, true );
-	}
-
-	private function validated_registry_shortcut( array $command, $field, $is_mac ) {
-		$value = array_key_exists( $field, $command ) ? $command[ $field ] : '';
-		if ( false === $this->normalize_shortcut( $value, $is_mac ) ) {
-			throw new \RuntimeException( 'easymde-toolbar-shortcut-invalid' );
-		}
-
-		return $value;
-	}
-
-	private function find_shortcut_conflict( array $shortcut_values ) {
-		$owners = array(
-			'windows' => array(),
-			'mac'     => array(),
-		);
-
-		foreach ( $this->get_reserved_shortcuts_for_script() as $reserved ) {
-			foreach ( array( 'windows', 'mac' ) as $platform ) {
-				$shortcut = $reserved[ $platform ];
-				if ( '' === $shortcut ) {
-					continue;
-				}
-				$binding = array(
-					'id'       => $reserved['id'],
-					'label'    => $reserved['label'],
-					'editable' => false,
-				);
-				if ( isset( $owners[ $platform ][ $shortcut ] ) ) {
-					if ( ! $owners[ $platform ][ $shortcut ]['editable'] && ! $binding['editable'] ) {
-						continue;
-					}
-					return array(
-						'platform' => $platform,
-						'shortcut' => $shortcut,
-						'bindings' => array( $owners[ $platform ][ $shortcut ], $binding ),
-					);
-				}
-				$owners[ $platform ][ $shortcut ] = $binding;
-			}
-		}
-
-		$editable_labels = $this->get_editable_shortcut_labels_for_script();
-		foreach ( $shortcut_values as $shortcut_id => $shortcut ) {
-			foreach ( array( 'windows', 'mac' ) as $platform ) {
-				$value = $shortcut[ $platform ];
-				if ( '' === $value ) {
-					continue;
-				}
-				$binding = array(
-					'id'       => $shortcut_id,
-					'label'    => isset( $editable_labels[ $shortcut_id ] ) ? $editable_labels[ $shortcut_id ] : $shortcut_id,
-					'editable' => true,
-				);
-				if ( isset( $owners[ $platform ][ $value ] ) ) {
-					return array(
-						'platform' => $platform,
-						'shortcut' => $value,
-						'bindings' => array( $owners[ $platform ][ $value ], $binding ),
-					);
-				}
-				$owners[ $platform ][ $value ] = $binding;
-			}
-		}
-
-		return false;
-	}
-
-	private function get_editable_shortcut_labels_for_script() {
-		$labels = array();
-		foreach ( $this->toolbar_registry->get_commands_for_script() as $command ) {
-			$command_id = isset( $command['id'] ) ? (string) $command['id'] : '';
-			$center_id  = $this->center_shortcut_id( $command_id );
-			if ( ! $center_id ) {
-				continue;
-			}
-			$labels[ $center_id ] = isset( $command['label'] ) ? (string) $command['label'] : $center_id;
-		}
-
-		return $labels;
-	}
-	private function center_shortcut_id( $command_id ) {
-		return ToolbarShortcutCatalog::settings_id_for_command( $command_id );
+		return $this->sanitizer->normalize_enum_settings( $this->sanitizer->merge_settings( $defaults, $settings ) );
 	}
 }

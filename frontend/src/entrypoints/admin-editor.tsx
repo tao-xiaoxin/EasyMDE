@@ -8,16 +8,34 @@ import {
 } from '../contracts/bootstrap/editor-root-bootstrap';
 import type { WordPressApiFetch } from '../integrations/wordpress/preview/create-wordpress-preview-port';
 import { createBrowserScrollSync } from '../integrations/browser/editor-layout/create-browser-scroll-sync';
+import {
+  createBrowserClipboardReadPermissionQuery,
+  createBrowserEditorClipboard
+} from '../integrations/browser/clipboard/create-browser-editor-clipboard';
+import { createBrowserEditorImagePixels } from '../integrations/browser/image-copy/create-browser-editor-image-pixels';
+import {
+  createBrowserEditorBlockIndexWorker,
+  type CreateBrowserEditorBlockIndexWorkerOptions
+} from '../integrations/browser/editor-context-menu/create-browser-editor-block-index-worker';
 import { createBrowserToolbarShortcuts } from '../integrations/browser/keyboard/create-browser-toolbar-shortcuts';
 import { createBrowserLocalDraftStorage } from '../integrations/browser/local-drafts/browser-local-draft-storage';
 import { createBrowserImmersivePreferencesPort } from '../integrations/browser/immersive-preferences/browser-immersive-preferences';
 import { createBrowserImmersiveEnvironment } from '../integrations/browser/immersive/create-browser-immersive-environment';
-import { createBrowserPreviewScroll } from '../integrations/browser/preview/create-browser-preview-scroll';
+import type {
+  WechatClipboardPort,
+  WechatClipboardResult
+} from '../contracts/ports/wechat-clipboard-port';
 import {
-  createBrowserWechatClipboard,
-  type ClipboardItemConstructor
+  WechatVisualRasterizationError,
+  type WechatVisualRasterizationPort
+} from '../contracts/ports/wechat-visual-rasterization-port';
+import { createBrowserPreviewScroll } from '../integrations/browser/preview/create-browser-preview-scroll';
+import type {
+  BrowserWechatClipboardRuntime,
+  ClipboardItemConstructor
 } from '../integrations/browser/wechat/create-browser-wechat-clipboard';
-import { createBrowserWechatVisualRasterizer } from '../integrations/browser/wechat/create-browser-wechat-visual-rasterizer';
+import type { BrowserWechatVisualRasterizerRuntime } from '../integrations/browser/wechat/create-browser-wechat-visual-rasterizer';
+import { createGeneratedContentExportSession } from '../features/generated-content-export/generated-content-export-session';
 import {
   createBrowserPreviewEnhancementPort,
   createWindowPreviewEnhancementRuntime
@@ -59,6 +77,14 @@ type AdminEditorBrowserRuntime = Readonly<{
   window: Window;
   wordpress: WordPressEditorRuntime;
 }>;
+
+type DeferredClipboardItemConstructor = new (
+  payload: Record<string, Blob | PromiseLike<Blob>>
+) => unknown;
+
+type ClipboardItemConstructorWithSupport = DeferredClipboardItemConstructor & {
+  supports?: (type: string) => boolean;
+};
 
 export type AdminEditorStartRuntime = Readonly<{
   bootstrap: unknown;
@@ -158,6 +184,173 @@ function localStorage(windowRef: Window): Storage | null {
   } catch {
     return null;
   }
+}
+
+function wechatBackgroundPreparationAbortError(): Error {
+  const error = new Error('wechat-background-preparation-cancelled');
+  error.name = 'AbortError';
+  return error;
+}
+
+function raceWithAbort<T>(
+  promise: Promise<T>,
+  signal: AbortSignal | undefined,
+  createAbortError: () => Error
+): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(createAbortError());
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      reject(createAbortError());
+    };
+    const cleanup = () => {
+      signal.removeEventListener('abort', onAbort);
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    void promise.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error: unknown) => {
+        cleanup();
+        reject(error);
+      }
+    );
+  });
+}
+
+function createLazyBrowserWechatClipboard(
+  runtime: BrowserWechatClipboardRuntime,
+  isActive: () => boolean
+): WechatClipboardPort {
+  let resolvedPort: WechatClipboardPort | null = null;
+  let portPromise: Promise<WechatClipboardPort> | null = null;
+  const loadPort = (): Promise<WechatClipboardPort> => {
+    if (resolvedPort) return Promise.resolve(resolvedPort);
+    if (!portPromise) {
+      portPromise = import(
+        '../integrations/browser/wechat/create-browser-wechat-clipboard'
+      ).then(
+        ({ createBrowserWechatClipboard }) => {
+          const port = createBrowserWechatClipboard(runtime);
+          resolvedPort = port;
+          return port;
+        },
+        (error: unknown) => {
+          portPromise = null;
+          throw error;
+        }
+      );
+    }
+    return portPromise;
+  };
+
+  return {
+    prepare(preview, options = {}): Promise<void> {
+      if (!isActive()) return Promise.resolve();
+      if (options.signal?.aborted) {
+        return Promise.reject(wechatBackgroundPreparationAbortError());
+      }
+      if (resolvedPort) {
+        return resolvedPort.prepare
+          ? resolvedPort.prepare(preview, options)
+          : Promise.resolve();
+      }
+      return raceWithAbort(
+        loadPort(),
+        options.signal,
+        wechatBackgroundPreparationAbortError
+      ).then((port) => {
+        if (!isActive()) return undefined;
+        if (options.signal?.aborted) {
+          throw wechatBackgroundPreparationAbortError();
+        }
+        return port.prepare ? port.prepare(preview, options) : undefined;
+      });
+    },
+    copy(preview, options = {}): Promise<WechatClipboardResult> {
+      const failure = (): WechatClipboardResult =>
+        true === options.pngConversionEnabled
+          ? {
+              code: 'wechat-png-clipboard-failed',
+              sideEffects: 'none',
+              status: 'failed'
+            }
+          : { code: 'wechat-copy-failed', status: 'failed' };
+      if (!isActive() || options.signal?.aborted) {
+        return Promise.resolve(failure());
+      }
+      if (resolvedPort) {
+        return resolvedPort.copy(preview, options);
+      }
+      return loadPort().then(
+        (port) => {
+          if (!isActive() || options.signal?.aborted) {
+            return failure();
+          }
+          return port.copy(preview, options);
+        },
+        () => failure()
+      );
+    }
+  };
+}
+
+function createLazyBrowserWechatVisualRasterizer(
+  runtime: BrowserWechatVisualRasterizerRuntime,
+  isActive: () => boolean
+): WechatVisualRasterizationPort {
+  let resolvedPort: WechatVisualRasterizationPort | null = null;
+  let portPromise: Promise<WechatVisualRasterizationPort> | null = null;
+  const cancelledError = (): Error =>
+    new WechatVisualRasterizationError('wechat-png-rasterization-cancelled');
+  const loadPort = (): Promise<WechatVisualRasterizationPort> => {
+    if (resolvedPort) return Promise.resolve(resolvedPort);
+    if (!portPromise) {
+      portPromise = import(
+        '../integrations/browser/wechat/create-browser-wechat-visual-rasterizer'
+      ).then(
+        ({ createBrowserWechatVisualRasterizer }) => {
+          const port = createBrowserWechatVisualRasterizer(runtime);
+          resolvedPort = port;
+          return port;
+        },
+        (error: unknown) => {
+          portPromise = null;
+          throw error;
+        }
+      );
+    }
+    return portPromise;
+  };
+
+  return {
+    rasterize(request) {
+      if (!isActive() || request.signal.aborted) {
+        return Promise.reject(cancelledError());
+      }
+      if (resolvedPort) {
+        return resolvedPort.rasterize(request);
+      }
+      return raceWithAbort(loadPort(), request.signal, cancelledError).then(
+        (port) => {
+          if (!isActive() || request.signal.aborted) {
+            throw cancelledError();
+          }
+          return port.rasterize(request);
+        },
+        (error: unknown) => {
+          if (error instanceof WechatVisualRasterizationError) {
+            throw error;
+          }
+          throw new WechatVisualRasterizationError(
+            'wechat-png-rasterization-unavailable'
+          );
+        }
+      );
+    }
+  };
 }
 
 export function mountAdminEditor(
@@ -269,6 +462,123 @@ export function mountAdminEditor(
         window: windowRef
       })
     : null;
+  const browserClipboard = windowRef.navigator.clipboard;
+  const deferredClipboardItem = (windowRef as Window & { ClipboardItem?: unknown }).ClipboardItem;
+  const supportsPngWrite = (): boolean => {
+    if (
+      !browserClipboard
+      || 'function' !== typeof browserClipboard.write
+      || 'function' !== typeof deferredClipboardItem
+    ) return false;
+    const ClipboardItem = deferredClipboardItem as ClipboardItemConstructorWithSupport;
+    if ('function' !== typeof ClipboardItem.supports) return false;
+    try {
+      return true === ClipboardItem.supports('image/png');
+    } catch {
+      return false;
+    }
+  };
+  const supportsRichWrite = (): boolean => {
+    if (
+      !browserClipboard
+      || 'function' !== typeof browserClipboard.write
+      || 'function' !== typeof deferredClipboardItem
+    ) return false;
+    const ClipboardItem = deferredClipboardItem as ClipboardItemConstructorWithSupport;
+    if ('function' !== typeof ClipboardItem.supports) return false;
+    try {
+      return true === ClipboardItem.supports('text/html')
+        && true === ClipboardItem.supports('text/plain');
+    } catch {
+      return false;
+    }
+  };
+  const queryReadPermission = createBrowserClipboardReadPermissionQuery(
+    windowRef.navigator
+  );
+  const editorClipboardPort = createBrowserEditorClipboard(
+    browserClipboard
+      ? {
+          ...(queryReadPermission ? { queryReadPermission } : {}),
+          readText: () => browserClipboard.readText(),
+          supportsPngWrite,
+          supportsRichWrite,
+          ...('function' === typeof deferredClipboardItem
+            ? {
+                writeDeferred: (text: Promise<string>) => {
+                  const ClipboardItem = deferredClipboardItem as DeferredClipboardItemConstructor;
+                  const plain = text.then(
+                    (value) => new Blob([value], { type: 'text/plain' })
+                  );
+                  void plain.catch(() => undefined);
+                  const item = new ClipboardItem({
+                    'text/plain': plain
+                  });
+                  return browserClipboard.write([item] as ClipboardItems);
+                },
+                writeImageDeferred: (image: Promise<Blob>) => {
+                  const ClipboardItem = deferredClipboardItem as DeferredClipboardItemConstructor;
+                  const item = new ClipboardItem({ 'image/png': image });
+                  return browserClipboard.write([item] as ClipboardItems);
+                },
+                writeRichDeferred: (payload) => {
+                  const ClipboardItem = deferredClipboardItem as DeferredClipboardItemConstructor;
+                  const html = payload.then(
+                    (value) => new Blob([value.html], { type: 'text/html' })
+                  );
+                  const text = payload.then(
+                    (value) => new Blob([value.text], { type: 'text/plain' })
+                  );
+                  void html.catch(() => undefined);
+                  void text.catch(() => undefined);
+                  const item = new ClipboardItem({
+                    'text/html': html,
+                    'text/plain': text
+                  });
+                  return browserClipboard.write([item] as ClipboardItems);
+                }
+              }
+            : {}),
+          writeText: (text) => browserClipboard.writeText(text)
+        }
+      : null
+  );
+  const editorImagePixelsPort = createBrowserEditorImagePixels({
+    clearTimeout: (handle) => windowRef.clearTimeout(handle as number),
+    document: documentRef,
+    setTimeout: (callback, delayMs) => windowRef.setTimeout(callback, delayMs)
+  });
+  const browserWorker = (windowRef as Window & { Worker?: unknown }).Worker;
+  const editorBlockIndexPort = createBrowserEditorBlockIndexWorker({
+    assetBaseUrl: bootstrap.previewEnhancement.assetBaseUrl,
+    referenceLabelCaseFoldProfile: bootstrap.referenceLabelCaseFoldProfile,
+    location: {
+      href: windowRef.location.href,
+      origin: windowRef.location.origin
+    },
+    ...(typeof browserWorker === 'function'
+      ? {
+          Worker: browserWorker as NonNullable<
+            CreateBrowserEditorBlockIndexWorkerOptions['Worker']
+          >
+        }
+      : {}),
+    workerUrl: bootstrap.editorBlockIndexWorkerUrl
+  });
+  const wechatVisualRasterizer = createLazyBrowserWechatVisualRasterizer(
+    {
+      blob: Blob,
+      document: documentRef,
+      file: File,
+      image: Image,
+      xmlSerializer: XMLSerializer
+    },
+    () => active
+  );
+  const generatedContentExportSession = createGeneratedContentExportSession({
+    clipboard: editorClipboardPort,
+    rasterizer: wechatVisualRasterizer
+  });
   const props: EditorRootProps = {
     appearance: bootstrap.appearance,
     appearancePort: createWordPressAppearancePort({
@@ -282,6 +592,11 @@ export function mountAdminEditor(
       siteUrl: windowRef.location.href
     }),
     document: bootstrap.document,
+    referenceLabelCaseFoldProfile: bootstrap.referenceLabelCaseFoldProfile,
+    contextMenuStrings: bootstrap.contextMenuStrings,
+    editorBlockIndexPort,
+    editorClipboardPort,
+    editorImagePixelsPort,
     enhancementPort,
     executeExternalCommand: createExternalCommandExecutor(
       bootstrap,
@@ -289,6 +604,7 @@ export function mountAdminEditor(
     ),
     fontControlsPort: createWordPressFontControlsPort(fontFields),
     fonts: bootstrap.fonts,
+    generatedContentExportSession,
     imageUpload: { ...bootstrap.imageUpload, postId },
     imageUploadPort: createWordPressImageUploadPort({
       actionNonce: bootstrap.imageUpload.actionNonce,
@@ -348,11 +664,12 @@ export function mountAdminEditor(
     onFailure,
     platform: platform(windowRef),
     publishPost: createNativePublisher(documentRef),
-    prepareToolbarShortcuts: ({ editorRoot, source }) =>
+    prepareToolbarShortcuts: ({ editorRoot, isOwnedTarget, source }) =>
       createBrowserToolbarShortcuts({
         commands: bootstrap.toolbar.commands,
         editorRoot,
         eventTarget: documentRef,
+        ...(isOwnedTarget ? { isOwnedTarget } : {}),
         platform: platform(windowRef),
         shortcuts: bootstrap.toolbar.shortcuts,
         source
@@ -404,28 +721,36 @@ export function mountAdminEditor(
     submissionField,
     titleField,
     toolbar: bootstrap.toolbar,
-    wechatClipboard: createBrowserWechatClipboard({
-      blob: Blob,
-      clipboardItem: clipboardItem(windowRef),
-      document: documentRef,
-      fetch: (input, init) => windowRef.fetch(input, init),
-      getComputedStyle: (element, pseudoElement) => windowRef.getComputedStyle(element, pseudoElement),
-      getSelection: () => windowRef.getSelection(),
-      pageOffset: () => ({ x: windowRef.scrollX, y: windowRef.scrollY }),
-      scrollTo: (x, y) => windowRef.scrollTo(x, y),
-      write: windowRef.navigator.clipboard?.write
-        ? (items) =>
-            windowRef.navigator.clipboard.write(items as ClipboardItems)
-        : null
-    }),
+    wechatClipboard: createLazyBrowserWechatClipboard(
+      {
+        blob: Blob,
+        clipboardItem: clipboardItem(windowRef),
+        document: documentRef,
+        fetch: (input, init) => windowRef.fetch(input, init),
+        getComputedStyle: (element, pseudoElement) => windowRef.getComputedStyle(element, pseudoElement),
+        getSelection: () => windowRef.getSelection(),
+        pageOffset: () => ({ x: windowRef.scrollX, y: windowRef.scrollY }),
+        scrollTo: (x, y) => windowRef.scrollTo(x, y),
+        write: windowRef.navigator.clipboard?.write
+          ? (items) =>
+              windowRef.navigator.clipboard.write(items as ClipboardItems)
+          : null
+      },
+      () => active
+    ),
     wechatExport: bootstrap.wechatExport,
-    wechatVisualRasterizationPort: createBrowserWechatVisualRasterizer({
-      blob: Blob,
-      document: documentRef,
-      file: File,
-      image: Image,
-      xmlSerializer: XMLSerializer
-    })
+    wechatVisualRasterizationPort: wechatVisualRasterizer,
+    simplifiedFormattingParser: {
+      parseFromString: (source, mimeType) => {
+        const Parser = (windowRef as Window & {
+          DOMParser?: new () => DOMParser;
+        }).DOMParser;
+        if ('function' !== typeof Parser) {
+          throw new Error('editor-simplified-formatting-parser-unavailable');
+        }
+        return new Parser().parseFromString(source, mimeType);
+      }
+    }
   };
 
   root.render(
@@ -442,6 +767,9 @@ export function mountAdminEditor(
     active = false;
     mediaPickerFrame?.dispose?.();
     root.unmount();
+    editorBlockIndexPort.dispose();
+    editorClipboardPort.dispose();
+    editorImagePixelsPort.dispose();
     nativeEditor?.classList.remove('easymde-native-editor-hidden');
   };
 }

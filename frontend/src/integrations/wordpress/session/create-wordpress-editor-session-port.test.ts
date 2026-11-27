@@ -331,4 +331,39 @@ describe('createWordPressEditorSessionPort', () => {
       namespace: 'easymde/session-invalid'
     })).toThrowError('editor-session-wordpress-runtime-unavailable');
   });
+  it('ignores a lock-free tick that answers no lock request this owner sent', () => {
+    const { emit, port } = fixture();
+    const unsubscribe = port.subscribe(vi.fn());
+
+    // A Heartbeat request already in flight before attach answers without a
+    // lock entry; it carries no capability evidence.
+    emit('heartbeat.tick', { 'wp-auth-check': true });
+    expect(port.getSnapshot()).toEqual({ status: 'ready' });
+
+    // A lock request that failed without a tick does not leak into the next
+    // send's answer when that send's autosave preparation throws first.
+    emit('heartbeat.send', {});
+    const unsubscribeAutosave = port.subscribeBeforeAutosave(() => {
+      throw new Error('synthetic-autosave-preparation-failure');
+    });
+    expect(() => emit('heartbeat.send', { wp_autosave: { content: '' } })).toThrowError(
+      'synthetic-autosave-preparation-failure'
+    );
+    emit('heartbeat.tick', { 'wp-auth-check': true });
+    expect(port.getSnapshot()).toEqual({ status: 'ready' });
+    unsubscribeAutosave();
+
+    // A later hook that strips the lock request leaves no evidence either.
+    const stripped: Record<string, unknown> = {};
+    emit('heartbeat.send', stripped);
+    delete stripped['wp-refresh-post-lock'];
+    emit('heartbeat.tick', { 'wp-auth-check': true });
+    expect(port.getSnapshot()).toEqual({ status: 'ready' });
+
+    // A genuine unanswered lock request still reports capability loss.
+    emit('heartbeat.send', {});
+    emit('heartbeat.tick', { 'wp-auth-check': true });
+    expect(port.getSnapshot()).toEqual({ status: 'capability-lost' });
+    unsubscribe();
+  });
 });

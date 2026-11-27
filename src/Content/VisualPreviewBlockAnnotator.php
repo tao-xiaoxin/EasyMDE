@@ -9,6 +9,10 @@ use League\CommonMark\Node\Block\AbstractBlock;
 use League\CommonMark\Node\Block\Document;
 use League\CommonMark\Extension\CommonMark\Node\Inline\Image;
 use League\CommonMark\Extension\CommonMark\Node\Inline\Link;
+use League\CommonMark\Extension\Table\Table;
+use League\CommonMark\Extension\Table\TableRow;
+use League\CommonMark\Extension\Table\TableSection;
+use League\CommonMark\Node\Block\Paragraph;
 use RuntimeException;
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -20,29 +24,59 @@ if ( ! defined( 'ABSPATH' ) ) {
  *
  * The annotator never renders Markdown and never becomes a second persistence
  * owner. It only carries CommonMark block provenance through the existing
- * Preview HTML transformations and emits a privacy-safe sidecar.
+ * Preview HTML transformations and emits a privacy-safe sidecar. Code-body
+ * and code-projection provenance is built by VisualPreviewCodeProjectionBuilder
+ * and exposed here unchanged for existing callers.
  */
 final class VisualPreviewBlockAnnotator {
 
-	const SOURCE_ATTRIBUTE = 'data-easymde-visual-source-id';
-	const BLOCK_ATTRIBUTE  = 'data-easymde-visual-block-id';
+	const SOURCE_ATTRIBUTE            = 'data-easymde-visual-source-id';
+	const BLOCK_ATTRIBUTE             = 'data-easymde-visual-block-id';
+	const MAX_CODE_BODY_ENTRIES       = VisualPreviewCodeProjectionBuilder::MAX_CODE_BODY_ENTRIES;
+	const MAX_CODE_BODY_BYTES         = VisualPreviewCodeProjectionBuilder::MAX_CODE_BODY_BYTES;
+	const CODE_BODY_UNAVAILABLE       = VisualPreviewCodeProjectionBuilder::CODE_BODY_UNAVAILABLE;
+	const CODE_BODY_LIMIT             = VisualPreviewCodeProjectionBuilder::CODE_BODY_LIMIT;
+	const MAX_CODE_PROJECTION_ENTRIES = VisualPreviewCodeProjectionBuilder::MAX_CODE_PROJECTION_ENTRIES;
+	const MAX_CODE_PROJECTION_ROWS    = VisualPreviewCodeProjectionBuilder::MAX_CODE_PROJECTION_ROWS;
+	const MAX_CODE_PROJECTION_BYTES   = VisualPreviewCodeProjectionBuilder::MAX_CODE_PROJECTION_BYTES;
+	const MAX_CODE_PROJECTION_INFO    = VisualPreviewCodeProjectionBuilder::MAX_CODE_PROJECTION_INFO;
 
 	/**
-	 * @param array<int,array{start:int,end:int}> $line_map Optional transformed-line to source-line map.
+	 * @param array<int,array{start:int,end:int}> $line_map           Optional transformed-line to source-line map.
+	 * @param string                              $normalized_markdown Optional parsed Markdown used to verify one repaired range.
 	 * @return array<int, array{source_id:string,startLine:int,endLine:int,editable:bool}>
 	 */
-	public static function describe_source_blocks( Document $document, array $line_map = array() ) {
+	public static function describe_source_blocks( Document $document, array $line_map = array(), $normalized_markdown = '' ) {
 		$blocks = array();
+		$nodes  = array();
 
-		foreach ( $document->children() as $index => $node ) {
+		foreach ( $document->children() as $node ) {
 			if ( ! $node instanceof AbstractBlock ) {
 				throw new RuntimeException( 'Unable to map a non-block CommonMark root node to Preview source lines.' );
 			}
 
+			$nodes[] = $node;
+		}
+
+		$repaired = self::repair_split_table_ranges(
+			$nodes,
+			'' === (string) $normalized_markdown ? array() : VisualPreviewCodeProjectionBuilder::split_source_lines( $normalized_markdown )
+		);
+
+		foreach ( $nodes as $index => $node ) {
 			$start_line = $node->getStartLine();
 			$end_line   = $node->getEndLine();
-			if ( null === $start_line || null === $end_line || $start_line < 1 || $end_line < $start_line ) {
+			if ( isset( $repaired[ $index ] ) ) {
+				$start_line = $repaired[ $index ][0];
+				$end_line   = $repaired[ $index ][1];
+			} elseif ( null === $start_line || null === $end_line || $start_line < 1 || $end_line < $start_line ) {
 				throw new RuntimeException( 'CommonMark did not provide a valid source range for a Preview block.' );
+			}
+			if ( $node instanceof Table ) {
+				$prefix_start = TableAlignmentAnnotation::source_prefix_start_line( $node );
+				if ( null !== $prefix_start && $prefix_start < $start_line ) {
+					$start_line = $prefix_start;
+				}
 			}
 
 			$range = empty( $line_map )
@@ -50,7 +84,7 @@ final class VisualPreviewBlockAnnotator {
 					'startLine' => (int) $start_line - 1,
 					'endLine'   => (int) $end_line,
 				)
-				: self::map_line_range( $start_line, $end_line, $line_map );
+				: VisualPreviewCodeProjectionBuilder::map_line_range( $start_line, $end_line, $line_map );
 
 			$blocks[] = array(
 				'source_id' => 's' . (int) $index,
@@ -64,30 +98,136 @@ final class VisualPreviewBlockAnnotator {
 	}
 
 	/**
-	 * @param array<int,array{start:int,end:int}> $line_map
-	 * @return array{startLine:int,endLine:int}
+	 * Repair the source ranges CommonMark reports when a GFM table start parser
+	 * replaces the active paragraph parser.
+	 *
+	 * TableStartParser gives the replaced paragraph's start line to both the
+	 * surviving paragraph and the new table, then closes that paragraph at
+	 * start - 1. A valid paragraph-adjacent table stays contiguous: the paragraph
+	 * owns the text lines before the header row, the table owns the header,
+	 * delimiter, and body lines. The delimiter row comes from the table's own body
+	 * rows and is verified against the parsed Markdown, so every other invalid
+	 * range keeps failing closed.
+	 *
+	 * @param array<int,AbstractBlock>                       $nodes            Root blocks in document order.
+	 * @param array<int,array{content:string,ending:string}> $normalized_lines Parsed Markdown lines, empty to skip verification.
+	 * @return array<int,array{0:int,1:int}> Repaired inclusive 1-indexed ranges keyed by root block index.
 	 */
-	private static function map_line_range( $start_line, $end_line, array $line_map ) {
-		$mapped_start = null;
-		$mapped_end   = null;
+	private static function repair_split_table_ranges( array $nodes, array $normalized_lines ) {
+		$ranges = array();
 
-		for ( $line = (int) $start_line; $line <= (int) $end_line; ++$line ) {
-			if ( ! isset( $line_map[ $line ]['start'], $line_map[ $line ]['end'] ) ) {
-				throw new RuntimeException( 'Preview transformed lines do not have complete source provenance.' );
+		foreach ( $nodes as $index => $node ) {
+			$start_line = $node->getStartLine();
+			$end_line   = $node->getEndLine();
+			if ( ! $node instanceof Paragraph || ! isset( $nodes[ $index + 1 ] ) || ! $nodes[ $index + 1 ] instanceof Table ) {
+				continue;
 			}
 
-			$mapped_start = null === $mapped_start ? $line_map[ $line ]['start'] : min( $mapped_start, $line_map[ $line ]['start'] );
-			$mapped_end   = null === $mapped_end ? $line_map[ $line ]['end'] : max( $mapped_end, $line_map[ $line ]['end'] );
+			$table       = $nodes[ $index + 1 ];
+			$table_start = $table->getStartLine();
+			$table_end   = $table->getEndLine();
+			if ( null === $start_line || null === $end_line || null === $table_start || null === $table_end ) {
+				continue;
+			}
+			if ( $start_line < 1 || $end_line !== $start_line - 1 || $table_start !== $start_line ) {
+				continue;
+			}
+
+			$delimiter_line = $table_end - self::table_body_row_count( $table );
+			if ( $delimiter_line < $start_line + 2 || $delimiter_line > $table_end ) {
+				continue;
+			}
+			if ( ! self::is_table_delimiter_line( $delimiter_line, $normalized_lines ) ) {
+				continue;
+			}
+
+			$ranges[ $index ]     = array( $start_line, $delimiter_line - 2 );
+			$ranges[ $index + 1 ] = array( $delimiter_line - 1, $table_end );
 		}
 
-		if ( null === $mapped_start || null === $mapped_end || $mapped_start < 1 || $mapped_end < $mapped_start ) {
-			throw new RuntimeException( 'Preview transformed lines produced an invalid source range.' );
+		return $ranges;
+	}
+
+	/**
+	 * Count the table body rows the table parser accepted into the AST.
+	 */
+	private static function table_body_row_count( Table $table ) {
+		$count = 0;
+
+		foreach ( $table->children() as $section ) {
+			if ( ! $section instanceof TableSection || $section->isHead() ) {
+				continue;
+			}
+
+			foreach ( $section->children() as $row ) {
+				if ( $row instanceof TableRow ) {
+					++$count;
+				}
+			}
 		}
 
-		return array(
-			'startLine' => (int) $mapped_start - 1,
-			'endLine'   => (int) $mapped_end,
-		);
+		return $count;
+	}
+
+	/**
+	 * Confirm the derived line is a GFM table delimiter row.
+	 *
+	 * @param int                                            $line_number      1-indexed candidate delimiter line.
+	 * @param array<int,array{content:string,ending:string}> $normalized_lines Parsed Markdown lines, empty to skip verification.
+	 */
+	private static function is_table_delimiter_line( $line_number, array $normalized_lines ) {
+		if ( empty( $normalized_lines ) ) {
+			return true;
+		}
+		if ( ! isset( $normalized_lines[ $line_number - 1 ] ) ) {
+			return false;
+		}
+
+		$content = $normalized_lines[ $line_number - 1 ]['content'];
+		if ( false === strpos( $content, '|' ) ) {
+			return false;
+		}
+
+		return 1 === preg_match( '/^ {0,3}\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/D', $content );
+	}
+
+	/**
+	 * Build the source-backed code-body map from the same parsed Preview AST.
+	 *
+	 * CommonMark's code literal is authoritative for content characters. The
+	 * source line map supplies original line endings and verifies that theme
+	 * normalization did not change a code row before it is exposed to REST.
+	 *
+	 * @param array<int,array{start:int,end:int}> $line_map
+	 * @return array{version:int,coordinate:string,status:string,entries:array<int,array<string,mixed>>}|null
+	 */
+	public static function describe_source_code_bodies( Document $document, $normalized_markdown, array $line_map, $original_markdown ) {
+		return VisualPreviewCodeProjectionBuilder::describe_source_code_bodies( $document, $normalized_markdown, $line_map, $original_markdown );
+	}
+
+	/**
+	 * Build the source cursor projection observed by the CommonMark code parsers.
+	 *
+	 * This is raw source provenance, not rendered HTML or a persistence format.
+	 * A malformed row makes only its entry unavailable; parser and Preview HTML
+	 * remain authoritative and continue to be returned.
+	 *
+	 * @param array<int,array{start:int,end:int}> $line_map
+	 * @param CodeProjectionBudget|null           $budget
+	 * @return array<string,mixed>|null
+	 */
+	public static function describe_source_code_projections( Document $document, $normalized_markdown, array $line_map, $original_markdown, $budget = null ) {
+		return VisualPreviewCodeProjectionBuilder::describe_source_code_projections( $document, $normalized_markdown, $line_map, $original_markdown, $budget );
+	}
+
+	/**
+	 * Preserve the historical serializer entry point used by unit coverage.
+	 *
+	 * @param array<string,mixed> $projection
+	 * @return string|false
+	 */
+	private static function encode_code_projection( array $projection ) {
+		return VisualPreviewCodeProjectionBuilder::encode_code_projection( $projection );
 	}
 
 	/**

@@ -10,6 +10,7 @@ Authoritative routes:
 - Testing, CI, installable ZIP, source archive, and E2E steps: [Testing and Release](TESTING_AND_RELEASE.md).
 - PHP and React string ownership, extraction, catalogs, locale, RTL, and language assets: `.agents/skills/i18n/SKILL.md`.
 - WeChat decisions, alternatives, and consequences: [ADR-001](decisions/ADR-001-wechat-clipboard-serialization.md).
+- Visual-editor projection, local ESM code splitting, and module health guardrails: [ADR-002](decisions/ADR-002-visual-editor-and-esm-architecture.md).
 
 When this document conflicts with code or current work, current human decisions, `AGENTS.md`, the live repository, and committed public compatibility contracts take precedence; do not mistake design rationale for implementation evidence.
 
@@ -40,14 +41,22 @@ The Root can compose multiple focused Features, but each external responsibility
 Focus Mode and immersive writing do not belong to the default ordinary-editor surface.
 The immersive presentation stays within the same Root; it reuses the ordinary
 editor's document, Preview, native form, media, revision, and WordPress session
-owners, and it does not create a second Root, editor, Renderer, save path, or
-persistence model. Publish, History, Outline, statistics, and view interactions
+owners, and it does not create a second Root, formal Renderer, save path, or
+persistence model. For immersive live-visual editing only, an authorized
+structured editor projection (ProseMirror core packages, MIT; see
+[ADR-002](decisions/ADR-002-visual-editor-and-esm-architecture.md)) replaces the
+raw `contentEditable` Full/Windowed split with one unified in-memory editing
+view over the existing article theme CSS DOM, preserves complex/custom blocks
+as raw-source-preserving protected atom cards, performs zero write-back on
+read/view without edits, and syncs legitimate edits back to canonical Markdown.
+Publish, History, Outline, statistics, and view interactions
 may only project existing WordPress capabilities; submission and restoration
 return to their native owners.
 
 The Settings Center is an independent React Root because it is an independent WordPress administration screen.
 It does not share mutable Stores, Contexts, caches, or lifecycle owners with the Editor Root.
 The ordinary editor and Settings Center must both use the React 18 runtime provided by WordPress, but this does not authorize another React runtime, an admin SPA, a Router, or a Hydration model.
+Within that WordPress React 18 boundary, Vite builds may emit local ES Modules with dynamic code splitting targeting WordPress 6.7+ and `es2020`, keeping all assets 100% local/offline and preserving public WordPress script handle compatibility ([ADR-002](decisions/ADR-002-visual-editor-and-esm-architecture.md)).
 The canonical Settings route also has an independent presentation document.
 WordPress performs authentication, screen resolution, and capability admission,
 then the page load hook emits the Settings document before the ordinary admin
@@ -82,8 +91,8 @@ Before choosing a new component or dependency, inspect existing EasyMDE and Word
 Persistent state belongs to PHP and WordPress, server-derived state is managed by one explicit owner, and editing-session state is managed by the nearest Feature or by the Root when cross-Feature coordination is genuinely required.
 Derived Dirty, statistics, and capability state are not copied into independent truths; recovery data enters only a versioned Local Draft Store isolated by Site, User, and Post, and it is never an implicit replacement for article saving.
 
-Preview is the only formal Safe HTML sink: Markdown passes through `PreviewPort` to PHP `EasyMDE\Content\MarkdownRenderer`, and the returned sanitized HTML is enhanced by local Mermaid, KaTeX, Highlight.js, and TOC enhancements.
-The browser does not render another Markdown copy or mask PHP Renderer or Composer dependency failures with an approximate result.
+Preview is the only formal Safe HTML sink for read-only Split/Preview panes and WeChat Clipboard export: Markdown passes through `PreviewPort` to PHP `EasyMDE\Content\MarkdownRenderer`, and the returned sanitized HTML is enhanced by local Mermaid, KaTeX, Highlight.js, and TOC enhancements.
+The browser does not replace PHP `MarkdownRenderer` for formal rendering or persistence, nor mask PHP Renderer or Composer dependency failures with an approximate result; the authorized immersive visual-editing projection ([ADR-002](decisions/ADR-002-visual-editor-and-esm-architecture.md)) is strictly a temporary in-memory editing view that synchronizes legitimate edits back to canonical Markdown.
 
 Save, Publish, Restore, Upload, Settings, Custom CSS, and Clipboard operations must start from an explicit user action, await the real WordPress or browser owner's result, and then update interface state.
 Opening, closing, focusing, Previewing, cancelling, fallback, and teardown must not hide writes, and Browser Abort must not be interpreted as cancellation of a server Mutation.
@@ -122,6 +131,7 @@ CDNs and remote static scripts are not replacements for local resources.
 
 EasyMDE architecture prioritizes data authority, WordPress compatibility, extension stability, error visibility, accessibility, and reproducible delivery.
 React code should remain local, composable, testable, and removable; abstractions require a real responsibility and consumer rather than a file-count or popularity rationale.
+Splitting complex frontend logic into cohesive, focused modules (typically 200–700 lines) with single-direction layering, no zero-JSX multi-thousand-line `.tsx` controllers, and automated ratchets in `tests/Node/` is encouraged maintainability hygiene rather than overdesign ([ADR-002](decisions/ADR-002-visual-editor-and-esm-architecture.md)).
 Performance optimization starts with representative measurement and must not sacrifice Selection, IME, Undo, Focus, Scroll, the Native Form, or failure traceability.
 
 Accessibility is not decoration: keyboard behavior, IME, focus entry and exit, Dialog, Toolbar, Split Pane, RTL, zoom, text resizing, Reduced Motion, Forced Colors, and long translations belong to the contract of the corresponding interface owner.

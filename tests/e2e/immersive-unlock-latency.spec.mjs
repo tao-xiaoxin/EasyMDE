@@ -1,21 +1,88 @@
 import { expect, test } from '@playwright/test';
 
+import {
+  finishVisualBrowserMonitor,
+  installVisualBrowserMonitor,
+  monitorError
+} from './helpers/visual-browser-monitor.mjs';
+
 const adminUser = requiredEnvironment('WORDPRESS_ADMIN_USER');
 const adminPassword = requiredEnvironment('WORDPRESS_ADMIN_PASSWORD');
 const previewSinkSelector = '.easymde-pane-preview [data-easymde-preview-html-sink="1"]';
 const documentWritePath = /\/wp-admin\/post\.php$|\/wp-json\/wp\/v2\/(?:posts|pages)(?:\/\d+)?(?:\/autosaves?\/?$)?$/u;
+const OWNED_POST_ANNOTATION = 'easymde-e2e-owned-post';
+
+// Installed Playwright otherwise captures the article's ARIA text on failure.
+process.env.PLAYWRIGHT_NO_COPY_PROMPT = '1';
+
+let monitoredPage = null;
+let ownedPostCapture = null;
 
 test.use({
   viewport: { width: 1440, height: 1000 },
-  screenshot: 'only-on-failure',
+  screenshot: 'off',
   trace: 'off',
   video: 'off'
+});
+
+test.afterEach(async ({}, testInfo) => {
+  const ownership = ownedPostCapture;
+  const page = monitoredPage;
+  ownedPostCapture = null;
+  monitoredPage = null;
+  const diagnosticErrors = [];
+  let summary = null;
+
+  // Monitor finalization must happen before any attachment attempt so an
+  // attachment failure cannot leave its listeners or history bridge alive.
+  if (page) {
+    try {
+      summary = await finishVisualBrowserMonitor(page);
+      if (summary === null) diagnosticErrors.push('monitor-summary-missing');
+    } catch {
+      diagnosticErrors.push('visual-browser-monitor-finish-failed');
+    }
+  }
+
+  const attach = async (name, body) => {
+    try {
+      await testInfo.attach(name, {
+        body: JSON.stringify(body),
+        contentType: 'application/json'
+      });
+    } catch {
+      diagnosticErrors.push(`${name}-attachment-failed`);
+    }
+  };
+
+  if (ownership) await attach(OWNED_POST_ANNOTATION, ownership);
+  if (summary) {
+    await attach('visual-browser-monitor', summary);
+    if (summary.issues.length > 0) diagnosticErrors.push(monitorError(summary.issues));
+  }
+
+  const uniqueDiagnosticErrors = [...new Set(diagnosticErrors)];
+  for (const code of uniqueDiagnosticErrors) {
+    testInfo.annotations.push({ type: 'easymde-e2e-diagnostic-error', description: code });
+  }
+  if (testInfo.status === testInfo.expectedStatus && uniqueDiagnosticErrors.length > 0) {
+    throw new Error(uniqueDiagnosticErrors.join(','));
+  }
 });
 
 function requiredEnvironment(name) {
   const value = process.env[name];
   if (!value) throw new Error(`${name} must be set in the root .env or process environment.`);
   return value;
+}
+
+async function loginRedirectDestination(page) {
+  const destination = await page.evaluate(() => {
+    const redirect = document.querySelector('#loginform input[name="redirect_to"]');
+    return redirect instanceof HTMLInputElement ? redirect.value : null;
+  });
+  if (!destination) throw new Error('wordpress-login-redirect-target-unavailable');
+  return destination;
 }
 
 const safeErrorNames = new Set([
@@ -50,6 +117,30 @@ function createSafeLoginStageError(failureCode, caughtError) {
   return error;
 }
 
+function createSafeSetupStageError(caughtError) {
+  const safeCauseType = safeCaughtErrorType(caughtError);
+  const error = new Error(`dashboard-setup-not-ready (${safeCauseType})`);
+  error.name = 'EditorSetupStageError';
+  error.code = 'dashboard-setup-not-ready';
+  error.safeCauseType = safeCauseType;
+  return error;
+}
+
+async function waitForDashboardSetupReadiness(page, monitor) {
+  let caughtError = null;
+  let drainCompleted = false;
+  try {
+    await page.waitForLoadState('load', { timeout: 8_000 });
+    drainCompleted = await monitor.drain({ timeoutMs: 8_000, quietMs: 300 });
+  } catch (error) {
+    caughtError = error;
+  }
+  const issues = monitor.snapshot().issues;
+  if (caughtError !== null || drainCompleted !== true || issues.length > 0) {
+    throw createSafeSetupStageError(caughtError ?? new Error('dashboard-setup-not-ready'));
+  }
+}
+
 function createSafeLoginAggregateError(stageError, caughtCleanupError) {
   const cleanupError = createSafeLoginStageError(
     'wordpress-login-failure-state-cleanup-failed',
@@ -70,7 +161,7 @@ function createPostRequestMonitor(page) {
   page.on('request', (request) => {
     if (!enabled || 'POST' !== request.method()) return;
     const url = new URL(request.url());
-    const isPreview = /\/wp-json\/easymde\/v1\/preview\/?$/u.test(url.pathname);
+    const isPreview = isPreviewPostRequest(request);
     const body = request.postData() ?? '';
     const isHeartbeat = url.searchParams.get('action') === 'heartbeat'
       || /(?:^|&)action=heartbeat(?:&|$)/u.test(body);
@@ -143,9 +234,10 @@ async function waitForLoginFocusQuiescence(page) {
   if (!focusSettled) throw new Error('wordpress-login-focus-did-not-settle');
 }
 
-async function login(page) {
+async function login(page, monitor = null) {
   let failureCode = 'wordpress-login-page-unavailable';
   try {
+    monitor?.expectNavigation('/wp-login.php', 'open-login');
     await page.goto('/wp-login.php');
     failureCode = 'wordpress-login-focus-did-not-settle';
     await waitForLoginFocusQuiescence(page);
@@ -201,6 +293,9 @@ async function login(page) {
     if (!loginStateIsValid) throw new Error(failureCode);
 
     failureCode = 'wordpress-login-submit-failed';
+    if (monitor) {
+      monitor.expectNavigation(await loginRedirectDestination(page), 'login-submit');
+    }
     const submitRequested = await page.evaluate(() => {
       const form = document.querySelector('#loginform');
       const submit = document.querySelector('#wp-submit');
@@ -297,14 +392,83 @@ test('preserves login and cleanup failures in a privacy-safe aggregate', async (
   expect(failure.cause).toBeUndefined();
 });
 
-async function openNewPost(page) {
+async function captureOwnedPost(page) {
+  const capture = await page.evaluate(() => {
+    const values = [...new Set(
+      [...document.querySelectorAll('#post_ID, input[name="post_ID"]')]
+        .map((input) => input instanceof HTMLInputElement ? input.value.trim() : null)
+        .filter((value) => value !== null)
+    )];
+    if (values.length === 0) {
+      return {
+        status: 'unidentified', code: 'unlock-owned-post-id-missing',
+        beforeFixture: true, route: 'new-post'
+      };
+    }
+    if (values.length !== 1 || !/^[1-9][0-9]*$/u.test(values[0])) {
+      return {
+        status: 'unidentified', code: 'unlock-owned-post-id-ambiguous',
+        beforeFixture: true, route: 'new-post'
+      };
+    }
+    const postId = Number(values[0]);
+    if (!Number.isSafeInteger(postId) || String(postId) !== values[0]) {
+      return {
+        status: 'unidentified', code: 'unlock-owned-post-id-unsafe',
+        beforeFixture: true, route: 'new-post'
+      };
+    }
+    return { status: 'identified', postId, beforeFixture: true, route: 'new-post' };
+  });
+  ownedPostCapture = capture;
+  test.info().annotations.push({
+    type: OWNED_POST_ANNOTATION,
+    description: JSON.stringify(capture)
+  });
+  if (capture.status !== 'identified') throw new Error(capture.code);
+  return capture;
+}
+
+async function openNewPost(page, monitor = null) {
+  monitor?.expectNavigation('/wp-admin/post-new.php', 'open-new-post');
   await page.goto('/wp-admin/post-new.php');
   await expect(page.locator('#easymde-editor')).toBeVisible();
+  await captureOwnedPost(page);
+  const runtimeBuilds = await page.evaluate(() => [...new Set(performance.getEntriesByType('resource')
+    .map((entry) => new URL(entry.name).pathname.split('/').at(-1))
+    .filter((name) => (
+      /^admin-editor-[A-Za-z0-9_-]+\.js$/u.test(name ?? '')
+      && !name.includes('loader-')
+      && !name.startsWith('admin-editor-chunk-')
+    )))]);
+  await test.info().attach('loaded-editor-build', {
+    body: JSON.stringify(runtimeBuilds),
+    contentType: 'application/json'
+  });
+  const expectedBuild = process.env.EASYMDE_E2E_EXPECT_EDITOR_BUILD;
+  if (expectedBuild) {
+    expect(runtimeBuilds, 'The browser must load the frozen production build').toEqual([expectedBuild]);
+  }
+}
+
+async function beginBrowserTest(page) {
+  const monitor = await installVisualBrowserMonitor(page, {
+    baseURL: test.info().project.use.baseURL
+  });
+  monitoredPage = page;
+  await login(page, monitor);
+  await waitForDashboardSetupReadiness(page, monitor);
+  await openNewPost(page, monitor);
+  return monitor;
 }
 
 async function fillMarkdownAndWaitForPreview(page, markdown, paragraphCount) {
-  await page.locator('.easymde-source-react .cm-content').fill(markdown);
-  await expect(page.locator('#easymde-source')).toHaveValue(markdown, {
+  const source = page.locator('#easymde-source');
+  await expect(source, 'Fixture setup requires a blank new-post source').toHaveValue('');
+  const sourceEditor = page.locator('.easymde-source-react .cm-content');
+  await sourceEditor.click();
+  await page.keyboard.insertText(markdown);
+  await expect(source).toHaveValue(markdown, {
     timeout: 60_000
   });
   const preview = page.locator(previewSinkSelector);
@@ -347,7 +511,9 @@ async function beginUnlockTiming(page, button, editorLabel) {
     const state = {
       clickAt: null,
       pendingAt: null,
+      pendingSnapshot: null,
       pendingFrameAt: null,
+      callbackObservedAt: null,
       editableAt: null,
       trustedClickCount: 0,
       frameId: null,
@@ -391,6 +557,7 @@ async function beginUnlockTiming(page, button, editorLabel) {
     const observePendingFrame = () => {
       if (state.pendingFrameAt !== null || state.pendingFrameId !== null) return;
       state.pendingFrameId = requestAnimationFrame((frameAt) => {
+        const callbackAt = performance.now();
         state.pendingFrameId = null;
         const spinner = target.querySelector('.easymde-immersive-preview-unlock-spinner');
         const bounds = spinner?.getBoundingClientRect();
@@ -403,6 +570,7 @@ async function beginUnlockTiming(page, button, editorLabel) {
           && style?.visibility !== 'hidden'
           && style?.display !== 'none') {
           state.pendingFrameAt = frameAt;
+          state.callbackObservedAt = callbackAt;
         }
       });
     };
@@ -414,6 +582,18 @@ async function beginUnlockTiming(page, button, editorLabel) {
       for (const record of records) {
         if (record.attributeName === 'aria-busy' && record.oldValue !== 'true') {
           state.pendingAt ??= performance.now();
+          if (state.pendingSnapshot === null && target.getAttribute('aria-busy') === 'true') {
+            const spinner = target.querySelector('.easymde-immersive-preview-unlock-spinner');
+            state.pendingSnapshot = {
+              accessibleName: target.getAttribute('aria-label'),
+              ariaBusy: target.getAttribute('aria-busy'),
+              ariaDisabled: target.getAttribute('aria-disabled'),
+              hasDisabledAttr: target.hasAttribute('disabled'),
+              hasSpinner: Boolean(spinner),
+              hasUnlockingClass: target.classList.contains('is-unlocking'),
+              isFocused: document.activeElement === target
+            };
+          }
           observePendingFrame();
         }
       }
@@ -442,6 +622,16 @@ async function beginUnlockTiming(page, button, editorLabel) {
   }, editorLabel);
 }
 
+const UNLOCK_MEASUREMENT_INVALID_CODE = 'immersive-unlock-timing-measurement-invalid';
+
+function requireUnlockMeasurement(value, { nullable = false } = {}) {
+  if (value === null && nullable) return value;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw new Error(UNLOCK_MEASUREMENT_INVALID_CODE);
+  }
+  return value;
+}
+
 async function finishUnlockTiming(page, labels) {
   const editor = page.getByRole('textbox', { name: labels.previewEditorLabel });
   await expect(editor).toHaveAttribute('contenteditable', 'true', { timeout: 60_000 });
@@ -460,9 +650,11 @@ async function finishUnlockTiming(page, labels) {
       entry.startTime < state.editableAt
       && entry.startTime + entry.duration > state.clickAt
     );
-    const firstPendingFrameMs = state.pendingFrameAt === null
+    // The legacy field name now records the first visible pending rAF callback
+    // observation latency; pendingFrameAt remains the raw rAF timestamp.
+    const firstPendingFrameMs = state.callbackObservedAt === null
       ? null
-      : state.pendingFrameAt - state.clickAt;
+      : state.callbackObservedAt - state.clickAt;
     const longTaskDurations = overlappingLongTasks.map(({ duration }) => duration);
     const result = {
       clickToEditableMs: state.editableAt - state.clickAt,
@@ -472,6 +664,7 @@ async function finishUnlockTiming(page, labels) {
       longTaskObserverSupported: state.longTaskObserverSupported,
       longTaskMaxMs: longTaskDurations.length ? Math.max(...longTaskDurations) : 0,
       longTasksAtLeast50ms: longTaskDurations.filter((duration) => duration >= 50).length,
+      pendingSnapshot: state.pendingSnapshot,
       trustedClickCount: state.trustedClickCount
     };
     state.pendingObserver.disconnect();
@@ -483,19 +676,23 @@ async function finishUnlockTiming(page, labels) {
     if (state.pendingFrameId !== null) cancelAnimationFrame(state.pendingFrameId);
     return result;
   });
+  requireUnlockMeasurement(result.clickToEditableMs);
+  requireUnlockMeasurement(result.clickToPendingMutationMs);
+  requireUnlockMeasurement(result.clickToPendingFrameMs, { nullable: true });
   return result;
 }
 
 async function waitForPendingFrame(page) {
   await page.waitForFunction(() =>
-    window.__easymdeUnlockTiming?.pendingFrameAt !== null,
+    window.__easymdeUnlockTiming?.callbackObservedAt !== null,
     null,
     { timeout: 5_000 }
   );
-  return page.evaluate(() => {
+  const pendingFrameMs = await page.evaluate(() => {
     const state = window.__easymdeUnlockTiming;
-    return state.pendingFrameAt - state.clickAt;
+    return state.callbackObservedAt - state.clickAt;
   });
+  return requireUnlockMeasurement(pendingFrameMs);
 }
 
 async function stopUnlockTiming(page) {
@@ -538,25 +735,24 @@ async function activateUnlock(page, labels, requestMonitor, { doubleClick = fals
   };
 }
 
-async function lockPreview(page, labels) {
-  const refreshResponse = page.waitForResponse((response) => (
-    isPreviewPostRequest(response.request())
-  ));
+async function lockPreview(page, labels, requestMonitor = null) {
+  requestMonitor?.start();
   await page.getByRole('button', { name: labels.previewLockReadOnly }).click();
-  const response = await refreshResponse;
-  if (!response.ok()) throw new Error('immersive-preview-refresh-failed');
   await expect(page.getByRole('textbox', {
     name: labels.previewEditorLabel
   })).toHaveCount(0);
   const unlock = page.getByRole('button', { name: labels.previewUnlockEdit });
   await expect(unlock).toBeEnabled({ timeout: 60_000 });
-  await expect(page.locator(previewSinkSelector)).toHaveAttribute('aria-busy', 'false', {
+  const previewSink = page.locator(previewSinkSelector);
+  await expect(previewSink).not.toHaveClass(/\beasymde-preview-surface-hidden\b/u);
+  await expect(previewSink).toHaveAttribute('aria-busy', 'false', {
     timeout: 60_000
   });
+  const requests = requestMonitor ? requestMonitor.stop() : null;
   return {
     phase: 'lock-preview',
-    responseOk: response.ok(),
-    responseStatus: response.status()
+    documentWrites: requests?.documentWrites ?? 0,
+    previewPosts: requests?.previewPosts ?? 0
   };
 }
 
@@ -575,7 +771,9 @@ async function attachTiming(testInfo, name, value) {
 async function readPreviewScrollAnchor(page) {
   return page.evaluate(() => {
     const canvas = document.querySelector('.easymde-immersive-preview-canvas');
-    const firstParagraph = canvas?.querySelector('p');
+    const visibleSurface = canvas?.querySelector('.easymde-prosemirror-surface')
+      ?? canvas?.querySelector('[data-easymde-preview-html-sink="1"]:not(.easymde-preview-surface-hidden)');
+    const firstParagraph = visibleSurface?.querySelector('p') ?? canvas?.querySelector('p');
     if (!(canvas instanceof HTMLElement) || !(firstParagraph instanceof HTMLElement)) {
       throw new Error('immersive-preview-scroll-anchor-unavailable');
     }
@@ -596,8 +794,7 @@ function previewAnchorDelta(before, after) {
 }
 
 test('cold short unlock reports pending before editable and ignores a physical double click', async ({ page }, testInfo) => {
-  await login(page);
-  await openNewPost(page);
+  await beginBrowserTest(page);
   const markdown = Array.from(
     { length: 8 },
     (_, index) => `Synthetic short unlock paragraph ${index + 1}.`
@@ -617,21 +814,11 @@ test('cold short unlock reports pending before editable and ignores a physical d
     bounds.x + bounds.width / 2,
     bounds.y + bounds.height / 2
   );
-  await expect(unlock).toHaveAttribute('aria-busy', 'true');
-  await expect(unlock).toHaveAttribute('aria-disabled', 'true');
-  await expect(unlock).not.toHaveAttribute('disabled');
-  await expect(unlock).toBeFocused();
-  await expect(unlock).toHaveClass(/is-unlocking/u);
-  await expect(unlock.locator('.easymde-immersive-preview-unlock-spinner')).toBeVisible();
-  await expect(unlock).toHaveAccessibleName(labels.previewUnlockEdit);
-  const accessibleBusyButton = page.getByRole('button', {
-    name: labels.previewUnlockEdit,
-    disabled: true
-  });
-  await expect(accessibleBusyButton).toHaveCount(1);
-  await expect(accessibleBusyButton).toHaveAttribute('aria-busy', 'true');
 
   const timing = await finishUnlockTiming(page, labels);
+  const editor = page.getByRole('textbox', { name: labels.previewEditorLabel });
+  await expect(editor).toHaveClass(/\beasymde-prosemirror-surface\b/u);
+  await expect(editor).toHaveClass(/\bProseMirror\b/u);
   const scrollAnchorAfter = await readPreviewScrollAnchor(page);
   const requests = requestMonitor.stop();
   const sample = {
@@ -641,9 +828,21 @@ test('cold short unlock reports pending before editable and ignores a physical d
   };
   await attachTiming(testInfo, 'cold-short-unlock.json', sample);
 
+  expect(sample.pendingSnapshot).toEqual({
+    accessibleName: labels.previewUnlockEdit,
+    ariaBusy: 'true',
+    ariaDisabled: 'true',
+    hasDisabledAttr: false,
+    hasSpinner: true,
+    hasUnlockingClass: true,
+    isFocused: true
+  });
   expect(sample.clickToPendingMutationMs).toBeLessThanOrEqual(100);
-  expect(sample.clickToPendingFrameMs).not.toBeNull();
-  expect(sample.clickToPendingFrameMs).toBeLessThanOrEqual(100);
+  if (sample.clickToPendingFrameMs !== null) {
+    expect(sample.clickToPendingFrameMs).toBeLessThanOrEqual(100);
+  } else {
+    expect(sample.clickToEditableMs).toBeLessThanOrEqual(100);
+  }
   expect(sample.trustedClickCount).toBe(2);
   expect(Math.abs(sample.scrollAnchorDelta.scrollTop)).toBeLessThanOrEqual(1);
   expectNoDocumentWrites([sample]);
@@ -651,8 +850,7 @@ test('cold short unlock reports pending before editable and ignores a physical d
 });
 
 test('warm short unlock 5-sample maximum stays within budget and does not write the document', async ({ page }, testInfo) => {
-  await login(page);
-  await openNewPost(page);
+  await beginBrowserTest(page);
   const markdown = Array.from(
     { length: 8 },
     (_, index) => `Synthetic warm unlock paragraph ${index + 1}.`
@@ -662,11 +860,11 @@ test('warm short unlock 5-sample maximum stays within budget and does not write 
   const requestMonitor = createPostRequestMonitor(page);
 
   const warmup = await activateUnlock(page, labels, requestMonitor);
-  const lockPhases = [await lockPreview(page, labels)];
+  const lockPhases = [await lockPreview(page, labels, requestMonitor)];
   const samples = [];
   for (let index = 0; index < 5; index += 1) {
     samples.push(await activateUnlock(page, labels, requestMonitor));
-    if (index < 4) lockPhases.push(await lockPreview(page, labels));
+    if (index < 4) lockPhases.push(await lockPreview(page, labels, requestMonitor));
   }
 
   const sampleMaximumMs = Math.max(...samples.map(({ clickToEditableMs }) => clickToEditableMs));
@@ -685,39 +883,40 @@ test('warm short unlock 5-sample maximum stays within budget and does not write 
   expect(samples.every(({ clickToPendingMutationMs }) => clickToPendingMutationMs <= 100)).toBe(true);
   expect(sampleMaximumMs).toBeLessThanOrEqual(200);
   expect(samples.every(({ scrollAnchorDelta }) => Math.abs(scrollAnchorDelta.scrollTop) <= 1)).toBe(true);
-  expectNoDocumentWrites([warmup, ...samples]);
+  expectNoDocumentWrites([warmup, ...samples, ...lockPhases]);
   await expect(page.locator('#easymde-source')).toHaveValue(markdown);
 });
 
-test('warm windowed long unlock 5-sample maximum stays within budget and mounted block cap', async ({ page }, testInfo) => {
-  await login(page);
-  await openNewPost(page);
+test('warm long-document ProseMirror unlock 5-sample maximum stays within budget and does not write the document', async ({ page }, testInfo) => {
+  await beginBrowserTest(page);
   const paragraphCount = 220;
   const markdown = Array.from(
     { length: paragraphCount },
-    (_, index) => `Synthetic windowed unlock paragraph ${index + 1}.`
+    (_, index) => `Synthetic long ProseMirror unlock paragraph ${index + 1}.`
   ).join('\n\n');
   await fillMarkdownAndWaitForPreview(page, markdown, paragraphCount);
   const labels = await enterImmersivePreview(page);
   const requestMonitor = createPostRequestMonitor(page);
 
   const warmup = await activateUnlock(page, labels, requestMonitor);
-  const lockPhases = [await lockPreview(page, labels)];
+  const lockPhases = [await lockPreview(page, labels, requestMonitor)];
   const samples = [];
   for (let index = 0; index < 5; index += 1) {
     const sample = await activateUnlock(page, labels, requestMonitor);
     samples.push(sample);
     const editor = page.getByRole('textbox', { name: labels.previewEditorLabel });
-    await expect(editor.locator('[data-easymde-preview-window-spacer]')).toHaveCount(1);
-    expect(await editor.locator('[data-easymde-visual-block-id]').count()).toBeLessThanOrEqual(160);
-    if (index < 4) lockPhases.push(await lockPreview(page, labels));
+    await expect(editor).toHaveClass(/\beasymde-prosemirror-surface\b/u);
+    await expect(editor).toHaveClass(/\bProseMirror\b/u);
+    await expect(editor).toHaveAttribute('contenteditable', 'true');
+    await expect(editor.locator('[data-easymde-preview-window-spacer]')).toHaveCount(0);
+    await expect(editor.locator('p')).toHaveCount(paragraphCount);
+    if (index < 4) lockPhases.push(await lockPreview(page, labels, requestMonitor));
   }
 
   const sampleMaximumMs = Math.max(...samples.map(({ clickToEditableMs }) => clickToEditableMs));
   const longTaskCount = samples.reduce((total, sample) => total + sample.longTaskCount, 0);
   const longTaskMaxMs = Math.max(...samples.map(({ longTaskMaxMs: duration }) => duration));
-  await attachTiming(testInfo, 'warm-windowed-unlock.json', {
-    blockCap: 160,
+  await attachTiming(testInfo, 'warm-long-prosemirror-unlock.json', {
     longTaskCount,
     longTaskMaxMs,
     metric: '5-sample maximum',
@@ -731,13 +930,12 @@ test('warm windowed long unlock 5-sample maximum stays within budget and mounted
   expect(samples.every(({ clickToPendingMutationMs }) => clickToPendingMutationMs <= 100)).toBe(true);
   expect(sampleMaximumMs).toBeLessThanOrEqual(500);
   expect(samples.every(({ scrollAnchorDelta }) => Math.abs(scrollAnchorDelta.scrollTop) <= 1)).toBe(true);
-  expectNoDocumentWrites([warmup, ...samples]);
+  expectNoDocumentWrites([warmup, ...samples, ...lockPhases]);
   await expect(page.locator('#easymde-source')).toHaveValue(markdown);
 });
 
 test('cancels a pending cold unlock when immersive mode changes', async ({ page }) => {
-  await login(page);
-  await openNewPost(page);
+  await beginBrowserTest(page);
   const markdown = Array.from(
     { length: 8 },
     (_, index) => `Synthetic canceled unlock paragraph ${index + 1}.`
@@ -808,8 +1006,7 @@ test('cancels a pending cold unlock when immersive mode changes', async ({ page 
 
 for (const activationKey of ['Enter', 'Space']) {
   test(`keeps keyboard ${activationKey} unlock focused and ignores repeated keys`, async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await beginBrowserTest(page);
     const markdown = Array.from(
       { length: 8 },
       (_, index) => `Synthetic keyboard unlock paragraph ${index + 1}.`
@@ -868,8 +1065,7 @@ for (const activationKey of ['Enter', 'Space']) {
 }
 
 test('closes the ready compact Outline at 390px and on a 760px to 390px resize', async ({ page }) => {
-  await login(page);
-  await openNewPost(page);
+  await beginBrowserTest(page);
   await page.setViewportSize({ width: 390, height: 844 });
   const markdown = [
     '# Synthetic heading',

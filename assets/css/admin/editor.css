@@ -2355,21 +2355,6 @@ body:has(.easymde-editor.is-immersive) .wrap {
     grid-area: preview;
 }
 
-.easymde-workspace.is-mode-source {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "source";
-}
-
-.easymde-workspace.is-mode-source .easymde-pane-preview,
-.easymde-workspace.is-mode-preview .easymde-pane-source {
-    display: none;
-}
-
-.easymde-workspace.is-mode-preview {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "preview";
-}
-
 .easymde-source,
 .easymde-preview,
 .easymde-preview-react-root {
@@ -2720,50 +2705,6 @@ body:has(.easymde-editor.is-immersive) .wrap {
 /* --------------------------------------------------------------------------
    17. Ordinary Editor & Shared Responsive Breakpoints
    -------------------------------------------------------------------------- */
-@media (max-width: 1080px) {
-    .easymde-workspace {
-        grid-template-columns: 1fr;
-        grid-template-areas:
-            "source"
-            "preview";
-        height: auto;
-        min-height: 0;
-    }
-
-    .easymde-pane-source {
-        border-inline-end: 0;
-        border-bottom: 1px solid #dcdcde;
-    }
-
-    .easymde-source,
-    .easymde-preview {
-        height: 420px;
-        min-height: 360px;
-        max-height: 58vh;
-    }
-
-    .easymde-preview-react-root {
-        flex: 0 1 auto;
-        height: 420px;
-        min-height: 360px;
-        max-height: 58vh;
-    }
-
-    .easymde-editor:not(.is-immersive) .easymde-pane-preview,
-    .easymde-editor:not(.is-immersive) .easymde-pane-preview > .easymde-immersive-preview-canvas {
-        height: 420px;
-        min-height: 360px;
-        max-height: 58vh;
-    }
-
-    #easymde-editor-root .easymde-editor[data-easymde-preview-presentation="preview"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
-        height: auto !important;
-        min-height: 680px;
-        max-height: none;
-    }
-
-}
-
 @media (min-width: 640px) {
     .easymde-editor[data-easymde-preview-presentation="preview"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview:where(:not([data-easymde-wechat-export-style-context="1"])) {
         padding: 45px 52.5px;
@@ -3040,13 +2981,6 @@ body:has(.easymde-editor.is-immersive) .wrap {
 }
 
 @media (max-width: 1080px) {
-    .easymde-editor.is-immersive:not(.is-immersive-source):not(.is-immersive-preview) .easymde-workspace {
-        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-        grid-template-areas: "source preview";
-        height: auto;
-        min-height: 0;
-    }
-
     .easymde-editor.is-immersive {
         --easymde-immersive-toolbar-height: 72px;
         grid-template-rows: var(--easymde-immersive-header-height) var(--easymde-immersive-toolbar-height) minmax(0, 1fr);
@@ -3102,28 +3036,9 @@ body:has(.easymde-editor.is-immersive) .wrap {
         flex: 0 0 auto;
     }
 
-    .easymde-editor.is-immersive .easymde-source,
-    .easymde-editor.is-immersive .easymde-preview,
-    .easymde-editor.is-immersive .easymde-preview-react-root {
-        height: auto;
-        min-height: 0;
-        max-height: none;
-    }
-
-    .easymde-editor.is-immersive.is-immersive-split:has(.easymde-immersive-outline)
-        > .easymde-workspace.is-split-resizable {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr);
-        grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
-        grid-template-areas:
-            "source"
-            "preview";
-    }
-
-    .easymde-editor.is-immersive.is-immersive-split:has(.easymde-immersive-outline)
-        > .easymde-workspace.is-split-resizable
-        > .easymde-immersive-pane-divider {
-        display: none;
+    .easymde-editor.is-immersive .easymde-immersive-outline {
+        min-width: 160px;
+        max-width: clamp(160px, 24vw, 220px);
     }
 }
 
@@ -3172,13 +3087,21 @@ body:has(.easymde-editor.is-immersive) .wrap {
         width: auto;
     }
 
-    .easymde-editor.is-immersive.is-immersive-split > .easymde-workspace.is-split-resizable {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr);
-        grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
-        grid-template-areas:
-            "source"
-            "preview";
+    .easymde-editor:not(.is-immersive) .easymde-workspace {
+        height: clamp(420px, 64vh, 720px);
+        min-height: 420px;
+    }
+
+    .easymde-editor:not(.is-immersive) .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview:where(:not([data-easymde-wechat-export-style-context="1"])) {
+        padding: 16px 14px 20px;
+    }
+
+    .easymde-editor[data-easymde-preview-presentation="split"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview:where(:not([data-easymde-wechat-export-style-context="1"])) {
+        padding: 16px 14px 20px;
+    }
+
+    .easymde-editor.is-immersive.is-immersive-split .easymde-pane-header {
+        padding-inline: 10px;
     }
 
     .easymde-editor.is-immersive .easymde-immersive-outline {
@@ -3203,8 +3126,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
         align-self: auto;
     }
 
-    .easymde-editor.is-immersive .easymde-immersive-outline-resizer,
-    .easymde-editor.is-immersive .easymde-immersive-pane-divider {
+    .easymde-editor.is-immersive .easymde-immersive-outline-resizer {
         display: none;
     }
 }

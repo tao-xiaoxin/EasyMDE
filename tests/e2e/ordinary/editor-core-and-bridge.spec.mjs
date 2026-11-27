@@ -525,7 +525,32 @@ test.describe('EasyMDE editor workflows', () => {
     const editorOwner = page.locator(
       '#easymde-editor-root [data-easymde-editor-owner="react"]'
     );
+    const assertOrdinaryAlwaysSideBySide = async () => {
+      await expect.poll(() => page.locator('#easymde-editor-root .easymde-workspace').evaluate((workspace) => {
+        const source = workspace.querySelector('.easymde-pane-source');
+        const preview = workspace.querySelector('.easymde-pane-preview');
+        if (!(source instanceof HTMLElement) || !(preview instanceof HTMLElement)) {
+          throw new Error('ordinary-workspace-panes-unavailable');
+        }
+        const sourceStyle = getComputedStyle(source);
+        const previewStyle = getComputedStyle(preview);
+        const sourceBox = source.getBoundingClientRect();
+        const previewBox = preview.getBoundingClientRect();
+        return {
+          previewVisible: 'none' !== previewStyle.display && previewBox.width > 0 && previewBox.height > 0,
+          sameRow: Math.abs(sourceBox.top - previewBox.top) <= 1,
+          sideBySide: sourceBox.right <= previewBox.left + 1 || previewBox.right <= sourceBox.left + 1,
+          sourceVisible: 'none' !== sourceStyle.display && sourceBox.width > 0 && sourceBox.height > 0
+        };
+      })).toEqual({
+        previewVisible: true,
+        sameRow: true,
+        sideBySide: true,
+        sourceVisible: true
+      });
+    };
 
+    await assertOrdinaryAlwaysSideBySide();
     await page.getByRole('button', { name: labels.immersive.immersive }).click();
     await expect(editorOwner).toHaveClass(new RegExp(expectedModeClass));
     const settingsTrigger = page.getByRole('button', {
@@ -552,6 +577,7 @@ test.describe('EasyMDE editor workflows', () => {
     await page.getByRole('button', { name: labels.immersive.exit }).click();
     await expect(page.getByRole('region', { name: labels.immersive.immersive }))
       .toHaveCount(0);
+    await assertOrdinaryAlwaysSideBySide();
 
     await page.getByRole('button', { name: labels.immersive.immersive }).click();
     await expect(editorOwner).toHaveClass(new RegExp(temporaryModeClass));
@@ -1537,7 +1563,7 @@ test.describe('EasyMDE editor workflows', () => {
       sourceFollowsPreview: true
     });
 
-    for (const width of [1080, 1079]) {
+    for (const width of [1280, 1081, 1080, 1079, 640]) {
       await page.setViewportSize({ width, height: 1000 });
       await expect.poll(() => page.locator('.easymde-workspace').evaluate((workspace) => {
         const sourcePane = workspace.querySelector('.easymde-pane-source');
@@ -1553,21 +1579,24 @@ test.describe('EasyMDE editor workflows', () => {
           borderBottomWidth: sourceStyle.borderBottomWidth,
           borderLeftWidth: sourceStyle.borderLeftWidth,
           borderRightWidth: sourceStyle.borderRightWidth,
-          stacked: preview.top > source.top
+          equalWidth: Math.abs(source.width - preview.width) <= 1,
+          pageOverflow: Math.max(
+            0,
+            document.documentElement.scrollWidth - document.documentElement.clientWidth
+          ),
+          sameRow: Math.abs(source.top - preview.top) <= 1,
+          sourceFollowsPreview: Math.abs(source.left - preview.right) <= 1
         };
       })).toEqual({
-        borderBottomWidth: '1px',
-        borderLeftWidth: '0px',
+        borderBottomWidth: '0px',
+        borderLeftWidth: '1px',
         borderRightWidth: '0px',
-        stacked: true
+        equalWidth: true,
+        pageOverflow: 0,
+        sameRow: true,
+        sourceFollowsPreview: true
       });
     }
-    await page.setViewportSize({ width: 1081, height: 1000 });
-    await expect.poll(() => page.locator('.easymde-workspace').evaluate((workspace) => {
-      const source = workspace.querySelector('.easymde-pane-source').getBoundingClientRect();
-      const preview = workspace.querySelector('.easymde-pane-preview').getBoundingClientRect();
-      return source.top === preview.top && Math.abs(source.width - preview.width) <= 1;
-    })).toBe(true);
 
     for (const [width, direction] of [[781, 'column'], [782, 'column'], [783, 'row']]) {
       await page.setViewportSize({ width, height: 900 });
@@ -2469,6 +2498,7 @@ test.describe('EasyMDE editor workflows', () => {
       const preview = element('.easymde-pane-preview');
       const divider = element('.easymde-immersive-pane-divider');
       const outline = element('.easymde-immersive-outline');
+      const outlineResizer = element('.easymde-immersive-outline-resizer');
       const outlineShow = element('.easymde-immersive-outline-show');
       const outlineClose = element('.easymde-immersive-outline-close');
       const toolbar = element('.easymde-immersive-toolbar-row');
@@ -2480,20 +2510,38 @@ test.describe('EasyMDE editor workflows', () => {
       const workspaceBox = box(workspace);
       const toolbarBox = box(toolbar);
       const dividerStyle = divider instanceof HTMLElement ? getComputedStyle(divider) : null;
+      const outlineStyle = outline instanceof HTMLElement ? getComputedStyle(outline) : null;
+      const outlineResizerStyle = outlineResizer instanceof HTMLElement
+        ? getComputedStyle(outlineResizer)
+        : null;
 
       return {
         mode: root instanceof HTMLElement
           ? ['is-immersive-source', 'is-immersive-split', 'is-immersive-preview']
             .find((name) => root.classList.contains(name)) ?? null
           : null,
+        pageOverflow: Math.max(
+          0,
+          document.documentElement.scrollWidth - document.documentElement.clientWidth
+        ),
         source: { box: sourceBox, visible: visible(source) },
         preview: { box: previewBox, visible: visible(preview) },
         workspace: { box: workspaceBox, visible: visible(workspace) },
         divider: {
+          box: box(divider),
+          display: dividerStyle?.display ?? null,
           exists: !!divider,
-          display: dividerStyle?.display ?? null
+          visible: visible(divider)
         },
-        outline: { box: box(outline), visible: visible(outline) },
+        outline: {
+          box: box(outline),
+          position: outlineStyle?.position ?? null,
+          visible: visible(outline)
+        },
+        outlineResizer: {
+          display: outlineResizerStyle?.display ?? null,
+          exists: !!outlineResizer
+        },
         outlineShow: {
           box: box(outlineShow),
           centerHit: centerHit(outlineShow, box(outlineShow)),
@@ -2534,38 +2582,55 @@ test.describe('EasyMDE editor workflows', () => {
       expect(state.secondary.scrollLeft).toBe(0);
     };
 
-    const assertOpenSplit = (state) => {
+    const assertSideBySideSplitPanes = (state, dir = 'ltr') => {
       expect(state.mode).toBe('is-immersive-split');
-      expect(state.outline.visible).toBe(true);
-      expect(state.outlineClose.centerHit).toBe(true);
-      expect(state.divider.display).toBe('none');
-      expect(state.source.visible).toBe(true);
-      expect(state.preview.visible).toBe(true);
-      expect(Math.abs(state.source.box.left - state.preview.box.left)).toBeLessThanOrEqual(1);
-      expect(Math.abs(state.source.box.width - state.preview.box.width)).toBeLessThanOrEqual(1);
-      expect(state.source.box.top).toBeLessThan(state.preview.box.top);
-      expect(state.source.box.right).toBeLessThanOrEqual(state.workspace.box.right + 1);
-      expect(state.preview.box.right).toBeLessThanOrEqual(state.workspace.box.right + 1);
-      assertSharedMobileControls(state);
-    };
-
-    const assertClosedSplit = (state) => {
-      expect(state.mode).toBe('is-immersive-split');
-      expect(state.outline.visible).toBe(false);
-      expect(state.outlineShow.visible).toBe(true);
-      expect(state.outlineShow.centerHit).toBe(true);
+      expect(state.divider.exists).toBe(true);
       expect(state.divider.display).not.toBe('none');
+      expect(state.divider.visible).toBe(true);
       expect(state.source.visible).toBe(true);
       expect(state.preview.visible).toBe(true);
       expect(Math.abs(state.source.box.top - state.preview.box.top)).toBeLessThanOrEqual(1);
-      expect(state.source.box.left).toBeLessThan(state.preview.box.left);
+      expect(Math.abs(state.source.box.height - state.preview.box.height)).toBeLessThanOrEqual(1);
+      if ('rtl' === dir) {
+        expect(state.preview.box.right).toBeLessThanOrEqual(state.source.box.left + 1);
+      } else {
+        expect(state.source.box.right).toBeLessThanOrEqual(state.preview.box.left + 1);
+      }
+      expect(state.source.box.left).toBeGreaterThanOrEqual(state.workspace.box.left - 1);
+      expect(state.preview.box.left).toBeGreaterThanOrEqual(state.workspace.box.left - 1);
+      expect(state.source.box.right).toBeLessThanOrEqual(state.workspace.box.right + 1);
+      expect(state.preview.box.right).toBeLessThanOrEqual(state.workspace.box.right + 1);
+      expect(state.pageOverflow).toBe(0);
+    };
+
+    const assertOpenSplit = (state, dir = 'ltr', { overlay = false } = {}) => {
+      expect(state.outline.visible).toBe(true);
+      expect(state.outlineClose.centerHit).toBe(true);
+      if (overlay) {
+        expect(state.outline.position).toBe('absolute');
+        expect(state.outlineResizer.display).toBe('none');
+      } else {
+        expect(state.outline.position).not.toBe('absolute');
+        expect(state.outlineResizer.display).not.toBe('none');
+      }
+      assertSideBySideSplitPanes(state, dir);
       assertSharedMobileControls(state);
     };
 
-    for (const viewport of [
-      { width: 641, height: 800 },
-      { width: 782, height: 800 },
-      { width: 783, height: 800 }
+    const assertClosedSplit = (state, dir = 'ltr') => {
+      expect(state.outline.visible).toBe(false);
+      expect(state.outlineShow.visible).toBe(true);
+      expect(state.outlineShow.centerHit).toBe(true);
+      assertSideBySideSplitPanes(state, dir);
+      assertSharedMobileControls(state);
+    };
+
+    for (const { viewport, overlay } of [
+      { viewport: { width: 641, height: 800 }, overlay: false },
+      { viewport: { width: 782, height: 800 }, overlay: false },
+      { viewport: { width: 783, height: 800 }, overlay: false },
+      { viewport: { width: 640, height: 800 }, overlay: true },
+      { viewport: { width: 390, height: 800 }, overlay: true }
     ]) {
       await page.setViewportSize(viewport);
       await expect(editor).toHaveClass(/is-immersive-split/);
@@ -2573,11 +2638,11 @@ test.describe('EasyMDE editor workflows', () => {
         await editor.getByRole('button', { name: labels.showOutline }).click();
       }
       await expect(editor.locator('.easymde-immersive-outline')).toBeVisible();
-      assertOpenSplit(await geometry());
+      assertOpenSplit(await geometry(), 'ltr', { overlay });
 
       await editor.getByRole('button', { name: labels.hideOutline }).first().click();
       await expect(editor.locator('.easymde-immersive-outline')).toHaveCount(0);
-      assertClosedSplit(await geometry());
+      assertClosedSplit(await geometry(), 'ltr');
 
       await editor.getByRole('button', { name: labels.showOutline }).click();
       await expect(editor.locator('.easymde-immersive-outline')).toBeVisible();
@@ -2585,11 +2650,7 @@ test.describe('EasyMDE editor workflows', () => {
 
     await page.setViewportSize({ width: 1081, height: 800 });
     await expect(editor.locator('.easymde-immersive-outline')).toBeVisible();
-    const wideOpen = await geometry();
-    expect(wideOpen.mode).toBe('is-immersive-split');
-    expect(wideOpen.source.box.top).toBeLessThanOrEqual(wideOpen.preview.box.top + 1);
-    expect(wideOpen.source.box.left).toBeLessThan(wideOpen.preview.box.left);
-    assertSharedMobileControls(wideOpen);
+    assertOpenSplit(await geometry(), 'ltr', { overlay: false });
 
     await editor.getByRole('button', { name: labels.preview, exact: true }).click();
     await expect(editor).toHaveClass(/is-immersive-preview/);
@@ -2604,17 +2665,25 @@ test.describe('EasyMDE editor workflows', () => {
     expect(sourceMode.preview.visible).toBe(false);
     expect(sourceMode.divider.exists).toBe(false);
 
-    await page.setViewportSize({ width: 783, height: 800 });
     const originalDir = await editor.getAttribute('dir');
     try {
       await editor.evaluate((root) => root.setAttribute('dir', 'rtl'));
       await editor.getByRole('button', { name: labels.split, exact: true }).click();
       await expect(editor).toHaveClass(/is-immersive-split/);
-      if (!await editor.locator('.easymde-immersive-outline').isVisible()) {
-        await editor.getByRole('button', { name: labels.showOutline }).click();
+      for (const { viewport, overlay } of [
+        { viewport: { width: 783, height: 800 }, overlay: false },
+        { viewport: { width: 782, height: 800 }, overlay: false },
+        { viewport: { width: 641, height: 800 }, overlay: false },
+        { viewport: { width: 640, height: 800 }, overlay: true },
+        { viewport: { width: 390, height: 800 }, overlay: true }
+      ]) {
+        await page.setViewportSize(viewport);
+        if (!await editor.locator('.easymde-immersive-outline').isVisible()) {
+          await editor.getByRole('button', { name: labels.showOutline }).click();
+        }
+        await expect(editor.locator('.easymde-immersive-outline')).toBeVisible();
+        assertOpenSplit(await geometry(), 'rtl', { overlay });
       }
-      await expect(editor.locator('.easymde-immersive-outline')).toBeVisible();
-      assertOpenSplit(await geometry());
     } finally {
       await editor.evaluate((root, dir) => {
         if (null === dir) root.removeAttribute('dir');
@@ -2624,10 +2693,7 @@ test.describe('EasyMDE editor workflows', () => {
 
     await page.setViewportSize({ width: 1280, height: 800 });
     await expect(editor).toHaveClass(/is-immersive-split/);
-    const desktopSplit = await geometry();
-    expect(desktopSplit.source.box.top).toBeLessThanOrEqual(desktopSplit.preview.box.top + 1);
-    expect(desktopSplit.source.box.left).toBeLessThan(desktopSplit.preview.box.left);
-    assertSharedMobileControls(desktopSplit);
+    assertOpenSplit(await geometry(), 'ltr', { overlay: false });
     browserMonitor.assertClean();
     } finally {
       browserMonitor.dispose();

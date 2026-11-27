@@ -408,6 +408,14 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(page.locator('.easymde-immersive-publish')).toBeInViewport();
     await expect(page.locator('.easymde-immersive-toolbar-row')).toHaveCSS(
       'overflow-x',
+      'hidden'
+    );
+    await expect(page.locator('.easymde-immersive-formatting')).toHaveCSS(
+      'overflow-x',
+      'auto'
+    );
+    await expect(page.locator('.easymde-immersive-secondary-actions')).toHaveCSS(
+      'overflow-x',
       'auto'
     );
     if (initialViewport) {

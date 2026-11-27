@@ -385,7 +385,7 @@ test.describe('EasyMDE editor workflows', () => {
         await expect(editorOwner).toHaveClass(new RegExp(mode[1]));
         if ('is-immersive-preview' === mode[1]) {
           const immersivePreview = page.locator(
-            '.easymde-immersive-preview-surface > .easymde-immersive-preview-canvas > .easymde-preview'
+            '.easymde-immersive-preview-surface > .easymde-immersive-preview-canvas > .easymde-preview[data-easymde-preview-html-sink="1"]'
           );
           await expect(immersivePreview).toBeVisible();
         }
@@ -1681,11 +1681,11 @@ test.describe('EasyMDE editor workflows', () => {
         const immersive = await readTaskGeometry(immersivePreview, `immersive-preview-${width}`);
 
         await page.getByRole('button', { name: labels.editMode, exact: true }).click();
-        await expect(page.locator('.easymde-editor')).toHaveClass(/is-immersive-source/);
+        await expect(page.locator('.easymde-editor[data-easymde-editor-owner="react"]')).toHaveClass(/is-immersive-source/);
         await expect(source).toHaveValue(markdown);
         await page.getByRole('button', { name: labels.previewMode, exact: true }).click();
         await expect(page.getByText(labels.previewContentLoaded)).toBeVisible();
-        await expect(page.locator('.easymde-editor')).toHaveClass(/is-immersive-preview/);
+        await expect(page.locator('.easymde-editor[data-easymde-editor-owner="react"]')).toHaveClass(/is-immersive-preview/);
         await expect(immersivePreview).toBeVisible();
         await expect(immersivePreview).toHaveAttribute('aria-busy', 'false');
         const roundtrip = await readTaskGeometry(immersivePreview, `immersive-roundtrip-${width}`);

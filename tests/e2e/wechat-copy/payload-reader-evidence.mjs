@@ -746,12 +746,22 @@ export async function readNativeCodeSurfaceEvidence(
       const taskOwnerSvgNodes = new Set(
         destinationTaskOwners.flatMap((owner) => [...owner.querySelectorAll('svg')])
       );
+      const inlinePseudoPaintSvgNodes = new Set(
+        [...root.querySelectorAll(
+          ':is(h1, h2, h3, h4, h5, h6) > svg[aria-hidden="true"]:first-child, a > span:only-child > svg[aria-hidden="true"]:first-child'
+        )].filter((svg) => (
+          !svg.closest('.easymde-mermaid, .katex, pre, code')
+          && svg.children.length > 0
+          && [...svg.children].every((child) => ['circle', 'path'].includes(child.localName))
+        ))
+      );
       // Source inputs and destination static owners are two representations of
-      // the same task marker. Count one representation and omit only marker SVG
-      // descendants; authored Mermaid, math, and code SVGs remain structural.
+      // the same task marker, and decorative ::before inline pseudo-paint SVGs
+      // materialize CSS pseudo-elements only in the destination payload. Omit
+      // those decorative SVGs; authored Mermaid, math, and code SVGs remain structural.
       const semanticTaskCheckboxCount = authoredTaskInputs.length + destinationTaskOwners.length;
       const semanticSvgCount = [...root.querySelectorAll('svg')]
-        .filter((svg) => !taskOwnerSvgNodes.has(svg)).length;
+        .filter((svg) => !taskOwnerSvgNodes.has(svg) && !inlinePseudoPaintSvgNodes.has(svg)).length;
       return {
         blocks: codeBlocks,
         elements: {

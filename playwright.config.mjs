@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { loadEnvFile } from 'node:process';
 import { defineConfig, devices } from '@playwright/test';
+import { E2E_TEST_MATCH } from './scripts/e2e-test-match.mjs';
 
 const localEnv = new URL('.env', import.meta.url);
 if (existsSync(localEnv)) {
@@ -44,6 +45,7 @@ const launchOptions = {
 
 export default defineConfig({
   testDir: './tests/e2e',
+  testMatch: E2E_TEST_MATCH,
   fullyParallel: false,
   workers: 1,
   timeout: 90_000,
@@ -51,9 +53,14 @@ export default defineConfig({
     timeout: 15_000
   },
   retries: 0,
-  reporter: process.env.CI
-    ? [['list'], ['junit', { outputFile: process.env.EASYMDE_PLAYWRIGHT_JUNIT_FILE || 'test-results/playwright-junit.xml' }]]
-    : [['list']],
+  reporter: process.env.EASYMDE_PLAYWRIGHT_JUNIT_FILE
+    ? [
+        ['junit', { outputFile: process.env.EASYMDE_PLAYWRIGHT_JUNIT_FILE }],
+        ['./scripts/e2e-shard-case-reporter.mjs', { outputFile: `${process.env.EASYMDE_PLAYWRIGHT_JUNIT_FILE}.cases.json` }]
+      ]
+    : process.env.CI
+      ? [['list'], ['junit', { outputFile: 'test-results/playwright-junit.xml' }]]
+      : [['list']],
   use: {
     baseURL,
     trace: 'retain-on-failure',

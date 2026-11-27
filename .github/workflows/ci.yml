@@ -630,12 +630,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           pattern: e2e-shard-summary-*
+          # Keep artifact directories separate so duplicate reports cannot overwrite each other.
           path: test-results/shard-summaries
-          merge-multiple: true
 
       - name: Publish consolidated E2E module summary
         if: always()
         run: node scripts/e2e-shards.mjs --aggregate-summaries test-results/shard-summaries
 
       - name: Verify all E2E module shards succeeded
+        if: always()
         run: test "${{ needs.e2e-shard.result }}" = "success"

@@ -580,27 +580,30 @@ test.describe('EasyMDE editor workflows', () => {
     if (!selectedTheme?.markupProfile) {
       throw new Error('selected-article-theme-markup-profile-unavailable');
     }
-    let currentMarkupProfile = selectedTheme.markupProfile;
+    let currentTheme = selectedTheme;
 
-    let currentViewportKey = null;
-    for (const { id, label, markupProfile } of targets) {
-      const desktopKey = `${desktop.width}x${desktop.height}`;
-      if (desktopKey !== currentViewportKey) {
-        await page.setViewportSize(desktop);
-        currentViewportKey = desktopKey;
-      }
+    const settingsDialog = page.getByRole('dialog', { name: labels.editorSettings });
+    const articleSelect = settingsDialog.getByRole('combobox', {
+      name: labels.articleTheme,
+      exact: true
+    });
+    const requestSummary = (outcomes, id) => outcomes.map((outcome) => ({
+      target: outcome.markdownTheme === id,
+      markdownMatches: outcome.markdownDigest === expectedMarkdownDigest,
+      status: outcome.status,
+      cancelled: outcome.cancelled,
+      requestFailed: Boolean(outcome.failure),
+      invalidRequest: Boolean(outcome.parseError),
+      invalidResponse: Boolean(outcome.responseBodyError || outcome.responseParseError),
+      expiredNonce: outcome.responseErrorCode === 'rest_cookie_invalid_nonce'
+    }));
 
+    const switchTheme = async (theme, width) => {
+      const { id, label, markupProfile } = theme;
       await settingsTrigger.click();
-      const settingsDialog = page.getByRole('dialog', {
-        name: labels.editorSettings
-      });
-      const articleSelect = settingsDialog.getByRole('combobox', {
-        name: labels.articleTheme,
-        exact: true
-      });
       const previousPreviewSignature = await readyPreviewSignature(preview);
       const previewRequestsBefore = previewRequests.length;
-      const sameMarkupProfile = currentMarkupProfile === markupProfile;
+      const sameMarkupProfile = currentTheme.markupProfile === markupProfile;
       await selectOrdinaryOption(page, articleSelect, label);
       await expect(preview).toHaveClass(
         new RegExp(`easymde-markdown-theme-${id}`)
@@ -608,31 +611,28 @@ test.describe('EasyMDE editor workflows', () => {
       await waitForArticleThemeTransition(
         preview,
         previousPreviewSignature,
-        currentMarkupProfile,
+        currentTheme.markupProfile,
         markupProfile,
-        `${id} ordinary preview refresh at ${desktop.width}px`
+        `${id} ordinary preview refresh at ${width}px`
       );
       await waitForBrowserPaint(page);
-      const requestEvidence = await previewRequests.evidence(
-        previewRequestsBefore,
-        id
-      );
+      const requestEvidence = await previewRequests.evidence(previewRequestsBefore, id);
       const markdownMismatches = requestEvidence.successful.filter(
         ({ markdownDigest }) => markdownDigest !== expectedMarkdownDigest
       );
       if (requestEvidence.invalid.length || requestEvidence.nonTarget.length) {
         requestFailures.push(
-          `${id}/${desktop.width}:invalid-preview-request-`
+          `${id}/${width}:invalid-preview-request-`
             + JSON.stringify({
-              invalid: requestEvidence.invalid,
-              nonTarget: requestEvidence.nonTarget
+              invalid: requestSummary(requestEvidence.invalid, id),
+              nonTarget: requestSummary(requestEvidence.nonTarget, id)
             })
         );
       }
       if (markdownMismatches.length) {
         requestFailures.push(
-          `${id}/${desktop.width}:preview-request-markdown-mismatch-`
-            + JSON.stringify(markdownMismatches)
+          `${id}/${width}:preview-request-markdown-mismatch-`
+            + JSON.stringify(requestSummary(markdownMismatches, id))
         );
       }
       if (
@@ -644,29 +644,37 @@ test.describe('EasyMDE editor workflows', () => {
         )
       ) {
         requestFailures.push(
-          `${id}/${desktop.width}:unexpected-preview-request-failure-`
-            + JSON.stringify(requestEvidence.target)
+          `${id}/${width}:unexpected-preview-request-failure-`
+            + JSON.stringify(requestSummary(requestEvidence.target, id))
         );
       }
+      const observed = requestSummary(requestEvidence.observed, id);
       if (requestEvidence.successful.length !== (sameMarkupProfile ? 0 : 1)) {
         requestFailures.push(
-          `${id}/${desktop.width}:preview-success-count-${requestEvidence.successful.length}`
+          `${id}/${width}:preview-success-count-${requestEvidence.successful.length}`
             + `-expected-${sameMarkupProfile ? 0 : 1}-observed-`
-            + JSON.stringify(requestEvidence.observed)
+            + JSON.stringify(observed)
         );
       }
-      currentMarkupProfile = markupProfile;
+      currentTheme = theme;
       await page.keyboard.press('Escape');
       await expect(settingsDialog).toHaveCount(0);
+      return observed;
+    };
 
-      for (const viewport of editorWritingViewports) {
-        const { width } = viewport;
-        const viewportKey = `${viewport.width}x${viewport.height}`;
-        if (viewportKey !== currentViewportKey) {
-          await page.setViewportSize(viewport);
-          currentViewportKey = viewportKey;
-          await waitForBrowserPaint(page);
+    // Reuse the document and fixture user, not a previous viewport's switch.
+    for (const viewport of editorWritingViewports) {
+      const { width } = viewport;
+      await page.setViewportSize(viewport);
+      await waitForBrowserPaint(page);
+      for (const theme of targets) {
+        const { id } = theme;
+        if (currentTheme.id === id) {
+          const alternate = catalog.articleThemes.find((candidate) => candidate.id !== id);
+          expect(alternate?.markupProfile, 'a distinct baseline theme is required').toBeTruthy();
+          await switchTheme(alternate, width);
         }
+        const observed = await switchTheme(theme, width);
 
         const geometry = await preview.evaluate((root) => {
           const pane = root.closest('.easymde-pane-preview');
@@ -735,12 +743,13 @@ test.describe('EasyMDE editor workflows', () => {
         measurements.push({
           id,
           width,
-          previewRequests: requestEvidence.observed,
+          previewRequests: observed,
           ...geometry
         });
       }
     }
 
+    expect(measurements).toHaveLength(editorWritingViewports.length * targets.length);
     const failures = measurements.filter(({ root, pane, tables, codeBlocks, mathBlocks }) => (
       root.overflow > 1
       || pane.overflow > 1

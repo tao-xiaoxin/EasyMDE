@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -16,7 +16,6 @@ import {
   buildShardInvocations,
   buildShardSummary,
   discoverE2ESpecFiles,
-  formatConsolidatedStepSummaryMarkdown,
   formatShardStepSummaryMarkdown,
   parseCliArgs,
   parseJUnitXml,
@@ -175,9 +174,20 @@ test('E2E shards Chromium execution across semantic module shards behind the Pla
   assert.match(e2eGateJob, /pattern:\s+e2e-shard-summary-\*[\s\S]*path:\s+test-results\/shard-summaries/);
   assert.match(e2eGateJob, /run:\s+node scripts\/e2e-shards\.mjs --aggregate-summaries test-results\/shard-summaries/);
   assert.match(e2eGateJob, /run:\s+test "\$\{\{ needs\.e2e-shard\.result \}\}" = "success"/);
+  const gateSteps = workflowStepBlocks(e2eGateJob);
+  const downloadIndex = gateSteps.findIndex((step) => step.includes('uses: actions/download-artifact@v4'));
+  const summaryIndex = gateSteps.findIndex((step) => step.includes('--aggregate-summaries'));
+  const resultIndex = gateSteps.findIndex((step) => step.includes('needs.e2e-shard.result'));
+  assert.ok(downloadIndex >= 0 && downloadIndex < summaryIndex && summaryIndex < resultIndex);
+  assert.match(gateSteps[downloadIndex], /continue-on-error: true/);
+  assert.doesNotMatch(gateSteps[downloadIndex], /merge-multiple: true/);
+  for (const step of [gateSteps[summaryIndex], gateSteps[resultIndex]]) {
+    assert.match(step, /if: always\(\)/);
+    assert.doesNotMatch(step, /continue-on-error: true/);
+  }
 
   assert.match(config, /testDir:\s*['"]\.\/tests\/e2e['"]/);
-  assert.match(config, /process\.env\.EASYMDE_PLAYWRIGHT_JUNIT_FILE \|\| 'test-results\/playwright-junit\.xml'/);
+  assert.match(config, /\['junit', \{ outputFile: process\.env\.EASYMDE_PLAYWRIGHT_JUNIT_FILE \}\]/);
 });
 
 test('Playwright fails fast and retains evidence from the failing attempt', () => {
@@ -206,15 +216,14 @@ test('Playwright fails fast and retains evidence from the failing attempt', () =
   );
 });
 
-test('Semantic E2E shard planner covers all 26 discovered specs with zero omissions, zero duplicates, and complementary splits', () => {
+test('Semantic E2E shard planner covers discovered specs without unintended duplicates and keeps complementary splits', () => {
   const specFiles = discoverE2ESpecFiles(join(repoRoot, 'tests/e2e'));
 
-  assert.equal(specFiles.length, 26, `Expected 26 E2E spec files, found ${specFiles.length}.`);
   assert.ok(specFiles.includes(THEME_APPEARANCE_SPEC));
   assert.ok(specFiles.includes(WECHAT_COPY_SPEC));
   assert.deepEqual(specFiles, [...specFiles].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
   for (const spec of specFiles) {
-    assert.match(spec, /^tests\/e2e\/.*\.spec\.mjs$/);
+    assert.match(spec, /^tests\/e2e\/.+$/);
   }
 
   const shards = planSemanticE2EShards(specFiles);
@@ -251,19 +260,17 @@ test('Semantic E2E shard planner covers all 26 discovered specs with zero omissi
     const invocations = buildShardInvocations(shard);
     const junitFiles = invocations.map((invocation) => invocation.env.EASYMDE_PLAYWRIGHT_JUNIT_FILE);
     assert.equal(new Set(junitFiles).size, junitFiles.length, `Shard ${shard.id} JUnit paths must be unique.`);
+    assert.equal(new Set(invocations.map(({ outputDir }) => outputDir)).size, invocations.length);
     for (const invocation of invocations) {
       assert.match(
         invocation.env.EASYMDE_PLAYWRIGHT_JUNIT_FILE,
         new RegExp(`^test-results/playwright-junit-shard-${shard.id}-\\d+\\.xml$`)
       );
-      const isFilteredOrSuite = Boolean(invocation.env.EASYMDE_E2E_SUITE || invocation.grep || invocation.grepInvert);
-      if (isFilteredOrSuite) {
-        assert.ok(invocation.args.includes('--project=chromium'));
-        assert.ok(!invocation.args.includes('--project=chromium-performance'));
-      } else {
-        assert.ok(invocation.args.includes('--project=chromium'));
-        assert.ok(invocation.args.includes('--project=chromium-performance'));
-      }
+      assert.ok(invocation.args.includes('--project=chromium'));
+      assert.ok(invocation.args.includes('--project=chromium-performance'));
+      assert.ok(invocation.args.includes('--forbid-only'));
+      assert.match(invocation.outputDir, new RegExp(`^test-results/playwright/shard-${shard.id}-\\d+$`));
+      assert.ok(invocation.args.includes(`--output=${invocation.outputDir}`));
     }
   }
 
@@ -482,7 +489,7 @@ test('E2E shard CLI validates arguments strictly and supports --plan, --matrix, 
   assert.match(badIndexRun.stderr, /must be less than or equal to --total/);
 });
 
-test('JUnit XML parser and Markdown step summaries report counts, failed test titles, and missing shards without leaking stack traces', () => {
+test('JUnit XML parser and Markdown step summaries report counts and safe source locations without publishing report text', () => {
   const sampleXml = `<?xml version="1.0" encoding="UTF-8"?>
 <testsuites tests="4" failures="1" skipped="1" errors="0" time="18.5">
   <testsuite name="empty-suite.spec.mjs" tests="0" failures="0" skipped="0" errors="0" time="0" />
@@ -493,25 +500,20 @@ test('JUnit XML parser and Markdown step summaries report counts, failed test ti
       <skipped />
     </testcase>
     <testcase name="persists image hosting toggle" classname="settings-center/layout-and-sections.spec.mjs" time="9.15">
-      <failure message="Error at http://secret.internal.example/wp-admin" type="FAILURE">SECRET_STACK_TRACE_LINE_12345</failure>
+      <failure message="synthetic diagnostic" type="FAILURE"><![CDATA[SECRET_STACK_TRACE_LINE_12345 </testsuite>]]></failure>
     </testcase>
   </testsuite>
 </testsuites>`;
 
-  const parsed = parseJUnitXml(sampleXml);
+  const location = { spec: 'tests/e2e/settings-center/layout-and-sections.spec.mjs', line: 42 };
+  const parsed = parseJUnitXml(sampleXml, [location.spec, 'tests/e2e/empty-suite.spec.mjs']);
   assert.deepEqual(parsed.counts, { total: 4, passed: 2, failed: 1, skipped: 1 });
   assert.equal(parsed.durationSeconds, 18.5);
   assert.equal(parsed.specs.length, 1);
   assert.equal(parsed.specs[0].spec, 'tests/e2e/settings-center/layout-and-sections.spec.mjs');
-  assert.deepEqual(parsed.failedTests, [
-    {
-      spec: 'tests/e2e/settings-center/layout-and-sections.spec.mjs',
-      title: 'persists image hosting toggle'
-    }
-  ]);
-
-  const entityXml = `<testsuite name="entity.spec.mjs"><testcase name="escapes &#38;lt;tag&#38;gt; literally" classname="entity.spec.mjs" time="1"><failure>boom</failure></testcase></testsuite>`;
-  assert.equal(parseJUnitXml(entityXml).failedTests[0].title, 'escapes &lt;tag&gt; literally');
+  assert.deepEqual(parsed.failedTests, []);
+  assert.doesNotMatch(JSON.stringify(parsed), /persists image hosting toggle|SECRET_STACK_TRACE_LINE_12345/);
+  parsed.failedTests = [location, { spec: 'PRIVATE_RUNTIME_CLASSNAME', line: 43 }];
 
   const canonicalShards = planSemanticE2EShards(discoverE2ESpecFiles(join(repoRoot, 'tests/e2e')));
   const settingsShard = canonicalShards.find((s) => s.id === 'settings-center');
@@ -524,37 +526,37 @@ test('JUnit XML parser and Markdown step summaries report counts, failed test ti
   const shardMarkdown = formatShardStepSummaryMarkdown(summary);
   assert.match(shardMarkdown, /### Settings Center E2E \(4\/9\)/);
   assert.match(shardMarkdown, /2 passed, 1 failed, 1 skipped \(4 total\)/);
-  assert.match(shardMarkdown, /persists image hosting toggle/);
+  assert.match(shardMarkdown, /layout-and-sections\.spec\.mjs:42/);
+  assert.doesNotMatch(shardMarkdown, /persists image hosting toggle|PRIVATE_RUNTIME_CLASSNAME/);
   assert.doesNotMatch(shardMarkdown, /SECRET_STACK_TRACE_LINE_12345/);
-  assert.doesNotMatch(shardMarkdown, /secret\.internal\.example/);
+  assert.deepEqual(summary.failedTests, [location]);
 
-  const passingShard = canonicalShards[0];
+  const passingShard = canonicalShards.find(({ id }) => id === 'wechat-copy-theme-fidelity');
+  const passingCounts = { total: 3, passed: 3, failed: 0, skipped: 0 };
   const passingSummary = buildShardSummary(
     passingShard,
-    [{ counts: { total: 3, passed: 3, failed: 0, skipped: 0 }, durationSeconds: 12.0, specs: [], failedTests: [] }],
+    [{ counts: passingCounts, durationSeconds: 12.0, specs: [
+      { spec: passingShard.units[0].files[0], ...passingCounts, durationSeconds: 12.0 }
+    ], failedTests: [] }],
     0,
     12.0
   );
 
-  const consolidated = formatConsolidatedStepSummaryMarkdown(canonicalShards, [passingSummary, summary]);
-  assert.match(consolidated, /### Playwright Chromium E2E — Module Shard Overview/);
-  assert.match(consolidated, /Shards Reported\*\*: 2\/9 \(7 missing\)/);
-  assert.match(consolidated, /5 passed, 1 failed, 1 skipped \(7 total\)/);
-  assert.match(consolidated, /⚠️ Missing/);
-  assert.match(consolidated, /#### Failed Tests/);
-  assert.match(consolidated, /\[4\/9 — Settings Center E2E\]/);
-  assert.match(consolidated, /persists image hosting toggle/);
-  assert.doesNotMatch(consolidated, /SECRET_STACK_TRACE_LINE_12345/);
+  const untrustedSummary = { ...summary, failedTests: [{ ...location, title: 'PRIVATE_RUNTIME_TITLE' }] };
 
   const tempDir = mkdtempSync(join(tmpdir(), 'easymde-e2e-summary-'));
   try {
     writeFileSync(join(tempDir, `e2e-shard-summary-${passingSummary.id}.json`), JSON.stringify(passingSummary), 'utf8');
-    writeFileSync(join(tempDir, `e2e-shard-summary-${summary.id}.json`), JSON.stringify(summary), 'utf8');
+    writeFileSync(join(tempDir, `e2e-shard-summary-${summary.id}.json`), JSON.stringify(untrustedSummary), 'utf8');
     const summaryOutPath = join(tempDir, 'step-summary.md');
 
     const aggregated = aggregateShardSummariesFromDir(tempDir);
-    assert.equal(aggregated.loadedSummaries.length, 2);
-    assert.match(aggregated.markdown, /Shards Reported\*\*: 2\/9/);
+    assert.equal(aggregated.passed, false);
+    assert.match(aggregated.markdown, /Shards Reported\*\*: 2\/9 \(7 missing\)/);
+    assert.match(aggregated.markdown, /5 passed, 1 failed, 1 skipped \(7 total\)/);
+    assert.match(aggregated.markdown, /#### Failed Tests/);
+    assert.match(aggregated.markdown, /\[4\/9 — Settings Center E2E\]/);
+    assert.doesNotMatch(aggregated.markdown, /PRIVATE_RUNTIME_TITLE|SECRET_STACK_TRACE_LINE_12345/);
 
     const planSummaryOutPath = join(tempDir, 'plan-summary.md');
     const planSummaryRun = spawnSync(
@@ -573,14 +575,108 @@ test('JUnit XML parser and Markdown step summaries report counts, failed test ti
       [join(repoRoot, 'scripts/e2e-shards.mjs'), '--aggregate-summaries', tempDir, '--summary-file', summaryOutPath],
       { encoding: 'utf8' }
     );
-    assert.equal(cliRun.status, 0, cliRun.stderr);
+    assert.equal(cliRun.status, 1, cliRun.stderr);
     assert.match(cliRun.stdout, /### Playwright Chromium E2E — Module Shard Overview/);
     const writtenSummary = readFileSync(summaryOutPath, 'utf8');
     assert.match(writtenSummary, /### Playwright Chromium E2E — Module Shard Overview/);
-    assert.match(writtenSummary, /persists image hosting toggle/);
+    assert.match(writtenSummary, /layout-and-sections\.spec\.mjs:42/);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test('aggregate CLI gates on unique, consistent evidence and publishes a redacted table on failure', (t) => {
+  const scratch = join(repoRoot, 'test-results');
+  mkdirSync(scratch, { recursive: true });
+  const work = mkdtempSync(join(scratch, 'aggregate-evidence-'));
+  t.after(() => rmSync(work, { recursive: true, force: true }));
+  const artifacts = join(work, 'download');
+  const summaryFile = join(work, 'step.md');
+  const script = join(repoRoot, 'scripts/e2e-shards.mjs');
+  const shards = planSemanticE2EShards(discoverE2ESpecFiles());
+  const reportPath = (shard, artifact = shard.id) => join(artifacts, artifact, `e2e-shard-summary-${shard.id}.json`);
+  const writeReport = (shard, report, artifact) => {
+    const file = reportPath(shard, artifact);
+    mkdirSync(join(file, '..'), { recursive: true });
+    writeFileSync(file, JSON.stringify(report));
+  };
+  const runAggregate = (cli = script) => {
+    rmSync(summaryFile, { force: true });
+    const result = spawnSync(process.execPath, [cli, '--aggregate-summaries', artifacts, '--summary-file', summaryFile], {
+      encoding: 'utf8'
+    });
+    const markdown = readFileSync(summaryFile, 'utf8');
+    assert.match(markdown, /Module Shard Overview/);
+    assert.doesNotMatch(`${result.stdout}${result.stderr}${markdown}`, /SYNTHETIC_PRIVATE_FIELD/);
+    return { exit: result.status, markdown };
+  };
+
+  const report = (shard, files = [...new Set(shard.units.flatMap(({ files }) => files))]) => {
+    const counts = { total: files.length, passed: files.length, failed: 0, skipped: 0 };
+    return buildShardSummary(shard, [{ counts, durationSeconds: 0.1, specs: files.map((spec) => ({
+      spec, total: 1, passed: 1, failed: 0, skipped: 0, durationSeconds: 0.1
+    })) }], 0, 0.2);
+  };
+  const missing = runAggregate();
+  assert.equal(missing.exit, 1);
+  assert.match(missing.markdown, /0\/\d+ \(\d+ missing\)/);
+
+  for (const shard of shards) writeReport(shard, report(shard));
+  assert.equal(runAggregate().exit, 0);
+  const shard = shards.find(({ units }) => new Set(units.flatMap(({ files }) => files)).size > 1);
+  const damaged = report(shard);
+  for (const [field, value] of Object.entries(damaged.counts)) {
+    damaged.counts[field] = 'SYNTHETIC_PRIVATE_FIELD';
+    writeReport(shard, damaged);
+    const result = runAggregate();
+    assert.equal(result.exit, 1);
+    assert.match(result.markdown, /⚠️ Invalid/);
+    damaged.counts[field] = value;
+  }
+  for (const inconsistent of [
+    { ...damaged, counts: { ...damaged.counts, total: damaged.counts.total + 1 } },
+    report(shard, [damaged.specs[0].spec]),
+    { ...damaged, specs: [] },
+    { ...damaged, exitCode: 7 },
+    { ...damaged, shard: damaged.shard + 1 },
+    { ...damaged, durationSeconds: 'SYNTHETIC_PRIVATE_FIELD' },
+    { ...damaged, exitCode: 'SYNTHETIC_PRIVATE_FIELD' },
+    { ...damaged, specs: [{ ...damaged.specs[0], passed: 'SYNTHETIC_PRIVATE_FIELD' }, ...damaged.specs.slice(1)] },
+    { ...damaged, failedTests: [{ spec: damaged.specs[0].spec, line: 'SYNTHETIC_PRIVATE_FIELD' }] }
+  ]) {
+    writeReport(shard, inconsistent);
+    const result = runAggregate();
+    assert.equal(result.exit, 1);
+    assert.match(result.markdown, /⚠️ Invalid/);
+  }
+  writeFileSync(reportPath(shard), '{SYNTHETIC_PRIVATE_FIELD');
+  const malformed = runAggregate();
+  assert.equal(malformed.exit, 1);
+  assert.match(malformed.markdown, /⚠️ Invalid/);
+
+  writeReport(shard, damaged);
+  writeReport(shard, damaged, 'duplicate-download');
+  const duplicate = runAggregate();
+  assert.equal(duplicate.exit, 1);
+  assert.match(duplicate.markdown, /⚠️ Duplicate/);
+  rmSync(reportPath(shard, 'duplicate-download'));
+
+  writeReport(shard, buildShardSummary(shard, [], 7, 0.1));
+  const failed = runAggregate();
+  assert.equal(failed.exit, 1);
+  assert.match(failed.markdown, /❌ Failed/);
+  assert.doesNotMatch(failed.markdown, /⚠️ Invalid/);
+  assert.match(failed.markdown, new RegExp(`Shards Reported\\*\\*: ${shards.length}/${shards.length}`));
+
+  mkdirSync(join(work, 'scripts'));
+  mkdirSync(join(work, 'tests/e2e'), { recursive: true });
+  for (const file of ['e2e-shards.mjs', 'e2e-shard-summary.mjs', 'e2e-test-match.mjs']) {
+    cpSync(join(repoRoot, 'scripts', file), join(work, 'scripts', file));
+  }
+  rmSync(artifacts, { recursive: true });
+  const empty = runAggregate(join(work, 'scripts/e2e-shards.mjs'));
+  assert.equal(empty.exit, 0);
+  assert.match(empty.markdown, /Shards Reported\*\*: 0\/0/);
 });
 
 test('Node and release jobs validate committed runtime assets and math glyph atlas without refreshing them', () => {

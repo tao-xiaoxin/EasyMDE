@@ -1,14 +1,14 @@
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
-import { dirname, join, resolve, sep } from 'node:path';
+import { appendFileSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, join, resolve } from 'node:path';
+
+const require = createRequire(import.meta.url);
+const e2ePrefix = 'tests/e2e/';
 
 function compareLex(a, b) {
   if (a < b) return -1;
   if (a > b) return 1;
   return 0;
-}
-
-function toPosixPath(filePath) {
-  return filePath.split(sep).join('/').replaceAll('\\', '/');
 }
 
 export function shortSpecDisplay(unit) {
@@ -62,141 +62,110 @@ export function formatPlanStepSummaryMarkdown(shards) {
   return lines.join('\n');
 }
 
-const NAMED_XML_ENTITIES = Object.freeze({
-  quot: '"',
-  apos: "'",
-  lt: '<',
-  gt: '>',
-  amp: '&'
-});
-
-function decodeXmlEntities(raw) {
-  if (!raw) return '';
-  return raw.replace(/&(?:#x([0-9a-fA-F]+)|#(\d+)|(quot|apos|lt|gt|amp));/g, (match, hex, dec, named) => {
-    if (named) {
-      return NAMED_XML_ENTITIES[named];
+function checkJUnitCounts(element, counts) {
+  for (const [name, value] of Object.entries(counts)) {
+    if (element.getAttribute(name) !== String(value)) {
+      throw new Error('invalid-junit-report');
     }
-    const codePoint = hex ? Number.parseInt(hex, 16) : Number.parseInt(dec, 10);
-    if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) {
-      return match;
-    }
-    return String.fromCodePoint(codePoint);
-  });
+  }
 }
 
-function parseXmlAttributes(attrText) {
-  const attrs = {};
-  const attrRe = /([A-Za-z_][A-Za-z0-9_.:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
-  let match;
-  while ((match = attrRe.exec(attrText)) !== null) {
-    attrs[match[1]] = decodeXmlEntities(match[2] ?? match[3] ?? '');
-  }
-  return attrs;
-}
+export function parseJUnitXml(xmlContent, assignedFiles) {
+  // Only the execution job has npm dependencies. Planning/aggregation still
+  // run without npm ci. Use the installed XML parser without loading scripts.
+  const { JSDOM } = require('jsdom');
+  let dom;
+  try {
+    dom = new JSDOM(xmlContent, { contentType: 'text/xml' });
+    const doc = dom.window.document;
+    const root = doc.documentElement;
+    if (doc.doctype || root?.tagName !== 'testsuites') throw new Error('report-structure');
+    const allowedSpecs = new Map(assignedFiles.map((file) => [file.slice(e2ePrefix.length), file]));
+    const specs = new Map();
+    const rootCounts = { tests: 0, failures: 0, skipped: 0, errors: 0 };
+    let durationSeconds = 0;
 
-function normalizeSpecName(rawName) {
-  const cleaned = toPosixPath(String(rawName || '').trim()).replace(/^\.\//, '');
-  if (!cleaned) {
-    return 'unknown';
-  }
-  if (cleaned.startsWith('tests/e2e/')) {
-    return cleaned;
-  }
-  if (cleaned.endsWith('.spec.mjs')) {
-    return `tests/e2e/${cleaned}`;
-  }
-  return cleaned;
-}
-
-function parseNumberSeconds(rawValue) {
-  const parsed = Number.parseFloat(String(rawValue ?? '0'));
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
-}
-
-export function parseJUnitXml(xmlContent) {
-  const content = String(xmlContent || '');
-  const specsMap = new Map();
-  const failedTests = [];
-  let total = 0;
-  let passed = 0;
-  let failed = 0;
-  let skipped = 0;
-  let durationSeconds = 0;
-
-  function ensureSpecEntry(specName) {
-    let entry = specsMap.get(specName);
-    if (!entry) {
-      entry = {
-        spec: specName,
-        passed: 0,
-        failed: 0,
-        skipped: 0,
-        total: 0,
-        durationSeconds: 0
-      };
-      specsMap.set(specName, entry);
-    }
-    return entry;
-  }
-
-  function processTestcases(body, fallbackSuiteName) {
-    const testcaseRe = /<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g;
-    let tcMatch;
-    while ((tcMatch = testcaseRe.exec(body)) !== null) {
-      const attrs = parseXmlAttributes(tcMatch[1]);
-      const inner = tcMatch[2] || '';
-      const specName = normalizeSpecName(attrs.classname || fallbackSuiteName || 'unknown');
-      const title = (attrs.name || '(unnamed test)').trim();
-      const tcDuration = parseNumberSeconds(attrs.time);
-
-      const entry = ensureSpecEntry(specName);
-      entry.total += 1;
-      entry.durationSeconds += tcDuration;
-      total += 1;
-      durationSeconds += tcDuration;
-
-      if (/<(?:failure|error)\b/.test(inner)) {
-        entry.failed += 1;
-        failed += 1;
-        failedTests.push({ spec: specName, title });
-      } else if (/<skipped\b/.test(inner)) {
-        entry.skipped += 1;
-        skipped += 1;
-      } else {
-        entry.passed += 1;
-        passed += 1;
+    for (const suite of root.children) {
+      const suiteName = suite.getAttribute('name');
+      const spec = allowedSpecs.get(suiteName?.replaceAll('\\', '/'));
+      if (suite.tagName !== 'testsuite' || !spec) throw new Error('report-suite');
+      const specCounts = specs.get(spec) || { spec, passed: 0, failed: 0, skipped: 0, total: 0, durationSeconds: 0 };
+      const suiteCounts = { tests: 0, failures: 0, skipped: 0, errors: 0 };
+      for (const entry of suite.children) {
+        if (entry.tagName !== 'testcase' || entry.getAttribute('classname') !== suiteName) {
+          throw new Error('report-case');
+        }
+        const outcomes = [...entry.children].filter(({ tagName }) => ['failure', 'error', 'skipped'].includes(tagName));
+        if (outcomes.length > 1) throw new Error('report-outcome');
+        const outcome = outcomes[0]?.tagName;
+        const time = Number(entry.getAttribute('time'));
+        if (!Number.isFinite(time) || time < 0 || (outcome !== 'skipped' && !entry.hasAttribute('time'))) {
+          throw new Error('report-duration');
+        }
+        suiteCounts.tests += 1;
+        specCounts.total += 1;
+        specCounts.durationSeconds += time;
+        if (outcome === 'skipped') {
+          suiteCounts.skipped += 1;
+          specCounts.skipped += 1;
+        } else if (outcome) {
+          suiteCounts[outcome === 'error' ? 'errors' : 'failures'] += 1;
+          specCounts.failed += 1;
+        } else {
+          specCounts.passed += 1;
+        }
       }
+      checkJUnitCounts(suite, suiteCounts);
+      for (const key of Object.keys(rootCounts)) rootCounts[key] += suiteCounts[key];
+      specs.set(spec, specCounts);
     }
-  }
-
-  const suiteRe = /<testsuite\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testsuite>)/g;
-  let matchedSuite = false;
-  let suiteMatch;
-  while ((suiteMatch = suiteRe.exec(content)) !== null) {
-    matchedSuite = true;
-    const suiteAttrs = parseXmlAttributes(suiteMatch[1]);
-    if (suiteMatch[2]) {
-      processTestcases(suiteMatch[2], suiteAttrs.name || '');
+    checkJUnitCounts(root, rootCounts);
+    if (rootCounts.tests === 0) throw new Error('report-empty');
+    const failed = rootCounts.failures + rootCounts.errors;
+    for (const spec of specs.values()) {
+      durationSeconds += spec.durationSeconds;
+      spec.durationSeconds = Number(spec.durationSeconds.toFixed(2));
     }
+    return {
+      counts: {
+        total: rootCounts.tests,
+        passed: rootCounts.tests - failed - rootCounts.skipped,
+        failed,
+        skipped: rootCounts.skipped
+      },
+      durationSeconds: Number(durationSeconds.toFixed(2)),
+      specs: [...specs.values()].filter(({ total }) => total > 0).sort((a, b) => compareLex(a.spec, b.spec)),
+      failedTests: []
+    };
+  } catch {
+    // XML parser and validation errors must not publish report content.
+    throw new Error('invalid-junit-report');
+  } finally {
+    dom?.window.close();
   }
+}
 
-  if (!matchedSuite) {
-    processTestcases(content, '');
+export function checkShardCaseIndex(cases, junit) {
+  if (!Array.isArray(cases) || cases.length !== junit.counts.total) throw new Error('case-index-count');
+  const remaining = new Map(junit.specs.map(({ spec, passed, failed, skipped }) => [spec, { passed, failed, skipped }]));
+  const failures = [];
+  for (const { file, line, outcome } of cases) {
+    const spec = `${e2ePrefix}${file}`;
+    const counts = remaining.get(spec);
+    if (!counts || !Object.hasOwn(counts, outcome) || !Number.isSafeInteger(line) || line < 1 || counts[outcome] < 1) {
+      throw new Error('case-index-entry');
+    }
+    counts[outcome] -= 1;
+    if (outcome === 'failed') failures.push({ spec, line });
   }
+  return failures;
+}
 
-  const specs = [...specsMap.values()]
-    .map((entry) => ({
-      ...entry,
-      durationSeconds: Number(entry.durationSeconds.toFixed(2))
-    }))
-    .sort((a, b) => compareLex(a.spec, b.spec));
-
-  return {
-    counts: { total, passed, failed, skipped },
-    durationSeconds: Number(durationSeconds.toFixed(2)),
-    specs,
-    failedTests
-  };
+function safeFailureLocations(failures, shardPlan) {
+  const assigned = new Set(shardPlan.units.flatMap(({ files }) => files));
+  return Array.isArray(failures)
+    ? failures.filter((failure) => assigned.has(failure?.spec) && Number.isSafeInteger(failure.line) && failure.line > 0)
+    : [];
 }
 
 export function buildShardSummary(shardPlan, parsedJUnitList, exitCode, wallDurationSeconds = null) {
@@ -236,7 +205,7 @@ export function buildShardSummary(shardPlan, parsedJUnitList, exitCode, wallDura
     for (const failure of parsed.failedTests ?? []) {
       failedTests.push({
         spec: failure.spec,
-        title: failure.title
+        line: failure.line
       });
     }
   }
@@ -259,7 +228,7 @@ export function buildShardSummary(shardPlan, parsedJUnitList, exitCode, wallDura
     counts: { total, passed, failed, skipped },
     assignedSpecs,
     specs: [...specsMap.values()].sort((a, b) => compareLex(a.spec, b.spec)),
-    failedTests
+    failedTests: safeFailureLocations(failedTests, shardPlan)
   };
 }
 
@@ -293,7 +262,7 @@ export function formatShardStepSummaryMarkdown(summary) {
     lines.push('#### Failed Tests');
     lines.push('');
     for (const failure of summary.failedTests) {
-      lines.push(`- \`${escapeMarkdownCell(failure.spec)}\`: ${escapeMarkdownCell(failure.title)}`);
+      lines.push(`- \`${escapeMarkdownCell(failure.spec)}:${failure.line}\``);
     }
     lines.push('');
   }
@@ -301,67 +270,138 @@ export function formatShardStepSummaryMarkdown(summary) {
   return lines.join('\n');
 }
 
-export function formatConsolidatedStepSummaryMarkdown(canonicalShards, shardSummaries) {
-  const summaryById = new Map();
-  for (const summary of shardSummaries) {
-    if (summary && typeof summary.id === 'string') {
-      summaryById.set(summary.id, summary);
+const countFields = ['passed', 'failed', 'skipped', 'total'];
+const validCount = (value) => Number.isSafeInteger(value) && value >= 0;
+const validDuration = (value) => Number.isFinite(value) && value >= 0 && Number.isSafeInteger(Math.round(value * 1000));
+
+function validCounts(counts) {
+  return counts && countFields.every((field) => validCount(counts[field]))
+    && counts.total === counts.passed + counts.failed + counts.skipped;
+}
+
+function validateShardSummary(summary, shard) {
+  if (!summary || summary.id !== shard.id || summary.label !== shard.label
+    || summary.shard !== shard.shard || summary.total !== (shard.total ?? shard.totalShards)
+    || !validCount(summary.exitCode) || summary.exitCode > 255
+    || !validDuration(summary.durationSeconds) || !validCounts(summary.counts)
+    || !Array.isArray(summary.specs) || !Array.isArray(summary.failedTests)) return false;
+
+  const { counts, exitCode, status, assignedSpecs } = summary;
+  const expectedAssignment = shard.units.map(shortSpecDisplay);
+  if (!Array.isArray(assignedSpecs) || assignedSpecs.length !== expectedAssignment.length
+    || !expectedAssignment.every((spec, index) => assignedSpecs[index] === spec)) return false;
+  if (exitCode === 0 ? status !== 'passed' || counts.total === 0 || counts.failed !== 0 : status !== 'failed') return false;
+
+  const allowedSpecs = new Set(shard.units.flatMap(({ files }) => files));
+  const failuresBySpec = new Map();
+  const remaining = { ...counts };
+  for (const spec of summary.specs) {
+    if (!allowedSpecs.delete(spec?.spec) || !validCounts(spec) || !spec.total || !validDuration(spec.durationSeconds)) return false;
+    for (const field of countFields) {
+      if (spec[field] > remaining[field]) return false;
+      remaining[field] -= spec[field];
+    }
+    failuresBySpec.set(spec.spec, spec.failed);
+  }
+  if ((exitCode === 0 && allowedSpecs.size > 0) || countFields.some((field) => remaining[field] !== 0)) return false;
+  for (const failure of summary.failedTests) {
+    if (!validCount(failure?.line) || failure.line < 1 || !(failuresBySpec.get(failure.spec) > 0)) return false;
+    failuresBySpec.set(failure.spec, failuresBySpec.get(failure.spec) - 1);
+  }
+  return true;
+}
+
+export function consolidateShardSummaries(summaryDir, canonicalShards) {
+  const expected = canonicalShards.filter(({ units }) => units.length > 0);
+  const reportPaths = new Map(expected.map(({ id }) => [`e2e-shard-summary-${id}.json`, []]));
+  let unreadable = false;
+  let unexpected = 0;
+  function collect(dirPath, atRoot = false) {
+    let entries;
+    try {
+      entries = readdirSync(dirPath, { withFileTypes: true });
+    } catch (error) {
+      if (!atRoot || error.code !== 'ENOENT') unreadable = true;
+      return;
+    }
+    for (const entry of entries) {
+      const fullPath = join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        collect(fullPath);
+      } else if (reportPaths.has(entry.name)) {
+        // Count aliases/non-files too, but never read a symlink target.
+        reportPaths.get(entry.name).push(entry.isFile() ? fullPath : null);
+      } else if (/^e2e-shard-summary-.+\.json$/.test(entry.name)) {
+        unexpected += 1;
+      }
     }
   }
+  if (expected.length) collect(resolve(summaryDir), true);
 
-  let totalPassed = 0;
-  let totalFailed = 0;
-  let totalSkipped = 0;
-  let totalTests = 0;
+  let totalPassed = 0n;
+  let totalFailed = 0n;
+  let totalSkipped = 0n;
+  let totalTests = 0n;
   let maxDuration = 0;
   let sumDuration = 0;
   let reportedCount = 0;
   let missingCount = 0;
+  let invalidCount = 0;
+  let anyFailed = false;
   const allFailures = [];
 
   const rows = [];
-  for (const shard of canonicalShards) {
+  for (const shard of expected) {
     const totalShards = shard.total ?? shard.totalShards;
-    const summary = summaryById.get(shard.id) || null;
     const assignedSpecsText = shard.units.map(shortSpecDisplay).join(', ');
-
+    const paths = reportPaths.get(`e2e-shard-summary-${shard.id}.json`);
+    const prefix = `| ${shard.shard}/${totalShards} | ${escapeMarkdownCell(shard.label)} (\`${shard.id}\`) | ${escapeMarkdownCell(assignedSpecsText)} |`;
+    let summary;
+    if (paths.length === 1 && paths[0]) {
+      try {
+        const parsed = JSON.parse(readFileSync(paths[0], 'utf8'));
+        if (validateShardSummary(parsed, shard)) summary = parsed;
+      } catch {
+        // Mark the canonical row invalid without printing paths, exceptions or payloads.
+      }
+    }
     if (!summary) {
-      missingCount += 1;
-      rows.push(
-        `| ${shard.shard}/${totalShards} | ${escapeMarkdownCell(shard.label)} (\`${shard.id}\`) | ${escapeMarkdownCell(assignedSpecsText)} | — | — | — | — | — | ⚠️ Missing |`
-      );
+      if (!paths.length) missingCount += 1;
+      else invalidCount += 1;
+      const reason = paths.length > 1 ? 'Duplicate' : paths.length === 1 ? 'Invalid' : 'Missing';
+      rows.push(`${prefix} — | — | — | — | — | ⚠️ ${reason} |`);
       continue;
     }
 
     reportedCount += 1;
-    totalPassed += summary.counts?.passed ?? 0;
-    totalFailed += summary.counts?.failed ?? 0;
-    totalSkipped += summary.counts?.skipped ?? 0;
-    totalTests += summary.counts?.total ?? 0;
-    const dur = Number(summary.durationSeconds ?? 0);
-    sumDuration += dur;
-    if (dur > maxDuration) {
-      maxDuration = dur;
-    }
-
+    const { passed, failed, skipped, total } = summary.counts;
+    const duration = summary.durationSeconds;
+    totalPassed += BigInt(passed);
+    totalFailed += BigInt(failed);
+    totalSkipped += BigInt(skipped);
+    totalTests += BigInt(total);
+    maxDuration = Math.max(maxDuration, duration);
+    sumDuration += duration;
+    anyFailed ||= summary.status === 'failed';
     const statusBadge = summary.status === 'passed' ? '✅ Passed' : '❌ Failed';
-    rows.push(
-      `| ${shard.shard}/${totalShards} | ${escapeMarkdownCell(shard.label)} (\`${shard.id}\`) | ${escapeMarkdownCell(assignedSpecsText)} | ${summary.counts?.passed ?? 0} | ${summary.counts?.failed ?? 0} | ${summary.counts?.skipped ?? 0} | ${summary.counts?.total ?? 0} | ${formatDuration(dur)} | ${statusBadge} |`
-    );
+    rows.push(`${prefix} ${passed} | ${failed} | ${skipped} | ${total} | ${formatDuration(duration)} | ${statusBadge} |`);
 
-    for (const failure of summary.failedTests ?? []) {
-      allFailures.push({
-        shardLabel: `${shard.shard}/${totalShards} — ${shard.label}`,
-        spec: failure.spec,
-        title: failure.title
-      });
+    for (const { spec, line } of summary.failedTests) {
+      allFailures.push({ shardLabel: `${shard.shard}/${totalShards} — ${shard.label}`, spec, line });
     }
   }
+
+  const notes = [
+    missingCount && `${missingCount} missing`,
+    invalidCount && `${invalidCount} invalid`,
+    unexpected && `${unexpected} unexpected`,
+    unreadable && 'download directory unreadable'
+  ].filter(Boolean);
 
   const lines = [
     '### Playwright Chromium E2E — Module Shard Overview',
     '',
-    `- **Shards Reported**: ${reportedCount}/${canonicalShards.length}${missingCount > 0 ? ` (${missingCount} missing)` : ''}`,
+    `- **Shards Reported**: ${reportedCount}/${expected.length}${notes.length ? ` (${notes.join(', ')})` : ''}`,
     `- **Total Tests**: ${totalPassed} passed, ${totalFailed} failed, ${totalSkipped} skipped (${totalTests} total)`,
     `- **Slowest Shard**: ${formatDuration(maxDuration)} (cumulative shard runtime: ${formatDuration(sumDuration)})`,
     '',
@@ -376,41 +416,13 @@ export function formatConsolidatedStepSummaryMarkdown(canonicalShards, shardSumm
     lines.push('');
     for (const failure of allFailures) {
       lines.push(
-        `- **[${escapeMarkdownCell(failure.shardLabel)}]** \`${escapeMarkdownCell(failure.spec)}\`: ${escapeMarkdownCell(failure.title)}`
+        `- **[${escapeMarkdownCell(failure.shardLabel)}]** \`${escapeMarkdownCell(failure.spec)}:${failure.line}\``
       );
     }
     lines.push('');
   }
 
-  return lines.join('\n');
-}
-
-export function loadShardSummariesFromDir(summaryDir) {
-  const loadedSummaries = [];
-  const resolvedDir = resolve(summaryDir);
-
-  function collect(dirPath) {
-    const entries = readdirSync(dirPath, { withFileTypes: true });
-    for (const entry of entries) {
-      const fullPath = join(dirPath, entry.name);
-      if (entry.isDirectory()) {
-        collect(fullPath);
-      } else if (entry.isFile() && /^e2e-shard-summary-.+\.json$/.test(entry.name)) {
-        const raw = readFileSync(fullPath, 'utf8');
-        try {
-          loadedSummaries.push(JSON.parse(raw));
-        } catch (error) {
-          console.error(`[e2e-shards] Warning: could not parse ${entry.name}: ${error.message}`);
-        }
-      }
-    }
-  }
-
-  if (existsSync(resolvedDir)) {
-    collect(resolvedDir);
-  }
-
-  return loadedSummaries;
+  return { markdown: lines.join('\n'), passed: notes.length === 0 && !anyFailed };
 }
 
 export function appendStepSummary(summaryPath, markdown) {

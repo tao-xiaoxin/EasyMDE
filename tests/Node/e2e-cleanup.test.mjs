@@ -163,3 +163,40 @@ test('cleanupOwnedRecords preserves non-cleanupPostTypes paths and skips batched
   assert.deepEqual(calls[0].args.slice(0, 4), ['post', 'delete', '77', '--force']);
   assert.deepEqual(calls[1].args.slice(0, 4), ['user', 'delete', '19', '--yes']);
 });
+
+test('WeChat cleanup without a content allowlist still refuses to delete user 1', () => {
+  const { calls, fixture } = createTestFixture({ cleanupPostTypes: undefined });
+  assert.throws(
+    () => fixture.cleanupOwnedRecords({ fixtureUserId: 1 }),
+    /test-fixture-cleanup-user-id-invalid/u
+  );
+  assert.equal(calls.length, 0);
+});
+
+test('ordinary editor cleanup keeps its exact query and user reassignment in one WP eval', async () => {
+  const keys = ['WORDPRESS_ADMIN_USER', 'WORDPRESS_ADMIN_PASSWORD'];
+  const original = keys.map((key) => process.env[key]);
+  let deleteUserContent;
+  try {
+    for (const key of keys) process.env[key] = 'synthetic-cleanup-test';
+    ({ deleteUserContent } = await import('../e2e/helpers/editor-e2e-helpers.mjs'));
+  } finally {
+    keys.forEach((key, i) => {
+      if (original[i] === undefined) delete process.env[key];
+      else process.env[key] = original[i];
+    });
+  }
+  const calls = [];
+  const wp = (args) => calls.push(args);
+  assert.throws(() => deleteUserContent(1, wp), /invalid-e2e-cleanup-user-id/u);
+  assert.equal(calls.length, 0);
+  deleteUserContent(42, wp);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].length, 2);
+  assert.equal(calls[0][0], 'eval');
+  assert.match(calls[0][1], /\$user_id = \(int\) 42;.*"author" => \$user_id/u);
+  assert.match(calls[0][1], /"post_type" => array\( "post", "page", "attachment" \)/u);
+  assert.match(calls[0][1], /wp_delete_post.*exit\( 1 \);.*wp_delete_user\( \$user_id, 1 \)/u);
+  const failure = new Error('synthetic-ordinary-wp-cli-failure');
+  assert.throws(() => deleteUserContent(42, () => { throw failure; }), (error) => error === failure);
+});

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
 import { runCleanupSteps } from '../support/run-cleanup-steps.mjs';
+import { ownedUserContentCleanupPhp } from '../support/owned-user-content-cleanup.mjs';
 import {
   createWpFixtureUser,
   runWpCommand
@@ -160,37 +161,15 @@ function createUser(slug, role = 'administrator') {
   });
 }
 
-function deleteUserContent(userId) {
-  const normalizedUserId = String(userId ?? '').trim();
-  if (!/^[1-9]\d*$/.test(normalizedUserId)) {
-    throw new Error(`Invalid E2E user ID for cleanup: ${String(userId)}`);
-  }
-
-  const numericUserId = Number.parseInt(normalizedUserId, 10);
-  if (!Number.isSafeInteger(numericUserId) || numericUserId <= 1) {
-    throw new Error(`Refusing to delete E2E user ID: ${normalizedUserId}`);
-  }
-
-  runWp([
+export function deleteUserContent(userId, runWpRef = runWp) {
+  const contentCleanup = ownedUserContentCleanupPhp(userId, ['post', 'page', 'attachment'], {
+    invalidUserIdCode: 'invalid-e2e-cleanup-user-id',
+    invalidPostTypesCode: 'invalid-e2e-cleanup-post-types'
+  });
+  runWpRef([
     'eval',
     [
-      `$user_id = (int) ${numericUserId};`,
-      'if ( $user_id <= 1 ) { fwrite( STDERR, "invalid-e2e-cleanup-user-id" ); exit( 1 ); }',
-      '$post_ids = get_posts( array(',
-      '  "author" => $user_id,',
-      '  "post_type" => array( "post", "page", "attachment" ),',
-      '  "post_status" => array_values( get_post_stati() ),',
-      '  "fields" => "ids",',
-      '  "posts_per_page" => -1,',
-      '  "no_found_rows" => true,',
-      '  "suppress_filters" => true',
-      ') );',
-      'foreach ( $post_ids as $post_id ) {',
-      '  if ( false === wp_delete_post( (int) $post_id, true ) ) {',
-      '    fwrite( STDERR, "failed-to-delete-post:" . (int) $post_id );',
-      '    exit( 1 );',
-      '  }',
-      '}',
+      contentCleanup,
       'require_once ABSPATH . "wp-admin/includes/user.php";',
       'if ( false === wp_delete_user( $user_id, 1 ) ) {',
       '  fwrite( STDERR, "failed-to-delete-user:" . $user_id );',

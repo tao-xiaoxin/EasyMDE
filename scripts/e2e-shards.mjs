@@ -1,21 +1,21 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   appendStepSummary,
   buildShardSummary,
-  formatConsolidatedStepSummaryMarkdown,
+  checkShardCaseIndex,
   formatPlanStepSummaryMarkdown,
   formatShardStepSummaryMarkdown,
-  loadShardSummariesFromDir,
+  consolidateShardSummaries,
   parseJUnitXml,
   shortSpecDisplay
 } from './e2e-shard-summary.mjs';
+import { E2E_TEST_MATCH } from './e2e-test-match.mjs';
 
 export {
   buildShardSummary,
-  formatConsolidatedStepSummaryMarkdown,
   formatPlanStepSummaryMarkdown,
   formatShardStepSummaryMarkdown,
   parseJUnitXml
@@ -141,8 +141,8 @@ export function discoverE2ESpecFiles(e2eRoot = defaultE2ERoot) {
     for (const entry of entries) {
       const fullPath = join(dirPath, entry.name);
       if (entry.isDirectory()) {
-        walk(fullPath);
-      } else if (entry.isFile() && entry.name.endsWith('.spec.mjs')) {
+        if (entry.name !== 'node_modules') walk(fullPath);
+      } else if (entry.isFile() && E2E_TEST_MATCH.test(entry.name)) {
         found.push(toPosixPath(relative(relativeRoot, fullPath)));
       }
     }
@@ -425,6 +425,12 @@ function isFilteredOrSuiteUnit(unit) {
   return Boolean(unit.env?.EASYMDE_E2E_SUITE || unit.grep || unit.grepInvert);
 }
 
+function exactPlaywrightFileFilter(file) {
+  // Playwright defaults positional filters to case-insensitive regexes. The
+  // explicit regex flags and absolute anchors select this file only.
+  return `/^${escapeRegex(toPosixPath(resolve(repoRoot, file)))}$/`;
+}
+
 export function buildShardInvocations(shardPlan) {
   const normalFiles = [];
   const normalUnitIds = [];
@@ -445,21 +451,17 @@ export function buildShardInvocations(shardPlan) {
 
   const shardSlug = shardPlan.id || `shard-${shardPlan.shard}`;
   const invocations = [];
-  let invocationIndex = 0;
 
   if (normalFiles.length > 0) {
-    invocationIndex += 1;
     invocations.push({
       args: [
         'playwright',
         'test',
         '--project=chromium',
         '--project=chromium-performance',
-        ...normalFiles
+        ...normalFiles.map(exactPlaywrightFileFilter)
       ],
-      env: {
-        EASYMDE_PLAYWRIGHT_JUNIT_FILE: `test-results/playwright-junit-shard-${shardSlug}-${invocationIndex}.xml`
-      },
+      env: {},
       files: normalFiles,
       grep: null,
       grepInvert: null,
@@ -468,8 +470,13 @@ export function buildShardInvocations(shardPlan) {
   }
 
   for (const unit of filteredUnits) {
-    invocationIndex += 1;
-    const args = ['playwright', 'test', '--project=chromium', ...unit.files];
+    const args = [
+      'playwright',
+      'test',
+      '--project=chromium',
+      '--project=chromium-performance',
+      ...unit.files.map(exactPlaywrightFileFilter)
+    ];
     if (unit.grep) {
       args.push('--grep', unit.grep);
     }
@@ -478,10 +485,7 @@ export function buildShardInvocations(shardPlan) {
     }
     invocations.push({
       args,
-      env: {
-        ...unit.env,
-        EASYMDE_PLAYWRIGHT_JUNIT_FILE: `test-results/playwright-junit-shard-${shardSlug}-${invocationIndex}.xml`
-      },
+      env: unit.env,
       files: [...unit.files],
       grep: unit.grep ?? null,
       grepInvert: unit.grepInvert ?? null,
@@ -489,7 +493,19 @@ export function buildShardInvocations(shardPlan) {
     });
   }
 
-  return invocations;
+  return invocations.map((invocation, index) => {
+    const suffix = `shard-${shardSlug}-${index + 1}`;
+    const outputDir = `test-results/playwright/${suffix}`;
+    return {
+      ...invocation,
+      args: [...invocation.args, '--forbid-only', `--output=${outputDir}`],
+      outputDir,
+      env: {
+        ...invocation.env,
+        EASYMDE_PLAYWRIGHT_JUNIT_FILE: `test-results/playwright-junit-${suffix}.xml`
+      }
+    };
+  });
 }
 
 function parsePositiveInteger(rawValue, flagName) {
@@ -645,19 +661,28 @@ export function formatPlan(shards) {
 
 export function aggregateShardSummariesFromDir(summaryDir, specFiles = discoverE2ESpecFiles(defaultE2ERoot)) {
   const canonicalShards = planSemanticE2EShards(specFiles);
-  const loadedSummaries = loadShardSummariesFromDir(summaryDir);
-  return {
-    canonicalShards,
-    loadedSummaries,
-    markdown: formatConsolidatedStepSummaryMarkdown(canonicalShards, loadedSummaries)
-  };
+  return consolidateShardSummaries(summaryDir, canonicalShards);
+}
+
+function readShardCaseEvidence(path, assignedFiles) {
+  const evidence = JSON.parse(readFileSync(path, 'utf8'));
+  const { category, count, locations } = evidence.errors;
+  if (category !== 'playwright-run-error' || !Array.isArray(evidence.cases) || !Number.isSafeInteger(count) || count < 0
+    || !Array.isArray(locations) || locations.length > count
+    || locations.some((location) => !assignedFiles.includes(location?.spec)
+      || !Number.isSafeInteger(location.line) || location.line < 1)) {
+    throw new Error('invalid-case-evidence');
+  }
+  return evidence;
 }
 
 function runShard(shardPlan, { summaryFile = null, resultsDir = defaultResultsDir } = {}) {
   const total = shardPlan.total ?? shardPlan.totalShards;
   const invocations = buildShardInvocations(shardPlan);
   const startedAt = Date.now();
-  let exitCode = 0;
+  let playwrightExitCode = 0;
+  let evidenceFailed = false;
+  const parsedJUnits = [];
 
   console.log(
     `[e2e-shards] Shard ${shardPlan.shard}/${total} — ${shardPlan.label} (${shardPlan.id})`
@@ -672,77 +697,95 @@ function runShard(shardPlan, { summaryFile = null, resultsDir = defaultResultsDi
   }
 
   const npxCommand = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-  const junitPaths = [];
+  for (const invocation of invocations) {
+    const childEnv = { ...process.env };
+    delete childEnv.EASYMDE_E2E_SUITE;
+    Object.assign(childEnv, invocation.env);
+    childEnv.EASYMDE_PLAYWRIGHT_ASSIGNED_FILES = JSON.stringify(invocation.files);
 
-  try {
-    for (const invocation of invocations) {
-      const childEnv = { ...process.env };
-      delete childEnv.EASYMDE_E2E_SUITE;
-      Object.assign(childEnv, invocation.env);
-
-      const junitRelPath = invocation.env.EASYMDE_PLAYWRIGHT_JUNIT_FILE;
-      if (junitRelPath) {
-        const resolvedJunitPath = resolve(repoRoot, junitRelPath);
-        rmSync(resolvedJunitPath, { force: true });
-        junitPaths.push(resolvedJunitPath);
-      }
-
-      const qualifiers = [];
-      if (invocation.env.EASYMDE_E2E_SUITE) {
-        qualifiers.push(`EASYMDE_E2E_SUITE=${invocation.env.EASYMDE_E2E_SUITE}`);
-      }
-      if (invocation.grep) {
-        qualifiers.push('--grep');
-      }
-      if (invocation.grepInvert) {
-        qualifiers.push('--grep-invert');
-      }
-      const qualifierLabel = qualifiers.length > 0 ? ` (${qualifiers.join(', ')})` : '';
-      console.log(
-        `[e2e-shards] Shard ${shardPlan.shard}/${total} — ${shardPlan.label}${qualifierLabel}: `
-        + `${npxCommand} ${invocation.args.join(' ')}`
-      );
-
-      const result = spawnSync(npxCommand, invocation.args, {
-        cwd: repoRoot,
-        env: childEnv,
-        stdio: 'inherit'
-      });
-
-      if (result.error) {
-        console.error(`[e2e-shards] Failed to start Playwright: ${result.error.message}`);
-        if (exitCode === 0) {
-          exitCode = 1;
-        }
-        continue;
-      }
-
-      if (result.status !== 0 && exitCode === 0) {
-        exitCode = result.status ?? 1;
-      }
-    }
-  } finally {
-    const wallDurationSeconds = (Date.now() - startedAt) / 1000;
-    const parsedJUnits = [];
-    for (const junitPath of junitPaths) {
-      if (existsSync(junitPath)) {
-        try {
-          parsedJUnits.push(parseJUnitXml(readFileSync(junitPath, 'utf8')));
-        } catch (error) {
-          console.error(`[e2e-shards] Warning: could not parse JUnit file ${basename(junitPath)}: ${error.message}`);
-        }
-      }
+    const junitPath = resolve(repoRoot, invocation.env.EASYMDE_PLAYWRIGHT_JUNIT_FILE);
+    const junitName = basename(junitPath);
+    const caseIndexPath = `${junitPath}.cases.json`;
+    try {
+      rmSync(junitPath, { force: true });
+      rmSync(caseIndexPath, { force: true });
+    } catch {
+      console.error(`[e2e-shards] junit-report-cleanup-failed: ${junitName}`);
+      evidenceFailed = true;
+      continue;
     }
 
-    const summary = buildShardSummary(shardPlan, parsedJUnits, exitCode, wallDurationSeconds);
-    mkdirSync(resultsDir, { recursive: true });
-    const summaryJsonPath = join(resultsDir, `e2e-shard-summary-${shardPlan.id}.json`);
-    writeFileSync(summaryJsonPath, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
+    console.log(`[e2e-shards] Running Playwright: ${invocation.unitIds.join(', ')}`);
+    const result = spawnSync(npxCommand, invocation.args, {
+      cwd: repoRoot,
+      env: childEnv,
+      stdio: 'ignore'
+    });
 
-    const stepSummaryTarget = summaryFile || process.env.GITHUB_STEP_SUMMARY || null;
-    if (stepSummaryTarget) {
-      appendStepSummary(stepSummaryTarget, formatShardStepSummaryMarkdown(summary));
+    if (result.status !== null && result.status !== 0) {
+      playwrightExitCode ||= result.status;
+    } else if (result.status === null) {
+      console.error(`[e2e-shards] playwright-process-failed: ${junitName}`);
+      evidenceFailed = true;
     }
+
+    // The reporter can observe load/setup failures even when there are no
+    // JUnit cases. A missing sidecar does not identify a Playwright root cause.
+    let evidence;
+    try {
+      evidence = readShardCaseEvidence(caseIndexPath, invocation.files);
+    } catch (error) {
+      // FS errors carry a code; JSON and schema errors do not. Never log their messages.
+      const state = error.code === 'ENOENT' ? 'missing' : error.code ? 'unavailable' : 'invalid';
+      console.error(`[e2e-shards] playwright-run-diagnostics-${state}: ${junitName}`);
+      evidenceFailed = true;
+    }
+    if (evidence?.errors.count > 0) {
+      const locations = evidence.errors.locations.map(({ spec, line }) => ` ${spec}:${line}`).join('');
+      console.error(`[e2e-shards] playwright-run-error: ${junitName} count=${evidence.errors.count}${locations}`);
+      evidenceFailed = true;
+    }
+
+    let report;
+    try {
+      report = parseJUnitXml(readFileSync(junitPath, 'utf8'), invocation.files);
+    } catch (error) {
+      const code = error.code === 'ENOENT' ? 'junit-report-missing' : 'junit-report-invalid';
+      console.error(`[e2e-shards] ${code}: ${junitName} (exit=${result.status ?? 'unavailable'})`);
+      evidenceFailed = true;
+      continue;
+    }
+
+    parsedJUnits.push(report);
+    evidenceFailed ||= report.counts.failed > 0;
+    if (result.status === 0) {
+      const observed = new Set(report.specs.map(({ spec }) => spec));
+      const missing = invocation.files.filter((file) => !observed.has(file));
+      if (missing.length) {
+        console.error(`[e2e-shards] playwright-assigned-specs-missing: ${junitName} (exit=0) ${missing.join(', ')}`);
+        evidenceFailed = true;
+      }
+    }
+    if (!evidence) continue;
+    try {
+      report.failedTests = checkShardCaseIndex(evidence.cases, report);
+    } catch {
+      console.error(`[e2e-shards] shard-case-index-invalid: ${junitName}`);
+      evidenceFailed = true;
+    }
+  }
+
+  const exitCode = playwrightExitCode || (evidenceFailed ? 1 : 0);
+  const wallDurationSeconds = (Date.now() - startedAt) / 1000;
+  const summary = buildShardSummary(shardPlan, parsedJUnits, exitCode, wallDurationSeconds);
+  mkdirSync(resultsDir, { recursive: true });
+  const summaryJsonPath = join(resultsDir, `e2e-shard-summary-${shardPlan.id}.json`);
+  writeFileSync(summaryJsonPath, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
+
+  console.log(`[e2e-shards] ${summary.counts.passed} passed, ${summary.counts.failed} failed, ${summary.counts.skipped} skipped`);
+  const stepSummaryTarget = summaryFile || process.env.GITHUB_STEP_SUMMARY || null;
+  if (stepSummaryTarget) {
+    appendStepSummary(stepSummaryTarget, formatShardStepSummaryMarkdown(summary));
   }
 
   return exitCode;
@@ -780,13 +823,13 @@ function main(argv) {
   }
 
   if (parsed.mode === 'aggregate') {
-    const { markdown } = aggregateShardSummariesFromDir(parsed.aggregateDir, specFiles);
+    const { markdown, passed } = aggregateShardSummariesFromDir(parsed.aggregateDir, specFiles);
     console.log(markdown);
     const stepSummaryTarget = parsed.summaryFile || process.env.GITHUB_STEP_SUMMARY || null;
     if (stepSummaryTarget) {
       appendStepSummary(stepSummaryTarget, markdown);
     }
-    return 0;
+    return passed ? 0 : 1;
   }
 
   if (parsed.mode === 'run-id') {

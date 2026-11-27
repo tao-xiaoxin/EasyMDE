@@ -1102,15 +1102,34 @@ JSON text: {"path":"C:\\Temp\\file","quote":"\"value\""}
       const permalink = postPermalink(postId);
       expect(page.url()).toBe(permalink);
 
+      // Inspect the published post in a fresh tab within the same authenticated
+      // context: in Chromium headless_shell, WordPress 7.1+'s aborted admin
+      // cross-document ViewTransition leaves the originating tab's compositor
+      // frame loop stalled even after subsequent navigations.
+      const publicPage = await page.context().newPage();
+      const publicMonitor = attachPrivacySafeBrowserMonitor(publicPage, {
+        baseURL: testInfo.project.use.baseURL,
+        allowedNavigationCategories: ['about-blank', 'same-origin']
+      });
+      try {
+      await publicPage.route(originalImageUrl, async (route) => {
+        imageRequestUrls.push(route.request().url());
+        await route.fulfill({
+          status: 200,
+          contentType: 'image/png',
+          body: fullCapabilityImage
+        });
+      });
+      try {
       for (const viewport of [
         { width: 1440, height: 900 },
         { width: 375, height: 812 },
         { width: 320, height: 720 }
       ]) {
-        await page.setViewportSize(viewport);
-        await page.goto(permalink, { waitUntil: 'load' });
-        await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
-        const article = page.locator('.easymde-rendered-content').first();
+        await publicPage.setViewportSize(viewport);
+        await publicPage.goto(permalink, { waitUntil: 'load' });
+        await publicPage.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
+        const article = publicPage.locator('.easymde-rendered-content').first();
         await expect(article).toBeVisible();
         await expect.poll(() => article.evaluate((root) => {
           const mermaids = [...root.querySelectorAll('.easymde-mermaid')];
@@ -1503,7 +1522,7 @@ JSON text: {"path":"C:\\Temp\\file","quote":"\"value\""}
         viewportEvidence.push({ geometry, imageEvidence, ownerSummary, viewport });
       }
 
-      const rtlMechanismEvidence = await page.locator(
+      const rtlMechanismEvidence = await publicPage.locator(
         '.easymde-rendered-content .easymde-mermaid[data-easymde-mermaid-layout="gantt"]'
       ).evaluate((owner) => {
         const svg = owner.querySelector(':scope > svg');
@@ -1592,7 +1611,7 @@ JSON text: {"path":"C:\\Temp\\file","quote":"\"value\""}
         });
       }
 
-      const typedOmProbe = await page.locator(
+      const typedOmProbe = await publicPage.locator(
         '.easymde-rendered-content .easymde-mermaid[data-easymde-mermaid-layout="gantt"]'
       ).evaluate((owner) => {
         const svg = owner.querySelector(':scope > svg');
@@ -1742,6 +1761,14 @@ JSON text: {"path":"C:\\Temp\\file","quote":"\"value\""}
           geometry.pageOverflow,
           JSON.stringify({ geometry, viewport })
         ).toBeLessThanOrEqual(1);
+      }
+      publicMonitor.assertClean();
+      } finally {
+        await publicPage.unroute(originalImageUrl).catch(() => undefined);
+      }
+      } finally {
+        publicMonitor.dispose();
+        await publicPage.close().catch(() => undefined);
       }
     } finally {
       await page.unroute(originalImageUrl);

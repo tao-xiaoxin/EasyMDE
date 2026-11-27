@@ -119,18 +119,11 @@ export async function installPerformanceModeOverride(page, mode) {
 export async function configurePerformanceMode(page, mode) {
 	const definition = performanceModeDefinitions[mode];
 	if (!definition) throw new Error("wechat-copy-performance-mode-invalid");
-	await waitForPreviewReady(page, {
-		requireImages: mode === "ordinarySource" ? true : undefined,
-		visible: definition.immersive || definition.editingMode !== "source",
-	});
+	await waitForPreviewReady(page);
 	if (!definition.immersive) {
-		if (definition.editingMode === "source") {
-			await expect(
-				page.locator(".easymde-source-react .cm-content"),
-			).toBeVisible();
-		} else if (definition.editingMode === "preview") {
-			await expect(page.locator(".easymde-pane-source")).toBeHidden();
-		}
+		await expect(
+			page.locator(".easymde-source-react .cm-content"),
+		).toBeVisible();
 		return;
 	}
 
@@ -189,10 +182,10 @@ export async function readPerformanceModeState(page) {
 		}
 		const visible = (element) =>
 			element instanceof HTMLElement && element.getClientRects().length > 0;
-		const workspaceModeOwners = ["live-preview", "preview", "source"].filter(
-			(mode) => workspace.classList.contains(`is-mode-${mode}`),
+		const workspaceModeOwners = [...workspace.classList].filter((className) =>
+			className.startsWith("is-mode-"),
 		);
-		if (workspaceModeOwners.length !== 1) {
+		if (workspaceModeOwners.length !== 0) {
 			throw new Error("wechat-copy-performance-workspace-mode-owner-invalid");
 		}
 		const immersiveModeOwners = ["split", "preview", "source"].filter((mode) =>
@@ -206,18 +199,11 @@ export async function readPerformanceModeState(page) {
 			throw new Error("wechat-copy-performance-immersive-mode-owner-invalid");
 		}
 		const immersiveMode = immersive ? immersiveModeOwners[0] : null;
-		const workspaceMode = workspaceModeOwners[0];
+		const workspaceMode = "split";
 		const editingMode = bootstrap?.settings?.general?.editingMode ?? null;
 		const actualMode = immersive
 			? `immersive${immersiveMode[0].toUpperCase()}${immersiveMode.slice(1)}`
-			: {
-					"live-preview": "ordinarySplit",
-					preview: "ordinaryPreview",
-					source: "ordinarySource",
-				}[workspaceMode];
-		if (!actualMode) {
-			throw new Error("wechat-copy-performance-actual-mode-unavailable");
-		}
+			: "ordinarySplit";
 		return {
 			actualMode,
 			editingMode,

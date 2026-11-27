@@ -16,16 +16,6 @@ export const performanceModeDefinitions = Object.freeze({
 		immersive: true,
 		immersiveMode: "split",
 	}),
-	ordinaryPreview: Object.freeze({
-		editingMode: "preview",
-		immersive: false,
-		immersiveMode: null,
-	}),
-	ordinarySource: Object.freeze({
-		editingMode: "source",
-		immersive: false,
-		immersiveMode: null,
-	}),
 	ordinarySplit: Object.freeze({
 		editingMode: "live-preview",
 		immersive: false,
@@ -46,16 +36,6 @@ export const performanceModeExpectations = Object.freeze({
 	immersiveSplit: Object.freeze({
 		previewPresentation: "split",
 		previewVisible: true,
-		sourceVisible: true,
-	}),
-	ordinaryPreview: Object.freeze({
-		previewPresentation: "split",
-		previewVisible: true,
-		sourceVisible: false,
-	}),
-	ordinarySource: Object.freeze({
-		previewPresentation: "split",
-		previewVisible: false,
 		sourceVisible: true,
 	}),
 	ordinarySplit: Object.freeze({

@@ -29,7 +29,6 @@ type OrdinaryEditorStatus = Readonly<{
 
 type EditorWorkspaceProps = Readonly<{
   direction: 'ltr' | 'rtl';
-  mode?: string;
   onLayoutChange?: () => void;
   ordinaryStatus?: OrdinaryEditorStatus;
   statusBarMode?: StatusBarMode;
@@ -66,7 +65,6 @@ function clampSplit(value: number): number {
  */
 export function EditorWorkspace({
   direction,
-  mode = 'live-preview',
   onLayoutChange,
   ordinaryStatus,
   statusBarMode = 'detailed',
@@ -159,7 +157,11 @@ export function EditorWorkspace({
   const workspace = (
     <div
       ref={workspaceRef}
-      className={`easymde-workspace is-mode-${mode}${splitResizable ? ' is-split-resizable' : ''}`}
+      className={
+        splitResizable
+          ? 'easymde-workspace is-split-resizable'
+          : 'easymde-workspace'
+      }
       data-easymde-layout-owner="react"
       dir={direction}
       style={style}

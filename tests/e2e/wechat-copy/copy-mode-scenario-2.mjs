@@ -69,15 +69,28 @@ export async function runCopyModeScenario2({ baseURL, context, login, page, test
       const coldPreview = page.locator(
         '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
       );
+      await expect(coldPreview).toBeVisible();
+      const coldLabels = await page.evaluate(
+        () => window.EasyMDEEditorRootBootstrap.strings.immersive
+      );
+      await page.locator('.easymde-toolbar-immersive-toggle').click();
+      await expect(page.getByRole('region', { name: coldLabels.immersive })).toBeVisible();
+      await expect(page.locator('.easymde-editor')).toHaveClass(/is-immersive-source/);
       await expect(coldPreview).toBeHidden();
       await assertSourcePresentation(page, coldPreview, 'split');
       await assertFullCapabilityPreview(coldPreview);
+      const coldImmersiveCopy = page.getByRole('button', {
+        name: coldLabels.wechat,
+        exact: true
+      });
       await copyFromSourceAndAssertZeroWrite(
         page,
-        page.locator('.easymde-toolbar-copy-action'),
+        coldImmersiveCopy,
         { png: false }
       );
       await expect(page.locator('#easymde-source')).toHaveValue(fullMarkdown);
+      await page.getByRole('button', { name: coldLabels.exit, exact: true }).click();
+      await expect(page.getByRole('region', { name: coldLabels.immersive })).toBeHidden();
     }
     await page.evaluate(() => window.sessionStorage.removeItem('easymde-e2e-source-presentation'));
 }

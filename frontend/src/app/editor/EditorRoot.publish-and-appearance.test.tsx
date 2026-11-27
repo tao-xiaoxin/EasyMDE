@@ -1188,7 +1188,7 @@ describe('EditorRoot publish and appearance', () => {
     expect(props.localDraftStorage.write).toHaveBeenCalled();
   });
 
-  it('maps Settings Center editing modes to immersive modes and rereads only outline preferences', async () => {
+  it('keeps the ordinary workspace fixed split across Settings Center editing modes and applies them only to immersive mode', async () => {
     const props = fixture();
     const modes = [
       ['live-preview', 'is-immersive-split'],
@@ -1207,6 +1207,17 @@ describe('EditorRoot publish and appearance', () => {
         />
       );
 
+      const workspace = view.container.querySelector('.easymde-workspace');
+      expect(workspace).not.toBeNull();
+      expect(workspace?.classList.contains('is-mode-live-preview')).toBe(false);
+      expect(workspace?.classList.contains('is-mode-source')).toBe(false);
+      expect(workspace?.classList.contains('is-mode-preview')).toBe(false);
+      expect(
+        Array.from(workspace?.classList ?? []).some((name) =>
+          name.startsWith('is-mode-')
+        )
+      ).toBe(false);
+
       fireEvent.click(
         await view.findByRole('button', { name: '进入沉浸写作' })
       );
@@ -1215,6 +1226,11 @@ describe('EditorRoot publish and appearance', () => {
           .querySelector('.easymde-editor')
           ?.classList.contains(expectedClass)
       ).toBe(true);
+      expect(
+        Array.from(workspace?.classList ?? []).some((name) =>
+          name.startsWith('is-mode-')
+        )
+      ).toBe(false);
       expect(props.immersivePreferencesPort.read).toHaveBeenCalled();
       view.unmount();
     }

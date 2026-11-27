@@ -313,7 +313,8 @@ export async function runCopyModeScenario6({ baseURL, context, login, page, test
     }).click();
 
     // Reuse the loader bootstrap seam to cover a genuinely first hidden
-    // Preview without changing the site-wide editing mode setting.
+    // Preview when Immersive Editing opens directly in persisted Source mode
+    // without changing the site-wide editing mode setting.
     await page.evaluate(() => {
       window.sessionStorage.setItem('easymde-e2e-hidden-png-source', '1');
     });
@@ -323,10 +324,14 @@ export async function runCopyModeScenario6({ baseURL, context, login, page, test
     expect(await page.evaluate(
       () => window.EasyMDEEditorRootBootstrap.settings.general.editingMode
     )).toBe('source');
+    const initialHiddenPreview = page.locator(
+      '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
+    );
+    await expect(initialHiddenPreview).toBeVisible();
     await page.addStyleTag({
       content: [
-        '.easymde-editor:not(.is-immersive) { max-width: 760px !important; }',
-        '.easymde-editor:not(.is-immersive) > .easymde-workspace {',
+        '.easymde-editor, .easymde-editor.is-immersive { max-width: 760px !important; }',
+        '.easymde-editor > .easymde-workspace, .easymde-editor.is-immersive > .easymde-workspace {',
         '  box-sizing: border-box !important;',
         '  width: 500px !important;',
         '  max-width: 760px !important;',
@@ -335,6 +340,14 @@ export async function runCopyModeScenario6({ baseURL, context, login, page, test
         '}'
       ].join('\n')
     });
+    const initialImmersiveLabels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await expect(
+      page.getByRole('region', { name: initialImmersiveLabels.immersive })
+    ).toBeVisible();
+    await expect(page.locator('.easymde-editor')).toHaveClass(/is-immersive-source/);
     const availableSourceWidth = await page.locator('.easymde-workspace').evaluate((workspace) => {
       const rect = workspace.getBoundingClientRect();
       const style = getComputedStyle(workspace);
@@ -349,9 +362,6 @@ export async function runCopyModeScenario6({ baseURL, context, login, page, test
     expect(availableSourceWidth).toBeGreaterThan(0);
     expect(availableSourceWidth).toBeLessThanOrEqual(760);
     await installPngMeasurementProbe(page);
-    const initialHiddenPreview = page.locator(
-      '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
-    );
     await expect(initialHiddenPreview).toBeHidden();
     uploadRequests.length = 0;
     await fillMarkdownAndWaitForPreview(
@@ -364,7 +374,10 @@ export async function runCopyModeScenario6({ baseURL, context, login, page, test
     await expect(initialHiddenPreview.locator('.easymde-mermaid')).toHaveCount(1);
     expect(uploadRequests).toHaveLength(0);
     await setupZeroWriteProbe(page);
-    const initialSourceCopy = page.locator('.easymde-toolbar-copy-action');
+    const initialSourceCopy = page.getByRole('button', {
+      exact: true,
+      name: initialImmersiveLabels.wechat
+    });
     await focusPageForCopy(page);
     await beginCopy(page, 'success');
     await initialSourceCopy.click();
@@ -405,5 +418,12 @@ export async function runCopyModeScenario6({ baseURL, context, login, page, test
     expect(initialSourceMeasurement?.rootWidth ?? Number.MAX_SAFE_INTEGER)
       .toBeLessThanOrEqual(availableSourceWidth + 1);
     await stopPngMeasurementProbe(page);
+    await page.getByRole('button', {
+      name: initialImmersiveLabels.exit,
+      exact: true
+    }).click();
+    await page.evaluate(() => {
+      window.sessionStorage.removeItem('easymde-e2e-hidden-png-source');
+    });
     await page.unroute(imageUploadMatcher);
 }

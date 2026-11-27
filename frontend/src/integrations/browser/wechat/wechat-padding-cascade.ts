@@ -1,10 +1,16 @@
 import { splitSelectorList } from "../../../shared/css/selector-list";
+import {
+	isCssLayerBlockRule,
+	isCssMediaRule,
+	isCssNestedDeclarationsRule,
+	isCssStyleRule,
+	isCssSupportsRule,
+	isSkippableNonSelectorRule,
+	isTransparentNestedGroupingRule,
+} from "./wechat-cssom-rule-guards";
 import type { WechatDimensionSemanticsContext } from "./wechat-dimension-semantics";
 import {
 	expandNestedSelectorList,
-	isCssRuleKind,
-	isSkippableNestedNonSelectorRule,
-	isTransparentNestedGroupingRule,
 	selectorHasScopeOrTopLevelNesting,
 	selectorMatchesSourceConservatively,
 	selectorUsesSiblingOrNegatedNesting,
@@ -218,33 +224,28 @@ function compileNestedPaddingGuards(
 ): boolean {
 	try {
 		for (const rule of Array.from(rules)) {
-			const isStyleRule =
-				(defaultView?.CSSStyleRule &&
-					rule instanceof defaultView.CSSStyleRule) ||
-				("undefined" !== typeof CSSStyleRule && rule instanceof CSSStyleRule);
-			if (isStyleRule) {
-				const styleRule = rule as CSSStyleRule;
+			if (isCssStyleRule(rule, defaultView)) {
 				const expanded = expandNestedSelectorList(
 					parentSelectorText,
-					styleRule.selectorText,
+					rule.selectorText,
 				);
 				if (!expanded) return true;
 				const childUnsafe =
 					ancestorUnsafe ||
-					selectorUsesSiblingOrNegatedNesting(styleRule.selectorText) ||
+					selectorUsesSiblingOrNegatedNesting(rule.selectorText) ||
 					selectorHasScopeOrTopLevelNesting(expanded, false);
 				const nextClosestSelectors = childUnsafe
 					? ancestorClosestSelectors
 					: [...ancestorClosestSelectors, expanded];
-				if (styleAffectsPadding(styleRule.style, property)) {
+				if (styleAffectsPadding(rule.style, property)) {
 					if (childUnsafe) return true;
 					outGuards.push({ closestSelectors: nextClosestSelectors });
 				}
 				if (
-					styleRule.cssRules &&
-					styleRule.cssRules.length > 0 &&
+					rule.cssRules &&
+					rule.cssRules.length > 0 &&
 					compileNestedPaddingGuards(
-						styleRule.cssRules,
+						rule.cssRules,
 						property,
 						defaultView,
 						expanded,
@@ -257,15 +258,8 @@ function compileNestedPaddingGuards(
 				}
 				continue;
 			}
-			if (
-				isCssRuleKind(
-					rule,
-					defaultView,
-					"CSSNestedDeclarations",
-					"[object CSSNestedDeclarations]",
-				)
-			) {
-				const style = (rule as CSSRule & { style?: CSSStyleDeclaration }).style;
+			if (isCssNestedDeclarationsRule(rule, defaultView)) {
+				const style = rule.style;
 				if (!style || "function" !== typeof style.getPropertyValue) return true;
 				if (styleAffectsPadding(style, property)) {
 					if (
@@ -299,7 +293,7 @@ function compileNestedPaddingGuards(
 				}
 				continue;
 			}
-			if (isSkippableNestedNonSelectorRule(rule, defaultView)) {
+			if (isSkippableNonSelectorRule(rule, defaultView)) {
 				continue;
 			}
 			// Fail closed on scope-rebinding or unrecognized nested rules
@@ -373,11 +367,7 @@ export function buildPaddingCascadeIndex(
 			const currentOrder = order;
 			order += 1;
 
-			if (
-				(defaultView?.CSSMediaRule &&
-					rule instanceof defaultView.CSSMediaRule) ||
-				rule instanceof CSSMediaRule
-			) {
+			if (isCssMediaRule(rule, defaultView)) {
 				const matches =
 					defaultView?.matchMedia(rule.conditionText).matches ?? true;
 				if (matches) {
@@ -385,23 +375,15 @@ export function buildPaddingCascadeIndex(
 				}
 				continue;
 			}
-			if (
-				(defaultView?.CSSSupportsRule &&
-					rule instanceof defaultView.CSSSupportsRule) ||
-				rule instanceof CSSSupportsRule
-			) {
+			if (isCssSupportsRule(rule, defaultView)) {
 				const supports = defaultView?.CSS?.supports(rule.conditionText) ?? true;
 				if (supports) {
 					walk(rule.cssRules, inLayer);
 				}
 				continue;
 			}
-			const isLayerRule =
-				(defaultView?.CSSLayerBlockRule &&
-					rule instanceof defaultView.CSSLayerBlockRule) ||
-				("name" in rule && "cssRules" in rule && !("conditionText" in rule));
-			if (isLayerRule) {
-				walk((rule as CSSGroupingRule).cssRules, true);
+			if (isCssLayerBlockRule(rule, defaultView)) {
+				walk(rule.cssRules, true);
 				continue;
 			}
 			const isConditionalGroupRule =
@@ -451,12 +433,8 @@ export function buildPaddingCascadeIndex(
 				}
 				continue;
 			}
-			const isStyleRule =
-				(defaultView?.CSSStyleRule &&
-					rule instanceof defaultView.CSSStyleRule) ||
-				rule instanceof CSSStyleRule;
-			if (!isStyleRule) {
-				if (isSkippableNestedNonSelectorRule(rule, defaultView)) {
+			if (!isCssStyleRule(rule, defaultView)) {
+				if (isSkippableNonSelectorRule(rule, defaultView)) {
 					continue;
 				}
 				if ("cssRules" in rule && (rule as { cssRules?: unknown }).cssRules) {

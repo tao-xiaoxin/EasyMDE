@@ -8,9 +8,12 @@ import {
 } from './wechat-clone-metadata';
 import { type CssDeclaration, splitCssDeclarations } from './wechat-css-list';
 import {
+  hasZeroRelativeOffset,
   headingAfterPseudoFlowFreshnessSignature,
   headingEmptyPseudoPaintColorIsVisible,
+  horizontalBarFitsContainingBlock,
   resolveAdjoiningAfterMargin,
+  resolveContainingBlockContentWidth,
   resolveHeadingLeftInFormattingParent,
   resolveProvenNaturalHeadingParent
 } from './wechat-heading-after-layout-analysis';
@@ -127,6 +130,7 @@ export function headingAfterEmptyPseudoFlowFor(
     !formattingParent ||
     'block' !== value(sourceComputed, 'display') ||
     'relative' !== value(sourceComputed, 'position') ||
+    !hasZeroRelativeOffset(sourceComputed, HEADING_EMPTY_PSEUDO_FLOW_EPSILON) ||
     'none' !== value(sourceComputed, 'float') ||
     'none' !== value(sourceComputed, 'transform') ||
     'visible' !== value(sourceComputed, 'overflow') ||
@@ -262,6 +266,21 @@ export function headingAfterEmptyPseudoFlowFor(
       adjoiningAfterMargin > desiredAfterBar ? desiredAfterBar - adjoiningAfterMargin : desiredAfterBar
     );
     marginLeft = cleanHeadingFlowPixel(headingLeftInParent + borderLeft + left);
+    const parentContentWidth = resolveContainingBlockContentWidth(
+      formattingParent.element,
+      formattingParent.computed
+    );
+    if (
+      !horizontalBarFitsContainingBlock(
+        formattingParent.direction,
+        parentContentWidth,
+        marginLeft,
+        width,
+        HEADING_EMPTY_PSEUDO_FLOW_EPSILON
+      )
+    ) {
+      return null;
+    }
     marginTop = gapBelowBorder;
     effectiveOpacity = cleanHeadingFlowPixel(sourceOpacity * pseudoOpacity);
   } else if (bottom >= -HEADING_EMPTY_PSEUDO_FLOW_EPSILON) {
@@ -270,6 +289,20 @@ export function headingAfterEmptyPseudoFlowFor(
     gapBelowBorder = 0;
     remainingMarginBottom = cleanHeadingFlowPixel(headingMarginBottom);
     marginLeft = cleanHeadingFlowPixel(left - paddingLeft);
+    const paddingRight = headingEmptyPseudoFinitePixel(sourceComputed, 'padding-right');
+    const headingContentWidth =
+      null === paddingRight ? null : rect.width - borderLeft - borderRight - paddingLeft - paddingRight;
+    if (
+      !horizontalBarFitsContainingBlock(
+        value(sourceComputed, 'direction'),
+        headingContentWidth,
+        marginLeft,
+        width,
+        HEADING_EMPTY_PSEUDO_FLOW_EPSILON
+      )
+    ) {
+      return null;
+    }
     marginTop = cleanHeadingFlowPixel(paddingBottom - effectiveBottom - height);
     effectiveOpacity = pseudoOpacity;
   } else {

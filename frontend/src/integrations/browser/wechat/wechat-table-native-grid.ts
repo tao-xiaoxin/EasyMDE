@@ -1,5 +1,15 @@
 import { splitSelectorList } from '../../../shared/css/selector-list';
 import type { BrowserWechatClipboardRuntime } from './wechat-clipboard-runtime';
+import { selectorHasPseudoBefore } from './wechat-css-selector-scanner';
+import {
+  isCssLayerBlockRule,
+  isCssMediaRule,
+  isCssNestedDeclarationsRule,
+  isCssStyleRule,
+  isCssSupportsRule,
+  isSkippableNonSelectorRule,
+  isTransparentNestedGroupingRule
+} from './wechat-cssom-rule-guards';
 import { supportsSpecialLayout } from './wechat-style-policy';
 
 const SUPPORTED_PSEUDO_WIDTH = '100cqi';
@@ -252,10 +262,6 @@ function matchingPseudoSelector(source: Element, selectorText: string): boolean 
   return matched;
 }
 
-function selectorHasPseudoBefore(selector: string): boolean {
-  return /::?before(?![a-z0-9_-])/iu.test(selector);
-}
-
 function selectorListHasPseudoBefore(selectorText: string): boolean | null {
   const selectors = splitSelectorList(selectorText);
   if (!selectors) return null;
@@ -270,53 +276,6 @@ function styleDeclaresWidthOrAll(style: CSSStyleDeclaration): boolean {
   return false;
 }
 
-function isRuleInstance(
-  rule: CSSRule,
-  defaultView: (Window & typeof globalThis) | null | undefined,
-  constructorName: string,
-  tagName: string
-): boolean {
-  const ctor =
-    defaultView && constructorName in defaultView
-      ? (defaultView as unknown as Record<string, unknown>)[constructorName]
-      : undefined;
-  return (
-    ('function' === typeof ctor && rule instanceof (ctor as new () => CSSRule)) ||
-    tagName === Object.prototype.toString.call(rule)
-  );
-}
-
-function isSkippableNonSelectorRule(
-  rule: CSSRule,
-  defaultView: (Window & typeof globalThis) | null | undefined
-): boolean {
-  if (
-    (defaultView?.CSSFontFaceRule && rule instanceof defaultView.CSSFontFaceRule) ||
-    (defaultView?.CSSRule && defaultView.CSSRule.FONT_FACE_RULE === rule.type)
-  ) {
-    return true;
-  }
-  if (
-    (defaultView?.CSSKeyframesRule && rule instanceof defaultView.CSSKeyframesRule) ||
-    (defaultView?.CSSRule && defaultView.CSSRule.KEYFRAMES_RULE === rule.type)
-  ) {
-    return true;
-  }
-  if (isRuleInstance(rule, defaultView, 'CSSViewTransitionRule', '[object CSSViewTransitionRule]')) {
-    return true;
-  }
-  return isRuleInstance(rule, defaultView, 'CSSLayerStatementRule', '[object CSSLayerStatementRule]');
-}
-
-function isGroupingRuleForNestedScan(
-  rule: CSSRule,
-  defaultView: (Window & typeof globalThis) | null | undefined
-): rule is CSSGroupingRule {
-  if (defaultView?.CSSMediaRule && rule instanceof defaultView.CSSMediaRule) return true;
-  if (defaultView?.CSSSupportsRule && rule instanceof defaultView.CSSSupportsRule) return true;
-  return isRuleInstance(rule, defaultView, 'CSSLayerBlockRule', '[object CSSLayerBlockRule]');
-}
-
 /**
  * Conservatively checks whether any rule nested inside a CSSStyleRule can
  * declare a width/inline-size/`all` rule on a `::before` pseudo-element.
@@ -329,27 +288,26 @@ function nestedSubtreeCouldAffectPseudoBeforeWidth(
 ): boolean {
   try {
     for (const rule of Array.from(rules)) {
-      if (defaultView?.CSSStyleRule && rule instanceof defaultView.CSSStyleRule) {
-        const styleRule = rule as CSSStyleRule;
-        const selfHasPseudoBefore = selectorListHasPseudoBefore(styleRule.selectorText);
+      if (isCssStyleRule(rule, defaultView)) {
+        const selfHasPseudoBefore = selectorListHasPseudoBefore(rule.selectorText);
         if (null === selfHasPseudoBefore) return true;
         const hasPseudoBefore = ancestorHasPseudoBefore || selfHasPseudoBefore;
-        if (hasPseudoBefore && styleDeclaresWidthOrAll(styleRule.style)) return true;
-        const nested = nestedRuleContainer(styleRule);
+        if (hasPseudoBefore && styleDeclaresWidthOrAll(rule.style)) return true;
+        const nested = nestedRuleContainer(rule);
         if (nested && nestedSubtreeCouldAffectPseudoBeforeWidth(nested, hasPseudoBefore, defaultView)) {
           return true;
         }
         continue;
       }
 
-      if (isRuleInstance(rule, defaultView, 'CSSNestedDeclarations', '[object CSSNestedDeclarations]')) {
-        const style = (rule as CSSRule & { style?: CSSStyleDeclaration }).style;
+      if (isCssNestedDeclarationsRule(rule, defaultView)) {
+        const style = rule.style;
         if (!style || 'function' !== typeof style.getPropertyValue) return true;
         if (ancestorHasPseudoBefore && styleDeclaresWidthOrAll(style)) return true;
         continue;
       }
 
-      if (isGroupingRuleForNestedScan(rule, defaultView)) {
+      if (isTransparentNestedGroupingRule(rule, defaultView)) {
         if (nestedSubtreeCouldAffectPseudoBeforeWidth(rule.cssRules, ancestorHasPseudoBefore, defaultView)) {
           return true;
         }
@@ -443,11 +401,10 @@ function readAuthorPseudoWidths(source: Element, runtime: BrowserWechatClipboard
   const visitRules = (rules: CSSRuleList, active: boolean): void => {
     for (const rule of Array.from(rules)) {
       const defaultView = runtime.document.defaultView;
-      if (defaultView?.CSSStyleRule && rule instanceof defaultView.CSSStyleRule) {
-        const styleRule = rule as CSSStyleRule;
-        const nested = nestedRuleContainer(styleRule);
+      if (isCssStyleRule(rule, defaultView)) {
+        const nested = nestedRuleContainer(rule);
         if (nested) {
-          const parentHasPseudoBefore = selectorListHasPseudoBefore(styleRule.selectorText);
+          const parentHasPseudoBefore = selectorListHasPseudoBefore(rule.selectorText);
           if (
             null === parentHasPseudoBefore ||
             nestedSubtreeCouldAffectPseudoBeforeWidth(nested, parentHasPseudoBefore, defaultView)
@@ -455,23 +412,23 @@ function readAuthorPseudoWidths(source: Element, runtime: BrowserWechatClipboard
             throw tableGridError('nested-rule-unreadable');
           }
         }
-        const widthRule = styleRulePseudoWidths(source, styleRule);
+        const widthRule = styleRulePseudoWidths(source, rule);
         if (widthRule) record(widthRule, active);
         continue;
       }
 
-      if (defaultView?.CSSMediaRule && rule instanceof defaultView.CSSMediaRule) {
-        visitRules(rule.cssRules, active && activeMediaRule(rule as CSSMediaRule, runtime));
+      if (isCssMediaRule(rule, defaultView)) {
+        visitRules(rule.cssRules, active && activeMediaRule(rule, runtime));
         continue;
       }
 
-      if (defaultView?.CSSSupportsRule && rule instanceof defaultView.CSSSupportsRule) {
-        visitRules(rule.cssRules, active && activeSupportsRule(rule as CSSSupportsRule, runtime));
+      if (isCssSupportsRule(rule, defaultView)) {
+        visitRules(rule.cssRules, active && activeSupportsRule(rule, runtime));
         continue;
       }
 
-      if (isRuleInstance(rule, defaultView, 'CSSLayerBlockRule', '[object CSSLayerBlockRule]')) {
-        visitRules((rule as CSSGroupingRule).cssRules, active);
+      if (isCssLayerBlockRule(rule, defaultView)) {
+        visitRules(rule.cssRules, active);
         continue;
       }
 

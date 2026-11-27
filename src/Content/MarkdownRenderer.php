@@ -270,7 +270,7 @@ final class MarkdownRenderer {
 	 * `&amp;#...;` encoded so `DOMDocument::loadHTML()` yields literal
 	 * `&#...;`. Applying a single pass only when WordPress preserves
 	 * `&amp;#...;` keeps image-scale parsing identical across WordPress
-	 * versions and `frontend/src/shared/image-scale-title.ts` without
+	 * versions and `frontend/src/features/image-scale/image-scale-contract.ts` without
 	 * double-decoding on WordPress 6.7.
 	 *
 	 * @param string    $title                   Decoded HTML `title` attribute value.

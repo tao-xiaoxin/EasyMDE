@@ -704,10 +704,12 @@ Accepted warnings and release-policy rationale are tracked in [Plugin Check Note
 
 ## Chromium E2E
 
-The Playwright suite is Chromium-only in the current configuration. CI runs
-the ordinary `chromium` project and the isolated `chromium-performance`
-project against the already-built release ZIP, not against a separately
-rebuilt package. The performance project disables Playwright trace and video
+The Playwright suite is Chromium-only in the current configuration. In CI, the
+6-shard parallel `e2e-shard` matrix (`scripts/e2e-shards.mjs`) runs the
+ordinary `chromium` project and the isolated `chromium-performance` project
+against the already-built release ZIP—not against a separately rebuilt
+package—and reports into the required `Playwright Chromium E2E` aggregator
+gate (`e2e`). The performance project disables Playwright trace and video
 because their DevTools DOM snapshots create browser tasks inside the measured
 interaction windows; failure screenshots and the privacy-safe performance
 JSON attachment remain available.

@@ -51,7 +51,9 @@ export default defineConfig({
     timeout: 15_000
   },
   retries: 0,
-  reporter: process.env.CI ? [['list'], ['junit', { outputFile: 'test-results/playwright-junit.xml' }]] : [['list']],
+  reporter: process.env.CI
+    ? [['list'], ['junit', { outputFile: process.env.EASYMDE_PLAYWRIGHT_JUNIT_FILE || 'test-results/playwright-junit.xml' }]]
+    : [['list']],
   use: {
     baseURL,
     trace: 'retain-on-failure',

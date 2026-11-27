@@ -1,11 +1,22 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";
+import {
+	canonicalMarkdownForPage,
+	fullCapabilityMarkdown,
+	login,
+	openEasyMdeNewPost,
+	registerEditorWorkflowHooks,
+	seedMarkdownAndWaitForPreview,
+	startWordPressSessionKeepalive,
+	waitForBrowserPaint,
+} from "./helpers/editor-e2e-helpers.mjs";
 import { selectOrdinaryOption } from "./helpers/ordinary-select.mjs";
 
 const reportRoot = resolve(process.cwd(), "test-results/theme-layout-audit");
 const auditPhase = process.env.EASYMDE_THEME_AUDIT_PHASE || "initial";
-const postUrl = "/wp-admin/post.php?post=5&action=edit";
+const captureScreenshots = process.env.EASYMDE_THEME_AUDIT_SCREENSHOTS === "1";
+const hasIsolatedWordPressCli = Boolean(process.env.EASYMDE_E2E_WP_PATH);
 const screenshotViewport = { width: 1440, height: 960 };
 const narrowViewport = { width: 760, height: 900 };
 const tolerance = 1.5;
@@ -77,20 +88,14 @@ const approvedSharedCodeFrameGeometry = {
 		wordBreak: "normal",
 	},
 };
-const fullCapabilityMarkdown = readFileSync(
-	new URL(
-		"../../docs/examples/markdown-full-capability-test.md",
-		import.meta.url,
-	),
-	"utf8",
-);
-const fullCapabilityImage = readFileSync(
-	new URL("../../docs/assets/easymde-logo-rounded.png", import.meta.url),
-);
 const expectedMermaidCount =
 	fullCapabilityMarkdown.match(/^```mermaid$/gmu)?.length ?? 0;
 if (expectedMermaidCount <= 0) {
 	throw new Error("full-capability-mermaid-fixture-empty");
+}
+
+if (hasIsolatedWordPressCli) {
+	registerEditorWorkflowHooks();
 }
 
 function requiredEnvironment(name) {
@@ -105,18 +110,6 @@ function requiredEnvironment(name) {
 
 function safeName(value) {
 	return value.replaceAll(/[^a-z0-9-]+/giu, "-").replaceAll(/^-+|-+$/gu, "");
-}
-
-async function login(page) {
-	await page.goto("/wp-login.php");
-	await page
-		.locator("#user_login")
-		.fill(requiredEnvironment("WORDPRESS_ADMIN_USER"));
-	await page
-		.locator("#user_pass")
-		.fill(requiredEnvironment("WORDPRESS_ADMIN_PASSWORD"));
-	await page.locator("#wp-submit").click();
-	await expect(page.locator("#wpadminbar")).toBeVisible();
 }
 
 async function waitForPreviewIdle(preview) {
@@ -904,13 +897,14 @@ function printCaseEvidence(root, { phycat }) {
 
 test("audits all registered article themes in ordinary, immersive split, and pure preview", async ({
 	page,
-}) => {
+}, testInfo) => {
 	test.setTimeout(60 * 60_000);
 	mkdirSync(reportRoot, { recursive: true });
 	const browserErrors = [];
 	const reportPath = resolve(reportRoot, `${auditPhase}-report.json`);
 	const report = {
 		phase: auditPhase,
+		screenshotsCaptured: captureScreenshots,
 		completed: false,
 		status: "running",
 		themes: [],
@@ -939,55 +933,43 @@ test("audits all registered article themes in ordinary, immersive split, and pur
 
 	try {
 		await page.setViewportSize(screenshotViewport);
-		await login(page);
-		await page.route(
-			"**/easymde-e2e-fixtures/markdown-full-capability-image.png",
-			(route) =>
-				route.fulfill({
-					status: 200,
-					contentType: "image/png",
-					body: fullCapabilityImage,
-				}),
-		);
-		const postResponse = await page.goto(postUrl);
-		if (!postResponse || !postResponse.ok()) {
-			throw new Error(
-				`theme-audit-post-unavailable:${postResponse?.status() ?? "no-response"}`,
-			);
+		const user = hasIsolatedWordPressCli
+			? testInfo.easymdeUser
+			: {
+					username: requiredEnvironment("WORDPRESS_ADMIN_USER"),
+					password: requiredEnvironment("WORDPRESS_ADMIN_PASSWORD"),
+				};
+		await login(page, user);
+		const sessionKeepalive = hasIsolatedWordPressCli
+			? startWordPressSessionKeepalive(page, user)
+			: null;
+		if (sessionKeepalive) {
+			testInfo.easymdeStopSessionKeepalive = sessionKeepalive.stop;
 		}
+		await openEasyMdeNewPost(page);
 		await expect(
 			page.locator('[data-easymde-editor-owner="react"]'),
 		).toBeVisible();
 		const preview = page.locator(".easymde-pane-preview article");
 		await waitForPreviewIdle(preview);
-		const fixtureImageUrl = new URL(
-			"/easymde-e2e-fixtures/markdown-full-capability-image.png",
-			page.url(),
-		).href;
-		const localCapabilityMarkdown = fullCapabilityMarkdown.replace(
-			/https:\/\/raw\.githubusercontent\.com\/tao-xiaoxin\/EasyMDE\/main\/docs\/assets\/easymde-logo-rounded\.png/g,
-			fixtureImageUrl,
-		);
-		await page
-			.locator(".easymde-source-react .cm-content")
-			.fill(localCapabilityMarkdown);
-		await expect(page.locator("#easymde-source")).toHaveValue(
-			localCapabilityMarkdown,
-		);
+		const localCapabilityMarkdown = await canonicalMarkdownForPage(page);
+		await seedMarkdownAndWaitForPreview(page, localCapabilityMarkdown);
 		await waitForFullCapabilityPreview(preview);
 		await expect
 			.poll(
 				() =>
 					preview
 						.locator("img")
-						.evaluateAll((images) =>
-							images.every(
-								(image) =>
-									image instanceof HTMLImageElement &&
-									image.complete &&
-									image.naturalWidth > 0 &&
-									image.naturalHeight > 0,
-							),
+						.evaluateAll(
+							(images) =>
+								images.length > 0 &&
+								images.every(
+									(image) =>
+										image instanceof HTMLImageElement &&
+										image.complete &&
+										image.naturalWidth > 0 &&
+										image.naturalHeight > 0,
+								),
 						),
 				{
 					message: "the local full-capability fixture images should load",
@@ -1016,12 +998,15 @@ test("audits all registered article themes in ordinary, immersive split, and pur
 		);
 		expect(adaptedThemes).toHaveLength(22);
 		expect(printThemes).toHaveLength(9);
+		const adaptedThemeIds = new Set(adaptedThemes.map(({ id }) => id));
+		const printThemeIds = new Set(printThemes.map(({ id }) => id));
 		const labels = bootstrap.strings.immersive;
 		report.themes = themes;
 		report.codeThemes = codeThemes;
 		report.setupBrowserErrors = consumeBrowserErrors();
 
 		for (const theme of themes) {
+			await sessionKeepalive?.assertHealthy();
 			for (const mode of ["ordinary", "split", "pure"]) {
 				await setMode(page, mode, labels);
 				if ("ordinary" === mode) {
@@ -1032,47 +1017,69 @@ test("audits all registered article themes in ordinary, immersive split, and pur
 					new RegExp(`easymde-markdown-theme-${theme.id}`),
 				);
 				const evidence = await preview.evaluate(caseEvidence, { mode });
-				const caseName = `${safeName(theme.id)}-${mode}`;
-				const diagramIndex = mode === "ordinary" ? 0 : 1;
-				await scrollToMermaid(page, mode, diagramIndex);
-				await page.screenshot({
-					path: resolve(reportRoot, `${auditPhase}-${caseName}.png`),
-					fullPage: false,
-				});
+				if (captureScreenshots) {
+					const caseName = `${safeName(theme.id)}-${mode}`;
+					const diagramIndex = mode === "ordinary" ? 0 : 1;
+					await scrollToMermaid(page, mode, diagramIndex);
+					await page.screenshot({
+						path: resolve(reportRoot, `${auditPhase}-${caseName}.png`),
+						fullPage: false,
+					});
+				}
 				report.cases.push({
 					theme: theme.id,
 					mode,
 					...evidence,
 					browserErrors: consumeBrowserErrors(),
 				});
+				if ("ordinary" === mode && printThemeIds.has(theme.id)) {
+					await page.emulateMedia({ media: "print" });
+					try {
+						const printEvidence = await preview.evaluate(printCaseEvidence, {
+							phycat: theme.id.startsWith("phycat-"),
+						});
+						report.printCases.push({
+							theme: theme.id,
+							...printEvidence,
+							browserErrors: consumeBrowserErrors(),
+						});
+					} finally {
+						await page.emulateMedia({ media: "screen" });
+					}
+				}
 			}
-		}
 
-		for (const theme of adaptedThemes) {
-			await page.setViewportSize(screenshotViewport);
-			await setMode(page, "ordinary", labels);
-			await chooseTheme(page, theme);
-			await page.setViewportSize(narrowViewport);
-			await setMode(page, "pure-narrow", labels);
-			await waitForFullCapabilityPreview(preview);
-			const evidence = await preview.evaluate(caseEvidence, {
-				mode: "pure-narrow",
-			});
-			await scrollToMermaid(page, "pure-narrow", 0);
-			await page.screenshot({
-				path: resolve(
-					reportRoot,
-					`${auditPhase}-${safeName(theme.id)}-pure-narrow.png`,
-				),
-				fullPage: false,
-			});
-			report.cases.push({
-				theme: theme.id,
-				mode: "pure-narrow",
-				...evidence,
-				browserErrors: consumeBrowserErrors(),
-			});
-			await page.setViewportSize(screenshotViewport);
+			if (adaptedThemeIds.has(theme.id)) {
+				await page.setViewportSize(narrowViewport);
+				try {
+					await waitForBrowserPaint(page);
+					await waitForFullCapabilityPreview(preview);
+					await expect(preview).toHaveClass(
+						new RegExp(`easymde-markdown-theme-${theme.id}`),
+					);
+					const narrowEvidence = await preview.evaluate(caseEvidence, {
+						mode: "pure-narrow",
+					});
+					if (captureScreenshots) {
+						await scrollToMermaid(page, "pure-narrow", 0);
+						await page.screenshot({
+							path: resolve(
+								reportRoot,
+								`${auditPhase}-${safeName(theme.id)}-pure-narrow.png`,
+							),
+							fullPage: false,
+						});
+					}
+					report.cases.push({
+						theme: theme.id,
+						mode: "pure-narrow",
+						...narrowEvidence,
+						browserErrors: consumeBrowserErrors(),
+					});
+				} finally {
+					await page.setViewportSize(screenshotViewport);
+				}
+			}
 		}
 
 		await setMode(page, "ordinary", labels);
@@ -1080,8 +1087,10 @@ test("audits all registered article themes in ordinary, immersive split, and pur
 		if (!defaultTheme)
 			throw new Error("audit-default-article-theme-unavailable");
 		await chooseTheme(page, defaultTheme);
+		await waitForFullCapabilityPreview(preview);
 		let sharedCodeGeometry = null;
 		for (const theme of codeThemes) {
+			await sessionKeepalive?.assertHealthy();
 			await chooseCodeTheme(page, theme);
 			const evidence = await preview.evaluate(codeCaseEvidence, {
 				approvedGeometry: approvedSharedCodeFrameGeometry,
@@ -1099,14 +1108,16 @@ test("audits all registered article themes in ordinary, immersive split, and pur
 					geometry: { expected: sharedCodeGeometry, actual: evidence.geometry },
 				});
 			}
-			await scrollToCodeBlock(page);
-			await page.screenshot({
-				path: resolve(
-					reportRoot,
-					`${auditPhase}-code-${safeName(theme.id)}.png`,
-				),
-				fullPage: false,
-			});
+			if (captureScreenshots) {
+				await scrollToCodeBlock(page);
+				await page.screenshot({
+					path: resolve(
+						reportRoot,
+						`${auditPhase}-code-${safeName(theme.id)}.png`,
+					),
+					fullPage: false,
+				});
+			}
 			report.codeCases.push({
 				theme: theme.id,
 				...evidence,
@@ -1114,19 +1125,7 @@ test("audits all registered article themes in ordinary, immersive split, and pur
 			});
 		}
 
-		for (const theme of printThemes) {
-			await chooseTheme(page, theme);
-			await page.emulateMedia({ media: "print" });
-			const evidence = await preview.evaluate(printCaseEvidence, {
-				phycat: theme.id.startsWith("phycat-"),
-			});
-			report.printCases.push({
-				theme: theme.id,
-				...evidence,
-				browserErrors: consumeBrowserErrors(),
-			});
-			await page.emulateMedia({ media: "screen" });
-		}
+		await sessionKeepalive?.assertHealthy();
 		expect(report.cases).toHaveLength(themes.length * 3 + adaptedThemes.length);
 		expect(report.codeCases).toHaveLength(codeThemes.length);
 		expect(report.printCases).toHaveLength(printThemes.length);

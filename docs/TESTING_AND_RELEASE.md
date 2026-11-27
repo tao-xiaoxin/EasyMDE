@@ -1086,7 +1086,10 @@ focused standalone specs under `tests/e2e/`:
   - `tests/e2e/ordinary/publishing-revisions-and-export.spec.mjs`: immersive
     publishing, excerpts, autosaves, native revisions, local preview
     enhancements/WeChat export, and the integrated published full-capability
-    Gantt intrinsic local-scroll width regression;
+    Gantt intrinsic local-scroll width regression. Only this Gantt scenario
+    accepts cancellation of the editor's exact math-atlas fetch or routed fixture
+    image GET issued during the native publish redirect, after verifying the main
+    frame reached the published post. Other failures remain errors;
   - `tests/e2e/ordinary/performance-budgets.spec.mjs`: near-threshold
     edit-phase Long Task budget and unified ProseMirror large-document
     `@performance` suites.

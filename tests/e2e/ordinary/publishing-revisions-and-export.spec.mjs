@@ -34,7 +34,7 @@ import {
   triggerNativeAutosave
 } from '../helpers/editor-e2e-helpers.mjs';
 import { selectOrdinaryOption } from '../helpers/ordinary-select.mjs';
-import { attachPrivacySafeBrowserMonitor } from '../helpers/privacy-safe-browser-monitor.mjs';
+import { attachPrivacySafeBrowserMonitor, createPublishAssetHandoff } from '../helpers/privacy-safe-browser-monitor.mjs';
 
 const fullCapabilityFixtureEvidence = {
   sha256: createHash('sha256').update(fullCapabilityMarkdown, 'utf8').digest('hex'),
@@ -1044,9 +1044,11 @@ JSON text: {"path":"C:\\Temp\\file","quote":"\"value\""}
 
   test('renders the published full-capability Gantt at its intrinsic local-scroll width', async ({ page }, testInfo) => {
     test.setTimeout(120_000);
+    const publishAssetHandoff = createPublishAssetHandoff(page, testInfo.project.use.baseURL);
     const browserMonitor = attachPrivacySafeBrowserMonitor(page, {
       baseURL: testInfo.project.use.baseURL,
-      allowedNavigationCategories: ['wp-login', 'wp-admin', 'same-origin']
+      allowedNavigationCategories: ['wp-login', 'wp-admin', 'same-origin'],
+      publishAssetHandoff
     });
     const originalImageUrl = 'https://raw.githubusercontent.com/tao-xiaoxin/EasyMDE/main/docs/assets/easymde-logo-rounded.png';
     const imageRequestUrls = [];
@@ -1095,12 +1097,18 @@ JSON text: {"path":"C:\\Temp\\file","quote":"\"value\""}
         name: labels.openAfterPublish
       });
       if (!await openAfterPublish.isChecked()) await openAfterPublish.click();
+      const atlasUrl = await page.evaluate(
+        () => window.EasyMDEEditorRootBootstrap.wechatExport.wechatMathAtlasUrl
+      );
+      // The exact image route was installed above and stays installed until teardown.
+      publishAssetHandoff.arm(atlasUrl, originalImageUrl);
       const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
       await publishDialog.getByRole('button', { name: labels.publish, exact: true }).click();
       await navigation;
       await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
       const permalink = postPermalink(postId);
       expect(page.url()).toBe(permalink);
+      publishAssetHandoff.confirm(permalink);
 
       // Inspect the published post in a fresh tab within the same authenticated
       // context: in Chromium headless_shell, WordPress 7.1+'s aborted admin
@@ -1773,6 +1781,10 @@ JSON text: {"path":"C:\\Temp\\file","quote":"\"value\""}
     } finally {
       await page.unroute(originalImageUrl);
     }
+    await testInfo.attach('published-gantt-editor-browser-events.json', {
+      body: JSON.stringify(browserMonitor.snapshot().counts),
+      contentType: 'application/json'
+    });
     browserMonitor.assertClean();
     } finally {
       browserMonitor.dispose();

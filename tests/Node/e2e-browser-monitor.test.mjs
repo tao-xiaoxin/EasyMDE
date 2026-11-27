@@ -5,6 +5,7 @@ import {
   attachPrivacySafeBrowserMonitor,
   classifyBrowserUrlCategory,
   classifyReadonlyPostRequest,
+  createPublishAssetHandoff,
   safeBrowserFailureClass
 } from '../e2e/helpers/privacy-safe-browser-monitor.mjs';
 
@@ -2172,4 +2173,92 @@ test('preview REST POST requires a valid JSON object body with a string markdown
     }, { baseURL: BASE_URL }),
     { category: 'preview-rest', classification: 'preview-readonly' }
   );
+});
+
+test('only exact atlas and fixture requests cancelled during a committed native publish redirect is expected', () => {
+  const atlasUrl = `${BASE_URL}/wp-content/plugins/easymde/assets/math/easymde-katex-glyph-atlas.json?contentversion=0123456789abcdef`;
+  const fixtureImage = 'https://fixture.example/logo.png';
+  const permalink = `${BASE_URL}/synthetic-published-post/`;
+  const scenarios = [
+    { name: 'controlled atlas cancellation', expected: 1 },
+    { name: 'controlled locally fulfilled fixture cancellation', fixture: true, expected: 1 },
+    { name: 'unrelated external image', fixture: true, url: 'https://fixture.example/unrelated.png' },
+    { name: 'fixture connection failure', fixture: true, errorText: 'net::ERR_CONNECTION_RESET' },
+    { name: 'fixture before redirect', fixture: true, startBeforeRedirect: true },
+    { name: 'fixture after navigation', fixture: true, startAfterNavigation: true },
+    { name: 'fixture without a committed destination', fixture: true, uncommitted: true },
+    { name: 'fixture HTTP failure', fixture: true, status: 503, expected: 1 },
+    { name: 'editor URL changes at submit in the same frame', sourceUrlChanges: true, expected: 1 },
+    { name: 'different plugin resource', url: `${BASE_URL}/wp-content/plugins/easymde/assets/other.json` },
+    { name: 'different atlas version', url: atlasUrl.replace('0123456789abcdef', '0123456789abcdee') },
+    { name: 'connection failure', errorText: 'net::ERR_CONNECTION_RESET' },
+    { name: 'wrong method', method: 'POST' },
+    { name: 'wrong resource type', resourceType: 'xhr' },
+    { name: 'before redirect', startBeforeRedirect: true },
+    { name: 'after navigation', startAfterNavigation: true },
+    { name: 'wrong frame', subframe: true },
+    { name: 'unrelated navigation', unrelated: true },
+    { name: 'replacement navigation before commit', interrupted: true },
+    { name: 'uncommitted navigation', uncommitted: true },
+    { name: 'wrong destination', wrongDestination: true }
+  ];
+  for (const scenario of scenarios) {
+    const page = createStubPage();
+    const frame = page.mainFrame();
+    const publishAssetHandoff = createPublishAssetHandoff(page, BASE_URL);
+    const monitor = attachPrivacySafeBrowserMonitor(page, {
+      baseURL: BASE_URL,
+      allowedNavigationCategories: ['wp-admin', 'same-origin'],
+      publishAssetHandoff
+    });
+    publishAssetHandoff.arm(atlasUrl, fixtureImage);
+    const submit = {
+      ...stubRequest({ url: `${BASE_URL}/wp-admin/post.php`, resourceType: 'document' }),
+      frame: () => frame,
+      isNavigationRequest: () => true
+    };
+    const destination = {
+      ...stubRequest({ url: permalink, method: 'GET', resourceType: 'document' }),
+      redirectedFrom: () => scenario.unrelated ? null : submit,
+      frame: () => frame,
+      isNavigationRequest: () => true
+    };
+    const atlas = {
+      ...stubRequest({
+        url: scenario.url ?? (scenario.fixture ? fixtureImage : atlasUrl),
+        method: scenario.method ?? 'GET',
+        resourceType: scenario.resourceType ?? (scenario.fixture ? 'image' : 'fetch'),
+        errorText: scenario.errorText ?? 'net::ERR_ABORTED'
+      }),
+      frame: () => scenario.subframe ? {} : frame,
+      isNavigationRequest: () => false
+    };
+    if (scenario.sourceUrlChanges) page.navigateMainFrame(`${BASE_URL}/wp-admin/post-new.php#synthetic-state`);
+    page.emit('request', submit);
+    if (scenario.startBeforeRedirect) page.emit('request', atlas);
+    page.emit('request', destination);
+    if (!scenario.startBeforeRedirect && !scenario.startAfterNavigation) page.emit('request', atlas);
+    if (scenario.startAfterNavigation) {
+      page.navigateMainFrame(permalink);
+      page.emit('request', atlas);
+    }
+    if (scenario.status) page.emit('response', { status: () => scenario.status, url: atlas.url, request: () => atlas });
+    page.emit('requestfailed', atlas);
+    if (scenario.interrupted) page.emit('request', { ...destination, redirectedFrom: () => null });
+    if (!scenario.startAfterNavigation && !scenario.uncommitted) page.navigateMainFrame(permalink);
+    publishAssetHandoff.confirm(scenario.wrongDestination ? `${BASE_URL}/different-post/` : permalink);
+    const result = monitor.snapshot();
+    assert.equal(result.counts.cancelledPublishAtlas, scenario.fixture ? 0 : scenario.expected ?? 0, scenario.name);
+    assert.equal(result.counts.cancelledPublishFixtureImage, scenario.fixture ? scenario.expected ?? 0 : 0, scenario.name);
+    if (scenario.status) {
+      assert.throws(() => monitor.assertClean(), /http-503:external:image/, scenario.name);
+    } else if (scenario.expected) {
+      monitor.assertClean();
+    } else {
+      assert.equal(result.counts.requestFailures, 1, scenario.name);
+      assert.throws(() => monitor.assertClean(), /request-failed:/, scenario.name);
+    }
+    monitor.dispose();
+    assert.equal(page.listenerCount('request'), 0);
+  }
 });

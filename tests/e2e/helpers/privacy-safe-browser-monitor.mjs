@@ -638,9 +638,101 @@ function resolveAllowedNavigationCategories(allowedNavigationCategories) {
   return new Set(source.filter((category) => VALID_URL_CATEGORIES.has(category)));
 }
 
+// Opt-in for the Gantt test only. Match requests on the exact native publish
+// redirect chain, then settle at the already-verified public permalink.
+export function createPublishAssetHandoff(page, baseURL) {
+  const base = resolveBaseContext(baseURL);
+  const submitUrl = `${base.baseOrigin}${base.basePath}/wp-admin/post.php`;
+  const candidates = new WeakMap();
+  const deferred = [];
+  let assets;
+  let navigation;
+  let destination;
+  let confirmed;
+  let committed = false;
+  let interrupted = false;
+
+  const onRequest = (request) => {
+    if (committed || interrupted) return;
+    try {
+      // Frame.url() may change at submit before the request is delivered.
+      if (request.frame() !== page.mainFrame()) return;
+      const url = request.url();
+      const method = request.method();
+      const resource = request.resourceType();
+      if (request.isNavigationRequest() && resource === 'document') {
+        if (!navigation && method === 'POST' && url === submitUrl) {
+          navigation = request;
+        } else if (navigation && method === 'GET' && request.redirectedFrom() === navigation
+          && classifyBrowserUrlCategory(url, base) === 'same-origin') {
+          navigation = request;
+          destination = url;
+        } else {
+          interrupted = true;
+        }
+      } else if (destination && method === 'GET') {
+        const asset = assets.find((entry) => entry.url === url && entry.resource === resource);
+        if (asset) candidates.set(request, asset.counter);
+      }
+    } catch {
+      // No identifiable frame means the request cannot qualify.
+    }
+  };
+  const onCommit = (frame) => {
+    if (frame === page.mainFrame() && frame.url() === destination) committed = true;
+  };
+  return {
+    arm(atlasUrl, fixtureImageUrl) {
+      let atlas;
+      let image;
+      try {
+        atlas = new URL(atlasUrl);
+        image = new URL(fixtureImageUrl);
+      } catch {
+        throw new Error('invalid-publish-asset-handoff');
+      }
+      if (!base.baseOrigin || assets || classifyBrowserUrlCategory(page.mainFrame().url(), base) !== 'wp-admin'
+        || classifyBrowserUrlCategory(atlasUrl, base) !== 'plugin-asset'
+        || !atlas.pathname.endsWith('/assets/math/easymde-katex-glyph-atlas.json')
+        || !/^\?contentversion=[a-f0-9]{16}$/u.test(atlas.search)
+        || atlas.username || atlas.password || atlas.hash
+        || classifyBrowserUrlCategory(fixtureImageUrl, base) !== 'external'
+        || image.protocol !== 'https:' || image.username || image.password || image.hash) {
+        throw new Error('invalid-publish-asset-handoff');
+      }
+      assets = [
+        { url: atlasUrl, resource: 'fetch', counter: 'cancelledPublishAtlas' },
+        { url: fixtureImageUrl, resource: 'image', counter: 'cancelledPublishFixtureImage' }
+      ];
+      page.on('request', onRequest);
+      page.on('framenavigated', onCommit);
+    },
+    confirm(permalink) { confirmed = permalink; },
+    deferAbort(request, summary) {
+      const counter = candidates.get(request);
+      if (!counter) return false;
+      candidates.delete(request);
+      deferred.push({ counter, summary });
+      return true;
+    },
+    settle(counts, recordFailure) {
+      const expected = !interrupted && committed && destination === confirmed;
+      for (const { counter, summary } of deferred.splice(0)) {
+        if (expected) counts[counter] += 1;
+        else recordFailure(summary);
+      }
+    },
+    dispose() {
+      if (!assets) return;
+      page.off('request', onRequest);
+      page.off('framenavigated', onCommit);
+    }
+  };
+}
+
 export function attachPrivacySafeBrowserMonitor(
   page,
-  { baseURL, allowedNavigationCategories, allowExpectedFailure } = {}
+  { baseURL, allowedNavigationCategories, allowExpectedFailure, publishAssetHandoff } = {}
 ) {
   const baseContext = resolveBaseContext(baseURL);
   const allowedNavigations = resolveAllowedNavigationCategories(allowedNavigationCategories);
@@ -659,6 +751,10 @@ export function attachPrivacySafeBrowserMonitor(
     requestFailures: 0,
     unexpectedNavigations: 0
   };
+  if (publishAssetHandoff) {
+    counts.cancelledPublishAtlas = 0;
+    counts.cancelledPublishFixtureImage = 0;
+  }
   const isExpectedFailure = (entry) => {
     if ('function' !== typeof allowExpectedFailure) return false;
     try {
@@ -756,6 +852,11 @@ export function attachPrivacySafeBrowserMonitor(
     counts.unexpectedNavigations += 1;
     record(`navigation:${category}`);
   };
+  const recordRequestFailure = (summary) => {
+    counts.requestFailures += 1;
+    if (requestFailureSummaries.length < 128) requestFailureSummaries.push(summary);
+    record(`request-failed:${summary.failureClass}:${summary.category}:${summary.resourceType}`);
+  };
   const onRequestFailed = (request) => {
     let category = classifyBrowserUrlCategory(request.url(), baseContext);
     const failureClass = safeBrowserFailureClass(request.failure()?.errorText);
@@ -783,19 +884,12 @@ export function attachPrivacySafeBrowserMonitor(
       counts.abortedAdminAjax += 1;
       return;
     }
-    const summary = {
-      category,
-      resourceType,
-      failureClass
-    };
+    const summary = { category, resourceType, failureClass };
+    if (failureClass === 'aborted' && publishAssetHandoff?.deferAbort(request, summary)) return;
     if (!baseContext.invalidBase && 'external' === category && isExpectedFailure({ type: 'requestfailed', ...summary })) {
       return;
     }
-    counts.requestFailures += 1;
-    if (requestFailureSummaries.length < 128) {
-      requestFailureSummaries.push(summary);
-    }
-    record(`request-failed:${failureClass}:${category}:${resourceType}`);
+    recordRequestFailure(summary);
   };
   const onResponse = (response) => {
     const status = response.status();
@@ -831,6 +925,7 @@ export function attachPrivacySafeBrowserMonitor(
     counts,
     failures,
     snapshot() {
+      publishAssetHandoff?.settle(counts, recordRequestFailure);
       return {
         counts: { ...counts },
         failures: [...failures],
@@ -839,6 +934,7 @@ export function attachPrivacySafeBrowserMonitor(
       };
     },
     assertClean() {
+      publishAssetHandoff?.settle(counts, recordRequestFailure);
       assert.deepEqual(
         failures,
         [],
@@ -853,6 +949,7 @@ export function attachPrivacySafeBrowserMonitor(
       page.off('dialog', onDialog);
       page.off('popup', onPopup);
       page.off('framenavigated', onFrameNavigated);
+      publishAssetHandoff?.dispose();
       page.off('requestfailed', onRequestFailed);
       page.off('response', onResponse);
     }

@@ -253,7 +253,8 @@ test.describe('Editor context menu production surfaces', () => {
     await login(page);
     await openNewPost(page);
     const { markdown, preview, source, sourceEditor } = await loadCanonicalFixture(page);
-    const root = await page.locator('#easymde-editor-root').elementHandle();
+    const liveRootSelector = '#easymde-editor-root:has(> [data-easymde-editor-owner="react"])';
+    const root = await page.locator(liveRootSelector).elementHandle();
     let nativeSource;
     try {
       nativeSource = await source.elementHandle();
@@ -272,7 +273,7 @@ test.describe('Editor context menu production surfaces', () => {
       await page.getByRole('button', { name: long.strings.exit, exact: true }).click();
       await expect(page.locator('.easymde-editor.is-immersive')).toHaveCount(0);
       await assertSourceExactValue(source, longMarkdown, 'long-visual-actions-complete');
-      expect(await root.evaluate((element) => element === document.querySelector('#easymde-editor-root'))).toBe(true);
+      expect(await root.evaluate((element, selector) => element === document.querySelector(selector), liveRootSelector)).toBe(true);
       expect(await nativeSource.evaluate((element) => element === document.querySelector('#easymde-source'))).toBe(true);
     } finally {
       await Promise.all([root?.dispose(), nativeSource?.dispose()]);

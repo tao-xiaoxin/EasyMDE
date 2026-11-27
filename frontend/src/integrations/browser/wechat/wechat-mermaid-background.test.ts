@@ -2462,5 +2462,109 @@ describe('wechat-mermaid-background', () => {
         vertical: 40,
       });
     });
+
+    it('keeps outer corners transparent for opaque rounded cards when preserveRoundedOuterCorners is set while preserving blocked-image and transparent-card inheritance', () => {
+      const article = document.createElement('article');
+      article.className = 'easymde-rendered-content';
+      const card = document.createElement('div');
+      card.className = 'easymde-mermaid';
+      article.append(card);
+      document.body.append(article);
+
+      const opaqueRoundedReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            card,
+            {
+              'background-color': 'rgb(252, 244, 247)',
+              'background-image': 'none',
+              'border-radius': '10px',
+              opacity: '1',
+            },
+          ],
+          [
+            article,
+            {
+              'background-color': 'rgb(255, 255, 255)',
+              'background-image': 'none',
+              opacity: '1',
+            },
+          ],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(card, opaqueRoundedReader, {
+          directSvgCapture: false,
+          preserveRoundedOuterCorners: true,
+        }),
+      ).toBeNull();
+      expect(
+        resolveMermaidInheritedBackground(card, opaqueRoundedReader, {
+          directSvgCapture: false,
+        }),
+      ).toEqual({
+        color: 'rgb(255, 255, 255)',
+      });
+
+      const blockedRoundedReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            card,
+            {
+              'background-color': 'rgba(0, 0, 0, 0)',
+              'background-image': 'url("https://example.test/bg.png")',
+              'border-radius': '10px',
+              opacity: '1',
+            },
+          ],
+          [
+            article,
+            {
+              'background-color': 'rgb(255, 255, 255)',
+              'background-image': 'linear-gradient(rgb(1, 2, 3), rgb(4, 5, 6))',
+              opacity: '1',
+            },
+          ],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(card, blockedRoundedReader, {
+          directSvgCapture: false,
+          preserveRoundedOuterCorners: true,
+        }),
+      ).toEqual({
+        color: 'rgb(255, 255, 255)',
+      });
+
+      const transparentRoundedReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            card,
+            {
+              'background-color': 'rgba(0, 0, 0, 0)',
+              'background-image': 'none',
+              'border-radius': '10px',
+              opacity: '1',
+            },
+          ],
+          [
+            article,
+            {
+              'background-color': 'rgb(20, 24, 32)',
+              'background-image': 'none',
+              opacity: '1',
+            },
+          ],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(card, transparentRoundedReader, {
+          directSvgCapture: false,
+          preserveRoundedOuterCorners: true,
+        }),
+      ).toEqual({
+        color: 'rgb(20, 24, 32)',
+      });
+    });
   });
 });

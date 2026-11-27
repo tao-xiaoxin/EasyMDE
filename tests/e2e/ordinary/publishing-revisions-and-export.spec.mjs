@@ -1098,6 +1098,7 @@ JSON text: {"path":"C:\\Temp\\file","quote":"\"value\""}
       const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
       await publishDialog.getByRole('button', { name: labels.publish, exact: true }).click();
       await navigation;
+      await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
       const permalink = postPermalink(postId);
       expect(page.url()).toBe(permalink);
 
@@ -1108,6 +1109,7 @@ JSON text: {"path":"C:\\Temp\\file","quote":"\"value\""}
       ]) {
         await page.setViewportSize(viewport);
         await page.goto(permalink, { waitUntil: 'load' });
+        await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
         const article = page.locator('.easymde-rendered-content').first();
         await expect(article).toBeVisible();
         await expect.poll(() => article.evaluate((root) => {
@@ -1481,14 +1483,23 @@ JSON text: {"path":"C:\\Temp\\file","quote":"\"value\""}
         ))).toBe(true);
 
         const screenshotPrefix = testInfo.outputPath(`public-gantt-${viewport.width}`);
-        await gantt.screenshot({ path: `${screenshotPrefix}-left.png` });
+        await gantt.scrollIntoViewIfNeeded();
+        await gantt.screenshot({
+          animations: 'disabled',
+          path: `${screenshotPrefix}-left.png`,
+          timeout: 15_000
+        });
         await gantt.evaluate((owner) => {
           owner.scrollLeft = Number.MAX_SAFE_INTEGER;
         });
         if (viewport.width <= 375) {
           await expect.poll(() => gantt.evaluate((owner) => owner.scrollLeft)).toBeGreaterThan(1);
         }
-        await gantt.screenshot({ path: `${screenshotPrefix}-right.png` });
+        await gantt.screenshot({
+          animations: 'disabled',
+          path: `${screenshotPrefix}-right.png`,
+          timeout: 15_000
+        });
         viewportEvidence.push({ geometry, imageEvidence, ownerSummary, viewport });
       }
 

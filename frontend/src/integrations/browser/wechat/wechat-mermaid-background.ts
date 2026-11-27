@@ -39,6 +39,13 @@ export type ResolveMermaidBackgroundOptions = Readonly<{
    */
   directSvgCapture?: boolean;
   /**
+   * When true for non-direct (`<foreignObject>`) captures embedded inside an
+   * exported WeChat article that already retains the article background, an
+   * opaque rounded Mermaid card keeps transparent outer corners instead of
+   * painting an ancestor canvas backdrop behind its `border-radius` arc.
+   */
+  preserveRoundedOuterCorners?: boolean;
+  /**
    * Optional article/preview content boundary where retained exported HTML
    * wrappers stop and outer preview chrome begins.
    */
@@ -637,7 +644,11 @@ export function resolveMermaidInheritedBackground(
     'backgroundColor',
   );
   const sourceHasRadius = hasNonZeroBorderRadius(sourceStyle, source);
-  if (isOpaqueBackgroundColor(sourceColor) && !sourceHasRadius && sourceOpacity >= 1) {
+  if (
+    isOpaqueBackgroundColor(sourceColor)
+    && (!sourceHasRadius || options.preserveRoundedOuterCorners)
+    && sourceOpacity >= 1
+  ) {
     return null;
   }
 

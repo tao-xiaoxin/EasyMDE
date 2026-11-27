@@ -1,5 +1,15 @@
 import { splitSelectorList } from "../../../shared/css/selector-list";
 import type { WechatDimensionSemanticsContext } from "./wechat-dimension-semantics";
+import {
+	expandNestedSelectorList,
+	isCssRuleKind,
+	isSkippableNestedNonSelectorRule,
+	isTransparentNestedGroupingRule,
+	selectorHasScopeOrTopLevelNesting,
+	selectorMatchesSourceConservatively,
+	selectorUsesSiblingOrNegatedNesting,
+	sourceOrAncestorMatchesConservatively,
+} from "./wechat-padding-selector-guards";
 
 export const SEMANTIC_PADDING_PROPERTIES = [
 	"padding-left",
@@ -28,8 +38,14 @@ export type PaddingCascadeRuleEntry = Readonly<{
 	selectors: readonly CompiledPaddingSelector[];
 }>;
 
+export type CompiledNestedPaddingGuard = Readonly<{
+	closestSelectors: readonly string[];
+	matchesSelector?: string;
+}>;
+
 export type PaddingCascadeIndex = Readonly<{
 	entries: readonly PaddingCascadeRuleEntry[];
+	nestedGuards: readonly CompiledNestedPaddingGuard[];
 	unreadableStyleSheet: boolean;
 }>;
 
@@ -191,36 +207,128 @@ function styleHasImportantPadding(
 	return false;
 }
 
-function subtreeAffectsPadding(
+function compileNestedPaddingGuards(
 	rules: CSSRuleList,
 	property: SemanticPaddingProperty,
+	defaultView: (Window & typeof globalThis) | null | undefined,
+	parentSelectorText: string,
+	ancestorClosestSelectors: readonly string[],
+	ancestorUnsafe: boolean,
+	outGuards: CompiledNestedPaddingGuard[],
 ): boolean {
 	try {
 		for (const rule of Array.from(rules)) {
-			if (
-				"style" in rule &&
-				rule.style &&
-				typeof (rule.style as CSSStyleDeclaration).getPropertyValue ===
-					"function"
-			) {
-				if (styleAffectsPadding(rule.style as CSSStyleDeclaration, property)) {
-					return true;
+			const isStyleRule =
+				(defaultView?.CSSStyleRule &&
+					rule instanceof defaultView.CSSStyleRule) ||
+				("undefined" !== typeof CSSStyleRule && rule instanceof CSSStyleRule);
+			if (isStyleRule) {
+				const styleRule = rule as CSSStyleRule;
+				const expanded = expandNestedSelectorList(
+					parentSelectorText,
+					styleRule.selectorText,
+				);
+				if (!expanded) return true;
+				const childUnsafe =
+					ancestorUnsafe ||
+					selectorUsesSiblingOrNegatedNesting(styleRule.selectorText) ||
+					selectorHasScopeOrTopLevelNesting(expanded, false);
+				const nextClosestSelectors = childUnsafe
+					? ancestorClosestSelectors
+					: [...ancestorClosestSelectors, expanded];
+				if (styleAffectsPadding(styleRule.style, property)) {
+					if (childUnsafe) return true;
+					outGuards.push({ closestSelectors: nextClosestSelectors });
 				}
-			}
-			if (
-				"cssRules" in rule &&
-				(rule as { cssRules?: CSSRuleList }).cssRules
-			) {
-				const childRules = (rule as { cssRules: CSSRuleList }).cssRules;
 				if (
-					childRules.length > 0 &&
-					subtreeAffectsPadding(childRules, property)
+					styleRule.cssRules &&
+					styleRule.cssRules.length > 0 &&
+					compileNestedPaddingGuards(
+						styleRule.cssRules,
+						property,
+						defaultView,
+						expanded,
+						nextClosestSelectors,
+						childUnsafe,
+						outGuards,
+					)
 				) {
 					return true;
 				}
+				continue;
 			}
+			if (
+				isCssRuleKind(
+					rule,
+					defaultView,
+					"CSSNestedDeclarations",
+					"[object CSSNestedDeclarations]",
+				)
+			) {
+				const style = (rule as CSSRule & { style?: CSSStyleDeclaration }).style;
+				if (!style || "function" !== typeof style.getPropertyValue) return true;
+				if (styleAffectsPadding(style, property)) {
+					if (
+						ancestorUnsafe ||
+						selectorHasScopeOrTopLevelNesting(parentSelectorText, false)
+					) {
+						return true;
+					}
+					outGuards.push({
+						closestSelectors: ancestorClosestSelectors,
+						matchesSelector: parentSelectorText,
+					});
+				}
+				continue;
+			}
+			if (isTransparentNestedGroupingRule(rule, defaultView)) {
+				const childRules = rule.cssRules;
+				if (
+					childRules.length > 0 &&
+					compileNestedPaddingGuards(
+						childRules,
+						property,
+						defaultView,
+						parentSelectorText,
+						ancestorClosestSelectors,
+						ancestorUnsafe,
+						outGuards,
+					)
+				) {
+					return true;
+				}
+				continue;
+			}
+			if (isSkippableNestedNonSelectorRule(rule, defaultView)) {
+				continue;
+			}
+			// Fail closed on scope-rebinding or unrecognized nested rules
+			// (e.g. CSSScopeRule `@scope`, CSSContainerRule, CSSStartingStyleRule).
+			return true;
 		}
 	} catch {
+		return true;
+	}
+	return false;
+}
+
+function nestedPaddingGuardMatchesSource(
+	source: Element,
+	guard: CompiledNestedPaddingGuard,
+): boolean {
+	for (let index = 0; index < guard.closestSelectors.length; index += 1) {
+		const selector = guard.closestSelectors[index];
+		if (
+			selector &&
+			sourceOrAncestorMatchesConservatively(source, selector, 0 === index)
+		) {
+			return true;
+		}
+	}
+	if (
+		guard.matchesSelector &&
+		selectorMatchesSourceConservatively(source, guard.matchesSelector)
+	) {
 		return true;
 	}
 	return false;
@@ -255,6 +363,7 @@ export function buildPaddingCascadeIndex(
 	const tokenPattern = `var(${tokenName})`;
 	const defaultView = document.defaultView;
 	const entries: PaddingCascadeRuleEntry[] = [];
+	const nestedGuards: CompiledNestedPaddingGuard[] = [];
 	let order = 0;
 	let unreadableStyleSheet = false;
 
@@ -347,6 +456,9 @@ export function buildPaddingCascadeIndex(
 					rule instanceof defaultView.CSSStyleRule) ||
 				rule instanceof CSSStyleRule;
 			if (!isStyleRule) {
+				if (isSkippableNestedNonSelectorRule(rule, defaultView)) {
+					continue;
+				}
 				if ("cssRules" in rule && (rule as { cssRules?: unknown }).cssRules) {
 					unreadableStyleSheet = true;
 					return;
@@ -365,20 +477,34 @@ export function buildPaddingCascadeIndex(
 			}
 
 			const styleRule = rule as CSSStyleRule;
+			const selectors = splitSelectorList(styleRule.selectorText);
+			if (
+				!selectors ||
+				selectors.some((selector) =>
+					selectorHasScopeOrTopLevelNesting(selector, true),
+				)
+			) {
+				unreadableStyleSheet = true;
+				return;
+			}
 			if (styleRule.cssRules && styleRule.cssRules.length > 0) {
-				if (subtreeAffectsPadding(styleRule.cssRules, property)) {
+				if (
+					compileNestedPaddingGuards(
+						styleRule.cssRules,
+						property,
+						defaultView,
+						styleRule.selectorText,
+						[styleRule.selectorText],
+						false,
+						nestedGuards,
+					)
+				) {
 					unreadableStyleSheet = true;
 					return;
 				}
 			}
 			if (!styleAffectsPadding(styleRule.style, property)) {
 				continue;
-			}
-
-			const selectors = splitSelectorList(styleRule.selectorText);
-			if (!selectors) {
-				unreadableStyleSheet = true;
-				return;
 			}
 			const compiledSelectors: CompiledPaddingSelector[] = selectors.map(
 				(selector) => ({
@@ -416,9 +542,9 @@ export function buildPaddingCascadeIndex(
 	}
 
 	if (unreadableStyleSheet) {
-		return { entries: [], unreadableStyleSheet: true };
+		return { entries: [], nestedGuards: [], unreadableStyleSheet: true };
 	}
-	return { entries, unreadableStyleSheet: false };
+	return { entries, nestedGuards, unreadableStyleSheet: false };
 }
 
 function getPaddingCascadeIndex(
@@ -501,7 +627,12 @@ export function evaluatePortablePaddingTransportDecision(
 		property,
 		dimensionSemantics,
 	);
-	if (index.unreadableStyleSheet) {
+	if (
+		index.unreadableStyleSheet ||
+		index.nestedGuards.some((guard) =>
+			nestedPaddingGuardMatchesSource(source, guard),
+		)
+	) {
 		return {
 			signature: `state=effective;reason=stylesheet-unreadable;token=${token};effective=${effective}`,
 			value: null,

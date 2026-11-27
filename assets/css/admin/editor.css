@@ -2568,7 +2568,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
     background: #fff;
 }
 
-.easymde-editor:not(.is-immersive) .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
+#easymde-editor-root .easymde-editor:not(.is-immersive) .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
     width: 100%;
     max-width: none;
     min-height: 100%;
@@ -2589,7 +2589,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
     background: #fff;
 }
 
-.easymde-editor[data-easymde-preview-presentation="split"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
+#easymde-editor-root .easymde-editor[data-easymde-preview-presentation="split"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
     width: 100%;
     max-width: none;
     min-height: 100%;
@@ -2610,7 +2610,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
     background: #f6f6f8;
 }
 
-.easymde-editor[data-easymde-preview-presentation="preview"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
+#easymde-editor-root .easymde-editor[data-easymde-preview-presentation="preview"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
     display: block;
     box-sizing: border-box;
     flex: 0 0 auto;
@@ -2756,7 +2756,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
         max-height: 58vh;
     }
 
-    .easymde-editor[data-easymde-preview-presentation="preview"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
+    #easymde-editor-root .easymde-editor[data-easymde-preview-presentation="preview"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
         height: auto !important;
         min-height: 680px;
         max-height: none;
@@ -2956,7 +2956,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
    19. Immersive Mode Responsive Breakpoints
    -------------------------------------------------------------------------- */
 @media (max-width: 760px) {
-    .easymde-editor[data-easymde-preview-presentation="preview"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
+    #easymde-editor-root .easymde-editor[data-easymde-preview-presentation="preview"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
         min-height: 520px;
     }
 

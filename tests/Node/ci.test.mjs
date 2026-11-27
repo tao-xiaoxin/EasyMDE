@@ -1,15 +1,27 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
+  SEMANTIC_SHARD_DEFINITIONS,
   THEME_APPEARANCE_SPEC,
   THEME_MATRIX_B_GREP,
+  WECHAT_COPY_SPEC,
+  WECHAT_COPY_THEME_FIDELITY_GREP,
+  WECHAT_COPY_THEME_FIDELITY_TITLES,
+  aggregateShardSummariesFromDir,
+  buildMatrixEntries,
   buildShardInvocations,
+  buildShardSummary,
   discoverE2ESpecFiles,
+  formatConsolidatedStepSummaryMarkdown,
+  formatShardStepSummaryMarkdown,
   parseCliArgs,
-  planE2EShards
+  parseJUnitXml,
+  planE2EShards,
+  planSemanticE2EShards
 } from '../../scripts/e2e-shards.mjs';
 
 const repoRoot = new URL('../..', import.meta.url).pathname;
@@ -70,6 +82,18 @@ test('GitHub Actions checkouts do not persist repository credentials', () => {
   });
 });
 
+test('Composer-backed CI jobs cache Composer downloads keyed by composer.lock', () => {
+  const workflow = readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
+  for (const jobName of ['composer', 'wpcs', 'phpunit', 'wordpress-i18n', 'release']) {
+    const job = workflowJobBlock(workflow, jobName);
+    assert.match(
+      job,
+      /uses:\s+actions\/cache@v4[\s\S]*path:\s+~\/\.cache\/composer[\s\S]*key:\s+composer-\$\{\{ runner\.os \}\}-\$\{\{ hashFiles\('composer\.lock'\) \}\}/,
+      `${jobName} job should cache Composer packages keyed by composer.lock.`
+    );
+  }
+});
+
 test('Plugin Check and E2E validate the release job ZIP artifact', () => {
   const workflow = readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
   const releaseJob = workflowJobBlock(workflow, 'release');
@@ -103,29 +127,53 @@ test('E2E uses packaged Composer dependencies without reinstalling the checkout'
   assert.doesNotMatch(e2eShardJob, /composer install/);
 });
 
-test('E2E shards Chromium execution across 6 jobs behind the Playwright Chromium E2E gate', () => {
+test('E2E shards Chromium execution across semantic module shards behind the Playwright Chromium E2E gate', () => {
   const workflow = readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
+  const releaseJob = workflowJobBlock(workflow, 'release');
   const e2eShardJob = workflowJobBlock(workflow, 'e2e-shard');
   const e2eGateJob = workflowJobBlock(workflow, 'e2e');
   const config = readFileSync(join(repoRoot, 'playwright.config.mjs'), 'utf8');
 
-  assert.match(e2eShardJob, /name:\s+Playwright Chromium E2E \(\$\{\{ matrix\.shard \}\}\/6\)/);
-  assert.match(e2eShardJob, /strategy:\s*\n\s+fail-fast:\s*false\s*\n\s+matrix:\s*\n\s+shard:\s*\[1,\s*2,\s*3,\s*4,\s*5,\s*6\]/);
+  assert.match(releaseJob, /outputs:\s*\n\s+e2e-matrix:\s*\$\{\{ steps\.e2e-matrix\.outputs\.matrix \}\}/);
+  assert.match(
+    releaseJob,
+    /id:\s+e2e-matrix[\s\S]*node scripts\/e2e-shards\.mjs --plan --summary-file "\$GITHUB_STEP_SUMMARY"[\s\S]*node scripts\/e2e-shards\.mjs --matrix/
+  );
+
+  assert.match(e2eShardJob, /name:\s+Playwright Chromium \(\$\{\{ matrix\.label \}\}\) \(\$\{\{ matrix\.shard \}\}\/\$\{\{ matrix\.total \}\}\)/);
   assert.match(
     e2eShardJob,
-    /uses:\s+actions\/cache@v4[\s\S]*path:\s+~\/\.cache\/ms-playwright[\s\S]*key:\s+playwright-chromium-\$\{\{ runner\.os \}\}-\$\{\{ hashFiles\('package-lock\.json'\) \}\}/
+    /strategy:\s*\n\s+fail-fast:\s*false\s*\n\s+matrix:\s*\n\s+include:\s*\$\{\{ fromJson\(needs\.release\.outputs\.e2e-matrix\) \}\}/
   );
-  assert.match(e2eShardJob, /run:\s+npx playwright install --with-deps chromium/);
-  assert.match(e2eShardJob, /run:\s+node scripts\/e2e-shards\.mjs --shard \$\{\{ matrix\.shard \}\} --total 6/);
+  assert.match(
+    e2eShardJob,
+    /id:\s+playwright-cache\s*\n\s+uses:\s+actions\/cache@v4[\s\S]*path:\s+~\/\.cache\/ms-playwright[\s\S]*key:\s+playwright-chromium-\$\{\{ runner\.os \}\}-\$\{\{ hashFiles\('package-lock\.json'\) \}\}/
+  );
+  assert.match(
+    e2eShardJob,
+    /if:\s+steps\.playwright-cache\.outputs\.cache-hit == 'true'\s*\n\s+run:\s+npx playwright install-deps chromium/
+  );
+  assert.match(
+    e2eShardJob,
+    /if:\s+steps\.playwright-cache\.outputs\.cache-hit != 'true'\s*\n\s+run:\s+npx playwright install --with-deps chromium/
+  );
+  assert.match(e2eShardJob, /PHP_CLI_SERVER_WORKERS=4 php -d memory_limit=512M "\$\(command -v wp\)" server/);
+  assert.match(e2eShardJob, /run:\s+node scripts\/e2e-shards\.mjs --shard-id "\$\{\{ matrix\.id \}\}"/);
   assert.doesNotMatch(e2eShardJob, /tests\/e2e\/[^\s]+\.spec\.mjs/);
   assert.match(
     e2eShardJob,
-    /name:\s+playwright-failure-artifacts-shard-\$\{\{ matrix\.shard \}\}[\s\S]*test-results\/playwright\n\s+test-results\/playwright-junit\*\.xml\n\s+\/tmp\/easymde-wp-server\.log/
+    /if:\s+always\(\)\s*\n\s+uses:\s+actions\/upload-artifact@v4[\s\S]*name:\s+e2e-shard-summary-\$\{\{ matrix\.id \}\}[\s\S]*path:\s+test-results\/e2e-shard-summary-\$\{\{ matrix\.id \}\}\.json/
+  );
+  assert.match(
+    e2eShardJob,
+    /name:\s+playwright-failure-artifacts-\$\{\{ matrix\.id \}\}[\s\S]*test-results\/playwright\n\s+test-results\/playwright-junit\*\.xml\n\s+\/tmp\/easymde-wp-server\.log/
   );
 
   assert.match(e2eGateJob, /^\s+name:\s+Playwright Chromium E2E$/m);
-  assert.match(e2eGateJob, /^\s+needs:\s+e2e-shard$/m);
+  assert.match(e2eGateJob, /^\s+needs:\s+\[release,\s*e2e-shard\]$/m);
   assert.match(e2eGateJob, /^\s+if:\s+always\(\)$/m);
+  assert.match(e2eGateJob, /pattern:\s+e2e-shard-summary-\*[\s\S]*path:\s+test-results\/shard-summaries/);
+  assert.match(e2eGateJob, /run:\s+node scripts\/e2e-shards\.mjs --aggregate-summaries test-results\/shard-summaries/);
   assert.match(e2eGateJob, /run:\s+test "\$\{\{ needs\.e2e-shard\.result \}\}" = "success"/);
 
   assert.match(config, /testDir:\s*['"]\.\/tests\/e2e['"]/);
@@ -158,27 +206,41 @@ test('Playwright fails fast and retains evidence from the failing attempt', () =
   );
 });
 
-test('E2E shard planner covers every discovered spec without duplicates and splits theme matrix across disjoint shards', () => {
+test('Semantic E2E shard planner covers all 26 discovered specs with zero omissions, zero duplicates, and complementary splits', () => {
   const specFiles = discoverE2ESpecFiles(join(repoRoot, 'tests/e2e'));
 
-  assert.ok(specFiles.length >= 19, `Expected at least 19 E2E spec files, found ${specFiles.length}.`);
+  assert.equal(specFiles.length, 26, `Expected 26 E2E spec files, found ${specFiles.length}.`);
   assert.ok(specFiles.includes(THEME_APPEARANCE_SPEC));
+  assert.ok(specFiles.includes(WECHAT_COPY_SPEC));
   assert.deepEqual(specFiles, [...specFiles].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
   for (const spec of specFiles) {
     assert.match(spec, /^tests\/e2e\/.*\.spec\.mjs$/);
   }
 
-  const shards = planE2EShards(specFiles, 6);
-  assert.equal(shards.length, 6);
+  const shards = planSemanticE2EShards(specFiles);
+  assert.equal(shards.length, 9);
+  assert.deepEqual(
+    shards.map((shard) => shard.id),
+    SEMANTIC_SHARD_DEFINITIONS.map((definition) => definition.id)
+  );
 
   const normalSpecCounts = new Map();
   const themeUnits = [];
+  const wechatCopyUnits = [];
 
-  for (const shard of shards) {
-    assert.ok(shard.units.length > 0, `Shard ${shard.shard} should not be empty.`);
+  for (let index = 0; index < shards.length; index += 1) {
+    const shard = shards[index];
+    assert.equal(shard.shard, index + 1);
+    assert.equal(shard.total, 9);
+    assert.equal(shard.totalShards, 9);
+    assert.ok(shard.label.length > 0);
+    assert.ok(shard.units.length > 0, `Shard ${shard.id} should not be empty.`);
+
     for (const unit of shard.units) {
       if (unit.files.includes(THEME_APPEARANCE_SPEC)) {
-        themeUnits.push({ shard: shard.shard, unit });
+        themeUnits.push({ shardId: shard.id, shard: shard.shard, unit });
+      } else if (unit.files.includes(WECHAT_COPY_SPEC)) {
+        wechatCopyUnits.push({ shardId: shard.id, shard: shard.shard, unit });
       } else {
         for (const file of unit.files) {
           normalSpecCounts.set(file, (normalSpecCounts.get(file) || 0) + 1);
@@ -188,13 +250,14 @@ test('E2E shard planner covers every discovered spec without duplicates and spli
 
     const invocations = buildShardInvocations(shard);
     const junitFiles = invocations.map((invocation) => invocation.env.EASYMDE_PLAYWRIGHT_JUNIT_FILE);
-    assert.equal(new Set(junitFiles).size, junitFiles.length, `Shard ${shard.shard} JUnit paths must be unique.`);
+    assert.equal(new Set(junitFiles).size, junitFiles.length, `Shard ${shard.id} JUnit paths must be unique.`);
     for (const invocation of invocations) {
       assert.match(
         invocation.env.EASYMDE_PLAYWRIGHT_JUNIT_FILE,
-        new RegExp(`^test-results/playwright-junit-shard-${shard.shard}-\\d+\\.xml$`)
+        new RegExp(`^test-results/playwright-junit-shard-${shard.id}-\\d+\\.xml$`)
       );
-      if (invocation.env.EASYMDE_E2E_SUITE) {
+      const isFilteredOrSuite = Boolean(invocation.env.EASYMDE_E2E_SUITE || invocation.grep || invocation.grepInvert);
+      if (isFilteredOrSuite) {
         assert.ok(invocation.args.includes('--project=chromium'));
         assert.ok(!invocation.args.includes('--project=chromium-performance'));
       } else {
@@ -204,7 +267,9 @@ test('E2E shard planner covers every discovered spec without duplicates and spli
     }
   }
 
-  const expectedNormalSpecs = specFiles.filter((file) => file !== THEME_APPEARANCE_SPEC);
+  const expectedNormalSpecs = specFiles.filter(
+    (file) => file !== THEME_APPEARANCE_SPEC && file !== WECHAT_COPY_SPEC
+  );
   assert.deepEqual(
     [...normalSpecCounts.keys()].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
     expectedNormalSpecs
@@ -216,73 +281,150 @@ test('E2E shard planner covers every discovered spec without duplicates and spli
   assert.equal(themeUnits.length, 2, 'themes-and-appearance.spec.mjs should split into two matrix units.');
   const matrixA = themeUnits.find(({ unit }) => unit.env.EASYMDE_E2E_SUITE === 'theme_matrix_a');
   const matrixB = themeUnits.find(({ unit }) => unit.env.EASYMDE_E2E_SUITE === 'theme_matrix_b');
-  assert.ok(matrixA, 'Missing theme_matrix_a unit.');
-  assert.ok(matrixB, 'Missing theme_matrix_b unit.');
-  assert.notEqual(matrixA.shard, matrixB.shard, 'theme_matrix_a and theme_matrix_b must run on distinct shards.');
+  assert.equal(matrixA?.shardId, 'themes-a-and-inkwell');
+  assert.equal(matrixB?.shardId, 'themes-b-and-writing');
   assert.equal(matrixA.unit.grep, null);
   assert.equal(matrixB.unit.grep, THEME_MATRIX_B_GREP);
 
-  const weights = shards.map((shard) => shard.totalWeightSeconds);
-  const maxWeight = Math.max(...weights);
-  const minWeight = Math.min(...weights);
-  assert.ok(maxWeight <= 750, `Expected max shard weight <= 750s on main, got ${maxWeight}s.`);
-  assert.ok(maxWeight - minWeight <= 100, `Expected balanced shard spread <= 100s on main, got ${maxWeight - minWeight}s.`);
+  assert.equal(wechatCopyUnits.length, 2, 'wechat-copy.spec.mjs should split into two complementary units.');
+  const fidelityUnit = wechatCopyUnits.find(({ shardId }) => shardId === 'wechat-copy-theme-fidelity');
+  const modesUnit = wechatCopyUnits.find(({ shardId }) => shardId === 'wechat-copy-modes-mermaid-and-tasks');
+  assert.ok(fidelityUnit, 'Missing wechat-copy-theme-fidelity unit.');
+  assert.ok(modesUnit, 'Missing wechat-copy-modes-mermaid-and-tasks unit.');
+  assert.equal(fidelityUnit.unit.grep, WECHAT_COPY_THEME_FIDELITY_GREP);
+  assert.equal(fidelityUnit.unit.grepInvert, null);
+  assert.equal(modesUnit.unit.grep, null);
+  assert.equal(modesUnit.unit.grepInvert, WECHAT_COPY_THEME_FIDELITY_GREP);
+
+  const fidelityInvocations = buildShardInvocations(shards.find((s) => s.id === 'wechat-copy-theme-fidelity'));
+  assert.equal(fidelityInvocations.length, 1);
+  assert.ok(fidelityInvocations[0].args.includes('--grep'));
+  assert.ok(!fidelityInvocations[0].args.includes('--grep-invert'));
+
+  const modesInvocations = buildShardInvocations(shards.find((s) => s.id === 'wechat-copy-modes-mermaid-and-tasks'));
+  assert.equal(modesInvocations.length, 2);
+  assert.ok(modesInvocations[0].args.includes('--project=chromium-performance'));
+  assert.ok(modesInvocations[1].args.includes('--grep-invert'));
+
+  // Mathematically verify complementary WeChat copy test partition (6 + 17 = 23).
+  const wechatCopySource = readFileSync(join(repoRoot, WECHAT_COPY_SPEC), 'utf8');
+  const testTitles = [...wechatCopySource.matchAll(/\btest\(\s*(['"`])([^'"`]+)\1\s*,/g)].map((m) => m[2]);
+  assert.equal(testTitles.length, 23, `Expected 23 tests in wechat-copy.spec.mjs, found ${testTitles.length}.`);
+  const fidelityRegex = new RegExp(WECHAT_COPY_THEME_FIDELITY_GREP);
+  const matchedTitles = testTitles.filter((title) => fidelityRegex.test(title));
+  const invertedTitles = testTitles.filter((title) => !fidelityRegex.test(title));
+  assert.equal(matchedTitles.length, 6, 'Theme fidelity grep must match exactly 6 tests.');
+  assert.equal(invertedTitles.length, 17, 'Complementary grep-invert must match the exact remaining 17 tests.');
+  assert.deepEqual(matchedTitles, [...WECHAT_COPY_THEME_FIDELITY_TITLES]);
+  assert.ok(
+    invertedTitles.includes('rejects private pixel evidence symlink escapes before outside creation'),
+    'Top-level private pixel evidence test must run in the complementary modes/mermaid/tasks shard.'
+  );
+
+  const matrix = buildMatrixEntries(shards);
+  assert.equal(matrix.length, 9);
+  for (let index = 0; index < matrix.length; index += 1) {
+    assert.equal(matrix[index].shard, index + 1);
+    assert.equal(matrix[index].total, 9);
+    assert.equal(matrix[index].id, shards[index].id);
+    assert.equal(matrix[index].label, shards[index].label);
+    assert.ok(matrix[index].specsSummary.length > 0);
+  }
 });
 
-test('E2E shard planner keeps heavy specs on distinct shards for a 25-spec suite with wechat-copy', () => {
+test('Semantic E2E shard planner routes future domain and unmatched specs without drops or duplicates and supports subsets and single-shard mode', () => {
   const baseSpecs = discoverE2ESpecFiles(join(repoRoot, 'tests/e2e'));
-  const expandedSpecs = [
-    ...baseSpecs,
-    'tests/e2e/wechat-copy.spec.mjs',
-    'tests/e2e/extra-feature-a.spec.mjs',
-    'tests/e2e/extra-feature-b.spec.mjs',
-    'tests/e2e/extra-feature-c.spec.mjs',
-    'tests/e2e/extra-feature-d.spec.mjs',
-    'tests/e2e/extra-feature-e.spec.mjs'
+  const futureSpecs = [
+    'tests/e2e/settings-center/future-settings-tab.spec.mjs',
+    'tests/e2e/ordinary/future-ordinary-workflow.spec.mjs',
+    'tests/e2e/context-menu/future-menu-command.spec.mjs',
+    'tests/e2e/visual/future-visual-block.spec.mjs',
+    'tests/e2e/wechat-future-export.spec.mjs',
+    'tests/e2e/unmatched-standalone-feature.spec.mjs'
   ];
+  const expandedSpecs = [...baseSpecs, ...futureSpecs];
 
-  const shards = planE2EShards(expandedSpecs, 6);
-  const unitShardById = new Map();
+  const shards = planSemanticE2EShards(expandedSpecs);
+  assert.equal(shards.length, 9);
+
+  const shardIdByUnitId = new Map();
   for (const shard of shards) {
     for (const unit of shard.units) {
-      assert.ok(!unitShardById.has(unit.id), `Duplicate execution unit ${unit.id}.`);
-      unitShardById.set(unit.id, shard.shard);
+      assert.ok(!shardIdByUnitId.has(unit.id), `Duplicate execution unit ${unit.id}.`);
+      shardIdByUnitId.set(unit.id, shard.id);
     }
   }
 
-  assert.equal(unitShardById.size, expandedSpecs.length + 1);
+  // +2 units because themes-and-appearance and wechat-copy each split into 2 units.
+  assert.equal(shardIdByUnitId.size, expandedSpecs.length + 2);
+  assert.equal(shardIdByUnitId.get('tests/e2e/settings-center/future-settings-tab.spec.mjs'), 'settings-center');
+  assert.equal(shardIdByUnitId.get('tests/e2e/ordinary/future-ordinary-workflow.spec.mjs'), 'ordinary-editor-and-publishing');
+  assert.equal(shardIdByUnitId.get('tests/e2e/context-menu/future-menu-command.spec.mjs'), 'context-menu-source-and-media');
+  assert.equal(shardIdByUnitId.get('tests/e2e/visual/future-visual-block.spec.mjs'), 'visual-editor-and-visual-menu');
+  assert.equal(shardIdByUnitId.get('tests/e2e/wechat-future-export.spec.mjs'), 'wechat-copy-modes-mermaid-and-tasks');
+  assert.ok(
+    shardIdByUnitId.has('tests/e2e/unmatched-standalone-feature.spec.mjs'),
+    'Unmatched future top-level spec must be assigned to the lightest active shard instead of dropped.'
+  );
 
-  const heaviestUnits = [
-    'tests/e2e/wechat-copy.spec.mjs',
-    `${THEME_APPEARANCE_SPEC}#theme_matrix_a`,
-    'tests/e2e/theme-layout-audit.spec.mjs',
-    `${THEME_APPEARANCE_SPEC}#theme_matrix_b`,
-    'tests/e2e/settings-center/first-paint-and-resilience.spec.mjs',
-    'tests/e2e/ordinary/publishing-revisions-and-export.spec.mjs'
-  ];
-  const heaviestShardSet = new Set(heaviestUnits.map((id) => unitShardById.get(id)));
-  assert.equal(heaviestShardSet.size, heaviestUnits.length, 'Top 6 heavy units must land on 6 distinct shards.');
+  // Subset planning filters out 0-unit shards and re-indexes 1..N.
+  const subsetShards = planSemanticE2EShards([
+    'tests/e2e/inkwell.spec.mjs',
+    'tests/e2e/settings-center/layout-and-sections.spec.mjs'
+  ]);
+  assert.equal(subsetShards.length, 2);
+  assert.deepEqual(
+    subsetShards.map((s) => ({ id: s.id, shard: s.shard, total: s.total })),
+    [
+      { id: 'themes-a-and-inkwell', shard: 1, total: 2 },
+      { id: 'settings-center', shard: 2, total: 2 }
+    ]
+  );
 
-  const maxWeight = Math.max(...shards.map((shard) => shard.totalWeightSeconds));
-  assert.ok(maxWeight <= 950, `Expected balanced 25-spec max shard weight <= 950s, got ${maxWeight}s.`);
-
+  // Single-shard mode does not split themes-and-appearance or wechat-copy.
   const singleShard = planE2EShards(expandedSpecs, 1);
   assert.equal(singleShard.length, 1);
   assert.equal(singleShard[0].units.length, expandedSpecs.length);
   assert.ok(
-    singleShard[0].units.every((unit) => !unit.env.EASYMDE_E2E_SUITE),
-    'Single-shard mode must not split themes-and-appearance into matrix suites.'
+    singleShard[0].units.every((unit) => !unit.env.EASYMDE_E2E_SUITE && !unit.grep && !unit.grepInvert),
+    'Single-shard mode must not split themes-and-appearance or wechat-copy.'
   );
 });
 
-test('E2E shard CLI validates arguments strictly and prints a deterministic plan', () => {
-  assert.deepEqual(parseCliArgs(['--shard', '2', '--total', '6']), { mode: 'run', shard: 2, total: 6 });
-  assert.deepEqual(parseCliArgs(['--plan', '--total', '6']), { mode: 'plan', total: 6 });
+test('E2E shard CLI validates arguments strictly and supports --plan, --matrix, --shard-id, --shard, and --aggregate-summaries', () => {
+  assert.deepEqual(parseCliArgs(['--plan']), { mode: 'plan', total: null, summaryFile: null });
+  assert.deepEqual(parseCliArgs(['--plan', '--total', '6']), { mode: 'plan', total: 6, summaryFile: null });
+  assert.deepEqual(parseCliArgs(['--plan', '--summary-file', 'plan-summary.md']), {
+    mode: 'plan',
+    total: null,
+    summaryFile: 'plan-summary.md'
+  });
+  assert.deepEqual(parseCliArgs(['--matrix']), { mode: 'matrix' });
+  assert.deepEqual(parseCliArgs(['--shard-id', 'settings-center']), {
+    mode: 'run-id',
+    shardId: 'settings-center',
+    summaryFile: null
+  });
+  assert.deepEqual(parseCliArgs(['--shard', '4']), {
+    mode: 'run-index',
+    shard: 4,
+    total: null,
+    summaryFile: null
+  });
+  assert.deepEqual(parseCliArgs(['--shard', '2', '--total', '6']), {
+    mode: 'run-index',
+    shard: 2,
+    total: 6,
+    summaryFile: null
+  });
+  assert.deepEqual(parseCliArgs(['--aggregate-summaries', 'test-results/shard-summaries']), {
+    mode: 'aggregate',
+    aggregateDir: 'test-results/shard-summaries',
+    summaryFile: null
+  });
 
   const invalidArgLists = [
     [],
-    ['--shard', '1'],
-    ['--plan'],
     ['--total', '6'],
     ['--shard', '0', '--total', '6'],
     ['--shard', '7', '--total', '6'],
@@ -290,9 +432,13 @@ test('E2E shard CLI validates arguments strictly and prints a deterministic plan
     ['--shard', '1.5', '--total', '6'],
     ['--shard', '1abc', '--total', '6'],
     ['--shard', '1', '--total', '0'],
-    ['--plan', '--shard', '1', '--total', '6'],
-    ['--unknown', '--total', '6'],
-    ['--shard', '1', '--shard', '2', '--total', '6'],
+    ['--plan', '--shard', '1'],
+    ['--plan', '--matrix'],
+    ['--matrix', '--total', '9'],
+    ['--shard-id', 'INVALID_ID'],
+    ['--shard-id', 'settings-center', '--total', '9'],
+    ['--unknown', '--plan'],
+    ['--shard', '1', '--shard', '2'],
     ['--total', '6', '--total', '6', '--plan']
   ];
 
@@ -300,40 +446,174 @@ test('E2E shard CLI validates arguments strictly and prints a deterministic plan
     assert.throws(() => parseCliArgs(args), `Expected invalid args to fail: ${args.join(' ')}`);
   }
 
-  const planRun = spawnSync(process.execPath, [join(repoRoot, 'scripts/e2e-shards.mjs'), '--plan', '--total', '6'], {
+  const planRun = spawnSync(process.execPath, [join(repoRoot, 'scripts/e2e-shards.mjs'), '--plan'], {
     encoding: 'utf8'
   });
   assert.equal(planRun.status, 0, planRun.stderr);
-  assert.match(planRun.stdout, /Shard 1\/6/);
-  assert.match(planRun.stdout, /Shard 6\/6/);
+  assert.match(planRun.stdout, /Shard 1\/9 — Themes A & Inkwell E2E \[themes-a-and-inkwell\]/);
+  assert.match(planRun.stdout, /Shard 4\/9 — Settings Center E2E \[settings-center\]/);
+  assert.match(planRun.stdout, /Shard 9\/9 — WeChat Copy: Modes, Mermaid PNG & Tasks E2E \[wechat-copy-modes-mermaid-and-tasks\]/);
   assert.match(planRun.stdout, /EASYMDE_E2E_SUITE=theme_matrix_a/);
   assert.match(planRun.stdout, /EASYMDE_E2E_SUITE=theme_matrix_b/);
+  assert.match(planRun.stdout, /grep-invert=/);
 
-  const badRun = spawnSync(process.execPath, [join(repoRoot, 'scripts/e2e-shards.mjs'), '--shard', '7', '--total', '6'], {
+  const matrixRun = spawnSync(process.execPath, [join(repoRoot, 'scripts/e2e-shards.mjs'), '--matrix'], {
     encoding: 'utf8'
   });
-  assert.equal(badRun.status, 1);
-  assert.match(badRun.stderr, /must be less than or equal to --total/);
+  assert.equal(matrixRun.status, 0, matrixRun.stderr);
+  const parsedMatrix = JSON.parse(matrixRun.stdout.trim());
+  assert.equal(Array.isArray(parsedMatrix), true);
+  assert.equal(parsedMatrix.length, 9);
+  assert.equal(parsedMatrix[3].id, 'settings-center');
+  assert.equal(parsedMatrix[3].label, 'Settings Center E2E');
+  assert.equal(parsedMatrix[3].shard, 4);
+  assert.equal(parsedMatrix[3].total, 9);
+
+  const badIdRun = spawnSync(process.execPath, [join(repoRoot, 'scripts/e2e-shards.mjs'), '--shard-id', 'does-not-exist'], {
+    encoding: 'utf8'
+  });
+  assert.equal(badIdRun.status, 1);
+  assert.match(badIdRun.stderr, /Unknown semantic shard id/);
+
+  const badIndexRun = spawnSync(process.execPath, [join(repoRoot, 'scripts/e2e-shards.mjs'), '--shard', '7', '--total', '6'], {
+    encoding: 'utf8'
+  });
+  assert.equal(badIndexRun.status, 1);
+  assert.match(badIndexRun.stderr, /must be less than or equal to --total/);
 });
 
-test('Node and release jobs validate committed runtime assets without refreshing them', () => {
+test('JUnit XML parser and Markdown step summaries report counts, failed test titles, and missing shards without leaking stack traces', () => {
+  const sampleXml = `<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="4" failures="1" skipped="1" errors="0" time="18.5">
+  <testsuite name="empty-suite.spec.mjs" tests="0" failures="0" skipped="0" errors="0" time="0" />
+  <testsuite name="settings-center/layout-and-sections.spec.mjs" tests="4" failures="1" skipped="1" errors="0" time="18.5">
+    <testcase name="renders overview cards &amp; sidebar &#38;lt;safe&#38;gt;" classname="settings-center/layout-and-sections.spec.mjs" time="4.25" />
+    <testcase name="saves appearance toggle" classname="settings-center/layout-and-sections.spec.mjs" time="5.10"></testcase>
+    <testcase name="skips optional probe" classname="settings-center/layout-and-sections.spec.mjs" time="0">
+      <skipped />
+    </testcase>
+    <testcase name="persists image hosting toggle" classname="settings-center/layout-and-sections.spec.mjs" time="9.15">
+      <failure message="Error at http://secret.internal.example/wp-admin" type="FAILURE">SECRET_STACK_TRACE_LINE_12345</failure>
+    </testcase>
+  </testsuite>
+</testsuites>`;
+
+  const parsed = parseJUnitXml(sampleXml);
+  assert.deepEqual(parsed.counts, { total: 4, passed: 2, failed: 1, skipped: 1 });
+  assert.equal(parsed.durationSeconds, 18.5);
+  assert.equal(parsed.specs.length, 1);
+  assert.equal(parsed.specs[0].spec, 'tests/e2e/settings-center/layout-and-sections.spec.mjs');
+  assert.deepEqual(parsed.failedTests, [
+    {
+      spec: 'tests/e2e/settings-center/layout-and-sections.spec.mjs',
+      title: 'persists image hosting toggle'
+    }
+  ]);
+
+  const entityXml = `<testsuite name="entity.spec.mjs"><testcase name="escapes &#38;lt;tag&#38;gt; literally" classname="entity.spec.mjs" time="1"><failure>boom</failure></testcase></testsuite>`;
+  assert.equal(parseJUnitXml(entityXml).failedTests[0].title, 'escapes &lt;tag&gt; literally');
+
+  const canonicalShards = planSemanticE2EShards(discoverE2ESpecFiles(join(repoRoot, 'tests/e2e')));
+  const settingsShard = canonicalShards.find((s) => s.id === 'settings-center');
+  const summary = buildShardSummary(settingsShard, [parsed], 1, 20.4);
+  assert.equal(summary.status, 'failed');
+  assert.equal(summary.id, 'settings-center');
+  assert.equal(summary.shard, 4);
+  assert.equal(summary.total, 9);
+
+  const shardMarkdown = formatShardStepSummaryMarkdown(summary);
+  assert.match(shardMarkdown, /### Settings Center E2E \(4\/9\)/);
+  assert.match(shardMarkdown, /2 passed, 1 failed, 1 skipped \(4 total\)/);
+  assert.match(shardMarkdown, /persists image hosting toggle/);
+  assert.doesNotMatch(shardMarkdown, /SECRET_STACK_TRACE_LINE_12345/);
+  assert.doesNotMatch(shardMarkdown, /secret\.internal\.example/);
+
+  const passingShard = canonicalShards[0];
+  const passingSummary = buildShardSummary(
+    passingShard,
+    [{ counts: { total: 3, passed: 3, failed: 0, skipped: 0 }, durationSeconds: 12.0, specs: [], failedTests: [] }],
+    0,
+    12.0
+  );
+
+  const consolidated = formatConsolidatedStepSummaryMarkdown(canonicalShards, [passingSummary, summary]);
+  assert.match(consolidated, /### Playwright Chromium E2E — Module Shard Overview/);
+  assert.match(consolidated, /Shards Reported\*\*: 2\/9 \(7 missing\)/);
+  assert.match(consolidated, /5 passed, 1 failed, 1 skipped \(7 total\)/);
+  assert.match(consolidated, /⚠️ Missing/);
+  assert.match(consolidated, /#### Failed Tests/);
+  assert.match(consolidated, /\[4\/9 — Settings Center E2E\]/);
+  assert.match(consolidated, /persists image hosting toggle/);
+  assert.doesNotMatch(consolidated, /SECRET_STACK_TRACE_LINE_12345/);
+
+  const tempDir = mkdtempSync(join(tmpdir(), 'easymde-e2e-summary-'));
+  try {
+    writeFileSync(join(tempDir, `e2e-shard-summary-${passingSummary.id}.json`), JSON.stringify(passingSummary), 'utf8');
+    writeFileSync(join(tempDir, `e2e-shard-summary-${summary.id}.json`), JSON.stringify(summary), 'utf8');
+    const summaryOutPath = join(tempDir, 'step-summary.md');
+
+    const aggregated = aggregateShardSummariesFromDir(tempDir);
+    assert.equal(aggregated.loadedSummaries.length, 2);
+    assert.match(aggregated.markdown, /Shards Reported\*\*: 2\/9/);
+
+    const planSummaryOutPath = join(tempDir, 'plan-summary.md');
+    const planSummaryRun = spawnSync(
+      process.execPath,
+      [join(repoRoot, 'scripts/e2e-shards.mjs'), '--plan', '--summary-file', planSummaryOutPath],
+      { encoding: 'utf8' }
+    );
+    assert.equal(planSummaryRun.status, 0, planSummaryRun.stderr);
+    const writtenPlanSummary = readFileSync(planSummaryOutPath, 'utf8');
+    assert.match(writtenPlanSummary, /### Planned Playwright Chromium E2E Module Shards/);
+    assert.match(writtenPlanSummary, /`settings-center`/);
+    assert.match(writtenPlanSummary, /`wechat-copy-modes-mermaid-and-tasks`/);
+
+    const cliRun = spawnSync(
+      process.execPath,
+      [join(repoRoot, 'scripts/e2e-shards.mjs'), '--aggregate-summaries', tempDir, '--summary-file', summaryOutPath],
+      { encoding: 'utf8' }
+    );
+    assert.equal(cliRun.status, 0, cliRun.stderr);
+    assert.match(cliRun.stdout, /### Playwright Chromium E2E — Module Shard Overview/);
+    const writtenSummary = readFileSync(summaryOutPath, 'utf8');
+    assert.match(writtenSummary, /### Playwright Chromium E2E — Module Shard Overview/);
+    assert.match(writtenSummary, /persists image hosting toggle/);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('Node and release jobs validate committed runtime assets and math glyph atlas without refreshing them', () => {
   const workflow = readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
   const nodeJob = workflowJobBlock(workflow, 'node');
   const releaseJob = workflowJobBlock(workflow, 'release');
 
   [nodeJob, releaseJob].forEach((job) => {
     assertJobChecksAssetsWithoutPreparing(job);
+    assert.match(job, /name:\s+Check WeChat math glyph atlas[\s\S]*run:\s+npm run math-atlas:check/);
+    assert.doesNotMatch(job, /\bnpm run prepare:math-atlas\b/);
   });
 });
 
-test('Node and release jobs run the frontend type-check and build contract', () => {
+test('Node job runs full frontend:check while release job runs deduplicated frontend:verify-release', () => {
   const workflow = readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
+  const packageJson = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
   const nodeJob = workflowJobBlock(workflow, 'node');
   const releaseJob = workflowJobBlock(workflow, 'release');
 
-  [nodeJob, releaseJob].forEach((job) => {
-    assert.match(job, /name:\s+Check frontend build contract[\s\S]*run:\s+npm run frontend:check/);
-  });
+  assert.match(nodeJob, /name:\s+Check frontend build contract[\s\S]*run:\s+npm run frontend:check/);
+  assert.match(releaseJob, /name:\s+Verify frontend release build[\s\S]*run:\s+npm run frontend:verify-release/);
+  assert.doesNotMatch(releaseJob, /\bnpm run frontend:check\b/);
+  assert.doesNotMatch(releaseJob, /\bnpm run test:frontend\b/);
+
+  const verifyScript = packageJson.scripts['frontend:verify-release'];
+  assert.equal(typeof verifyScript, 'string');
+  assert.match(verifyScript, /\bnpm run icons:check\b/);
+  assert.match(verifyScript, /\bnpm run lint:frontend\b/);
+  assert.match(verifyScript, /\bnpm run typecheck:frontend\b/);
+  assert.match(verifyScript, /\bnpm run build:frontend-contract\b/);
+  assert.match(verifyScript, /\bnpm run check:frontend-production\b/);
+  assert.doesNotMatch(verifyScript, /\bnpm run test:frontend\b/);
 });
 
 test('runtime asset CI guard rejects preparation inside multiline commands', () => {
@@ -363,7 +643,7 @@ test('release job uploads explicit source and plugin artifacts without publish p
 
   assert.match(releaseJob, /name:\s+Resolve release metadata[\s\S]*git rev-parse HEAD[\s\S]*readReleaseVersions[\s\S]*Resolved plugin version is not safe for artifact filenames/);
   assert.match(releaseJob, /name:\s+Build source archives[\s\S]*run:\s+npm run build:source-archives/);
-  assert.match(releaseJob, /name:\s+Verify release artifacts[\s\S]*env:\s*\n\s+PLUGIN_VERSION:\s+\$\{\{ steps\.release-metadata\.outputs\.version \}\}[\s\S]*source_zip="dist\/EasyMDE-\$\{PLUGIN_VERSION\}-source\.zip"[\s\S]*source_tar_gz="dist\/EasyMDE-\$\{PLUGIN_VERSION\}-source\.tar\.gz"[\s\S]*unzip -t "\$\{source_zip\}"[\s\S]*tar -tzf "\$\{source_tar_gz\}"[\s\S]*unzip -t "\$\{plugin_zip\}"/);
+  assert.match(releaseJob, /name:\s+Verify release artifacts[\s\S]*env:\s*\n\s+PLUGIN_VERSION:\s+\$\{\{ steps\.release-metadata\.outputs\.version \}\}[\s\S]*source_zip="dist\/EasyMDE-\$\{PLUGIN_VERSION\}-source\.zip"[\s\S]*source_tar_gz="dist\/EasyMDE-\$\{PLUGIN_VERSION\}-source\.tar\.gz"[\s\S]*unzip -t "\$\{source_zip\}"[\s\S]*tar -tzf "\$\{source_tar_gz\}" > \/dev\/null[\s\S]*unzip -t "\$\{plugin_zip\}"/);
   assert.match(releaseJob, /name:\s+Summarize release artifacts[\s\S]*\| Checkout SHA \| Version \| Artifact \| Payload \| Byte size \| SHA-256 \|/);
   assert.match(releaseJob, /name:\s+Upload source code ZIP[\s\S]*name:\s+source-code-zip[\s\S]*path:\s+dist\/EasyMDE-\$\{\{ steps\.release-metadata\.outputs\.version \}\}-source\.zip[\s\S]*if-no-files-found:\s+error/);
   assert.match(releaseJob, /name:\s+Upload source code tar\.gz[\s\S]*name:\s+source-code-tar-gz[\s\S]*path:\s+dist\/EasyMDE-\$\{\{ steps\.release-metadata\.outputs\.version \}\}-source\.tar\.gz[\s\S]*if-no-files-found:\s+error/);

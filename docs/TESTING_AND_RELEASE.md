@@ -225,13 +225,14 @@ npm run assets:check
 npm run math-atlas:check
 npm run lint:frontend
 npm run frontend:check
+npm run frontend:verify-release
 git ls-files -z -- '*.js' '*.mjs' | xargs -0 -n1 node --check
 npm run i18n:check
 npm run notices:check
 npm test
 ```
 
-`npm run frontend:check` verifies the locked generated Lucide nodes, runs Biome linting, strict TypeScript checking, Vitest component and contract tests, the test-only WordPress Classic Script contract, and read-only production comparisons for all nine manifest-backed Vite entries (including the local ESM `format: "es"` + dynamic code-splitting chunks of `admin-editor.tsx` for ProseMirror visual editing, WeChat export, optional CodeMirror indentation parsers, `ImmersivePublishDialog`, and `ImmersiveCustomCssDialog`, plus the Editor entry's exactly one explicit manifest-owned PNG encoder worker resource). `npm test` runs all Node tests including `tests/Node/frontend-architecture-guardrails.test.mjs` and `tests/Node/php-architecture-guardrails.test.mjs`, which enforce unidirectional frontend layering, zero runtime circular dependencies across production frontend modules, a 1,200-line warning threshold and strict 1,500-line hard production file ceiling with zero legacy exceptions across both `frontend/src/` and `src/`, a 400-line zero-JSX `.tsx` controller ceiling, and PHP PSR-4/`ABSPATH`/`Support`+`Frontend` isolation. The current locked toolchain uses Biome 2.5.4, Vite 8.1.5, TypeScript 7.0.2, CodeMirror 6, ProseMirror core (`prosemirror-*`) + `markdown-it`, and development-only `lucide-react@0.487.0` on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime.
+`npm run frontend:check` verifies the locked generated Lucide nodes, runs Biome linting, strict TypeScript checking, Vitest component and contract tests, the test-only WordPress Classic Script contract, and read-only production comparisons for all nine manifest-backed Vite entries (including the local ESM `format: "es"` + dynamic code-splitting chunks of `admin-editor.tsx` for ProseMirror visual editing, WeChat export, optional CodeMirror indentation parsers, `ImmersivePublishDialog`, and `ImmersiveCustomCssDialog`, plus the Editor entry's exactly one explicit manifest-owned PNG encoder worker resource). The CI `release` job runs `npm run frontend:verify-release` (icons, Biome lint, TypeScript check, classic contract build, and byte-for-byte production verification) without duplicating the full Vitest run already enforced by the required `Node validation` job. `npm test` runs all Node tests including `tests/Node/frontend-architecture-guardrails.test.mjs` and `tests/Node/php-architecture-guardrails.test.mjs`, which enforce unidirectional frontend layering, zero runtime circular dependencies across production frontend modules, a 1,200-line warning threshold and strict 1,500-line hard production file ceiling with zero legacy exceptions across both `frontend/src/` and `src/`, a 400-line zero-JSX `.tsx` controller ceiling, and PHP PSR-4/`ABSPATH`/`Support`+`Frontend` isolation. The current locked toolchain uses Biome 2.5.4, Vite 8.1.5, TypeScript 7.0.2, CodeMirror 6, ProseMirror core (`prosemirror-*`) + `markdown-it`, and development-only `lucide-react@0.487.0` on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime.
 
 The test-only build writes to `.cache/easymde-frontend-contract/`. `npm run build:frontend` writes the committed outputs for the nine Vite configs below, while `npm run check:frontend-production` writes temporary outputs, validates each output, and compares each complete file set and its bytes with the committed runtimes without rewriting them. The validators fail on private React, invalid or inconsistent manifests, missing or stale output, non-plugin-relative resource paths, remote or development URLs, absolute local paths, and source maps.
 
@@ -982,15 +983,7 @@ Accepted warnings and release-policy rationale are tracked in [Plugin Check Note
 
 ## Chromium E2E
 
-The Playwright suite is Chromium-only in the current configuration. In CI, the
-6-shard parallel `e2e-shard` matrix (`scripts/e2e-shards.mjs`) runs the
-ordinary `chromium` project and the isolated `chromium-performance` project
-against the already-built release ZIP—not against a separately rebuilt
-package—and reports into the required `Playwright Chromium E2E` aggregator
-gate (`e2e`). The performance project disables Playwright trace and video
-because their DevTools DOM snapshots create browser tasks inside the measured
-interaction windows; failure screenshots and the privacy-safe performance
-JSON attachment remain available.
+The Playwright suite is Chromium-only in the current configuration. In CI, the `release` job emits a 9-shard semantic module matrix (`node scripts/e2e-shards.mjs --matrix`, human-readable plan via `node scripts/e2e-shards.mjs --plan`) that fans out parallel `e2e-shard` jobs named `Playwright Chromium (<Module Label>) (<shard>/<total>)` executing `node scripts/e2e-shards.mjs --shard-id "<id>"` against the already-built release ZIP—not against a separately rebuilt package. Each shard runs the ordinary `chromium` project and the isolated `chromium-performance` project (splitting `themes-and-appearance.spec.mjs` across `theme_matrix_a` / `theme_matrix_b` and `wechat-copy.spec.mjs` across complementary `--grep` / `--grep-invert` filters), publishes a privacy-safe JUnit-backed per-shard Markdown table to `$GITHUB_STEP_SUMMARY`, and uploads its `e2e-shard-summary-<id>.json` artifact. The required `Playwright Chromium E2E` aggregator gate (`e2e`) runs `node scripts/e2e-shards.mjs --aggregate-summaries test-results/shard-summaries` to publish the consolidated module shard overview table to `$GITHUB_STEP_SUMMARY` and verifies that every shard succeeded. The performance project disables Playwright trace and video because their DevTools DOM snapshots create browser tasks inside the measured interaction windows; failure screenshots and the privacy-safe performance JSON attachment remain available.
 
 Local E2E requires a clean WordPress install with the release ZIP active and a running WordPress server. Then run:
 

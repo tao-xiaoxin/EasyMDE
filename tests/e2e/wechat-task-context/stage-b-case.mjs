@@ -389,7 +389,9 @@ export async function runStageBReadyGeometryCase(
           name: immersiveLabels.editMode,
           exact: true
         }).click();
-        await expect(page.locator('.easymde-editor')).toHaveClass(/is-immersive-source/u);
+        await expect(
+          page.locator('.easymde-editor[data-easymde-editor-owner="react"]')
+        ).toHaveClass(/is-immersive-source/u);
         await expect(page.locator(selector)).toBeHidden();
         const compatibility = await page.evaluate(() => (
           globalThis.__wechatTaskContextHiddenEvidence.beginHidden()
@@ -702,14 +704,16 @@ export async function runCdpGeometryCase(
       }).click();
       selector = immersivePreviewSelector;
       const immersivePreview = page.locator(selector);
-      await expect(page.locator('.easymde-editor')).toHaveClass(/is-immersive-preview/u);
+      await expect(
+        page.locator('.easymde-editor[data-easymde-editor-owner="react"]')
+      ).toHaveClass(/is-immersive-preview/u);
       await expect(immersivePreview).toBeVisible();
       await waitForAcceptedPreviewState(
         page,
         selector,
         `wechat-task-context-${scenario.themeId}-immersive-preview-unavailable`
       );
-      await page.setViewportSize({ width: 444, height: 1000 });
+      await page.setViewportSize({ width: 448, height: 1000 });
       await waitForAcceptedPreviewState(
         page,
         selector,
@@ -717,7 +721,7 @@ export async function runCdpGeometryCase(
       );
       const widthSample = await readPreviewContentWidth(page, selector);
       actualContentWidth = widthSample.contentWidth;
-      expect(widthSample.viewportWidth).toBe(444);
+      expect(widthSample.viewportWidth).toBe(448);
       expect(actualContentWidth).toBe(335.5);
       expect(actualContentWidth - 335).toBe(0.5);
       await settleAcceptedPreviewReadiness(page, selector);
@@ -765,7 +769,9 @@ export async function runCdpGeometryCase(
         name: immersiveLabels.editMode,
         exact: true
       }).click();
-      await expect(page.locator('.easymde-editor')).toHaveClass(/is-immersive-source/u);
+      await expect(
+        page.locator('.easymde-editor[data-easymde-editor-owner="react"]')
+      ).toHaveClass(/is-immersive-source/u);
       await expect(page.locator('.easymde-pane-source')).toBeHidden();
       await waitForAcceptedPreviewState(
         page,

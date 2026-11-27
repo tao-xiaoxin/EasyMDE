@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { expect, test } from '@playwright/test';
 import {
+  assertOrdinarySideBySideSplit,
   canonicalMarkdownForPage,
   collectRuntimeAssetRequests,
   currentPostId,
@@ -22,6 +23,7 @@ import {
 } from '../helpers/editor-e2e-helpers.mjs';
 import {
   desktop,
+  editorWritingViewports,
   miniLandscape,
   miniPortrait
 } from '../helpers/editor-viewports.mjs';
@@ -530,32 +532,10 @@ test.describe('EasyMDE editor workflows', () => {
     const editorOwner = page.locator(
       '#easymde-editor-root [data-easymde-editor-owner="react"]'
     );
-    const assertOrdinaryAlwaysSideBySide = async () => {
-      await expect.poll(() => page.locator('#easymde-editor-root .easymde-workspace').evaluate((workspace) => {
-        const source = workspace.querySelector('.easymde-pane-source');
-        const preview = workspace.querySelector('.easymde-pane-preview');
-        if (!(source instanceof HTMLElement) || !(preview instanceof HTMLElement)) {
-          throw new Error('ordinary-workspace-panes-unavailable');
-        }
-        const sourceStyle = getComputedStyle(source);
-        const previewStyle = getComputedStyle(preview);
-        const sourceBox = source.getBoundingClientRect();
-        const previewBox = preview.getBoundingClientRect();
-        return {
-          previewVisible: 'none' !== previewStyle.display && previewBox.width > 0 && previewBox.height > 0,
-          sameRow: Math.abs(sourceBox.top - previewBox.top) <= 1,
-          sideBySide: sourceBox.right <= previewBox.left + 1 || previewBox.right <= sourceBox.left + 1,
-          sourceVisible: 'none' !== sourceStyle.display && sourceBox.width > 0 && sourceBox.height > 0
-        };
-      })).toEqual({
-        previewVisible: true,
-        sameRow: true,
-        sideBySide: true,
-        sourceVisible: true
-      });
-    };
 
-    await assertOrdinaryAlwaysSideBySide();
+    await assertOrdinarySideBySideSplit(page, 'ordinary-before-immersive', {
+      checkPageOverflow: false
+    });
     await page.getByRole('button', { name: labels.immersive.immersive }).click();
     await expect(editorOwner).toHaveClass(new RegExp(expectedModeClass));
     const settingsTrigger = page.getByRole('button', {
@@ -582,7 +562,9 @@ test.describe('EasyMDE editor workflows', () => {
     await page.getByRole('button', { name: labels.immersive.exit }).click();
     await expect(page.getByRole('region', { name: labels.immersive.immersive }))
       .toHaveCount(0);
-    await assertOrdinaryAlwaysSideBySide();
+    await assertOrdinarySideBySideSplit(page, 'ordinary-after-immersive', {
+      checkPageOverflow: false
+    });
 
     await page.getByRole('button', { name: labels.immersive.immersive }).click();
     await expect(editorOwner).toHaveClass(new RegExp(temporaryModeClass));
@@ -1568,7 +1550,7 @@ test.describe('EasyMDE editor workflows', () => {
       sourceFollowsPreview: true
     });
 
-    for (const viewport of [desktop, miniLandscape, miniPortrait]) {
+    for (const viewport of editorWritingViewports) {
       await page.setViewportSize(viewport);
       await expect.poll(() => page.locator('.easymde-workspace').evaluate((workspace) => {
         const sourcePane = workspace.querySelector('.easymde-pane-source');
@@ -2742,6 +2724,56 @@ test.describe('EasyMDE editor workflows', () => {
         }
       }, originalDirs);
     }
+
+    // Verify docked Outline resizer bounds align with CSS clamp(160px, 24vw, 220px) at 800px.
+    await page.setViewportSize({ width: 800, height: 900 });
+    await expect(editor).toHaveClass(/is-immersive-split/);
+    if (!await editor.locator('.easymde-immersive-outline').isVisible()) {
+      await editor.getByRole('button', { name: labels.showOutline }).click();
+    }
+    const dockedOutlineResizer = editor.locator('.easymde-immersive-outline-resizer');
+    await expect(dockedOutlineResizer).toBeVisible();
+    const readOutlineResizeState = () => editor.evaluate((root) => {
+      const outline = root.querySelector('.easymde-immersive-outline');
+      const resizer = root.querySelector('.easymde-immersive-outline-resizer');
+      if (!(outline instanceof HTMLElement) || !(resizer instanceof HTMLElement)) {
+        throw new Error('docked-outline-resize-elements-unavailable');
+      }
+      return {
+        max: Number.parseInt(resizer.getAttribute('aria-valuemax') ?? '', 10),
+        min: Number.parseInt(resizer.getAttribute('aria-valuemin') ?? '', 10),
+        now: Number.parseInt(resizer.getAttribute('aria-valuenow') ?? '', 10),
+        renderedWidth: Math.round(outline.getBoundingClientRect().width)
+      };
+    });
+    await expect.poll(readOutlineResizeState).toEqual({
+      max: 192,
+      min: 160,
+      now: 192,
+      renderedWidth: 192
+    });
+    await dockedOutlineResizer.focus();
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(readOutlineResizeState).toEqual({
+      max: 192,
+      min: 160,
+      now: 192,
+      renderedWidth: 192
+    });
+    await page.keyboard.press('ArrowLeft');
+    await expect.poll(readOutlineResizeState).toEqual({
+      max: 192,
+      min: 160,
+      now: 182,
+      renderedWidth: 182
+    });
+    await page.keyboard.press('Home');
+    await expect.poll(readOutlineResizeState).toEqual({
+      max: 192,
+      min: 160,
+      now: 192,
+      renderedWidth: 192
+    });
 
     await page.setViewportSize(desktop);
     await expect(editor).toHaveClass(/is-immersive-split/);

@@ -27,7 +27,13 @@ describe('positionEditorContextSubmenu', () => {
       trigger,
       boundary,
       viewport: { height: 360, width: 400 }
-    })).toEqual({ left: 176, placement: 'right', pointerTop: 53, top: 252 });
+    })).toEqual({
+      left: 176,
+      overlapped: false,
+      placement: 'right',
+      pointerTop: 53,
+      top: 252
+    });
   });
 
   it('keeps RTL submenus on the fixed left side when it fits', () => {
@@ -39,7 +45,14 @@ describe('positionEditorContextSubmenu', () => {
       boundary: { ...boundary, bottom: 492 },
       viewport: { height: 500, width: 400 }
     });
-    expect(result).toEqual({ left: 84, placement: 'left', pointerTop: 24, top: 281 });
+    expect(result).toEqual({
+      left: 84,
+      overlapped: false,
+      placement: 'left',
+      pointerTop: 24,
+      top: 281
+    });
+    if (result.overlapped) throw new Error('expected-non-overlapped-rtl-submenu');
     expect(result.top + result.pointerTop).toBe(rtlTrigger.top + rtlTrigger.height / 2);
   });
 
@@ -50,7 +63,13 @@ describe('positionEditorContextSubmenu', () => {
       trigger: { ...trigger, left: 320, right: 380 },
       boundary,
       viewport: { height: 360, width: 400 }
-    })).toEqual({ left: 64, placement: 'left', pointerTop: 53, top: 252 });
+    })).toEqual({
+      left: 64,
+      overlapped: false,
+      placement: 'left',
+      pointerTop: 53,
+      top: 252
+    });
   });
 
   it('marks RTL menus overlapped and uses the wider side without pointer outset when both sides are narrow', () => {
@@ -60,7 +79,12 @@ describe('positionEditorContextSubmenu', () => {
       trigger: { ...trigger, left: 120, right: 180, top: 400 },
       boundary,
       viewport: { height: 360, width: 400 }
-    })).toEqual({ left: 12, overlapped: true, placement: 'right', pointerTop: 76, top: 252 });
+    })).toEqual({
+      left: 12,
+      overlapped: true,
+      placement: 'right',
+      top: 252
+    });
   });
 
   it('marks narrow LTR submenus overlapped toward the side with more horizontal room inside the viewport gutter', () => {
@@ -78,7 +102,6 @@ describe('positionEditorContextSubmenu', () => {
       left: 162,
       overlapped: true,
       placement: 'right',
-      pointerTop: 24,
       top: 91
     });
     expect(moreSpaceRight.left + 220).toBe(382);
@@ -94,7 +117,6 @@ describe('positionEditorContextSubmenu', () => {
       left: 8,
       overlapped: true,
       placement: 'left',
-      pointerTop: 24,
       top: 91
     });
   });
@@ -207,32 +229,38 @@ describe('computeRootMenuPosition', () => {
 });
 
 describe('sameSubmenuPositions', () => {
-  const basePosition: EditorContextMenuPosition = {
+  const attachedPosition: EditorContextMenuPosition = {
     left: 162,
     maxBlockSize: 400,
+    overlapped: false,
     placement: 'right',
+    pointerLeft: 162,
     pointerTop: 24,
     top: 91
   };
+  const overlappedPosition: EditorContextMenuPosition = {
+    left: 162,
+    maxBlockSize: 400,
+    overlapped: true,
+    placement: 'right',
+    top: 91
+  };
 
-  it('detects overlapped flag changes while treating undefined and false equivalently', () => {
+  it('detects transitions between attached and overlapped submenu layouts', () => {
     expect(
-      sameSubmenuPositions(
-        { '0': basePosition },
-        { '0': { ...basePosition, overlapped: true } }
-      )
+      sameSubmenuPositions({ '0': attachedPosition }, { '0': overlappedPosition })
     ).toBe(false);
     expect(
-      sameSubmenuPositions(
-        { '0': { ...basePosition, overlapped: true } },
-        { '0': basePosition }
-      )
+      sameSubmenuPositions({ '0': overlappedPosition }, { '0': attachedPosition })
     ).toBe(false);
     expect(
-      sameSubmenuPositions(
-        { '0': basePosition },
-        { '0': { ...basePosition, overlapped: false } }
-      )
+      sameSubmenuPositions({ '0': overlappedPosition }, { '0': { ...overlappedPosition } })
     ).toBe(true);
+    expect(
+      sameSubmenuPositions(
+        { '0': attachedPosition },
+        { '0': { ...attachedPosition, pointerTop: 32 } }
+      )
+    ).toBe(false);
   });
 });

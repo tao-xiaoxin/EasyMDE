@@ -52,7 +52,9 @@ export async function runHiddenTaskOwnerScenario({ baseURL, createOwnedPost, log
         exact: true
       }).click();
       const immersivePreview = page.locator(immersivePreviewSelector);
-      await expect(page.locator('.easymde-editor')).toHaveClass(/is-immersive-preview/u);
+      await expect(
+        page.locator('.easymde-editor[data-easymde-editor-owner="react"]')
+      ).toHaveClass(/is-immersive-preview/u);
       await expect(page.locator('.easymde-pane-source')).toBeHidden();
       await expect(immersivePreview).toBeVisible();
       await waitForAcceptedPreviewState(
@@ -61,7 +63,7 @@ export async function runHiddenTaskOwnerScenario({ baseURL, createOwnedPost, log
         'wechat-task-context-hidden-preview-not-accepted'
       );
       const nominalContentWidth = 335;
-      const qaViewportWidth = 444;
+      const qaViewportWidth = 448;
       const actualContentWidth = 335.5;
       await page.setViewportSize({ width: qaViewportWidth, height: 1000 });
       await waitForAcceptedPreviewState(
@@ -109,7 +111,9 @@ export async function runHiddenTaskOwnerScenario({ baseURL, createOwnedPost, log
         name: immersiveLabels.editMode,
         exact: true
       }).click();
-      await expect(page.locator('.easymde-editor')).toHaveClass(/is-immersive-source/u);
+      await expect(
+        page.locator('.easymde-editor[data-easymde-editor-owner="react"]')
+      ).toHaveClass(/is-immersive-source/u);
       await expect(immersivePreview).toBeHidden();
       await waitForAcceptedPreviewState(
         page,

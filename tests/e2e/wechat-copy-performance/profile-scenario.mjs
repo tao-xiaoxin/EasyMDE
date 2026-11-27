@@ -9,7 +9,6 @@ import { createUploadTimeline } from "./copy-timeline.mjs";
 import { expectedArticleTheme } from "./environment.mjs";
 import { expectedCodeTheme } from "./environment.mjs";
 import { expectedImageProvider } from "./environment.mjs";
-import { installPerformanceModeOverride } from "./editor-session.mjs";
 import { installPerformanceProbe } from "./performance-probe.mjs";
 import { performanceModeExpectations } from "./performance-mode.mjs";
 import { privateEvidenceDirectory } from "./private-evidence.mjs";
@@ -68,7 +67,6 @@ export async function runPerformanceProfileScenario({ baseURL, context, createOw
 			origin,
 		});
 		await page.setViewportSize({ height: 785, width: 1329 });
-		await installPerformanceModeOverride(page, configuredPerformanceMode);
 		await page.goto(`/wp-admin/post.php?post=${postId}&action=edit`, {
 			waitUntil: "domcontentloaded",
 		});

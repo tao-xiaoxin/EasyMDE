@@ -2,22 +2,18 @@
 export const performanceModeEnvironment = "EASYMDE_E2E_PERFORMANCE_MODE";
 export const performanceModeDefinitions = Object.freeze({
 	immersivePreview: Object.freeze({
-		editingMode: "live-preview",
 		immersive: true,
 		immersiveMode: "preview",
 	}),
 	immersiveSource: Object.freeze({
-		editingMode: "live-preview",
 		immersive: true,
 		immersiveMode: "source",
 	}),
 	immersiveSplit: Object.freeze({
-		editingMode: "live-preview",
 		immersive: true,
 		immersiveMode: "split",
 	}),
 	ordinarySplit: Object.freeze({
-		editingMode: "live-preview",
 		immersive: false,
 		immersiveMode: null,
 	}),

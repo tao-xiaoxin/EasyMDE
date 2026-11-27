@@ -99,7 +99,6 @@ export type UseEditorContextMenuBridgeOptions = Readonly<{
   remoteImageImportPort: RemoteImageImportPort;
   reportFailure: (code: string) => void;
   rootActiveRef: SharedRef<boolean>;
-  rootRef: SharedRef<HTMLDivElement | null>;
   simplifiedFormattingParser: EditorRootProps['simplifiedFormattingParser'];
   submissionField: HTMLTextAreaElement;
   subscribeContextMenuReadiness: (listener: () => void) => () => void;
@@ -138,7 +137,6 @@ export function useEditorContextMenuBridge({
   remoteImageImportPort,
   reportFailure,
   rootActiveRef,
-  rootRef,
   simplifiedFormattingParser,
   submissionField,
   subscribeContextMenuReadiness,
@@ -673,9 +671,6 @@ export function useEditorContextMenuBridge({
     });
   }, [contextMenuBlockIndexCache, documentSession, visualEditorRuntimeRef]);
 
-  const contextMenuWorkspace =
-    rootRef.current?.querySelector<HTMLElement>('.easymde-workspace') ?? null;
-
   const contextMenuHeading = useMemo(
     () => ({
       commands: toolbar.commands,
@@ -689,7 +684,6 @@ export function useEditorContextMenuBridge({
     if (!documentSession) return null;
     return createSourceContextMenuSurface({
       contextMenuBlockIndexFailureRef,
-      contextMenuWorkspace,
       documentSession,
       editorClipboardPort,
       editorCodeContentQuery,
@@ -712,7 +706,6 @@ export function useEditorContextMenuBridge({
       subscribeContextMenuReadiness
     });
   }, [
-    contextMenuWorkspace,
     documentSession,
     editorBlockIndexPort,
     editorClipboardPort,
@@ -741,7 +734,6 @@ export function useEditorContextMenuBridge({
     if (!runtime) return null;
     return createVisualContextMenuSurface({
       contextMenuBlockIndexFailureRef,
-      contextMenuWorkspace,
       documentSession,
       editorClipboardPort,
       editorCodeContentQuery,
@@ -760,7 +752,6 @@ export function useEditorContextMenuBridge({
       visualEditorSurface
     });
   }, [
-    contextMenuWorkspace,
     documentSession,
     editorBlockIndexPort,
     editorClipboardPort,

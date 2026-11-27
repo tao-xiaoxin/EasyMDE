@@ -40,14 +40,61 @@ import {
 } from '../immersive-editor';
 import type { ImmersiveStrings } from './immersive-editor-ui-types';
 
+export const COMPACT_OUTLINE_MAX_WIDTH = 782;
+
+const INTERMEDIATE_OUTLINE_MAX_VIEWPORT = 1080;
 const DEFAULT_WIDTH = 240;
 const MIN_WIDTH = 190;
 const MAX_WIDTH = 360;
+const INTERMEDIATE_MIN_WIDTH = 160;
+const INTERMEDIATE_MAX_WIDTH = 220;
+const INTERMEDIATE_VIEWPORT_RATIO = 0.24;
+const OVERLAY_HORIZONTAL_GUTTER = 22.5;
 const EMPTY_OUTLINE_KEYS = new Map<ImmersiveOutlineItem, string>();
 const EMPTY_OUTLINE_TREE: ReadonlyArray<ImmersiveOutlineNode> = [];
 
-function boundedWidth(width: number) {
-  return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, Math.round(width)));
+type OutlineWidthBounds = Readonly<{
+  max: number;
+  min: number;
+}>;
+
+function outlineWidthBounds(viewportWidth?: number): OutlineWidthBounds {
+  if (
+    undefined === viewportWidth
+    || !Number.isFinite(viewportWidth)
+    || viewportWidth <= 0
+  ) {
+    return { max: MAX_WIDTH, min: MIN_WIDTH };
+  }
+  if (viewportWidth <= COMPACT_OUTLINE_MAX_WIDTH) {
+    return {
+      max: Math.max(
+        0,
+        Math.min(
+          DEFAULT_WIDTH,
+          Math.floor(viewportWidth - OVERLAY_HORIZONTAL_GUTTER)
+        )
+      ),
+      min: 0
+    };
+  }
+  if (viewportWidth <= INTERMEDIATE_OUTLINE_MAX_VIEWPORT) {
+    return {
+      max: Math.max(
+        INTERMEDIATE_MIN_WIDTH,
+        Math.min(
+          INTERMEDIATE_MAX_WIDTH,
+          Math.floor(viewportWidth * INTERMEDIATE_VIEWPORT_RATIO)
+        )
+      ),
+      min: INTERMEDIATE_MIN_WIDTH
+    };
+  }
+  return { max: MAX_WIDTH, min: MIN_WIDTH };
+}
+
+function boundedWidth(width: number, bounds: OutlineWidthBounds): number {
+  return Math.max(bounds.min, Math.min(bounds.max, Math.round(width)));
 }
 
 const MERMAID_ICON_RULES: ReadonlyArray<readonly [RegExp, LucideIcon]> = [
@@ -186,6 +233,7 @@ export const ImmersiveOutline = memo(function ImmersiveOutline({
   items,
   open,
   strings,
+  viewportWidth,
   onOpenChange,
   onSelect
 }: Readonly<{
@@ -194,10 +242,15 @@ export const ImmersiveOutline = memo(function ImmersiveOutline({
   items: ReadonlyArray<ImmersiveOutlineItem>;
   open: boolean;
   strings: ImmersiveStrings;
+  viewportWidth?: number | undefined;
   onOpenChange: (open: boolean) => void;
   onSelect: (item: ImmersiveOutlineItem) => void;
 }>) {
-  const [width, setWidth] = useState(DEFAULT_WIDTH);
+  const [preferredWidth, setPreferredWidth] = useState(DEFAULT_WIDTH);
+  const bounds = outlineWidthBounds(viewportWidth);
+  const boundsRef = useRef(bounds);
+  boundsRef.current = bounds;
+  const effectiveWidth = boundedWidth(preferredWidth, bounds);
   const outlineRef = useRef<HTMLElement>(null);
   const releaseDragRef = useRef<(() => void) | null>(null);
   const onSelectRef = useRef(onSelect);
@@ -264,13 +317,14 @@ export const ImmersiveOutline = memo(function ImmersiveOutline({
   }
 
   const startResize = (event: ReactPointerEvent<HTMLHRElement>) => {
+    if ('mouse' === event.pointerType && 0 !== event.button) return;
     event.preventDefault();
     releaseDragRef.current?.();
     const documentRef = outlineRef.current?.ownerDocument;
     if (!documentRef) throw new Error('immersive-outline-document-unavailable');
     const resizer = event.currentTarget;
     const pointerId = event.pointerId;
-    const startWidth = width;
+    const startWidth = effectiveWidth;
     const startX = event.clientX;
     const previousCursor = documentRef.body.style.cursor;
     const previousSelection = documentRef.body.style.userSelect;
@@ -278,7 +332,7 @@ export const ImmersiveOutline = memo(function ImmersiveOutline({
       if (moveEvent.pointerId !== pointerId) return;
       const physicalDelta = moveEvent.clientX - startX;
       const logicalDelta = 'rtl' === direction ? -physicalDelta : physicalDelta;
-      setWidth(boundedWidth(startWidth + logicalDelta));
+      setPreferredWidth(boundedWidth(startWidth + logicalDelta, boundsRef.current));
     };
     const release = (releaseEvent?: globalThis.PointerEvent) => {
       if (releaseEvent && releaseEvent.pointerId !== pointerId) return;
@@ -306,10 +360,15 @@ export const ImmersiveOutline = memo(function ImmersiveOutline({
     if (physicalStep) {
       event.preventDefault();
       const logicalStep = 'rtl' === direction ? -physicalStep : physicalStep;
-      setWidth((current) => boundedWidth(current + logicalStep));
+      setPreferredWidth((current) =>
+        boundedWidth(
+          boundedWidth(current, boundsRef.current) + logicalStep,
+          boundsRef.current
+        )
+      );
     } else if ('Home' === event.key) {
       event.preventDefault();
-      setWidth(DEFAULT_WIDTH);
+      setPreferredWidth(boundedWidth(DEFAULT_WIDTH, boundsRef.current));
     }
   };
 
@@ -319,7 +378,7 @@ export const ImmersiveOutline = memo(function ImmersiveOutline({
         ref={outlineRef}
         className="easymde-immersive-outline"
         aria-label={strings.outline}
-        style={{ width }}
+        style={{ width: effectiveWidth }}
       >
         <div className="easymde-immersive-outline-title">
           <span>{strings.outline}</span>
@@ -357,12 +416,14 @@ export const ImmersiveOutline = memo(function ImmersiveOutline({
         tabIndex={0}
         aria-orientation="vertical"
         aria-label={strings.resizeOutline}
-        aria-valuemin={MIN_WIDTH}
-        aria-valuemax={MAX_WIDTH}
-        aria-valuenow={width}
+        aria-valuemin={bounds.min}
+        aria-valuemax={bounds.max}
+        aria-valuenow={effectiveWidth}
         className="easymde-immersive-outline-resizer"
         onPointerDown={startResize}
-        onDoubleClick={() => setWidth(DEFAULT_WIDTH)}
+        onDoubleClick={() =>
+          setPreferredWidth(boundedWidth(DEFAULT_WIDTH, boundsRef.current))
+        }
         onKeyDown={resizeWithKeyboard}
       />
     </Fragment>

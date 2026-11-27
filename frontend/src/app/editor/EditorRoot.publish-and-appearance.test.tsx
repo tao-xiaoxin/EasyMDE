@@ -999,54 +999,66 @@ describe('EditorRoot publish and appearance', () => {
   });
 
   it('matches the reference outline drag bounds, reset and cleanup lifecycle', async () => {
-    const props = fixture();
-    const view = render(<EditorRoot {...props} />);
-    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
-    const separator = view.getByRole('separator', {
-      name: '调整大纲宽度'
+    const previousInnerWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 1280
     });
-    const outlineActions = view.getAllByRole('button', {
-      name: '收起大纲'
-    });
-    const footerAction = outlineActions.at(-1);
-    if (!footerAction) throw new Error('outline-footer-control-unavailable');
-    expect(
-      Array.from(footerAction.childNodes).some(
-        (node) =>
-          Node.TEXT_NODE === node.nodeType
-          && '收起大纲' === node.textContent?.trim()
-      )
-    ).toBe(true);
+    try {
+      const props = fixture();
+      const view = render(<EditorRoot {...props} />);
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      const separator = view.getByRole('separator', {
+        name: '调整大纲宽度'
+      });
+      const outlineActions = view.getAllByRole('button', {
+        name: '收起大纲'
+      });
+      const footerAction = outlineActions.at(-1);
+      if (!footerAction) throw new Error('outline-footer-control-unavailable');
+      expect(
+        Array.from(footerAction.childNodes).some(
+          (node) =>
+            Node.TEXT_NODE === node.nodeType
+            && '收起大纲' === node.textContent?.trim()
+        )
+      ).toBe(true);
 
-    expect(separator.getAttribute('aria-valuenow')).toBe('240');
-    fireEvent.pointerDown(separator, {
-      clientX: 240,
-      pointerId: 1,
-      pointerType: 'touch'
-    });
-    expect(document.body.style.cursor).toBe('col-resize');
-    expect(document.body.style.userSelect).toBe('none');
-    fireEvent.pointerMove(document, { clientX: 500, pointerId: 1 });
-    expect(separator.getAttribute('aria-valuenow')).toBe('360');
-    fireEvent.pointerMove(document, { clientX: -100, pointerId: 1 });
-    expect(separator.getAttribute('aria-valuenow')).toBe('190');
-    fireEvent.pointerUp(document, { pointerId: 1 });
-    expect(document.body.style.cursor).toBe('');
-    expect(document.body.style.userSelect).toBe('');
+      expect(separator.getAttribute('aria-valuenow')).toBe('240');
+      fireEvent.pointerDown(separator, {
+        clientX: 240,
+        pointerId: 1,
+        pointerType: 'touch'
+      });
+      expect(document.body.style.cursor).toBe('col-resize');
+      expect(document.body.style.userSelect).toBe('none');
+      fireEvent.pointerMove(document, { clientX: 500, pointerId: 1 });
+      expect(separator.getAttribute('aria-valuenow')).toBe('360');
+      fireEvent.pointerMove(document, { clientX: -100, pointerId: 1 });
+      expect(separator.getAttribute('aria-valuenow')).toBe('190');
+      fireEvent.pointerUp(document, { pointerId: 1 });
+      expect(document.body.style.cursor).toBe('');
+      expect(document.body.style.userSelect).toBe('');
 
-    fireEvent.doubleClick(separator);
-    expect(separator.getAttribute('aria-valuenow')).toBe('240');
+      fireEvent.doubleClick(separator);
+      expect(separator.getAttribute('aria-valuenow')).toBe('240');
 
-    fireEvent.pointerDown(separator, { clientX: 240, pointerId: 2 });
-    const [hideOutline] = view.getAllByRole('button', {
-      name: '收起大纲'
-    });
-    if (!hideOutline) throw new Error('hide-outline-control-unavailable');
-    fireEvent.click(hideOutline);
-    expect(document.body.style.cursor).toBe('');
-    expect(document.body.style.userSelect).toBe('');
-    fireEvent.mouseMove(document, { clientX: 320 });
-    fireEvent.mouseUp(document);
+      fireEvent.pointerDown(separator, { clientX: 240, pointerId: 2 });
+      const [hideOutline] = view.getAllByRole('button', {
+        name: '收起大纲'
+      });
+      if (!hideOutline) throw new Error('hide-outline-control-unavailable');
+      fireEvent.click(hideOutline);
+      expect(document.body.style.cursor).toBe('');
+      expect(document.body.style.userSelect).toBe('');
+      fireEvent.mouseMove(document, { clientX: 320 });
+      fireEvent.mouseUp(document);
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: previousInnerWidth
+      });
+    }
   });
 
   it('applies immersive presentation settings to the real outline and scroll owners', async () => {

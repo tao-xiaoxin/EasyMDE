@@ -169,19 +169,111 @@ describe('EditorWorkspace', () => {
     expect(separator.getAttribute('aria-valuemax')).toBe('80');
     expect(separator.getAttribute('aria-valuenow')).toBe('50');
 
-    fireEvent.mouseDown(separator, { clientX: 500 });
-    fireEvent.mouseMove(document, { clientX: 700 });
-    fireEvent.mouseUp(document);
+    fireEvent.pointerDown(separator, {
+      button: 2,
+      clientX: 500,
+      pointerId: 9,
+      pointerType: 'mouse'
+    });
+    fireEvent.pointerMove(document, { clientX: 700, pointerId: 9 });
+    expect(separator.getAttribute('aria-valuenow')).toBe('50');
+
+    fireEvent.pointerDown(separator, {
+      button: 0,
+      clientX: 500,
+      pointerId: 1,
+      pointerType: 'mouse'
+    });
+    fireEvent.pointerMove(document, { clientX: 700, pointerId: 1 });
+    fireEvent.pointerUp(document, { pointerId: 1 });
     expect(separator.getAttribute('aria-valuenow')).toBe('70');
     expect(workspace.style.getPropertyValue('--easymde-split-start')).toBe('70');
 
-    fireEvent.mouseDown(separator, { clientX: 700 });
-    fireEvent.mouseMove(document, { clientX: 1200 });
-    fireEvent.mouseUp(document);
+    fireEvent.pointerDown(separator, {
+      button: 0,
+      clientX: 700,
+      pointerId: 2,
+      pointerType: 'mouse'
+    });
+    fireEvent.pointerMove(document, { clientX: 1200, pointerId: 2 });
+    fireEvent.pointerUp(document, { pointerId: 2 });
     expect(separator.getAttribute('aria-valuenow')).toBe('80');
 
     fireEvent.keyDown(separator, { key: 'ArrowLeft' });
     expect(separator.getAttribute('aria-valuenow')).toBe('79');
+    fireEvent.keyDown(separator, { key: 'Home' });
+    expect(separator.getAttribute('aria-valuenow')).toBe('50');
+  });
+
+  it('supports touch pointer dragging with capture, pointercancel cleanup, and RTL direction', () => {
+    const view = render(
+      <EditorWorkspace
+        direction="rtl"
+        splitResizable
+        splitResizeLabel="Resize editor and Preview"
+        source={<section>Source</section>}
+        preview={<section>Preview</section>}
+      />
+    );
+    const workspace = view.container.querySelector<HTMLElement>('.easymde-workspace');
+    const separator = view.getByRole('separator', {
+      name: 'Resize editor and Preview'
+    });
+    if (!workspace) throw new Error('workspace-unavailable');
+    Object.defineProperty(workspace, 'offsetWidth', {
+      configurable: true,
+      value: 1000
+    });
+    const setPointerCapture = vi.fn();
+    const releasePointerCapture = vi.fn();
+    let capturedId: number | null = null;
+    Object.defineProperty(separator, 'setPointerCapture', {
+      configurable: true,
+      value: (id: number) => {
+        capturedId = id;
+        setPointerCapture(id);
+      }
+    });
+    Object.defineProperty(separator, 'hasPointerCapture', {
+      configurable: true,
+      value: (id: number) => capturedId === id
+    });
+    Object.defineProperty(separator, 'releasePointerCapture', {
+      configurable: true,
+      value: (id: number) => {
+        capturedId = null;
+        releasePointerCapture(id);
+      }
+    });
+
+    fireEvent.pointerDown(separator, {
+      button: 0,
+      clientX: 500,
+      pointerId: 7,
+      pointerType: 'touch'
+    });
+    expect(setPointerCapture).toHaveBeenCalledWith(7);
+    expect(document.body.style.userSelect).toBe('none');
+    // Unrelated pointer IDs must be ignored while a touch drag is active.
+    fireEvent.pointerMove(document, { clientX: 100, pointerId: 8, pointerType: 'touch' });
+    expect(separator.getAttribute('aria-valuenow')).toBe('50');
+    // In RTL, dragging left increases the logical start pane.
+    fireEvent.pointerMove(document, { clientX: 350, pointerId: 7, pointerType: 'touch' });
+    expect(separator.getAttribute('aria-valuenow')).toBe('65');
+    expect(workspace.style.getPropertyValue('--easymde-split-start')).toBe('65');
+    expect(workspace.style.getPropertyValue('--easymde-split-end')).toBe('35');
+
+    fireEvent.pointerCancel(document, { pointerId: 7, pointerType: 'touch' });
+    expect(releasePointerCapture).toHaveBeenCalledWith(7);
+    expect(document.body.style.userSelect).toBe('');
+
+    // Moves after pointercancel must not change the split.
+    fireEvent.pointerMove(document, { clientX: 200, pointerId: 7, pointerType: 'touch' });
+    expect(separator.getAttribute('aria-valuenow')).toBe('65');
+
+    // Keyboard resizing in RTL remains intact after touch interaction.
+    fireEvent.keyDown(separator, { key: 'ArrowLeft' });
+    expect(separator.getAttribute('aria-valuenow')).toBe('66');
     fireEvent.keyDown(separator, { key: 'Home' });
     expect(separator.getAttribute('aria-valuenow')).toBe('50');
   });

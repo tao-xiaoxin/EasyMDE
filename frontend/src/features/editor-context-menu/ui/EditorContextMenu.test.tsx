@@ -2040,6 +2040,7 @@ describe('EditorContextMenu', () => {
       expect(frame?.className).toBe('easymde-editor-context-menu__submenu-frame');
       expect(frame?.dataset.easymdeContextMenuOverlapped).toBe('true');
       expect(frame?.dataset.easymdeContextMenuPlacement).toBe('right');
+      expect(frame?.style.getPropertyValue('--easymde-context-menu-pointer-top')).toBe('');
       expect(submenu.style.left).toBe('162px');
       expect(
         document.body.querySelector('[data-easymde-context-menu-pointer="true"]')

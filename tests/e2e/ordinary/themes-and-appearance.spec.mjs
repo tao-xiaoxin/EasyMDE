@@ -31,6 +31,7 @@ import {
 } from '../helpers/editor-theme-helpers.mjs';
 import {
   desktop,
+  editorWritingViewports,
   miniLandscape,
   miniPortrait
 } from '../helpers/editor-viewports.mjs';
@@ -339,7 +340,7 @@ test.describe('EasyMDE editor workflows', () => {
       await recordHeadingRhythm(id, `ordinary-${desktop.width}`, 52);
 
       let desktopDecoration;
-      for (const viewport of [desktop, miniLandscape, miniPortrait]) {
+      for (const viewport of editorWritingViewports) {
         const { width } = viewport;
         await page.setViewportSize(viewport);
         expectedThemeBackgroundImage = await readArticleThemeBackgroundImage(page, id);
@@ -563,7 +564,7 @@ test.describe('EasyMDE editor workflows', () => {
     }
     let currentMarkupProfile = selectedTheme.markupProfile;
 
-    for (const viewport of [desktop, miniLandscape, miniPortrait]) {
+    for (const viewport of editorWritingViewports) {
       const { width } = viewport;
       await page.setViewportSize(viewport);
 
@@ -1264,7 +1265,7 @@ test.describe('EasyMDE editor workflows', () => {
     }).toBe(true);
   });
 
-  for (const viewport of [desktop, miniLandscape, miniPortrait]) {
+  for (const viewport of editorWritingViewports) {
     const viewportWidth = viewport.width;
     test(`keeps Crimson Focus native task markers bounded at ${viewportWidth}px`, async ({ page }, testInfo) => {
       test.setTimeout(180_000);

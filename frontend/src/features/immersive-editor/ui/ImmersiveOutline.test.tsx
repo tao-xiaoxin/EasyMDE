@@ -183,4 +183,75 @@ describe('ImmersiveOutline', () => {
       [updatedItems[3]]
     ]);
   });
+
+  it('aligns rendered width, drag clamping, keyboard steps, and ARIA bounds to the intermediate 24vw cap', () => {
+    const view = render(
+      <ImmersiveOutline
+        activeIndex={null}
+        direction="ltr"
+        items={items}
+        onOpenChange={() => {}}
+        onSelect={() => {}}
+        open
+        strings={strings}
+        viewportWidth={800}
+      />
+    );
+    const outline = view.container.querySelector<HTMLElement>(
+      '.easymde-immersive-outline'
+    );
+    const resizer = view.getByRole('separator', { name: strings.resizeOutline });
+    expect(outline?.style.width).toBe('192px');
+    expect(resizer.getAttribute('aria-valuemin')).toBe('160');
+    expect(resizer.getAttribute('aria-valuemax')).toBe('192');
+    expect(resizer.getAttribute('aria-valuenow')).toBe('192');
+
+    // Moving wider at the 192px cap must not announce an unreachable width.
+    fireEvent.keyDown(resizer, { key: 'ArrowRight' });
+    expect(outline?.style.width).toBe('192px');
+    expect(resizer.getAttribute('aria-valuenow')).toBe('192');
+
+    // Moving narrower steps directly from the rendered 192px width.
+    fireEvent.keyDown(resizer, { key: 'ArrowLeft' });
+    expect(outline?.style.width).toBe('182px');
+    expect(resizer.getAttribute('aria-valuenow')).toBe('182');
+
+    // Pointer drag clamps strictly within [160, 192].
+    fireEvent.pointerDown(resizer, {
+      button: 0,
+      clientX: 182,
+      pointerId: 3,
+      pointerType: 'mouse'
+    });
+    fireEvent.pointerMove(document, { clientX: 100, pointerId: 3 });
+    fireEvent.pointerUp(document, { pointerId: 3 });
+    expect(outline?.style.width).toBe('160px');
+    expect(resizer.getAttribute('aria-valuenow')).toBe('160');
+
+    // Home resets to the reachable cap of DEFAULT_WIDTH (192px at 800px viewport).
+    fireEvent.keyDown(resizer, { key: 'Home' });
+    expect(outline?.style.width).toBe('192px');
+    expect(resizer.getAttribute('aria-valuenow')).toBe('192');
+
+    // Widening to desktop restores the desktop 190-360 bounds and clamps to reachable widths.
+    view.rerender(
+      <ImmersiveOutline
+        activeIndex={null}
+        direction="ltr"
+        items={items}
+        onOpenChange={() => {}}
+        onSelect={() => {}}
+        open
+        strings={strings}
+        viewportWidth={1280}
+      />
+    );
+    expect(resizer.getAttribute('aria-valuemin')).toBe('190');
+    expect(resizer.getAttribute('aria-valuemax')).toBe('360');
+    expect(resizer.getAttribute('aria-valuenow')).toBe('192');
+    expect(outline?.style.width).toBe('192px');
+    fireEvent.keyDown(resizer, { key: 'Home' });
+    expect(resizer.getAttribute('aria-valuenow')).toBe('240');
+    expect(outline?.style.width).toBe('240px');
+  });
 });

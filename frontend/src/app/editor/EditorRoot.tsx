@@ -346,7 +346,6 @@ export function EditorRoot(props: EditorRootProps) {
     remoteImageImportPort: media.remoteImageImportPort,
     reportFailure,
     rootActiveRef,
-    rootRef,
     simplifiedFormattingParser: props.simplifiedFormattingParser,
     submissionField: props.submissionField,
     subscribeContextMenuReadiness,

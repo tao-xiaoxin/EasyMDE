@@ -326,8 +326,8 @@ function MenuLayerComponent({
                         data-easymde-context-menu-pointer="true"
                         data-easymde-context-menu-pointer-placement={childPosition.placement}
                         style={{
-                          left: `${childPosition.pointerLeft ?? childPosition.left}px`,
-                          top: `${childPosition.top + (childPosition.pointerTop ?? 20)}px`
+                          left: `${childPosition.pointerLeft}px`,
+                          top: `${childPosition.top + childPosition.pointerTop}px`
                         }}
                       />
                     ) : null}
@@ -372,7 +372,9 @@ function MenuLayerComponent({
 
   const frameStyle: CSSProperties & { '--easymde-context-menu-pointer-top'?: string } = submenuPosition
     ? {
-        '--easymde-context-menu-pointer-top': `${submenuPosition.pointerTop ?? 20}px`,
+        ...(submenuPosition.overlapped
+          ? {}
+          : { '--easymde-context-menu-pointer-top': `${submenuPosition.pointerTop}px` }),
         clipPath: submenuPosition.clipPath,
         left: `${submenuPosition.left}px`,
         top: `${submenuPosition.top}px`

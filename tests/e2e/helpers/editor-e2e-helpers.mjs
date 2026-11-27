@@ -339,6 +339,64 @@ export async function openEasyMdeNewPost(page) {
   await expect(page.locator('#easymde-editor')).toBeVisible();
 }
 
+export async function assertOrdinarySideBySideSplit(
+  page,
+  label,
+  { checkPageOverflow = true, direction = 'ltr' } = {}
+) {
+  await expect.poll(
+    () => page.locator('#easymde-editor-root [data-easymde-editor-owner="react"]').evaluate(
+      (owner, { checkOverflow, expectedDirection }) => {
+        const workspace = owner.querySelector('.easymde-workspace');
+        const source = workspace?.querySelector('.easymde-pane-source');
+        const preview = workspace?.querySelector('.easymde-pane-preview');
+        if (!(source instanceof HTMLElement) || !(preview instanceof HTMLElement)) {
+          throw new Error('ordinary-workspace-panes-unavailable');
+        }
+        const sourceStyle = getComputedStyle(source);
+        const previewStyle = getComputedStyle(preview);
+        const sourceBox = source.getBoundingClientRect();
+        const previewBox = preview.getBoundingClientRect();
+        return {
+          hasModeClass: [
+            ...Array.from(owner.classList),
+            ...Array.from(workspace?.classList ?? [])
+          ].some((name) => name.startsWith('is-mode-')),
+          ...(checkOverflow
+            ? {
+                pageOverflow: Math.max(
+                  0,
+                  document.documentElement.scrollWidth - document.documentElement.clientWidth
+                )
+              }
+            : {}),
+          previewVisible: 'none' !== previewStyle.display
+            && 'hidden' !== previewStyle.visibility
+            && previewBox.width > 0
+            && previewBox.height > 0,
+          sideBySide: 'rtl' === expectedDirection
+            ? previewBox.right <= sourceBox.left + 1
+            : sourceBox.right <= previewBox.left + 1,
+          sourceVisible: 'none' !== sourceStyle.display
+            && 'hidden' !== sourceStyle.visibility
+            && sourceBox.width > 0
+            && sourceBox.height > 0,
+          topAligned: Math.abs(sourceBox.top - previewBox.top) <= 1
+        };
+      },
+      { checkOverflow: checkPageOverflow, expectedDirection: direction }
+    ),
+    { message: `${label}: ordinary editor should stay in side-by-side split` }
+  ).toEqual({
+    hasModeClass: false,
+    ...(checkPageOverflow ? { pageOverflow: 0 } : {}),
+    previewVisible: true,
+    sideBySide: true,
+    sourceVisible: true,
+    topAligned: true
+  });
+}
+
 export async function revealNativeMetaBox(page, boxId) {
   const box = page.locator(`#${boxId}`);
   await expect(box).toHaveCount(1);

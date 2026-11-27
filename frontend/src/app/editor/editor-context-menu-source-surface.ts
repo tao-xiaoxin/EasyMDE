@@ -45,7 +45,6 @@ import type {
 
 export type CreateSourceContextMenuSurfaceDeps = Readonly<{
   contextMenuBlockIndexFailureRef: SharedRef<ContextMenuBlockIndexFailure | null>;
-  contextMenuWorkspace: HTMLElement | null;
   documentSession: EditorDocumentSession;
   editorClipboardPort: EditorClipboardPort | undefined;
   editorCodeContentQuery: EditorCodeContentQuerySession;
@@ -82,7 +81,6 @@ export function createSourceContextMenuSurface(
 ): EditorContextMenuSurface {
   const {
     contextMenuBlockIndexFailureRef,
-    contextMenuWorkspace,
     documentSession,
     editorClipboardPort,
     editorCodeContentQuery,
@@ -114,9 +112,7 @@ export function createSourceContextMenuSurface(
       && 'off' !== imageUpload.remoteImageUploadMode
       && /^https?:\/\//iu.test(image.destination),
     boundaryElement:
-      contextMenuWorkspace
-      ?? element?.closest<HTMLElement>('.easymde-workspace')
-      ?? boundaryElement,
+      element.closest<HTMLElement>('.easymde-workspace') ?? boundaryElement,
     element,
     getActionContext: (_target, snapshot, blockIndex) => {
       const linkBinding: EditorSourceLinkQueryBinding = {

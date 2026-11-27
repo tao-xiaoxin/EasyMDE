@@ -75,47 +75,6 @@ export async function waitForPreviewReady(
 	);
 }
 
-export async function installPerformanceModeOverride(page, mode) {
-	const definition = performanceModeDefinitions[mode];
-	if (!definition || mode === "ordinarySplit") return;
-	await page.addInitScript(
-		({ editingMode }) => {
-			let loaderBootstrap;
-			Object.defineProperty(window, "EasyMDEAdminEditorLoaderBootstrap", {
-				configurable: true,
-				get: () => loaderBootstrap,
-				set: (value) => {
-					const editorBootstrap =
-						value &&
-						typeof value === "object" &&
-						value.editorBootstrap &&
-						typeof value.editorBootstrap === "object"
-							? value.editorBootstrap
-							: null;
-					if (!editorBootstrap) {
-						loaderBootstrap = value;
-						return;
-					}
-					loaderBootstrap = {
-						...value,
-						editorBootstrap: {
-							...editorBootstrap,
-							settings: {
-								...editorBootstrap.settings,
-								general: {
-									...editorBootstrap.settings?.general,
-									editingMode,
-								},
-							},
-						},
-					};
-				},
-			});
-		},
-		{ editingMode: definition.editingMode },
-	);
-}
-
 export async function configurePerformanceMode(page, mode) {
 	const definition = performanceModeDefinitions[mode];
 	if (!definition) throw new Error("wechat-copy-performance-mode-invalid");
@@ -158,6 +117,9 @@ export async function configurePerformanceMode(page, mode) {
 		await waitForPreviewReady(page, { visible: false });
 		return;
 	}
+	await page
+		.getByRole("button", { name: immersiveLabels.splitMode, exact: true })
+		.click();
 	await expect(immersivePreview).toBeVisible();
 	await waitForPreviewReady(page);
 }

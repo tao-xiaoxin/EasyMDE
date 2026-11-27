@@ -883,4 +883,23 @@ describe('ImmersiveEditor document derivations', () => {
         .toBeNull();
     });
   });
+
+  it('propagates live viewport width to the docked Outline resizer bounds across resizes', () => {
+    const fixture = createImmersiveEditorFixture('# Heading\n\nbody', 800);
+    const view = render(<ImmersiveEditor {...fixture.props} mode="split" />);
+    const outline = view.container.querySelector<HTMLElement>(
+      '.easymde-immersive-outline'
+    );
+    const resizer = view.getByRole('separator', { name: 'resizeOutline' });
+    expect(outline?.style.width).toBe('192px');
+    expect(resizer.getAttribute('aria-valuemin')).toBe('160');
+    expect(resizer.getAttribute('aria-valuemax')).toBe('192');
+    expect(resizer.getAttribute('aria-valuenow')).toBe('192');
+
+    act(() => fixture.resizeTo(1280));
+    expect(outline?.style.width).toBe('240px');
+    expect(resizer.getAttribute('aria-valuemin')).toBe('190');
+    expect(resizer.getAttribute('aria-valuemax')).toBe('360');
+    expect(resizer.getAttribute('aria-valuenow')).toBe('240');
+  });
 });

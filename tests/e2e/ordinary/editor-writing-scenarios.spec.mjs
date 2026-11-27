@@ -1,11 +1,12 @@
 import { expect, test } from '@playwright/test';
 import {
+  assertOpenContextMenuGeometry,
   closeMenu,
-  menuSelector,
   openRootSubmenu,
   openSourceMenu
 } from '../helpers/context-menu-helpers.mjs';
 import {
+  assertOrdinarySideBySideSplit,
   currentPostId,
   login,
   normalizeMarkdown,
@@ -22,66 +23,10 @@ import {
 } from '../helpers/editor-viewports.mjs';
 import { attachPrivacySafeBrowserMonitor } from '../helpers/privacy-safe-browser-monitor.mjs';
 
-function assertNoHorizontalClip(clipPath, label) {
-  if (!clipPath || 'none' === clipPath) return;
-  const match = clipPath.match(/^inset\(([^)]+)\)$/u);
-  if (!match) {
-    throw new Error(`unexpected-context-menu-clip-path:${label}:${clipPath}`);
-  }
-  const tokens = match[1]
-    .trim()
-    .split(/\s+/u)
-    .map((token) => Number.parseFloat(token));
-  const right = 1 === tokens.length ? tokens[0] : tokens[1];
-  const left = tokens.length <= 2 ? right : 3 === tokens.length ? tokens[1] : tokens[3];
-  expect(right, `${label} horizontal right clip`).toBe(0);
-  expect(left, `${label} horizontal left clip`).toBe(0);
-}
-
-async function assertOrdinarySideBySideSplit(page, label) {
-  await expect.poll(
-    () => page.locator('#easymde-editor-root [data-easymde-editor-owner="react"]').evaluate((owner) => {
-      const workspace = owner.querySelector('.easymde-workspace');
-      const source = workspace?.querySelector('.easymde-pane-source');
-      const preview = workspace?.querySelector('.easymde-pane-preview');
-      if (!(source instanceof HTMLElement) || !(preview instanceof HTMLElement)) {
-        throw new Error('ordinary-workspace-panes-unavailable');
-      }
-      const sourceStyle = getComputedStyle(source);
-      const previewStyle = getComputedStyle(preview);
-      const sourceBox = source.getBoundingClientRect();
-      const previewBox = preview.getBoundingClientRect();
-      return {
-        hasModeClass: [
-          ...Array.from(owner.classList),
-          ...Array.from(workspace?.classList ?? [])
-        ].some((name) => name.startsWith('is-mode-')),
-        pageOverflow: Math.max(
-          0,
-          document.documentElement.scrollWidth - document.documentElement.clientWidth
-        ),
-        previewVisible: 'none' !== previewStyle.display
-          && 'hidden' !== previewStyle.visibility
-          && previewBox.width > 0
-          && previewBox.height > 0,
-        sourceLeftOfPreview: sourceBox.right <= previewBox.left + 1,
-        sourceVisible: 'none' !== sourceStyle.display
-          && 'hidden' !== sourceStyle.visibility
-          && sourceBox.width > 0
-          && sourceBox.height > 0,
-        topAligned: Math.abs(sourceBox.top - previewBox.top) <= 1
-      };
-    }),
-    { message: `${label}: ordinary editor should stay in side-by-side split` }
-  ).toEqual({
-    hasModeClass: false,
-    pageOverflow: 0,
-    previewVisible: true,
-    sourceLeftOfPreview: true,
-    sourceVisible: true,
-    topAligned: true
-  });
-}
+test.use({
+  trace: 'off',
+  video: 'off'
+});
 
 async function assertSourceContextMenuAndSubmenu(page, { expectedSource, phase }) {
   const sourceEditor = page.locator('.easymde-source-react .cm-content');
@@ -90,61 +35,113 @@ async function assertSourceContextMenuAndSubmenu(page, { expectedSource, phase }
   await sourceEditor.click();
   await openSourceMenu(page, sourceEditor);
   await openRootSubmenu(page, 'insert');
-
-  const submenuFrame = page.locator('.easymde-editor-context-menu__submenu-frame').first();
-  const submenu = page.locator('.easymde-editor-context-menu__submenu').first();
-  await expect(submenuFrame).toBeVisible();
-  await expect(submenu).toBeVisible();
-
-  const geometry = await page.evaluate((rootSelector) => {
-    const root = document.querySelector(rootSelector);
-    const frame = document.querySelector('.easymde-editor-context-menu__submenu-frame');
-    const sub = document.querySelector('.easymde-editor-context-menu__submenu');
-    const pointers = document.querySelectorAll('.easymde-editor-context-menu__pointer');
-    if (!(root instanceof HTMLElement)
-      || !(frame instanceof HTMLElement)
-      || !(sub instanceof HTMLElement)) {
-      throw new Error('context-menu-elements-unavailable');
-    }
-    const rootRect = root.getBoundingClientRect();
-    const frameRect = frame.getBoundingClientRect();
-    const subRect = sub.getBoundingClientRect();
-    return {
-      afterMaskImage: getComputedStyle(frame, '::after').maskImage,
-      frameClipPath: getComputedStyle(frame).clipPath,
-      frameLeft: frameRect.left,
-      frameOverlapped: frame.getAttribute('data-easymde-context-menu-overlapped'),
-      frameRight: frameRect.right,
-      pointerCount: pointers.length,
-      rootClipPath: getComputedStyle(root).clipPath,
-      rootLeft: rootRect.left,
-      rootRight: rootRect.right,
-      subClipPath: getComputedStyle(sub).clipPath,
-      subLeft: subRect.left,
-      subRight: subRect.right,
-      viewportWidth: window.innerWidth
-    };
-  }, menuSelector);
-
-  expect(geometry.rootLeft, `${phase} root left`).toBeGreaterThanOrEqual(7.5);
-  expect(geometry.rootRight, `${phase} root right`).toBeLessThanOrEqual(geometry.viewportWidth - 7.5);
-  expect(geometry.frameLeft, `${phase} submenu frame left`).toBeGreaterThanOrEqual(7.5);
-  expect(geometry.frameRight, `${phase} submenu frame right`).toBeLessThanOrEqual(geometry.viewportWidth - 7.5);
-  expect(geometry.subLeft, `${phase} submenu left`).toBeGreaterThanOrEqual(7.5);
-  expect(geometry.subRight, `${phase} submenu right`).toBeLessThanOrEqual(geometry.viewportWidth - 7.5);
-  assertNoHorizontalClip(geometry.rootClipPath, `${phase}-root`);
-  assertNoHorizontalClip(geometry.frameClipPath, `${phase}-frame`);
-  assertNoHorizontalClip(geometry.subClipPath, `${phase}-submenu`);
-
-  if ('true' === geometry.frameOverlapped) {
-    expect(geometry.pointerCount, `${phase} overlapped pointer count`).toBe(0);
-    expect(geometry.afterMaskImage, `${phase} overlapped frame mask`).toBe('none');
-  } else {
-    expect(geometry.pointerCount, `${phase} non-overlapped pointer count`).toBe(1);
-  }
-
+  await assertOpenContextMenuGeometry(page, {
+    expectedOverlapped: false,
+    phase
+  });
   await closeMenu(page, phase, { expectedSource });
   await expect(sourceField).toHaveValue(expectedSource);
+}
+
+async function assertImmersiveSplitDividerResize(
+  page,
+  immersiveRoot,
+  { hasTouch, phase }
+) {
+  const divider = immersiveRoot.locator('.easymde-immersive-pane-divider');
+  await expect(divider).toBeVisible();
+
+  const readSplitMetrics = () => immersiveRoot.evaluate((root) => {
+    const source = root.querySelector('.easymde-pane-source');
+    const preview = root.querySelector('.easymde-pane-preview');
+    const handle = root.querySelector('.easymde-immersive-pane-divider');
+    if (!(source instanceof HTMLElement)
+      || !(preview instanceof HTMLElement)
+      || !(handle instanceof HTMLElement)) {
+      throw new Error('immersive-split-resize-elements-unavailable');
+    }
+    const sourceRect = source.getBoundingClientRect();
+    const previewRect = preview.getBoundingClientRect();
+    const handleRect = handle.getBoundingClientRect();
+    return {
+      dividerCenterX: handleRect.left + handleRect.width / 2,
+      dividerCenterY: handleRect.top + handleRect.height / 2,
+      pageOverflow: Math.max(
+        0,
+        document.documentElement.scrollWidth - document.documentElement.clientWidth
+      ),
+      previewWidth: previewRect.width,
+      sourceLeftOfPreview: sourceRect.right <= previewRect.left + 1,
+      sourceWidth: sourceRect.width,
+      topAligned: Math.abs(sourceRect.top - previewRect.top) <= 1,
+      touchAction: getComputedStyle(handle).touchAction,
+      valueNow: Number.parseInt(handle.getAttribute('aria-valuenow') ?? '', 10)
+    };
+  });
+
+  const before = await readSplitMetrics();
+  expect(before.valueNow, `${phase} initial split value`).toBe(50);
+  expect(before.touchAction, `${phase} divider touch-action`).toBe('none');
+
+  const dragDistance = 80;
+  const startX = Math.round(before.dividerCenterX);
+  const startY = Math.round(before.dividerCenterY);
+  const steps = 5;
+
+  if (hasTouch) {
+    const cdp = await page.context().newCDPSession(page);
+    try {
+      await cdp.send('Input.dispatchTouchEvent', {
+        touchPoints: [{ id: 1, x: startX, y: startY }],
+        type: 'touchStart'
+      });
+      for (let step = 1; step <= steps; step += 1) {
+        const nextX = Math.round(startX + (dragDistance * step) / steps);
+        await cdp.send('Input.dispatchTouchEvent', {
+          touchPoints: [{ id: 1, x: nextX, y: startY }],
+          type: 'touchMove'
+        });
+      }
+      await cdp.send('Input.dispatchTouchEvent', {
+        touchPoints: [],
+        type: 'touchEnd'
+      });
+    } finally {
+      await cdp.detach();
+    }
+  } else {
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(startX + dragDistance, startY, { steps });
+    await page.mouse.up();
+  }
+
+  const afterDrag = await readSplitMetrics();
+  expect(afterDrag.valueNow, `${phase} split value after drag`).toBeGreaterThan(before.valueNow);
+  expect(
+    afterDrag.sourceWidth,
+    `${phase} source width after drag`
+  ).toBeGreaterThan(before.sourceWidth + 20);
+  expect(
+    afterDrag.previewWidth,
+    `${phase} preview width after drag`
+  ).toBeLessThan(before.previewWidth - 20);
+  expect(afterDrag.sourceLeftOfPreview, `${phase} side-by-side after drag`).toBe(true);
+  expect(afterDrag.topAligned, `${phase} top aligned after drag`).toBe(true);
+  expect(afterDrag.pageOverflow, `${phase} overflow after drag`).toBe(0);
+
+  await divider.focus();
+  await page.keyboard.press('ArrowLeft');
+  const afterArrow = await readSplitMetrics();
+  expect(afterArrow.valueNow, `${phase} split value after ArrowLeft`).toBe(afterDrag.valueNow - 1);
+
+  await page.keyboard.press('Home');
+  const afterHome = await readSplitMetrics();
+  expect(afterHome.valueNow, `${phase} split value after Home`).toBe(50);
+  expect(
+    Math.abs(afterHome.sourceWidth - before.sourceWidth),
+    `${phase} source width restored after Home`
+  ).toBeLessThanOrEqual(2);
 }
 
 const writingScenarios = [
@@ -318,6 +315,11 @@ test.describe('EasyMDE routine editor writing scenarios', () => {
             expect(immersiveSplitGeometry.outlinePosition).not.toBe('absolute');
             expect(immersiveSplitGeometry.outlineResizerVisible).toBe(true);
           }
+
+          await assertImmersiveSplitDividerResize(page, immersiveRoot, {
+            hasTouch: scenario.hasTouch,
+            phase: `${scenario.name}-immersive-split-divider`
+          });
 
           await assertSourceContextMenuAndSubmenu(page, {
             expectedSource: initialMarkdown,

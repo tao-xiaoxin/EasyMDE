@@ -405,15 +405,6 @@ export async function installEditorBootstrapOverride(page, pngConversionEnabled)
         const forceSource = '1' === window.sessionStorage.getItem(
           'easymde-e2e-source-presentation'
         );
-        const requestedEditingMode = window.sessionStorage.getItem(
-          'easymde-e2e-editing-mode'
-        );
-        if (
-          requestedEditingMode
-          && !['live-preview', 'source', 'preview'].includes(requestedEditingMode)
-        ) {
-          throw new Error('wechat-e2e-editing-mode-invalid');
-        }
         loaderBootstrap = {
           ...value,
           editorBootstrap: {
@@ -422,11 +413,7 @@ export async function installEditorBootstrapOverride(page, pngConversionEnabled)
               ...editorBootstrap.settings,
               general: {
                 ...editorBootstrap.settings?.general,
-                ...(forceSource
-                  ? { editingMode: 'source' }
-                  : requestedEditingMode
-                    ? { editingMode: requestedEditingMode }
-                    : {})
+                ...(forceSource ? { editingMode: 'source' } : {})
               }
             },
             wechatExport: {

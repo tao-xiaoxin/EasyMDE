@@ -322,6 +322,23 @@ test('ordinary React editor CSS owns the historical fixed 50/50 workspace', () =
     'intermediate immersive breakpoint must not hide the split divider'
   );
 
+  const section17Start = css.lastIndexOf('17. Ordinary Editor & Shared Responsive Breakpoints');
+  const section18Start = css.lastIndexOf('18. WordPress Media Picker Dialog');
+  assert.ok(
+    section17Start > -1 && section18Start > section17Start,
+    'Missing Section 17/18 CSS markers'
+  );
+  const section17Css = css.slice(section17Start, section18Start);
+  const sharedTabletPortraitMedia = cssBlock(
+    section17Css,
+    '@media (max-width: 782px)'
+  );
+  const tabletSplitPreviewPaper = cssRule(
+    sharedTabletPortraitMedia,
+    `#easymde-editor-root .easymde-editor:not(.is-immersive) .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview${wechatExportPaperSelector},\n    #easymde-editor-root .easymde-editor[data-easymde-preview-presentation="split"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview${wechatExportPaperSelector}`
+  );
+  assertDeclaration(tabletSplitPreviewPaper, 'padding', '18px 18px 24px');
+
   const section19Start = css.lastIndexOf('19. Immersive Mode Responsive Breakpoints');
   const section20Start = css.lastIndexOf('20. Unified ProseMirror Immersive Visual Editor Surface');
   assert.ok(
@@ -354,18 +371,16 @@ test('ordinary React editor CSS owns the historical fixed 50/50 workspace', () =
     'grid-column',
     '1'
   );
-
-  const tabletOrdinaryPreviewPaper = cssRule(
+  assert.doesNotMatch(
     tabletPortraitMedia,
-    `.easymde-editor:not(.is-immersive) .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview${wechatExportPaperSelector}`
+    /\.easymde-editor:not\(\.is-immersive\)/,
+    'ordinary editor preview padding belongs in Section 17 shared breakpoints, not Section 19'
   );
-  assertDeclaration(tabletOrdinaryPreviewPaper, 'padding', '18px 18px 24px');
-
-  const tabletSplitPreviewPaper = cssRule(
-    tabletPortraitMedia,
-    `.easymde-editor[data-easymde-preview-presentation="split"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview${wechatExportPaperSelector}`
+  assertDeclaration(
+    cssRule(css, '.easymde-editor.is-immersive .easymde-immersive-pane-divider'),
+    'touch-action',
+    'none'
   );
-  assertDeclaration(tabletSplitPreviewPaper, 'padding', '18px 18px 24px');
 
   assertDeclaration(
     cssRule(
@@ -1162,11 +1177,10 @@ test('context submenu border joins the clipped tail without masking its glass or
   assertDeclaration(flipped, '--easymde-context-menu-join-side', '100%');
 });
 
-test('context menu CSS styles overlapped submenus without phone-only breakpoints', () => {
-  const overlappedFrame = cssRule(
-    css,
-    '.easymde-editor-context-menu__submenu-frame[data-easymde-context-menu-overlapped="true"]'
-  );
+test('context menu CSS styles overlapped submenus without phone-only breakpoints or forced-colors specificity regressions', () => {
+  const overlappedFrameSelector =
+    '.easymde-editor-context-menu__submenu-frame:where([data-easymde-context-menu-overlapped="true"])';
+  const overlappedFrame = cssRule(css, overlappedFrameSelector);
   assertDeclaration(
     overlappedFrame,
     'filter',
@@ -1174,7 +1188,7 @@ test('context menu CSS styles overlapped submenus without phone-only breakpoints
   );
   const overlappedOutline = cssRule(
     css,
-    '.easymde-editor-context-menu__submenu-frame[data-easymde-context-menu-overlapped="true"]::after'
+    `${overlappedFrameSelector}::after`
   );
   assertDeclaration(overlappedOutline, 'mask-image', 'none');
 
@@ -1182,6 +1196,27 @@ test('context menu CSS styles overlapped submenus without phone-only breakpoints
   const section8Start = css.lastIndexOf('8. Immersive Font Selector Controls');
   assert.ok(section7Start > -1 && section8Start > section7Start, 'Missing Section 7/8 CSS markers');
   const section7Css = css.slice(section7Start, section8Start);
+
+  const overlappedRuleIndex = section7Css.indexOf(overlappedFrameSelector);
+  const forcedColorsIndex = section7Css.indexOf('@media (forced-colors: active)');
+  assert.ok(
+    overlappedRuleIndex > -1 && forcedColorsIndex > overlappedRuleIndex,
+    'forced-colors media override must appear after the (0,1,0) overlapped submenu rule so filter: none wins'
+  );
+  const forcedColorsBlock = cssBlock(section7Css, '@media (forced-colors: active)');
+  assertDeclaration(
+    cssRule(
+      forcedColorsBlock,
+      '.easymde-editor-context-menu,\n    .easymde-editor-context-menu__submenu-frame'
+    ),
+    'filter',
+    'none'
+  );
+  assert.doesNotMatch(
+    section7Css,
+    /\.easymde-editor-context-menu__submenu-frame\[data-easymde-context-menu-overlapped="true"\]/,
+    'overlapped submenu frame must use :where(...) to stay at (0,1,0) specificity'
+  );
 
   assert.doesNotMatch(
     section7Css,

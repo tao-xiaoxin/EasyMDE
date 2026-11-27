@@ -93,10 +93,17 @@ persistence fallback.
 ## Comparison and completion
 
 Compare source ownership and interaction semantics, then effective DOM,
-geometry, computed styles, pixels, accessibility, and behavior. Test just below,
-at, and above each breakpoint; include orientation, zoom, text scale, scrollbar,
-safe area, and open keyboard where relevant. Compare default, hover,
-focus-visible, active, selected, disabled, pending, error, and expanded states.
+geometry, computed styles, pixels, accessibility, and behavior. For routine
+ordinary and immersive editor layout acceptance, follow
+`docs/TESTING_AND_RELEASE.md#routine-editor-writing-acceptance` and verify the
+three canonical writing viewports (`1280 × 1040` Desktop, `1133 × 744` iPad
+mini landscape, and `744 × 1133` iPad mini portrait); do not add `< 744px`
+phone-width editor writing tests or pixel-by-pixel breakpoint sweeps. Narrow
+mobile viewports (`280–390px`) remain strictly scoped to public article reader
+pages, WeChat mobile reader export columns, and Settings Center surfaces.
+Include orientation, zoom, text scale, scrollbar, safe area, and open keyboard
+where relevant. Compare default, hover, focus-visible, active, selected,
+disabled, pending, error, and expanded states.
 
 On mismatch, locate the first divergent ancestor or owner, fix the root cause,
 and rerender. Tolerate only understood rasterization/subpixel variance. A

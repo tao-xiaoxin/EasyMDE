@@ -1,6 +1,10 @@
 import { expect, test } from '@playwright/test';
 
 import {
+  miniLandscape,
+  miniPortrait
+} from './helpers/editor-viewports.mjs';
+import {
   finishVisualBrowserMonitor,
   installVisualBrowserMonitor,
   monitorError
@@ -1064,9 +1068,9 @@ for (const activationKey of ['Enter', 'Space']) {
   });
 }
 
-test('closes the ready compact Outline at 390px and on a 760px to 390px resize', async ({ page }) => {
+test('closes the ready compact Outline at 744px and on a 1133px to 744px resize', async ({ page }) => {
   await beginBrowserTest(page);
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize(miniPortrait);
   const markdown = [
     '# Synthetic heading',
     ...Array.from({ length: 8 }, (_, index) => `Synthetic compact paragraph ${index + 1}.`)
@@ -1081,7 +1085,7 @@ test('closes the ready compact Outline at 390px and on a 760px to 390px resize',
   await expect(outline).toHaveCount(0);
 
   await lockPreview(page, labels);
-  await page.setViewportSize({ width: 760, height: 900 });
+  await page.setViewportSize(miniLandscape);
   await page.getByRole('button', { name: labels.showOutline }).click();
   await expect(outline).toBeVisible();
   await page.getByRole('button', { name: labels.previewUnlockEdit }).click();
@@ -1094,7 +1098,7 @@ test('closes the ready compact Outline at 390px and on a 760px to 390px resize',
   });
   await outlineHeading.focus();
   await expect(outlineHeading).toBeFocused();
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize(miniPortrait);
   await expect(outline).toHaveCount(0);
   await expect(editor).toBeFocused();
 });

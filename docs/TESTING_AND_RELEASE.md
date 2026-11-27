@@ -1023,14 +1023,66 @@ and restores the Settings Center editing mode after both normal and CDP hard
 reloads. It loads no Legacy Focus assets and remains zero-write until the user
 invokes a legitimate WordPress mutation.
 
+### Routine Editor Writing Acceptance
+
+Routine ordinary and immersive editor layout and interaction acceptance uses
+**only three realistic writing viewports** exported from
+`tests/e2e/helpers/editor-viewports.mjs`:
+
+| Scenario | Viewport | Input mode | Immersive Outline |
+| --- | --- | --- | --- |
+| Desktop | `1280 × 1040` | Mouse + keyboard (`hasTouch: false`) | Docked, resizer visible |
+| iPad mini landscape | `1133 × 744` | Chromium touch emulation (`hasTouch: true, isMobile: true`) | Docked, resizer visible |
+| iPad mini portrait | `744 × 1133` | Chromium touch emulation (`hasTouch: true, isMobile: true`) | Overlay (`position: absolute`, `<= 782px`), resizer hidden, split divider visible |
+
+Normative policy:
+
+- Routine ordinary and immersive editor layout and interaction acceptance MUST
+  use only these three canonical writing viewports (`1280 × 1040`,
+  `1133 × 744`, `744 × 1133`). Do not add phone-width (`< 744px`, such as
+  `280–640px`) editor writing tests or pixel-by-pixel breakpoint sweeps.
+- Narrow mobile viewports (`280–390px`) remain strictly scoped to public
+  article reader pages, WeChat mobile reader export columns, and Settings
+  Center surfaces.
+
+Workflow checklist verified by the routine writing suite:
+
+1. Ordinary editor opens in fixed side-by-side split (Source left of Preview,
+   top-aligned within 1px, no `is-mode-*` class, zero horizontal page
+   overflow) even when `general.editingMode` is `'source'` or `'preview'`.
+2. Markdown input settles in the live Preview with rendered heading output and
+   `aria-busy="false"`.
+3. Source context menu and expanded `insert` submenu stay within
+   `[7.5, viewport.width - 7.5]` with zero horizontal `clip-path` slicing,
+   consistent overlapped-state pointer/mask rendering, and clean dismissal with
+   zero source mutation across both ordinary split and immersive split.
+4. Immersive Editing opens with the configured initial mode, supports Split
+   mode with side-by-side panes, visible `.easymde-immersive-pane-divider`, and
+   docked (`1280 × 1040`, `1133 × 744`) versus overlay (`744 × 1133`) Outline
+   behavior, plus Source-only and Preview-only round-trip edits back to
+   ordinary split.
+5. On Desktop (`1280 × 1040`), native draft Save after Preview settlement
+   shows the WordPress success notice and persists the exact normalized
+   `_easymde_markdown` post meta.
+
+Run the routine writing acceptance suite with:
+
+```bash
+npm run test:e2e -- tests/e2e/ordinary/editor-writing-scenarios.spec.mjs --project=chromium
+```
+
 The Playwright E2E suites are organized into domain-focused directories and
 focused standalone specs under `tests/e2e/`:
 
 - `tests/e2e/ordinary/`:
+  - `tests/e2e/ordinary/editor-writing-scenarios.spec.mjs`: routine three-viewport
+    (`1280 × 1040` Desktop, `1133 × 744` iPad mini landscape, `744 × 1133` iPad
+    mini portrait) ordinary split, Source context menu, immersive editing,
+    desktop draft persistence, and `general.editingMode` acceptance suite;
   - `tests/e2e/ordinary/editor-core-and-bridge.spec.mjs`: ordinary split
     editor, toolbar commands, native bridge, local drafts, and the integrated
-    immersive mobile header/toolbar/outline, long-title breakpoint, and
-    intermediate-width split-plus-outline layout regressions;
+    immersive desktop/tablet header/toolbar/outline, long-title, and
+    three-viewport split-plus-outline layout regressions;
   - `tests/e2e/ordinary/themes-and-appearance.spec.mjs`: registered article
     and code themes, Custom CSS scoping, ordinary settings popover, and the
     integrated Crimson Focus native task-marker layout regressions;
@@ -1195,13 +1247,14 @@ attribution URLs and identifiers are not recorded. This budget applies only to
 this near-threshold sequence; other performance cases retain their
 separate gates. The JSON attachment and structured output contain counts and
 timings needed to locate a failure without recording article content.
-The 390px immersive cases begin with Outline open. They check that its overlay
-does not narrow Source, Split, Preview, or the Mac frame, then verify pending
-unlock keeps the Outline open, editable readiness closes it without changing
-Markdown, Preview, or the preference, and manual reopen remains available.
-They also cover desktop-to-compact resize while Preview remains editable,
-repeated crossings after a manual reopen, focus and caret preservation, RTL
-placement, and page-level horizontal overflow.
+The tablet-portrait (`744 × 1133`) immersive compact-Outline cases begin with
+Outline open. They check that its overlay does not narrow Source, Split,
+Preview, or the Mac frame, then verify pending unlock keeps the Outline open,
+editable readiness closes it without changing Markdown, Preview, or the
+preference, and manual reopen remains available. They also cover
+tablet-landscape-to-portrait (`1133 × 744` to `744 × 1133`) resize while
+Preview remains editable, repeated crossings after a manual reopen, focus and
+caret preservation, RTL placement, and page-level horizontal overflow.
 The 194 KB unified ProseMirror paste-and-edit case (`@performance keeps a synthetic large Markdown paste and unified ProseMirror visual editing responsive`)
 pastes 2,038 synthetic blocks (including 454 headings plus language-free and
 explicit-language code fences) into the unlocked ProseMirror `textbox` via the

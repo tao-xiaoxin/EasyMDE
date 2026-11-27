@@ -58,6 +58,16 @@ export function isCssNestedDeclarationsRule(
 	);
 }
 
+export function isCssKeyframesRule(
+	rule: CSSRule,
+	defaultView: (Window & typeof globalThis) | null | undefined,
+): rule is CSSKeyframesRule {
+	return (
+		isCssRuleKind(rule, defaultView, 'CSSKeyframesRule', '[object CSSKeyframesRule]') ||
+		Boolean(defaultView?.CSSRule && defaultView.CSSRule.KEYFRAMES_RULE === rule.type)
+	);
+}
+
 export function isSkippableNonSelectorRule(
 	rule: CSSRule,
 	defaultView: (Window & typeof globalThis) | null | undefined,
@@ -68,10 +78,7 @@ export function isSkippableNonSelectorRule(
 	) {
 		return true;
 	}
-	if (
-		isCssRuleKind(rule, defaultView, 'CSSKeyframesRule', '[object CSSKeyframesRule]') ||
-		(defaultView?.CSSRule && defaultView.CSSRule.KEYFRAMES_RULE === rule.type)
-	) {
+	if (isCssKeyframesRule(rule, defaultView)) {
 		return true;
 	}
 	if (

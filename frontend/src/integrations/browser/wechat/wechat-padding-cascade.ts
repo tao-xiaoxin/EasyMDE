@@ -1,5 +1,6 @@
 import { splitSelectorList } from "../../../shared/css/selector-list";
 import {
+	isCssKeyframesRule,
 	isCssLayerBlockRule,
 	isCssMediaRule,
 	isCssNestedDeclarationsRule,
@@ -52,6 +53,7 @@ export type CompiledNestedPaddingGuard = Readonly<{
 export type PaddingCascadeIndex = Readonly<{
 	entries: readonly PaddingCascadeRuleEntry[];
 	nestedGuards: readonly CompiledNestedPaddingGuard[];
+	paddingKeyframeNames: ReadonlySet<string>;
 	unreadableStyleSheet: boolean;
 }>;
 
@@ -213,6 +215,77 @@ function styleHasImportantPadding(
 	return false;
 }
 
+function normalizeKeyframeName(raw: string): string {
+	const trimmed = raw.trim();
+	if (
+		trimmed.length >= 2 &&
+		((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+			(trimmed.startsWith("'") && trimmed.endsWith("'")))
+	) {
+		return trimmed.slice(1, -1);
+	}
+	return trimmed;
+}
+
+function recordPaddingKeyframesRule(
+	rule: CSSKeyframesRule,
+	property: SemanticPaddingProperty,
+	outKeyframeNames: Set<string>,
+): boolean {
+	const tokenName = PORTABLE_PADDING_TOKENS[property];
+	try {
+		let affectsPadding = false;
+		for (const frame of Array.from(rule.cssRules)) {
+			const frameStyle = (frame as CSSRule & { style?: CSSStyleDeclaration })
+				.style;
+			if (!frameStyle || "function" !== typeof frameStyle.getPropertyValue) {
+				return true;
+			}
+			if (
+				styleAffectsPadding(frameStyle, property) ||
+				frameStyle.getPropertyValue("all").trim() !== "" ||
+				frameStyle.getPropertyValue(tokenName).trim() !== ""
+			) {
+				affectsPadding = true;
+			}
+		}
+		if (!affectsPadding) return false;
+		const normalizedName = normalizeKeyframeName(rule.name ?? "");
+		if (!normalizedName) return true;
+		outKeyframeNames.add(normalizedName);
+		return false;
+	} catch {
+		return true;
+	}
+}
+
+function elementUsesAnimatedPaddingKeyframes(
+	source: Element,
+	semanticStyle: CSSStyleDeclaration | null,
+	paddingKeyframeNames: ReadonlySet<string>,
+): boolean {
+	if (0 === paddingKeyframeNames.size) return false;
+	const animationNames = [
+		semanticStyle?.getPropertyValue("animation-name").trim() ?? "",
+		source.ownerDocument.defaultView
+			?.getComputedStyle(source)
+			?.getPropertyValue("animation-name")
+			.trim() ?? "",
+	].filter(Boolean);
+	// Fail closed if animation-name cannot be inspected so padding animations never silently bypass effective pixels.
+	if (0 === animationNames.length) return true;
+	for (const rawList of animationNames) {
+		for (const rawToken of rawList.split(",")) {
+			const trimmed = rawToken.trim();
+			if (!trimmed || "none" === trimmed.toLowerCase()) continue;
+			if (paddingKeyframeNames.has(normalizeKeyframeName(trimmed))) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
 function compileNestedPaddingGuards(
 	rules: CSSRuleList,
 	property: SemanticPaddingProperty,
@@ -221,6 +294,7 @@ function compileNestedPaddingGuards(
 	ancestorClosestSelectors: readonly string[],
 	ancestorUnsafe: boolean,
 	outGuards: CompiledNestedPaddingGuard[],
+	outKeyframeNames: Set<string>,
 ): boolean {
 	try {
 		for (const rule of Array.from(rules)) {
@@ -252,6 +326,7 @@ function compileNestedPaddingGuards(
 						nextClosestSelectors,
 						childUnsafe,
 						outGuards,
+						outKeyframeNames,
 					)
 				) {
 					return true;
@@ -287,8 +362,15 @@ function compileNestedPaddingGuards(
 						ancestorClosestSelectors,
 						ancestorUnsafe,
 						outGuards,
+						outKeyframeNames,
 					)
 				) {
+					return true;
+				}
+				continue;
+			}
+			if (isCssKeyframesRule(rule, defaultView)) {
+				if (recordPaddingKeyframesRule(rule, property, outKeyframeNames)) {
 					return true;
 				}
 				continue;
@@ -358,6 +440,7 @@ export function buildPaddingCascadeIndex(
 	const defaultView = document.defaultView;
 	const entries: PaddingCascadeRuleEntry[] = [];
 	const nestedGuards: CompiledNestedPaddingGuard[] = [];
+	const paddingKeyframeNames = new Set<string>();
 	let order = 0;
 	let unreadableStyleSheet = false;
 
@@ -434,6 +517,13 @@ export function buildPaddingCascadeIndex(
 				continue;
 			}
 			if (!isCssStyleRule(rule, defaultView)) {
+				if (isCssKeyframesRule(rule, defaultView)) {
+					if (recordPaddingKeyframesRule(rule, property, paddingKeyframeNames)) {
+						unreadableStyleSheet = true;
+						return;
+					}
+					continue;
+				}
 				if (isSkippableNonSelectorRule(rule, defaultView)) {
 					continue;
 				}
@@ -454,8 +544,7 @@ export function buildPaddingCascadeIndex(
 				continue;
 			}
 
-			const styleRule = rule as CSSStyleRule;
-			const selectors = splitSelectorList(styleRule.selectorText);
+			const selectors = splitSelectorList(rule.selectorText);
 			if (
 				!selectors ||
 				selectors.some((selector) =>
@@ -465,23 +554,24 @@ export function buildPaddingCascadeIndex(
 				unreadableStyleSheet = true;
 				return;
 			}
-			if (styleRule.cssRules && styleRule.cssRules.length > 0) {
+			if (rule.cssRules && rule.cssRules.length > 0) {
 				if (
 					compileNestedPaddingGuards(
-						styleRule.cssRules,
+						rule.cssRules,
 						property,
 						defaultView,
-						styleRule.selectorText,
-						[styleRule.selectorText],
+						rule.selectorText,
+						[rule.selectorText],
 						false,
 						nestedGuards,
+						paddingKeyframeNames,
 					)
 				) {
 					unreadableStyleSheet = true;
 					return;
 				}
 			}
-			if (!styleAffectsPadding(styleRule.style, property)) {
+			if (!styleAffectsPadding(rule.style, property)) {
 				continue;
 			}
 			const compiledSelectors: CompiledPaddingSelector[] = selectors.map(
@@ -490,14 +580,14 @@ export function buildPaddingCascadeIndex(
 					specificity: selectorSpecificity(selector),
 				}),
 			);
-			const value = styleRule.style.getPropertyValue(property).trim();
+			const value = rule.style.getPropertyValue(property).trim();
 			const usesToken = value.includes(tokenPattern);
 			const layeredPortable = inLayer && usesToken;
 			const isPortable = !inLayer && usesToken;
 			const important =
 				!isPortable &&
 				!layeredPortable &&
-				styleHasImportantPadding(styleRule.style, property);
+				styleHasImportantPadding(rule.style, property);
 			entries.push({
 				important,
 				inLayer,
@@ -520,9 +610,19 @@ export function buildPaddingCascadeIndex(
 	}
 
 	if (unreadableStyleSheet) {
-		return { entries: [], nestedGuards: [], unreadableStyleSheet: true };
+		return {
+			entries: [],
+			nestedGuards: [],
+			paddingKeyframeNames: new Set(),
+			unreadableStyleSheet: true,
+		};
 	}
-	return { entries, nestedGuards, unreadableStyleSheet: false };
+	return {
+		entries,
+		nestedGuards,
+		paddingKeyframeNames,
+		unreadableStyleSheet: false,
+	};
 }
 
 function getPaddingCascadeIndex(
@@ -613,6 +713,18 @@ export function evaluatePortablePaddingTransportDecision(
 	) {
 		return {
 			signature: `state=effective;reason=stylesheet-unreadable;token=${token};effective=${effective}`,
+			value: null,
+		};
+	}
+	if (
+		elementUsesAnimatedPaddingKeyframes(
+			source,
+			semanticStyle,
+			index.paddingKeyframeNames,
+		)
+	) {
+		return {
+			signature: `state=effective;reason=animated;token=${token};effective=${effective}`,
 			value: null,
 		};
 	}

@@ -205,6 +205,7 @@ describe("responsive portable padding semantics", () => {
 	function paddingSemantics(
 		left: string,
 		right: string,
+		extra: Record<string, string> = {},
 	): WechatDimensionSemanticsContext {
 		const raw = style({
 			"--easymde-portable-padding-left": left,
@@ -212,6 +213,7 @@ describe("responsive portable padding semantics", () => {
 			"padding-left": "48px",
 			"padding-right": "20px",
 			position: "static",
+			...extra,
 		});
 		return {
 			cleanup: vi.fn(),
@@ -1184,6 +1186,74 @@ describe("responsive portable padding semantics", () => {
 			).toBeNull();
 		} finally {
 			override.remove();
+			fixture.cleanup();
+		}
+	});
+
+	it("preserves effective computed padding when a @keyframes animation overrides padding while ignoring unrelated @keyframes", () => {
+		const fixture = portableQuoteFixture();
+		const animSheet = document.createElement("style");
+		animSheet.textContent = `
+			@keyframes unrelated-spin {
+				from { transform: rotate(0deg); }
+				to { transform: rotate(360deg); }
+			}
+			@keyframes pad-override {
+				to { padding-left: 10px; }
+			}
+			.easymde-rendered-content blockquote blockquote {
+				animation: pad-override 0.01s linear forwards;
+			}
+		`;
+		document.head.append(animSheet);
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 10px",
+				"padding-left": "10px",
+				position: "static",
+			});
+			// 1. Element running/retaining a finished fill-mode:forwards padding animation keeps effective pixels.
+			const animatedSemantics = paddingSemantics("10%", "5%", {
+				"animation-name": "pad-override",
+				"padding-left": "10px",
+			});
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					animatedSemantics,
+					animatedSemantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+			// Unaffected axis (`padding-right`) is not declared in pad-override and stays portable.
+			expect(
+				semanticPaddingValue(
+					"padding-right",
+					fixture.source,
+					measured,
+					animatedSemantics,
+					animatedSemantics.getComputedStyle(fixture.source),
+				),
+			).toBe("5%");
+
+			// 2. Unrelated element with animation-name: none (or only unrelated-spin) keeps portable percentage.
+			fixture.source.style.setProperty("animation-name", "none");
+			const unaffectedSemantics = paddingSemantics("10%", "5%", {
+				"animation-name": "unrelated-spin",
+			});
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					unaffectedSemantics,
+					unaffectedSemantics.getComputedStyle(fixture.source),
+				),
+			).toBe("10%");
+		} finally {
+			fixture.source.style.removeProperty("animation-name");
+			animSheet.remove();
 			fixture.cleanup();
 		}
 	});

@@ -29,6 +29,11 @@ import {
   readArticleThemeBackgroundImage,
   setImmersiveSplitRatio
 } from '../helpers/editor-theme-helpers.mjs';
+import {
+  desktop,
+  miniLandscape,
+  miniPortrait
+} from '../helpers/editor-viewports.mjs';
 import { selectOrdinaryOption } from '../helpers/ordinary-select.mjs';
 import { collectPreviewRequestOutcomes } from '../helpers/preview-request-evidence.mjs';
 import { attachPrivacySafeBrowserMonitor } from '../helpers/privacy-safe-browser-monitor.mjs';
@@ -224,7 +229,7 @@ test.describe('EasyMDE editor workflows', () => {
         throw new Error(`${id}-article-theme-swatch-unavailable`);
       }
       const expectedSwatch = hexToRgbCss(swatch);
-      await page.setViewportSize({ width: 1200, height: 900 });
+      await page.setViewportSize(desktop);
       await settingsTrigger.click();
       const settingsDialog = page.getByRole('dialog', {
         name: labels.editorSettings
@@ -273,7 +278,7 @@ test.describe('EasyMDE editor workflows', () => {
       );
       if (requestEvidence.invalid.length || requestEvidence.nonTarget.length) {
         failures.push(
-          `${id}/ordinary-1200/top: preview-request-payload-invalid-`
+          `${id}/ordinary-${desktop.width}/top: preview-request-payload-invalid-`
             + JSON.stringify({
               invalid: requestEvidence.invalid,
               nonTarget: requestEvidence.nonTarget
@@ -282,7 +287,7 @@ test.describe('EasyMDE editor workflows', () => {
       }
       if (markdownMismatches.length) {
         failures.push(
-          `${id}/ordinary-1200/top: preview-request-markdown-mismatch-`
+          `${id}/ordinary-${desktop.width}/top: preview-request-markdown-mismatch-`
             + JSON.stringify(markdownMismatches)
         );
       }
@@ -295,13 +300,13 @@ test.describe('EasyMDE editor workflows', () => {
         )
       ) {
         failures.push(
-          `${id}/ordinary-1200/top: unexpected-preview-request-failure-`
+          `${id}/ordinary-${desktop.width}/top: unexpected-preview-request-failure-`
             + JSON.stringify(requestEvidence.target)
         );
       }
       if (requestEvidence.successful.length !== (sameMarkupProfile ? 0 : 1)) {
         failures.push(
-          `${id}/ordinary-1200/top: preview-success-count-`
+          `${id}/ordinary-${desktop.width}/top: preview-success-count-`
             + `${requestEvidence.successful.length}-expected-`
             + `${sameMarkupProfile ? 0 : 1}-observed-`
             + JSON.stringify(requestEvidence.observed)
@@ -323,7 +328,7 @@ test.describe('EasyMDE editor workflows', () => {
         ).length;
         if (actualCount !== expectedCount) {
           failures.push(
-            `${id}/ordinary-1200/top: table-accessibility-${role}-count-`
+            `${id}/ordinary-${desktop.width}/top: table-accessibility-${role}-count-`
               + `${actualCount}-expected-${expectedCount}`
           );
         }
@@ -331,11 +336,12 @@ test.describe('EasyMDE editor workflows', () => {
       await page.keyboard.press('Escape');
       await expect(settingsDialog).toHaveCount(0);
 
-      await recordHeadingRhythm(id, 'ordinary-1200', 52);
+      await recordHeadingRhythm(id, `ordinary-${desktop.width}`, 52);
 
       let desktopDecoration;
-      for (const width of [1200, 760, 680]) {
-        await page.setViewportSize({ width, height: 900 });
+      for (const viewport of [desktop, miniLandscape, miniPortrait]) {
+        const { width } = viewport;
+        await page.setViewportSize(viewport);
         expectedThemeBackgroundImage = await readArticleThemeBackgroundImage(page, id);
         const decoration = await recordGeometry(
           id,
@@ -343,12 +349,12 @@ test.describe('EasyMDE editor workflows', () => {
           ['top', 'middle', 'bottom'],
           desktopDecoration
         );
-        if (1200 === width && !desktopDecoration) {
+        if (desktop.width === width && !desktopDecoration) {
           desktopDecoration = decoration;
         }
       }
 
-      await page.setViewportSize({ width: 1200, height: 900 });
+      await page.setViewportSize(desktop);
       expectedThemeBackgroundImage = await readArticleThemeBackgroundImage(page, id);
       await page.getByRole('button', {
         name: labels.immersive.enter,
@@ -442,7 +448,7 @@ test.describe('EasyMDE editor workflows', () => {
         );
       }
 
-      await page.setViewportSize({ width: 680, height: 900 });
+      await page.setViewportSize(miniPortrait);
       expectedThemeBackgroundImage = await readArticleThemeBackgroundImage(page, id);
       await setImmersiveSplitRatio(
         page,
@@ -451,7 +457,7 @@ test.describe('EasyMDE editor workflows', () => {
       );
       await recordGeometry(
         id,
-        'immersive-680-outline-hidden-ratio-50',
+        `immersive-${miniPortrait.width}-outline-hidden-ratio-50`,
         ['top', 'middle', 'bottom']
       );
       await page.getByRole('button', {
@@ -461,11 +467,11 @@ test.describe('EasyMDE editor workflows', () => {
       await expect(editorOwner).toHaveClass(/is-immersive-preview/);
       await recordGeometry(
         id,
-        'immersive-preview-680',
+        `immersive-preview-${miniPortrait.width}`,
         ['top', 'middle', 'bottom'],
         desktopDecoration
       );
-      await page.setViewportSize({ width: 1200, height: 900 });
+      await page.setViewportSize(desktop);
       await page.getByRole('button', {
         name: labels.immersive.exit,
         exact: true
@@ -557,8 +563,9 @@ test.describe('EasyMDE editor workflows', () => {
     }
     let currentMarkupProfile = selectedTheme.markupProfile;
 
-    for (const width of [1200, 760, 680]) {
-      await page.setViewportSize({ width, height: 900 });
+    for (const viewport of [desktop, miniLandscape, miniPortrait]) {
+      const { width } = viewport;
+      await page.setViewportSize(viewport);
 
       for (const { id, label, markupProfile } of targets) {
         await settingsTrigger.click();
@@ -1198,7 +1205,7 @@ test.describe('EasyMDE editor workflows', () => {
 
     await login(page, user);
     await openEasyMdeNewPost(page);
-    await page.setViewportSize({ width: 783, height: 900 });
+    await page.setViewportSize(miniLandscape);
     const scrollSettingsTrigger = page.locator(
       '.easymde-toolbar-popover-settings > button'
     );
@@ -1257,7 +1264,8 @@ test.describe('EasyMDE editor workflows', () => {
     }).toBe(true);
   });
 
-  for (const viewportWidth of [1280, 375, 320]) {
+  for (const viewport of [desktop, miniLandscape, miniPortrait]) {
+    const viewportWidth = viewport.width;
     test(`keeps Crimson Focus native task markers bounded at ${viewportWidth}px`, async ({ page }, testInfo) => {
       test.setTimeout(180_000);
       const browserMonitor = attachPrivacySafeBrowserMonitor(page, {
@@ -1640,7 +1648,7 @@ test.describe('EasyMDE editor workflows', () => {
       };
 
       await login(page, testInfo.easymdeUser);
-      await page.setViewportSize({ width: viewportWidth, height: 900 });
+      await page.setViewportSize(viewport);
       await openEasyMdeNewPost(page);
       const fixtureImageUrl = new URL(
         '/easymde-e2e-fixtures/markdown-full-capability-image.png',

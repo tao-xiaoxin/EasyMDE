@@ -20,6 +20,11 @@ import {
   setImageHostingEnabledSetting,
   testSlug
 } from '../helpers/editor-e2e-helpers.mjs';
+import {
+  desktop,
+  miniLandscape,
+  miniPortrait
+} from '../helpers/editor-viewports.mjs';
 import { selectOrdinaryOption } from '../helpers/ordinary-select.mjs';
 import { collectPreviewRequestOutcomes } from '../helpers/preview-request-evidence.mjs';
 import {
@@ -399,11 +404,11 @@ test.describe('EasyMDE editor workflows', () => {
     await page.keyboard.press('Escape');
     await expect(page.getByRole('dialog', { name: immersiveLabels.table })).toHaveCount(0);
     const initialViewport = page.viewportSize();
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize(miniPortrait);
     await expect.poll(() => editorOwner.evaluate((owner) => ({
       clientWidth: owner.clientWidth,
       scrollWidth: owner.scrollWidth
-    }))).toEqual({ clientWidth: 390, scrollWidth: 390 });
+    }))).toEqual({ clientWidth: miniPortrait.width, scrollWidth: miniPortrait.width });
     await expect(page.locator('.easymde-immersive-header')).toBeInViewport();
     await expect(page.locator('.easymde-immersive-publish')).toBeInViewport();
     await expect(page.locator('.easymde-immersive-toolbar-row')).toHaveCSS(
@@ -702,8 +707,8 @@ test.describe('EasyMDE editor workflows', () => {
 
     const cdp = await context.newCDPSession(page);
     await cdp.send('Emulation.setDeviceMetricsOverride', {
-      width: 390,
-      height: 844,
+      width: miniPortrait.width,
+      height: miniPortrait.height,
       deviceScaleFactor: 1,
       mobile: true
     });
@@ -711,7 +716,7 @@ test.describe('EasyMDE editor workflows', () => {
     expect(await page.evaluate(
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth
     )).toBeLessThanOrEqual(1);
-    await testInfo.attach('compact-status-mobile', {
+    await testInfo.attach('compact-status-tablet', {
       body: await page.screenshot({ fullPage: true }),
       contentType: 'image/png'
     });
@@ -1518,7 +1523,7 @@ test.describe('EasyMDE editor workflows', () => {
       await expect(page.locator(selector)).toHaveCount(0);
     }
 
-    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.setViewportSize(desktop);
     const desktopGeometry = await page.locator('.easymde-workspace').evaluate((workspace) => {
       const source = workspace.querySelector('.easymde-pane-source').getBoundingClientRect();
       const preview = workspace.querySelector('.easymde-pane-preview').getBoundingClientRect();
@@ -1563,8 +1568,8 @@ test.describe('EasyMDE editor workflows', () => {
       sourceFollowsPreview: true
     });
 
-    for (const width of [1280, 1081, 1080, 1079, 640]) {
-      await page.setViewportSize({ width, height: 1000 });
+    for (const viewport of [desktop, miniLandscape, miniPortrait]) {
+      await page.setViewportSize(viewport);
       await expect.poll(() => page.locator('.easymde-workspace').evaluate((workspace) => {
         const sourcePane = workspace.querySelector('.easymde-pane-source');
         const previewPane = workspace.querySelector('.easymde-pane-preview');
@@ -1598,8 +1603,13 @@ test.describe('EasyMDE editor workflows', () => {
       });
     }
 
-    for (const [width, direction] of [[781, 'column'], [782, 'column'], [783, 'row']]) {
-      await page.setViewportSize({ width, height: 900 });
+    for (const [viewport, direction] of [
+      [miniPortrait, 'column'],
+      [miniLandscape, 'row'],
+      [desktop, 'row']
+    ]) {
+      const { width } = viewport;
+      await page.setViewportSize(viewport);
       const responsiveToolbar = page.locator('.easymde-toolbar');
       await expect(responsiveToolbar).toHaveCSS('flex-direction', direction);
       await expect.poll(() => page.locator('#easymde-editor').evaluate((editor) => ({
@@ -1696,7 +1706,7 @@ test.describe('EasyMDE editor workflows', () => {
     }
   });
 
-  test('keeps the immersive mobile header, toolbar rows, and outline geometrically usable', async ({ page }, testInfo) => {
+  test('keeps the immersive header, toolbar rows, and outline geometrically usable across writing viewports', async ({ page }, testInfo) => {
     const browserMonitor = attachPrivacySafeBrowserMonitor(page, {
       baseURL: testInfo.project.use.baseURL
     });
@@ -1709,7 +1719,7 @@ test.describe('EasyMDE editor workflows', () => {
     const immersiveLabels = await page.evaluate(
       () => window.EasyMDEEditorRootBootstrap.strings.immersive
     );
-    await page.setViewportSize({ width: 375, height: 667 });
+    await page.setViewportSize(miniPortrait);
     const editorOwner = page.locator('.easymde-editor[data-easymde-editor-owner="react"]');
     await editorOwner.locator('.easymde-toolbar-immersive-toggle').click();
     const immersiveRoot = page.locator(
@@ -1765,18 +1775,24 @@ test.describe('EasyMDE editor workflows', () => {
       };
 
       const header = selector('.easymde-immersive-header');
+      const brandName = selector('.easymde-immersive-brand-name');
       const toolbar = selector('.easymde-immersive-toolbar-row');
       const formatting = selector('.easymde-immersive-formatting');
       const secondary = selector('.easymde-immersive-secondary-actions');
       const publish = selector('.easymde-immersive-publish');
+      const publishText = selector('.easymde-immersive-publish > span:last-child');
       const wechat = selector('.easymde-immersive-wechat');
       const title = selector('.easymde-immersive-title-field');
       const titleMeasure = selector('.easymde-immersive-title-measure');
       const titleSpan = selector('.easymde-immersive-title-measure > span');
       const titleInput = selector('.easymde-immersive-title-measure > textarea');
       const viewSwitch = selector('.easymde-immersive-view-switch');
+      const viewSwitchLabels = Array.from(
+        root.querySelectorAll('.easymde-immersive-view-switch button > span')
+      );
       const saveState = selector('.easymde-immersive-save-state');
       const outline = selector('.easymde-immersive-outline');
+      const outlineResizer = selector('.easymde-immersive-outline-resizer');
       const headerBox = box(header);
       const toolbarBox = box(toolbar);
       const formattingBox = box(formatting);
@@ -1793,6 +1809,7 @@ test.describe('EasyMDE editor workflows', () => {
         ? getComputedStyle(secondary).direction
         : 'ltr';
       const headerStyle = header instanceof HTMLElement ? getComputedStyle(header) : null;
+      const publishStyle = publish instanceof HTMLElement ? getComputedStyle(publish) : null;
       const titleStyle = title instanceof HTMLElement ? getComputedStyle(title) : null;
       const titleMeasureStyle = titleMeasure instanceof HTMLElement
         ? getComputedStyle(titleMeasure)
@@ -1800,17 +1817,22 @@ test.describe('EasyMDE editor workflows', () => {
       const titleInputStyle = titleInput instanceof HTMLElement
         ? getComputedStyle(titleInput)
         : null;
+      const outlineStyle = outline instanceof HTMLElement ? getComputedStyle(outline) : null;
+      const outlineResizerStyle = outlineResizer instanceof HTMLElement
+        ? getComputedStyle(outlineResizer)
+        : null;
       const headerPaddingTop = Number.parseFloat(headerStyle?.paddingTop ?? '0') || 0;
-      const firstGridRowHeight = Number.parseFloat(
-        headerStyle?.gridTemplateRows.split(/\s+/u)[0] ?? '0'
-      ) || 0;
-      const firstGridRowBottom = headerBox
+      const firstGridRowHeight = 'grid' === headerStyle?.display
+        ? Number.parseFloat(headerStyle.gridTemplateRows.split(/\s+/u)[0] ?? '0') || 0
+        : 0;
+      const firstGridRowBottom = headerBox && firstGridRowHeight > 0
         ? headerBox.top + headerPaddingTop + firstGridRowHeight
         : null;
 
       return {
         devicePixelRatio: window.devicePixelRatio,
         viewport: { height: window.innerHeight, width: window.innerWidth },
+        brandName: { visible: visible(brandName) },
         header: {
           box: headerBox,
           display: headerStyle?.display ?? null,
@@ -1835,10 +1857,12 @@ test.describe('EasyMDE editor workflows', () => {
         publish: {
           box: publishBox,
           centerHit: centerHit(publish, publishBox),
+          fontSize: Number.parseFloat(publishStyle?.fontSize ?? '0') || 0,
           fullBoxVisible: !!publishBox
             && publishBox.width > 0
             && publishBox.height > 0
             && withinViewport(publishBox),
+          textVisible: visible(publishText) && (Number.parseFloat(publishStyle?.fontSize ?? '0') || 0) > 0,
           visible: visible(publish),
           withinViewport: withinViewport(publishBox)
         },
@@ -1872,8 +1896,22 @@ test.describe('EasyMDE editor workflows', () => {
             && titleBox.right <= headerBox.right
         },
         saveState: { box: saveStateBox, visible: visible(saveState) },
-        viewSwitch: { box: viewSwitchBox, visible: visible(viewSwitch) },
-        outline: { box: outlineBox, visible: visible(outline) },
+        viewSwitch: {
+          box: viewSwitchBox,
+          labelCount: viewSwitchLabels.length,
+          labelsVisible: viewSwitchLabels.length === 3
+            && viewSwitchLabels.every((span) => visible(span)),
+          visible: visible(viewSwitch)
+        },
+        outline: {
+          box: outlineBox,
+          position: outlineStyle?.position ?? null,
+          visible: visible(outline)
+        },
+        outlineResizer: {
+          display: outlineResizerStyle?.display ?? null,
+          visible: visible(outlineResizer)
+        },
         intersections: {
           publishTitle: intersects(publishBox, titleBox),
           publishViewSwitch: intersects(publishBox, viewSwitchBox),
@@ -1890,32 +1928,36 @@ test.describe('EasyMDE editor workflows', () => {
       };
     });
 
-    const mobileLongTitle = `移动端沉浸式标题几何验证MobileTitleWithoutSpaces${'中文标题测试'.repeat(14)}`;
+    const longTitle = `平板与桌面沉浸式标题几何验证WritingTitleWithoutSpaces${'中文标题测试'.repeat(14)}`;
 
-    for (const viewport of [
-      { width: 375, height: 667 },
-      { width: 280, height: 653 },
-      { width: 641, height: 800 },
-      { width: 1080, height: 800 }
+    for (const { dir, overlay, viewport } of [
+      { dir: 'ltr', overlay: true, viewport: miniPortrait },
+      { dir: 'rtl', overlay: true, viewport: miniPortrait },
+      { dir: 'ltr', overlay: false, viewport: miniLandscape },
+      { dir: 'ltr', overlay: false, viewport: desktop }
     ]) {
       await page.setViewportSize(viewport);
-      const originalDir = 375 === viewport.width
+      const originalDir = 'rtl' === dir
         ? await immersiveRoot.getAttribute('dir')
         : null;
       try {
-        if (375 === viewport.width) {
+        if ('rtl' === dir) {
           await immersiveRoot.evaluate((root) => root.setAttribute('dir', 'rtl'));
         }
         await expect(immersiveRoot.getByRole('region', { name: immersiveLabels.immersive })).toBeVisible();
         const titleInput = immersiveRoot.locator('.easymde-immersive-title-measure > textarea');
-        await titleInput.fill(mobileLongTitle);
-        await expect(titleInput).toHaveValue(mobileLongTitle);
+        await titleInput.fill(longTitle);
+        await expect(titleInput).toHaveValue(longTitle);
         await expect(immersiveRoot.locator('.easymde-immersive-title-measure > span'))
-          .toHaveText(mobileLongTitle);
+          .toHaveText(longTitle);
         const initial = await geometry();
 
         expect(initial.devicePixelRatio).toBe(1);
         expect(initial.viewport).toEqual(viewport);
+        expect(initial.brandName.visible).toBe(true);
+        expect(initial.viewSwitch.visible).toBe(true);
+        expect(initial.viewSwitch.labelCount).toBe(3);
+        expect(initial.viewSwitch.labelsVisible).toBe(true);
         expect(initial.header.visible).toBe(true);
         expect(initial.toolbar.visible).toBe(true);
         expect(initial.toolbar.scrollLeft).toBe(0);
@@ -1925,6 +1967,7 @@ test.describe('EasyMDE editor workflows', () => {
         expect(initial.formatting.scrollLeft).toBe(0);
         expect(initial.secondary.scrollLeft).toBe(0);
         expect(initial.publish.visible).toBe(true);
+        expect(initial.publish.textVisible).toBe(true);
         expect(initial.publish.withinViewport).toBe(true);
         expect(initial.publish.fullBoxVisible).toBe(true);
         expect(initial.publish.centerHit).toBe(true);
@@ -1936,8 +1979,8 @@ test.describe('EasyMDE editor workflows', () => {
         expect(initial.title.centerHit).toBe(true);
         expect(initial.title.inputWithinOwner).toBe(true);
         expect(initial.title.inputWithinHeader).toBe(true);
-        expect(initial.title.inputValue).toBe(mobileLongTitle);
-        expect(initial.title.measureText).toBe(mobileLongTitle);
+        expect(initial.title.inputValue).toBe(longTitle);
+        expect(initial.title.measureText).toBe(longTitle);
         expect(initial.title.box?.width).toBeGreaterThan(0);
         expect(initial.title.box?.height).toBeGreaterThan(0);
         expect(initial.title.inputBox?.height).toBeGreaterThan(0);
@@ -1945,15 +1988,23 @@ test.describe('EasyMDE editor workflows', () => {
         expect(initial.title.box?.top).toBeGreaterThanOrEqual(
           (initial.header.box?.top ?? 0) - 1
         );
-        expect(initial.title.box?.bottom).toBeLessThanOrEqual(
-          (initial.title.firstGridRowBottom ?? Number.POSITIVE_INFINITY) + 1
-        );
-        expect(initial.title.inputBox?.bottom).toBeLessThanOrEqual(
-          (initial.title.firstGridRowBottom ?? Number.POSITIVE_INFINITY) + 1
-        );
-        expect(initial.secondary.box?.top).toBeGreaterThanOrEqual(
-          (initial.formatting.box?.bottom ?? 0) - 1
-        );
+        if (viewport.width <= 1232) {
+          expect(initial.title.box?.bottom).toBeLessThanOrEqual(
+            (initial.title.firstGridRowBottom ?? Number.POSITIVE_INFINITY) + 1
+          );
+          expect(initial.title.inputBox?.bottom).toBeLessThanOrEqual(
+            (initial.title.firstGridRowBottom ?? Number.POSITIVE_INFINITY) + 1
+          );
+        } else {
+          expect(initial.title.box?.bottom).toBeLessThanOrEqual(
+            (initial.header.box?.bottom ?? Number.POSITIVE_INFINITY) + 1
+          );
+        }
+        if (viewport.width <= 1080) {
+          expect(initial.secondary.box?.top).toBeGreaterThanOrEqual(
+            (initial.formatting.box?.bottom ?? 0) - 1
+          );
+        }
         expect(initial.copyStartsSecondaryLogicalStart).toBe(true);
         expect(initial.intersections.publishTitle).toBe(false);
         expect(initial.intersections.publishViewSwitch).toBe(false);
@@ -1972,6 +2023,13 @@ test.describe('EasyMDE editor workflows', () => {
         expect(expanded.intersections.outlineToolbar).toBe(false);
         expect(expanded.toolbar.centerHit).toBe(true);
         expect(expanded.toolbar.scrollLeft).toBe(0);
+        if (overlay) {
+          expect(expanded.outline.position).toBe('absolute');
+          expect(expanded.outlineResizer.display).toBe('none');
+        } else {
+          expect(expanded.outline.position).not.toBe('absolute');
+          expect(expanded.outlineResizer.visible).toBe(true);
+        }
 
         await immersiveRoot.getByRole('button', { name: hideOutlineLabel }).first().click();
         await expect(immersiveRoot.locator('.easymde-immersive-outline')).toHaveCount(0);
@@ -1986,12 +2044,12 @@ test.describe('EasyMDE editor workflows', () => {
         expect(reopened.intersections.outlineToolbar).toBe(false);
         expect(reopened.toolbar.centerHit).toBe(true);
       } finally {
-        if (375 === viewport.width) {
-          await immersiveRoot.evaluate((root, dir) => {
-            if (null === dir) {
+        if ('rtl' === dir) {
+          await immersiveRoot.evaluate((root, prevDir) => {
+            if (null === prevDir) {
               root.removeAttribute('dir');
             } else {
-              root.setAttribute('dir', dir);
+              root.setAttribute('dir', prevDir);
             }
           }, originalDir);
         }
@@ -2336,29 +2394,14 @@ test.describe('EasyMDE editor workflows', () => {
       };
     });
 
-    for (const viewport of [
-      { width: 1081, height: 800 },
-      { width: 1097, height: 800 },
-      { width: 1113, height: 800 },
-      { width: 1129, height: 800 },
-      { width: 1145, height: 800 },
-      { width: 1161, height: 800 },
-      { width: 1177, height: 800 },
-      { width: 1193, height: 800 },
-      { width: 1209, height: 800 },
-      { width: 1225, height: 800 },
-      { width: 1231, height: 800 },
-      { width: 1232, height: 800 },
-      { width: 1233, height: 800 },
-      { width: 1241, height: 800 },
-      { width: 1257, height: 800 },
-      { width: 1273, height: 800 },
-      { width: 1279, height: 800 },
-      { width: 1280, height: 800 },
-      { width: 1440, height: 800 }
+    for (const { dir, viewport } of [
+      { dir: 'ltr', viewport: desktop },
+      { dir: 'ltr', viewport: miniLandscape },
+      { dir: 'rtl', viewport: miniLandscape },
+      { dir: 'ltr', viewport: miniPortrait }
     ]) {
       await page.setViewportSize(viewport);
-      const useRtl = viewport.width === 1232;
+      const useRtl = 'rtl' === dir;
       const originalDir = useRtl ? await immersiveRoot.getAttribute('dir') : null;
       try {
         if (useRtl) {
@@ -2385,8 +2428,12 @@ test.describe('EasyMDE editor workflows', () => {
         expect(state.publish.visible).toBe(true);
         expect(state.publish.fullBoxVisible).toBe(true);
         expect(state.publish.centerHit).toBe(true);
-        expect(state.stats.visible).toBe(true);
-        expect(state.stats.count).toBe(3);
+        if (viewport.width > 782) {
+          expect(state.stats.visible).toBe(true);
+          expect(state.stats.count).toBe(3);
+        } else {
+          expect(state.stats.visible).toBe(false);
+        }
         expect(state.dirty).toBe(true);
         expect(state.intersections.publishTitle).toBe(false);
         expect(state.intersections.titleSaveState).toBe(false);
@@ -2406,9 +2453,9 @@ test.describe('EasyMDE editor workflows', () => {
         if (useRtl) expect(state.direction).toBe('rtl');
       } finally {
         if (useRtl) {
-          await immersiveRoot.evaluate((root, dir) => {
-            if (null === dir) root.removeAttribute('dir');
-            else root.setAttribute('dir', dir);
+          await immersiveRoot.evaluate((root, prevDir) => {
+            if (null === prevDir) root.removeAttribute('dir');
+            else root.setAttribute('dir', prevDir);
           }, originalDir);
         }
       }
@@ -2424,7 +2471,7 @@ test.describe('EasyMDE editor workflows', () => {
     }
   });
 
-  test('keeps split panes usable beside an outline at intermediate widths', async ({ page }, testInfo) => {
+  test('keeps split panes usable beside an outline across writing viewports', async ({ page }, testInfo) => {
     const browserMonitor = attachPrivacySafeBrowserMonitor(page, {
       baseURL: testInfo.project.use.baseURL
     });
@@ -2437,7 +2484,7 @@ test.describe('EasyMDE editor workflows', () => {
     const labels = await page.evaluate(
       () => window.EasyMDEEditorRootBootstrap.strings.immersive
     );
-    await page.setViewportSize({ width: 641, height: 800 });
+    await page.setViewportSize(miniPortrait);
     const editorOwner = page.locator('.easymde-editor[data-easymde-editor-owner="react"]');
     await editorOwner.locator('.easymde-toolbar-immersive-toggle').click();
 
@@ -2626,11 +2673,9 @@ test.describe('EasyMDE editor workflows', () => {
     };
 
     for (const { viewport, overlay } of [
-      { viewport: { width: 641, height: 800 }, overlay: false },
-      { viewport: { width: 782, height: 800 }, overlay: false },
-      { viewport: { width: 783, height: 800 }, overlay: false },
-      { viewport: { width: 640, height: 800 }, overlay: true },
-      { viewport: { width: 390, height: 800 }, overlay: true }
+      { viewport: desktop, overlay: false },
+      { viewport: miniLandscape, overlay: false },
+      { viewport: miniPortrait, overlay: true }
     ]) {
       await page.setViewportSize(viewport);
       await expect(editor).toHaveClass(/is-immersive-split/);
@@ -2647,10 +2692,6 @@ test.describe('EasyMDE editor workflows', () => {
       await editor.getByRole('button', { name: labels.showOutline }).click();
       await expect(editor.locator('.easymde-immersive-outline')).toBeVisible();
     }
-
-    await page.setViewportSize({ width: 1081, height: 800 });
-    await expect(editor.locator('.easymde-immersive-outline')).toBeVisible();
-    assertOpenSplit(await geometry(), 'ltr', { overlay: false });
 
     await editor.getByRole('button', { name: labels.preview, exact: true }).click();
     await expect(editor).toHaveClass(/is-immersive-preview/);
@@ -2671,11 +2712,8 @@ test.describe('EasyMDE editor workflows', () => {
       await editor.getByRole('button', { name: labels.split, exact: true }).click();
       await expect(editor).toHaveClass(/is-immersive-split/);
       for (const { viewport, overlay } of [
-        { viewport: { width: 783, height: 800 }, overlay: false },
-        { viewport: { width: 782, height: 800 }, overlay: false },
-        { viewport: { width: 641, height: 800 }, overlay: false },
-        { viewport: { width: 640, height: 800 }, overlay: true },
-        { viewport: { width: 390, height: 800 }, overlay: true }
+        { viewport: miniLandscape, overlay: false },
+        { viewport: miniPortrait, overlay: true }
       ]) {
         await page.setViewportSize(viewport);
         if (!await editor.locator('.easymde-immersive-outline').isVisible()) {
@@ -2691,7 +2729,7 @@ test.describe('EasyMDE editor workflows', () => {
       }, originalDir);
     }
 
-    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.setViewportSize(desktop);
     await expect(editor).toHaveClass(/is-immersive-split/);
     assertOpenSplit(await geometry(), 'ltr', { overlay: false });
     browserMonitor.assertClean();

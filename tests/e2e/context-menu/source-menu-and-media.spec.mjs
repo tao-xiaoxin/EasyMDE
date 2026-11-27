@@ -50,6 +50,11 @@ import {
   selectVisualText,
   waitForVisualPreviewAccepted
 } from '../helpers/context-menu-visual-helpers.mjs';
+import {
+  desktop,
+  miniLandscape,
+  miniPortrait
+} from '../helpers/editor-viewports.mjs';
 
 test.use({
   permissions: ['clipboard-read', 'clipboard-write'],
@@ -840,7 +845,7 @@ test.describe('Editor context menu production surfaces', () => {
     }
   });
 
-  test('keeps Source context menu and submenus unclipped across narrow side-by-side split viewports', async ({ page }) => {
+  test('keeps Source context menu and submenus unclipped across editor writing viewports', async ({ page }) => {
     await login(page);
     await openNewPost(page);
     const { markdown, source } = await loadCanonicalFixture(page);
@@ -858,7 +863,7 @@ test.describe('Editor context menu production surfaces', () => {
       expect(left, `${label} horizontal left clip`).toBe(0);
     };
 
-    const assertNarrowViewportContextMenu = async (viewport, modeLabel) => {
+    const assertWritingViewportContextMenu = async (viewport, modeLabel) => {
       await page.setViewportSize(viewport);
       const activeSourceEditor = page.locator('.easymde-source-react .cm-content');
       await expect(activeSourceEditor).toBeVisible();
@@ -880,13 +885,17 @@ test.describe('Editor context menu production surfaces', () => {
           document.querySelectorAll('.easymde-editor-context-menu__shortcut')
         );
         if (!root || !frame || !sub) {
-          throw new Error('narrow-context-menu-elements-missing');
+          throw new Error('writing-viewport-context-menu-elements-missing');
         }
         const rootRect = root.getBoundingClientRect();
+        const frameRect = frame.getBoundingClientRect();
         const subRect = sub.getBoundingClientRect();
         return {
+          afterMaskImage: getComputedStyle(frame, '::after').maskImage,
           frameClipPath: getComputedStyle(frame).clipPath,
+          frameLeft: frameRect.left,
           frameOverlapped: frame.getAttribute('data-easymde-context-menu-overlapped'),
+          frameRight: frameRect.right,
           pointerCount: pointers.length,
           rootClipPath: getComputedStyle(root).clipPath,
           rootLeft: rootRect.left,
@@ -905,6 +914,10 @@ test.describe('Editor context menu production surfaces', () => {
       expect(geometry.rootRight, `${phase} root right`).toBeLessThanOrEqual(
         geometry.viewportWidth - 7.5
       );
+      expect(geometry.frameLeft, `${phase} submenu frame left`).toBeGreaterThanOrEqual(7.5);
+      expect(geometry.frameRight, `${phase} submenu frame right`).toBeLessThanOrEqual(
+        geometry.viewportWidth - 7.5
+      );
       expect(geometry.subLeft, `${phase} submenu left`).toBeGreaterThanOrEqual(7.5);
       expect(geometry.subRight, `${phase} submenu right`).toBeLessThanOrEqual(
         geometry.viewportWidth - 7.5
@@ -913,36 +926,35 @@ test.describe('Editor context menu production surfaces', () => {
       assertNoHorizontalClip(geometry.frameClipPath, `${phase}-frame`);
       assertNoHorizontalClip(geometry.subClipPath, `${phase}-submenu`);
 
-      if (viewport.width <= 480) {
-        expect(geometry.frameOverlapped, `${phase} overlapped attr`).toBe('true');
-        expect(geometry.pointerCount, `${phase} pointer hidden`).toBe(0);
-        expect(geometry.shortcutCount, `${phase} shortcuts present`).toBeGreaterThan(0);
-        for (const display of geometry.shortcutDisplays) {
-          expect(display, `${phase} shortcut display`).toBe('none');
-        }
+      expect(geometry.shortcutCount, `${phase} shortcuts present`).toBeGreaterThan(0);
+      for (const display of geometry.shortcutDisplays) {
+        expect(display, `${phase} shortcut visible`).not.toBe('none');
+      }
+
+      if ('true' === geometry.frameOverlapped) {
+        expect(geometry.pointerCount, `${phase} overlapped pointer count`).toBe(0);
+        expect(geometry.afterMaskImage, `${phase} overlapped frame mask`).toBe('none');
+      } else {
+        expect(geometry.pointerCount, `${phase} non-overlapped pointer count`).toBe(1);
       }
 
       await closeMenu(page, phase, { expectedSource: markdown });
       await assertSourceExactValue(source, markdown, phase);
     };
 
-    const viewports = [
-      { height: 800, width: 900 },
-      { height: 800, width: 640 },
-      { height: 800, width: 390 }
-    ];
+    const viewports = [desktop, miniLandscape, miniPortrait];
 
     for (const viewport of viewports) {
-      await assertNarrowViewportContextMenu(viewport, 'ordinary-split');
+      await assertWritingViewportContextMenu(viewport, 'ordinary-split');
     }
 
-    await page.setViewportSize({ height: 800, width: 1280 });
+    await page.setViewportSize(desktop);
     const strings = await enterImmersive(page);
     await page.getByRole('button', { name: strings.split, exact: true }).last().click();
     await expect(page.locator('.easymde-editor.is-immersive.is-immersive-split')).toBeVisible();
 
     for (const viewport of viewports) {
-      await assertNarrowViewportContextMenu(viewport, 'immersive-split');
+      await assertWritingViewportContextMenu(viewport, 'immersive-split');
     }
   });
 });

@@ -344,14 +344,9 @@ export function useEditorSessionAndFormBridge({
   ]);
 
   useLayoutEffect(() => {
-    if (
-      !documentSession
-      || !isNewPost
-      || 'preview' === settings.general.editingMode
-    )
-      return;
+    if (!documentSession || !isNewPost) return;
     documentSession.document.focus();
-  }, [documentSession, isNewPost, settings.general.editingMode]);
+  }, [documentSession, isNewPost]);
 
   useEffect(() => {
     if (!documentSession) {

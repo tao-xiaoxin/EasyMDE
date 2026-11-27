@@ -694,6 +694,184 @@ final class MarkdownRendererTest extends WP_UnitTestCase
         $this->assertStringNotContainsString( 'data-easymde-visual-source-id', $preview['html'] );
     }
 
+	public function test_preview_marks_split_block_math_roots_read_only_without_overlapping_source_ranges() {
+		$preview = MarkdownRenderer::render_preview( 'Display math: \\[\\frac{1}{n}\\].', 'default' );
+		$blocks  = $preview['editMap']['blocks'];
+
+		$this->assertCount( 3, $blocks );
+		$this->assertSame(
+			array(
+				array( 'id' => 'b0', 'startLine' => 1, 'endLine' => 1, 'editable' => false ),
+				array( 'id' => 'b1', 'startLine' => 1, 'endLine' => 1, 'editable' => false ),
+				array( 'id' => 'b2', 'startLine' => 1, 'endLine' => 1, 'editable' => false ),
+			),
+			$blocks
+		);
+		$this->assertStringContainsString( '<p data-easymde-visual-block-id="b0">Display math:</p>', $preview['html'] );
+		$this->assertStringContainsString( '<div class="easymde-math easymde-math-block" data-easymde-visual-block-id="b1">', $preview['html'] );
+		$this->assertStringContainsString( '<p data-easymde-visual-block-id="b2">.</p>', $preview['html'] );
+	}
+
+	public function test_preview_resets_read_only_duplicate_group_before_following_source_block() {
+		$preview = MarkdownRenderer::render_preview(
+			"First: \\[x\\].\n\nSecond: \\[y\\].\n\nAfter",
+			'default'
+		);
+		$ranges = array_map(
+			static function ( $block ) {
+				return array(
+					'startLine' => $block['startLine'],
+					'endLine'   => $block['endLine'],
+					'editable'  => $block['editable'],
+				);
+			},
+			$preview['editMap']['blocks']
+		);
+
+		$this->assertSame(
+			array(
+				array( 'startLine' => 1, 'endLine' => 1, 'editable' => false ),
+				array( 'startLine' => 1, 'endLine' => 1, 'editable' => false ),
+				array( 'startLine' => 1, 'endLine' => 1, 'editable' => false ),
+				array( 'startLine' => 3, 'endLine' => 3, 'editable' => false ),
+				array( 'startLine' => 3, 'endLine' => 3, 'editable' => false ),
+				array( 'startLine' => 3, 'endLine' => 3, 'editable' => false ),
+				array( 'startLine' => 4, 'endLine' => 5, 'editable' => true ),
+			),
+			$ranges
+		);
+	}
+
+	public function test_preview_marks_split_math_roots_read_only_when_prose_continues_on_the_next_line() {
+		$preview = MarkdownRenderer::render_preview( "Before: \\[x\\] after.\nMore", 'default' );
+
+		$this->assertSame(
+			array(
+				array( 'id' => 'b0', 'startLine' => 2, 'endLine' => 2, 'editable' => false ),
+				array( 'id' => 'b1', 'startLine' => 2, 'endLine' => 2, 'editable' => false ),
+				array( 'id' => 'b2', 'startLine' => 2, 'endLine' => 2, 'editable' => false ),
+			),
+			$preview['editMap']['blocks']
+		);
+		$this->assertStringContainsString( 'Before:', $preview['html'] );
+		$this->assertStringContainsString( 'More', $preview['html'] );
+	}
+
+	public function test_preview_marks_split_math_roots_read_only_when_prose_precedes_on_the_previous_line() {
+		$preview = MarkdownRenderer::render_preview( "Intro\nBefore: \\[x\\] after.", 'default' );
+
+		$this->assertSame(
+			array(
+				array( 'id' => 'b0', 'startLine' => 2, 'endLine' => 2, 'editable' => false ),
+				array( 'id' => 'b1', 'startLine' => 2, 'endLine' => 2, 'editable' => false ),
+				array( 'id' => 'b2', 'startLine' => 2, 'endLine' => 2, 'editable' => false ),
+			),
+			$preview['editMap']['blocks']
+		);
+		$this->assertStringContainsString( 'Intro', $preview['html'] );
+		$this->assertStringContainsString( 'Before:', $preview['html'] );
+	}
+
+	public function test_preview_keeps_a_following_editable_paragraph_after_a_multiline_split_group() {
+		$preview = MarkdownRenderer::render_preview( "Before: \\[x\\] after.\nMore\n\nEditable", 'default' );
+
+		$this->assertSame(
+			array(
+				array( 'id' => 'b0', 'startLine' => 2, 'endLine' => 2, 'editable' => false ),
+				array( 'id' => 'b1', 'startLine' => 2, 'endLine' => 2, 'editable' => false ),
+				array( 'id' => 'b2', 'startLine' => 2, 'endLine' => 2, 'editable' => false ),
+				array( 'id' => 'b3', 'startLine' => 3, 'endLine' => 4, 'editable' => true ),
+			),
+			$preview['editMap']['blocks']
+		);
+		$this->assertStringContainsString( 'More', $preview['html'] );
+		$this->assertStringContainsString( '<p data-easymde-visual-block-id="b3">Editable</p>', $preview['html'] );
+	}
+
+	public function test_preview_unions_connected_split_roots_across_a_multiline_bridge_before_the_following_editable_paragraph() {
+		$preview = MarkdownRenderer::render_preview(
+			"Before: \\[x\\] tail.\nMiddle\nPrefix \\[y\\] after.\n\nEditable",
+			'default'
+		);
+
+		$this->assertSame(
+			array(
+				array( 'id' => 'b0', 'startLine' => 3, 'endLine' => 3, 'editable' => false ),
+				array( 'id' => 'b1', 'startLine' => 3, 'endLine' => 3, 'editable' => false ),
+				array( 'id' => 'b2', 'startLine' => 3, 'endLine' => 3, 'editable' => false ),
+				array( 'id' => 'b3', 'startLine' => 3, 'endLine' => 3, 'editable' => false ),
+				array( 'id' => 'b4', 'startLine' => 3, 'endLine' => 3, 'editable' => false ),
+				array( 'id' => 'b5', 'startLine' => 4, 'endLine' => 5, 'editable' => true ),
+			),
+			$preview['editMap']['blocks']
+		);
+		$this->assertStringContainsString( 'Middle', $preview['html'] );
+		$this->assertStringContainsString( 'Prefix', $preview['html'] );
+		$this->assertStringContainsString( '<p data-easymde-visual-block-id="b5">Editable</p>', $preview['html'] );
+	}
+
+	public function test_preview_rejects_invalid_source_block_types_order_and_bounds() {
+		$cases = array(
+			array( 'source_id' => 's0', 'startLine' => '0', 'endLine' => 1, 'editable' => true ),
+			array( 'source_id' => 's0', 'startLine' => -1, 'endLine' => 1, 'editable' => true ),
+			array( 'source_id' => 's0', 'startLine' => 1, 'endLine' => 0, 'editable' => true ),
+			array( 'source_id' => 's1', 'startLine' => 0, 'endLine' => 1, 'editable' => true ),
+			array( 'source_id' => 's0', 'startLine' => 0, 'endLine' => 1, 'editable' => 'true' ),
+		);
+
+		foreach ( $cases as $source_block ) {
+			try {
+				VisualPreviewBlockAnnotator::finalize(
+					'<p data-easymde-visual-source-id="' . $source_block['source_id'] . '">A</p>',
+					array( $source_block )
+				);
+				$this->fail( 'Expected malformed Preview source provenance to be rejected.' );
+			} catch ( RuntimeException $exception ) {
+				$this->assertSame( 'Preview source map contains an invalid source block.', $exception->getMessage() );
+			}
+		}
+	}
+
+	public function test_preview_rejects_an_overlap_that_crosses_the_previous_source_group_floor() {
+		$source_blocks = array(
+			array( 'source_id' => 's0', 'startLine' => 0, 'endLine' => 2, 'editable' => true ),
+			array( 'source_id' => 's1', 'startLine' => 2, 'endLine' => 4, 'editable' => true ),
+			array( 'source_id' => 's2', 'startLine' => 1, 'endLine' => 3, 'editable' => true ),
+		);
+
+		$this->expectException( RuntimeException::class );
+		$this->expectExceptionMessage( 'Preview source ranges overlap without a deterministic source owner.' );
+		VisualPreviewBlockAnnotator::finalize(
+			'<p data-easymde-visual-source-id="s0">A</p>' .
+			'<p data-easymde-visual-source-id="s1">B</p>' .
+			'<p data-easymde-visual-source-id="s2">C</p>',
+			$source_blocks
+		);
+	}
+
+	public function test_preview_allows_a_new_overlap_group_starting_at_the_previous_source_floor() {
+		$source_blocks = array(
+			array( 'source_id' => 's0', 'startLine' => 0, 'endLine' => 2, 'editable' => true ),
+			array( 'source_id' => 's1', 'startLine' => 2, 'endLine' => 4, 'editable' => true ),
+			array( 'source_id' => 's2', 'startLine' => 2, 'endLine' => 3, 'editable' => true ),
+		);
+		$result = VisualPreviewBlockAnnotator::finalize(
+			'<p data-easymde-visual-source-id="s0">A</p>' .
+			'<p data-easymde-visual-source-id="s1">B</p>' .
+			'<p data-easymde-visual-source-id="s2">C</p>',
+			$source_blocks
+		);
+
+		$this->assertSame(
+			array(
+				array( 'id' => 'b0', 'startLine' => 0, 'endLine' => 2, 'editable' => true ),
+				array( 'id' => 'b1', 'startLine' => 4, 'endLine' => 4, 'editable' => false ),
+				array( 'id' => 'b2', 'startLine' => 4, 'endLine' => 4, 'editable' => false ),
+			),
+			$result['editMap']['blocks']
+		);
+	}
+
 	public function test_preview_maps_mixed_line_endings_before_a_trailing_whitespace_only_line() {
 		$markdown = "# Heading\r\n\rParagraph\n \t";
 		$preview  = MarkdownRenderer::render_preview( $markdown, 'default' );
@@ -839,6 +1017,64 @@ final class MarkdownRendererTest extends WP_UnitTestCase
 		VisualPreviewBlockAnnotator::describe_source_blocks( $document, array(), "Before.\n| a | b |\n| no | no |\n| 1 | 2 |\n" );
 	}
 
+	public function test_preview_repairs_indented_paragraph_split_table_delimiters() {
+		$method    = new ReflectionMethod( MarkdownRenderer::class, 'create_converter' );
+		$method->setAccessible( true );
+		$converter = $method->invoke( null, true );
+		$parser    = new MarkdownParser( $converter->getEnvironment() );
+
+		$cases = array(
+			'four spaces before pipe'       => "Intro\n| A | B |\n    | --- | --- |\n| 1 | 2 |\n",
+			'tab before pipe'               => "Intro\n| A | B |\n\t| --- | --- |\n| 1 | 2 |\n",
+			'mixed spaces and tabs'         => "Intro\n| A | B |\n  \t  | --- | --- |\n| 1 | 2 |\n",
+			'four spaces without edge pipe' => "Intro\n| A | B |\n    --- | ---\n| 1 | 2 |\n",
+			'tab without edge pipe'         => "Intro\n| A | B |\n\t--- | ---\n| 1 | 2 |\n",
+		);
+
+		foreach ( $cases as $case_id => $markdown ) {
+			$document = $parser->parse( $markdown );
+
+			$this->assertSame(
+				array(
+					array(
+						'source_id' => 's0',
+						'startLine' => 0,
+						'endLine'   => 1,
+						'editable'  => true,
+					),
+					array(
+						'source_id' => 's1',
+						'startLine' => 1,
+						'endLine'   => 4,
+						'editable'  => true,
+					),
+				),
+				VisualPreviewBlockAnnotator::describe_source_blocks( $document, array(), $markdown ),
+				$case_id
+			);
+
+			$preview = MarkdownRenderer::render_preview( $markdown, 'default' );
+			$blocks  = $preview['editMap']['blocks'];
+			$this->assertCount( 2, $blocks, $case_id );
+			$this->assertSame( array( 'startLine' => 0, 'endLine' => 1 ), self::block_range( $blocks[0] ), $case_id );
+			$this->assertSame( array( 'startLine' => 1, 'endLine' => 4 ), self::block_range( $blocks[1] ), $case_id );
+			$this->assertTrue( $blocks[0]['editable'], $case_id );
+			$this->assertTrue( $blocks[1]['editable'], $case_id );
+		}
+	}
+
+	public function test_preview_rejects_an_indented_non_delimiter_line_for_split_table_repair() {
+		$method    = new ReflectionMethod( MarkdownRenderer::class, 'create_converter' );
+		$method->setAccessible( true );
+		$converter = $method->invoke( null, true );
+		$markdown  = "Intro\n| A | B |\n    | --- | --- |\n| 1 | 2 |\n";
+		$document  = ( new MarkdownParser( $converter->getEnvironment() ) )->parse( $markdown );
+
+		$this->expectException( RuntimeException::class );
+		$this->expectExceptionMessage( 'CommonMark did not provide a valid source range for a Preview block.' );
+		VisualPreviewBlockAnnotator::describe_source_blocks( $document, array(), "Intro\n| A | B |\n    | no | no |\n| 1 | 2 |\n" );
+	}
+
     public function test_renders_basic_markdown_with_commonmark()
     {
         $html = MarkdownRenderer::render("# Hello\n\n**World**");
@@ -961,9 +1197,249 @@ final class MarkdownRendererTest extends WP_UnitTestCase
         $this->assertStringContainsString( '{width=50%}', $html );
         $this->assertStringNotContainsString( 'width="50%"', $html );
 
-        $this->expectException( RuntimeException::class );
-        $this->expectExceptionMessage( 'easymde_image_scale_syntax_invalid' );
-        MarkdownRenderer::render( '![Alt](https://example.test/image.png "{width=51%}")' );
+        foreach (
+            array(
+                'unsupported percentage' => '![Alt](https://example.test/image.png "{width=51%}")',
+                'unspaced marker'        => '![Alt](https://example.test/image.png "Title{width=50%}")',
+                'adjacent markers'       => '![Alt](https://example.test/image.png "{width=50%}{width=67%}")',
+                'repeated markers'       => '![Alt](https://example.test/image.png "Title {width=50%} {width=67%}")',
+                'repeated bare markers'  => '![Alt](https://example.test/image.png "{width=50%} {width=67%}")',
+                'trailing spaces repeat' => '![Alt](https://example.test/image.png "Title {width=50%}   {width=67%}")',
+            ) as $case => $markdown
+        ) {
+            try {
+                MarkdownRenderer::render( $markdown );
+                $this->fail( 'Expected invalid terminal marker to throw for ' . $case );
+            } catch ( RuntimeException $exception ) {
+                $this->assertSame( 'easymde_image_scale_syntax_invalid', $exception->getMessage(), $case );
+            }
+        }
+    }
+
+	public function test_image_scale_numeric_entity_markers_are_deterministic_with_or_without_unrelated_prose()
+	{
+		$valid_cases = array(
+			'standalone &amp;#123; 50%'      => '![Alt](https://example.test/image.png "Caption &amp;#123;width=50%&amp;#125;")',
+			'prose-accompanied &amp;#123; 50%' => "Unrelated {width= note\n\n" . '![Alt](https://example.test/image.png "Caption &amp;#123;width=50%&amp;#125;")',
+			'standalone padded entity 50%'   => '![Alt](https://example.test/image.png "Caption &#00000123;width=50%&#00000125;")',
+			'prose-accompanied padded 50%'   => "Unrelated {width= note\n\n" . '![Alt](https://example.test/image.png "Caption &#00000123;width=50%&#00000125;")',
+		);
+
+		foreach ( $valid_cases as $case => $markdown ) {
+			$rendered = MarkdownRenderer::render( $markdown );
+			$preview  = MarkdownRenderer::render_preview( $markdown );
+			foreach ( array( 'render' => $rendered, 'render_preview' => $preview['html'] ) as $mode => $html ) {
+				$document              = new DOMDocument( '1.0', 'UTF-8' );
+				$previous_libxml_state = libxml_use_internal_errors( true );
+				try {
+					$loaded = $document->loadHTML(
+						'<?xml encoding="UTF-8"><div id="image-scale-entity-root">' . $html . '</div>',
+						LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD
+					);
+				} finally {
+					libxml_clear_errors();
+					libxml_use_internal_errors( $previous_libxml_state );
+				}
+
+				$this->assertTrue( $loaded, $case . ':' . $mode );
+				$image = $document->getElementsByTagName( 'img' )->item( 0 );
+				$this->assertInstanceOf( DOMElement::class, $image, $case . ':' . $mode );
+				$this->assertSame( 'Caption', $image->getAttribute( 'title' ), $case . ':' . $mode );
+				$this->assertSame( '50%', $image->getAttribute( 'width' ), $case . ':' . $mode );
+				$this->assertSame( '50', $image->getAttribute( 'data-easymde-image-scale' ), $case . ':' . $mode );
+			}
+		}
+
+		$invalid_cases = array(
+			'standalone &amp;#123; 51%'        => '![Alt](https://example.test/image.png "Caption &amp;#123;width=51%&amp;#125;")',
+			'prose-accompanied &amp;#123; 51%' => "Unrelated {width= note\n\n" . '![Alt](https://example.test/image.png "Caption &amp;#123;width=51%&amp;#125;")',
+		);
+
+		foreach ( $invalid_cases as $case => $markdown ) {
+			try {
+				MarkdownRenderer::render( $markdown );
+				$this->fail( 'Expected invalid numeric-entity scale marker to throw for ' . $case );
+			} catch ( RuntimeException $exception ) {
+				$this->assertSame( 'easymde_image_scale_syntax_invalid', $exception->getMessage(), $case );
+			}
+		}
+	}
+
+	public function test_image_scale_numeric_entity_parity_across_wp67_and_wp71_kses_behaviors()
+	{
+		$valid_cases = array(
+			'hex entity 50%'             => '![Alt](https://example.test/image.png "Caption &amp;#x7b;width=50%&amp;#x7d;")',
+			'padded hex entity 50%'      => '![Alt](https://example.test/image.png "Caption &#x0000007b;width=50%&#x0000007d;")',
+			'trailing single zero dec'   => '![Alt](https://example.test/image.png "Caption {width=50%}&amp;#0;")',
+			'trailing single zero hex'   => '![Alt](https://example.test/image.png "Caption {width=50%}&amp;#x0;")',
+			'trailing single zero upper' => '![Alt](https://example.test/image.png "Caption {width=50%}&amp;#X0;")',
+		);
+
+		foreach ( $valid_cases as $case => $markdown ) {
+			$rendered = MarkdownRenderer::render( $markdown );
+			$preview  = MarkdownRenderer::render_preview( $markdown );
+			foreach ( array( 'render' => $rendered, 'render_preview' => $preview['html'] ) as $mode => $html ) {
+				$document              = new DOMDocument( '1.0', 'UTF-8' );
+				$previous_libxml_state = libxml_use_internal_errors( true );
+				try {
+					$loaded = $document->loadHTML(
+						'<?xml encoding="UTF-8"><div id="image-scale-parity-root">' . $html . '</div>',
+						LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD
+					);
+				} finally {
+					libxml_clear_errors();
+					libxml_use_internal_errors( $previous_libxml_state );
+				}
+
+				$this->assertTrue( $loaded, $case . ':' . $mode );
+				$image = $document->getElementsByTagName( 'img' )->item( 0 );
+				$this->assertInstanceOf( DOMElement::class, $image, $case . ':' . $mode );
+				$this->assertSame( 'Caption', $image->getAttribute( 'title' ), $case . ':' . $mode );
+				$this->assertSame( '50%', $image->getAttribute( 'width' ), $case . ':' . $mode );
+				$this->assertSame( '50', $image->getAttribute( 'data-easymde-image-scale' ), $case . ':' . $mode );
+			}
+		}
+
+		$unscaled_cases = array(
+			'double escaped amp'   => '![Alt](https://example.test/image.png "Caption &amp;amp;#123;width=50%&amp;amp;#125;")',
+			'nested numeric amp'   => '![Alt](https://example.test/image.png "Caption &amp;#38;#123;width=50%&amp;#38;#125;")',
+			'multi-zero decimal'   => '![Alt](https://example.test/image.png "Caption {width=50%}&amp;#00;")',
+			'multi-zero hex'       => '![Alt](https://example.test/image.png "Caption {width=50%}&amp;#x00;")',
+			'disallowed control 1' => '![Alt](https://example.test/image.png "Caption {width=50%}&amp;#1;")',
+		);
+
+		foreach ( $unscaled_cases as $case => $markdown ) {
+			$rendered = MarkdownRenderer::render( $markdown );
+			$preview  = MarkdownRenderer::render_preview( $markdown );
+			foreach ( array( 'render' => $rendered, 'render_preview' => $preview['html'] ) as $mode => $html ) {
+				$document              = new DOMDocument( '1.0', 'UTF-8' );
+				$previous_libxml_state = libxml_use_internal_errors( true );
+				try {
+					$loaded = $document->loadHTML(
+						'<?xml encoding="UTF-8"><div id="image-scale-unscaled-root">' . $html . '</div>',
+						LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD
+					);
+				} finally {
+					libxml_clear_errors();
+					libxml_use_internal_errors( $previous_libxml_state );
+				}
+
+				$this->assertTrue( $loaded, $case . ':' . $mode );
+				$image = $document->getElementsByTagName( 'img' )->item( 0 );
+				$this->assertInstanceOf( DOMElement::class, $image, $case . ':' . $mode );
+				$this->assertFalse( $image->hasAttribute( 'width' ), $case . ':' . $mode );
+				$this->assertFalse( $image->hasAttribute( 'data-easymde-image-scale' ), $case . ':' . $mode );
+			}
+		}
+
+		// Entity-encoded space after a first marker must still trigger invalid repeated-marker rejection.
+		try {
+			MarkdownRenderer::render( '![Alt](https://example.test/image.png "Caption {width=33%}&amp;#32; {width=50%}")' );
+			$this->fail( 'Expected repeated marker separated by entity space to throw.' );
+		} catch ( RuntimeException $exception ) {
+			$this->assertSame( 'easymde_image_scale_syntax_invalid', $exception->getMessage() );
+		}
+
+		// XSS safety: entity-decoded angle brackets or quotes in the remaining caption stay safely escaped inside `title`.
+		$xss_html = MarkdownRenderer::render(
+			'![Alt](https://example.test/image.png "Caption &amp;#60;script&amp;#62; &amp;#34; onerror=&amp;#34;alert(1) &amp;#123;width=50%&amp;#125;")'
+		);
+		$this->assertStringNotContainsString( '<script', $xss_html );
+		$xss_doc               = new DOMDocument( '1.0', 'UTF-8' );
+		$previous_libxml_state = libxml_use_internal_errors( true );
+		try {
+			$loaded = $xss_doc->loadHTML(
+				'<?xml encoding="UTF-8"><div id="image-scale-xss-root">' . $xss_html . '</div>',
+				LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD
+			);
+		} finally {
+			libxml_clear_errors();
+			libxml_use_internal_errors( $previous_libxml_state );
+		}
+		$this->assertTrue( $loaded );
+		$xss_image = $xss_doc->getElementsByTagName( 'img' )->item( 0 );
+		$this->assertInstanceOf( DOMElement::class, $xss_image );
+		$this->assertFalse( $xss_image->hasAttribute( 'onerror' ) );
+		$this->assertSame( '50%', $xss_image->getAttribute( 'width' ) );
+		$this->assertSame( '50', $xss_image->getAttribute( 'data-easymde-image-scale' ) );
+		$this->assertSame( 'Caption <script> " onerror="alert(1)', $xss_image->getAttribute( 'title' ) );
+
+		// Direct unit coverage of both WordPress 6.7 (KSES already decoded) and WordPress 7.1.5+ (KSES preserves `&amp;#...;`) normalization branches.
+		$normalize = new ReflectionMethod( MarkdownRenderer::class, 'normalize_image_scale_title' );
+		$normalize->setAccessible( true );
+
+		// WP 6.7 mode: no extra pass so already-decoded nested entities (e.g. `&#038;#123;` -> `&#123;`) are never double-decoded.
+		$this->assertSame( 'Caption &#123;width=50%&#125;', $normalize->invoke( null, 'Caption &#123;width=50%&#125;', false, false ) );
+		$this->assertSame( 'Caption {width=50%}&#0;', $normalize->invoke( null, 'Caption {width=50%}&#0;', false, false ) );
+
+		// WP 7.1.5+ mode: single pass matching `decodeWpKsesRenderedTitle()`.
+		$this->assertSame( 'Caption {width=50%}', $normalize->invoke( null, 'Caption &#123;width=50%&#125;', true, true ) );
+		$this->assertSame( 'Caption {width=50%}', $normalize->invoke( null, 'Caption &#00000123;width=50%&#00000125;', true, true ) );
+		$this->assertSame( 'Caption {width=50%}', $normalize->invoke( null, 'Caption &#x7b;width=50%&#x7d;', true, true ) );
+		$this->assertSame( 'Caption {width=50%}', $normalize->invoke( null, 'Caption &#x0000007b;width=50%&#x0000007d;', true, true ) );
+		$this->assertSame( 'Caption {width=50%}', $normalize->invoke( null, 'Caption {width=50%}&#0;', true, true ) );
+		$this->assertSame( 'Caption {width=50%}', $normalize->invoke( null, 'Caption {width=50%}&#x0;', true, true ) );
+		$this->assertSame( 'Caption {width=50%}', $normalize->invoke( null, 'Caption {width=50%}&#X0;', true, true ) );
+		$this->assertSame( 'Caption {width=50%}&#00;', $normalize->invoke( null, 'Caption {width=50%}&#00;', true, true ) );
+		$this->assertSame( 'Caption {width=50%}&#x00;', $normalize->invoke( null, 'Caption {width=50%}&#x00;', true, true ) );
+		$this->assertSame( 'Caption &#123;width=50%&#125;', $normalize->invoke( null, 'Caption &#38;#123;width=50%&#38;#125;', true, true ) );
+		$this->assertSame( 'Caption &amp;#123;width=50%&amp;#125;', $normalize->invoke( null, 'Caption &amp;#123;width=50%&amp;#125;', true, true ) );
+		$this->assertSame( '&#1; &#xD800; &#xFFFE; &#xFFFF; &#1114112;', $normalize->invoke( null, '&#1; &#xD800; &#xFFFE; &#xFFFF; &#1114112;', true, true ) );
+		$this->assertSame( "\xC2\x80", $normalize->invoke( null, '&#128;', true, true ) );
+		$this->assertSame( "\xF4\x8F\xBF\xBF", $normalize->invoke( null, '&#1114111;', true, true ) );
+	}
+
+    public function test_nonterminal_image_scale_text_in_title_stays_literal_and_supports_terminal_scale()
+    {
+        $literal_markdown = '![Alt](https://example.test/image.png "Syntax {width=50%} example")';
+        $literal_html     = MarkdownRenderer::render( $literal_markdown );
+        $literal_preview  = MarkdownRenderer::render_preview( $literal_markdown );
+
+        foreach ( array( 'render' => $literal_html, 'render_preview' => $literal_preview['html'] ) as $mode => $html ) {
+            $document              = new DOMDocument( '1.0', 'UTF-8' );
+            $previous_libxml_state = libxml_use_internal_errors( true );
+            try {
+                $loaded = $document->loadHTML(
+                    '<?xml encoding="UTF-8"><div id="image-scale-root">' . $html . '</div>',
+                    LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD
+                );
+            } finally {
+                libxml_clear_errors();
+                libxml_use_internal_errors( $previous_libxml_state );
+            }
+
+            $this->assertTrue( $loaded, $mode );
+            $image = $document->getElementsByTagName( 'img' )->item( 0 );
+            $this->assertInstanceOf( DOMElement::class, $image, $mode );
+            $this->assertSame( 'Syntax {width=50%} example', $image->getAttribute( 'title' ), $mode );
+            $this->assertFalse( $image->hasAttribute( 'width' ), $mode );
+            $this->assertFalse( $image->hasAttribute( 'data-easymde-image-scale' ), $mode );
+        }
+
+        $scaled_markdown = '![Alt](https://example.test/image.png "Syntax {width=50%} example {width=67%}")';
+        $scaled_html     = MarkdownRenderer::render( $scaled_markdown );
+        $scaled_preview  = MarkdownRenderer::render_preview( $scaled_markdown );
+
+        foreach ( array( 'render' => $scaled_html, 'render_preview' => $scaled_preview['html'] ) as $mode => $html ) {
+            $document              = new DOMDocument( '1.0', 'UTF-8' );
+            $previous_libxml_state = libxml_use_internal_errors( true );
+            try {
+                $loaded = $document->loadHTML(
+                    '<?xml encoding="UTF-8"><div id="image-scale-root">' . $html . '</div>',
+                    LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD
+                );
+            } finally {
+                libxml_clear_errors();
+                libxml_use_internal_errors( $previous_libxml_state );
+            }
+
+            $this->assertTrue( $loaded, $mode );
+            $image = $document->getElementsByTagName( 'img' )->item( 0 );
+            $this->assertInstanceOf( DOMElement::class, $image, $mode );
+            $this->assertSame( 'Syntax {width=50%} example', $image->getAttribute( 'title' ), $mode );
+            $this->assertSame( '67%', $image->getAttribute( 'width' ), $mode );
+            $this->assertSame( '67', $image->getAttribute( 'data-easymde-image-scale' ), $mode );
+        }
     }
 
     public function test_preview_preserves_image_scale_contract()
@@ -1162,6 +1638,38 @@ MD;
         $this->assertStringContainsString('<ul class="task-list">', $all_tasks);
         $this->assertSame( 2, substr_count( $all_tasks, 'class="task-list-item"' ) );
         $this->assertStringContainsString('<input checked disabled type="checkbox">', $all_tasks);
+    }
+
+    public function test_task_list_marker_spacing_is_removed_from_tight_and_loose_lists()
+    {
+        $tight = MarkdownRenderer::render( "- [ ] Todo\n- [x] Done", 'default' );
+        $loose = MarkdownRenderer::render( "- [ ] Todo\n\n- [x] Done", 'default' );
+
+        // Real line breaks are required here: the two items must be separate
+        // list entries so both checkbox states run through the spacing
+        // normalization. An escaped '\n' would collapse them into one item.
+        $this->assertSame( 2, substr_count( $tight, 'class="task-list-item"' ) );
+        $this->assertStringContainsString( '<input disabled type="checkbox">Todo', $tight );
+        $this->assertStringContainsString( '<input checked disabled type="checkbox">Done', $tight );
+        $this->assertStringNotContainsString( '<input disabled type="checkbox"> Todo', $tight );
+        $this->assertStringNotContainsString( '<input checked disabled type="checkbox"> Done', $tight );
+        $this->assertSame( 2, substr_count( $loose, 'class="task-list-item"' ) );
+        $this->assertStringContainsString( '<p><input disabled type="checkbox">Todo</p>', $loose );
+        $this->assertStringContainsString( '<p><input checked disabled type="checkbox">Done</p>', $loose );
+        $this->assertStringNotContainsString( '<input disabled type="checkbox"> Todo', $loose );
+        $this->assertStringNotContainsString( '<input checked disabled type="checkbox"> Done', $loose );
+    }
+
+    public function test_task_marker_spacing_does_not_change_regular_lists_or_non_task_inputs()
+    {
+        $regular = MarkdownRenderer::render( "- Todo\n- Done", 'default' );
+        $input   = MarkdownRenderer::render( 'Label <input type="checkbox" disabled> text', 'default' );
+
+        $this->assertStringContainsString( '<li>Todo</li>', $regular );
+        $this->assertStringContainsString( '<li>Done</li>', $regular );
+        $this->assertStringNotContainsString( '<input', $input );
+        $this->assertStringContainsString( 'Label', $input );
+        $this->assertStringContainsString( 'text', $input );
     }
 
     public function test_task_list_markup_is_preserved_for_the_default_article_theme()

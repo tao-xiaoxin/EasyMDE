@@ -22,6 +22,10 @@ import {
   type ToolbarPlatform
 } from '../../features/toolbar/ui/EditorToolbar';
 import { formatKeyboardShortcut } from '../../shared/keyboard/keyboard-shortcut';
+import {
+  useWechatCopyStatus,
+  type WechatCopyStatusStore
+} from '../../features/wechat-export/wechat-copy-status';
 import type {
   EditorRootProps,
   VisualToolbarCommandResult
@@ -57,6 +61,7 @@ export type RootExportCommandsProps = Readonly<{
   executeCommand: (commandId: string) => void;
   platform: ToolbarPlatform;
   toolbar: ToolbarBootstrap;
+  wechatCopyStatus: WechatCopyStatusStore;
 }>;
 
 function WechatIcon() {
@@ -74,8 +79,13 @@ function WechatIcon() {
 export function RootExportCommands({
   executeCommand,
   platform,
-  toolbar
+  toolbar,
+  wechatCopyStatus
 }: RootExportCommandsProps) {
+  const {
+    pending: wechatCopyPending,
+    unavailable: wechatCopyUnavailable
+  } = useWechatCopyStatus(wechatCopyStatus);
   const commands = toolbar.commands.filter(
     (command) => 'main' === command.surface && 'export' === command.group
   );
@@ -92,18 +102,23 @@ export function RootExportCommands({
         const title = shortcut
           ? `${command.label} (${shortcut})`
           : command.label;
+        const isWechatCopy = 'copyWechat' === command.action;
+        const wechatCopyBlocked =
+          isWechatCopy && (wechatCopyPending || wechatCopyUnavailable);
         return (
           <button
             key={command.id}
             type="button"
-            className={`easymde-toolbar-button easymde-toolbar-button-compact${'copyWechat' === command.action ? ' easymde-toolbar-copy-action' : ''}`}
+            className={`easymde-toolbar-button easymde-toolbar-button-compact${isWechatCopy ? ' easymde-toolbar-copy-action' : ''}`}
             data-easymde-command={command.id}
             aria-label={command.label}
+            aria-busy={isWechatCopy && wechatCopyPending ? 'true' : undefined}
+            aria-disabled={wechatCopyBlocked ? 'true' : undefined}
             title={title}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => executeCommand(command.id)}
           >
-            {'copyWechat' === command.action ? (
+            {isWechatCopy ? (
               <WechatIcon />
             ) : (
               <span

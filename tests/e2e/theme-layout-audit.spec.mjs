@@ -1,8 +1,9 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import {
-	canonicalMarkdownForPage,
+	fullCapabilityImage,
 	fullCapabilityMarkdown,
 	login,
 	openEasyMdeNewPost,
@@ -88,11 +89,25 @@ const approvedSharedCodeFrameGeometry = {
 		wordBreak: "normal",
 	},
 };
+const fullCapabilityImageSource =
+	"https://raw.githubusercontent.com/tao-xiaoxin/EasyMDE/main/docs/assets/easymde-logo-rounded.png";
 const expectedMermaidCount =
 	fullCapabilityMarkdown.match(/^```mermaid$/gmu)?.length ?? 0;
 if (expectedMermaidCount <= 0) {
 	throw new Error("full-capability-mermaid-fixture-empty");
 }
+const canonicalMermaidRoles = [
+	"flowchart-v2",
+	"sequence",
+	"pie",
+	"gantt",
+	"classDiagram",
+	"stateDiagram",
+	"er",
+	"mindmap",
+	"timeline",
+	"xychart",
+];
 
 if (hasIsolatedWordPressCli) {
 	registerEditorWorkflowHooks();
@@ -145,7 +160,7 @@ async function chooseTheme(page, theme) {
 		exact: true,
 	});
 	await selectOrdinaryOption(page, select, theme.label);
-	await expect(page.locator(".easymde-pane-preview article")).toHaveClass(
+	await expect(page.locator('.easymde-pane-preview article[data-easymde-preview-html-sink="1"]')).toHaveClass(
 		new RegExp(`easymde-markdown-theme-${theme.id}`),
 	);
 	await waitForStylesheet(
@@ -176,7 +191,7 @@ async function chooseCodeTheme(page, theme) {
 		exact: true,
 	});
 	await selectOrdinaryOption(page, select, theme.label);
-	await expect(page.locator(".easymde-pane-preview article")).toHaveClass(
+	await expect(page.locator('.easymde-pane-preview article[data-easymde-preview-html-sink="1"]')).toHaveClass(
 		new RegExp(`easymde-code-theme-${theme.id}`),
 	);
 	await waitForStylesheet(
@@ -238,7 +253,7 @@ async function setMode(page, mode, labels) {
 }
 
 async function scrollToMermaid(page, mode, index) {
-	await page.locator(".easymde-pane-preview article").evaluate(
+	await page.locator('.easymde-pane-preview article[data-easymde-preview-html-sink="1"]').evaluate(
 		(root, args) => {
 			const svg = root.querySelectorAll(".easymde-mermaid svg")[args.index];
 			if (!(svg instanceof SVGElement))
@@ -255,7 +270,7 @@ async function scrollToMermaid(page, mode, index) {
 }
 
 async function scrollToCodeBlock(page) {
-	await page.locator(".easymde-pane-preview article").evaluate((root) => {
+	await page.locator('.easymde-pane-preview article[data-easymde-preview-html-sink="1"]').evaluate((root) => {
 		const codeBlocks = Array.from(root.querySelectorAll("pre code.hljs"));
 		const code = codeBlocks.sort(
 			(first, second) =>
@@ -274,8 +289,9 @@ async function scrollToCodeBlock(page) {
 	});
 }
 
-function caseEvidence(root, { mode }) {
+function caseEvidence(root, { mode, expectedMermaidCount, expectedMermaidRoles }) {
 	const geometryTolerance = 1.5;
+	const intrinsicGeometryTolerance = 1 / 64;
 	const near = (first, second) => Math.abs(first - second) <= geometryTolerance;
 	const box = (element) => {
 		const rect = element.getBoundingClientRect();
@@ -477,7 +493,300 @@ function caseEvidence(root, { mode }) {
 	const mermaids = Array.from(root.querySelectorAll(".easymde-mermaid svg"));
 	if (!mermaids.length)
 		failures.push(failure("mermaid-svg-missing", ".easymde-mermaid svg"));
+	const mermaidRoles = mermaids.map((svg) => {
+		const role = svg.getAttribute("aria-roledescription")?.trim();
+		if (!role)
+			failures.push(failure("mermaid-role-missing", "svg[aria-roledescription]"));
+		return role ?? null;
+	});
+	if (
+		Array.isArray(expectedMermaidRoles) &&
+		JSON.stringify(mermaidRoles) !== JSON.stringify(expectedMermaidRoles)
+	)
+		failures.push(
+			failure("mermaid-role-order-invalid", ".easymde-mermaid svg", {
+				expected: expectedMermaidRoles,
+				actual: mermaidRoles,
+			}),
+		);
+	const completeCanonicalMermaidFixture =
+		mermaids.length === expectedMermaidCount &&
+		JSON.stringify(mermaidRoles) === JSON.stringify(expectedMermaidRoles);
+	const intrinsicMermaidRoles = new Set(["gantt", "sequence", "timeline"]);
+	const intrinsicMermaidOwnerEvidence = (svg, viewBoxParts, role) => {
+		const owner = svg.parentElement;
+		const ownerStyle = owner instanceof HTMLElement ? getComputedStyle(owner) : null;
+		const ownerBox = owner instanceof HTMLElement ? box(owner) : null;
+		const directSvgCount = owner instanceof HTMLElement
+			? Array.from(owner.children).filter(
+					(child) => child instanceof SVGSVGElement,
+				).length
+			: 0;
+		const direct = owner instanceof HTMLElement && owner === svg.parentElement;
+		const localHorizontalScroll =
+			owner instanceof HTMLElement &&
+			ownerStyle &&
+			["auto", "scroll"].includes(ownerStyle.overflowX);
+		const svgRect = svg.getBoundingClientRect();
+		const sourceWidth = svgRect.width;
+		const sourceHeight = svgRect.height;
+		const screenCtm = svg.getScreenCTM?.() ?? null;
+		const ctm = screenCtm && [
+			screenCtm.a,
+			screenCtm.b,
+			screenCtm.c,
+			screenCtm.d,
+			screenCtm.e,
+			screenCtm.f,
+		].every(Number.isFinite)
+			? {
+				a: screenCtm.a,
+				b: screenCtm.b,
+				c: screenCtm.c,
+				d: screenCtm.d,
+				e: screenCtm.e,
+				f: screenCtm.f,
+			}
+			: null;
+		const expectedScale = Math.min(
+			sourceWidth / viewBoxParts[2],
+			sourceHeight / viewBoxParts[3],
+		);
+		const projectedDiagResidual = ctm && Number.isFinite(expectedScale)
+			? {
+				a: Math.abs(ctm.a - expectedScale) * viewBoxParts[2],
+				d: Math.abs(ctm.d - expectedScale) * viewBoxParts[3],
+			}
+			: null;
+		const intrinsicCtmComplete =
+			ctm !== null &&
+			Number.isFinite(expectedScale) &&
+			expectedScale > 0 &&
+			ctm.a > 0 &&
+			ctm.d > 0 &&
+			Math.abs(ctm.b) <= 1e-6 &&
+			Math.abs(ctm.c) <= 1e-6 &&
+			projectedDiagResidual !== null &&
+			Number.isFinite(projectedDiagResidual.a) &&
+			Number.isFinite(projectedDiagResidual.d) &&
+			projectedDiagResidual.a <= intrinsicGeometryTolerance &&
+			projectedDiagResidual.d <= intrinsicGeometryTolerance;
+		let start = null;
+		let end = null;
+		let startScrollLeft = null;
+		let endScrollLeft = null;
+		let scrollRange = null;
+		if (owner instanceof HTMLElement) {
+			const originalScrollLeft = owner.scrollLeft;
+			owner.scrollLeft = 0;
+			startScrollLeft = owner.scrollLeft;
+			start = box(svg);
+			owner.scrollLeft = Math.max(0, owner.scrollWidth - owner.clientWidth);
+			endScrollLeft = owner.scrollLeft;
+			end = box(svg);
+			scrollRange = Math.max(0, owner.scrollWidth - owner.clientWidth);
+			owner.scrollLeft = originalScrollLeft;
+		}
+		const paddingLeft = ownerStyle
+			? Number.parseFloat(ownerStyle.paddingLeft)
+			: Number.NaN;
+		const paddingRight = ownerStyle
+			? Number.parseFloat(ownerStyle.paddingRight)
+			: Number.NaN;
+		const ownerContentLeft =
+			ownerBox &&
+			owner instanceof HTMLElement &&
+			Number.isFinite(paddingLeft)
+				? ownerBox.left + owner.clientLeft + paddingLeft
+				: null;
+		const ownerContentRight =
+			ownerBox &&
+			owner instanceof HTMLElement &&
+			Number.isFinite(paddingRight)
+				? ownerBox.left + owner.clientLeft + owner.clientWidth - paddingRight
+				: null;
+		const startLeadingEdgeOffset =
+			start && ownerContentLeft !== null ? start.left - ownerContentLeft : null;
+		const startTrailingEdgeOffset =
+			start && ownerContentRight !== null ? start.right - ownerContentRight : null;
+		const endLeadingEdgeOffset =
+			end && ownerContentLeft !== null ? end.left - ownerContentLeft : null;
+		const endTrailingEdgeOffset =
+			end && ownerContentRight !== null ? end.right - ownerContentRight : null;
+		const expectedScrollWidth =
+			owner instanceof HTMLElement &&
+			Number.isFinite(paddingLeft) &&
+			Number.isFinite(paddingRight)
+				? Math.max(owner.clientWidth, sourceWidth + paddingLeft + paddingRight)
+				: Number.NaN;
+		const complete =
+			direct &&
+			directSvgCount === 1 &&
+			localHorizontalScroll &&
+			owner instanceof HTMLElement &&
+			ownerBox &&
+			Number.isFinite(sourceWidth) &&
+			Number.isFinite(sourceHeight) &&
+			sourceWidth > 0 &&
+			sourceHeight > 0 &&
+			Math.abs(sourceWidth - viewBoxParts[2]) <= intrinsicGeometryTolerance &&
+			Math.abs(sourceHeight - viewBoxParts[3]) <= intrinsicGeometryTolerance &&
+			intrinsicCtmComplete &&
+			Number.isFinite(owner.scrollWidth) &&
+			Number.isFinite(expectedScrollWidth) &&
+			Math.abs(owner.scrollWidth - expectedScrollWidth) <= geometryTolerance &&
+			Number.isFinite(startLeadingEdgeOffset) &&
+			Math.abs(startLeadingEdgeOffset) <= geometryTolerance &&
+			Number.isFinite(startTrailingEdgeOffset) &&
+			startTrailingEdgeOffset >= -geometryTolerance &&
+			Number.isFinite(endLeadingEdgeOffset) &&
+			endLeadingEdgeOffset <= geometryTolerance &&
+			Number.isFinite(endTrailingEdgeOffset) &&
+			Math.abs(endTrailingEdgeOffset) <= geometryTolerance &&
+			Number.isFinite(startScrollLeft) &&
+			Number.isFinite(endScrollLeft) &&
+			Math.abs(startScrollLeft) <= geometryTolerance &&
+			Math.abs(endScrollLeft - (scrollRange ?? 0)) <= geometryTolerance;
+		return {
+			complete,
+			ctm,
+			direct,
+			directSvgCount,
+			end,
+			endScrollLeft,
+			localHorizontalScroll,
+			owner: owner instanceof HTMLElement ? box(owner) : null,
+			ownerOverflowX: ownerStyle?.overflowX ?? null,
+			ownerScrollRange: scrollRange,
+			ownerScrollWidth: owner instanceof HTMLElement ? owner.scrollWidth : null,
+			expectedScrollWidth,
+			expectedScale,
+			endLeadingEdgeOffset,
+			endTrailingEdgeOffset,
+			intrinsicCtmComplete,
+			projectedDiagResidual,
+			startLeadingEdgeOffset,
+			startTrailingEdgeOffset,
+			sourceHeight,
+			sourceWidth,
+			start,
+			startScrollLeft,
+			role,
+			viewBox: { height: viewBoxParts[3], width: viewBoxParts[2] },
+		};
+	};
+	const erLayoutEvidence = (svg) => {
+		if (svg.getAttribute("aria-roledescription")?.trim() !== "er")
+			return null;
+		const erFailures = [];
+		const attributes = Array.from(
+			svg.querySelectorAll('text.entityLabel[id*="-attr-"]'),
+		);
+		if (!attributes.length)
+			erFailures.push(
+				failure("er-attribute-text-missing", "text.entityLabel"),
+			);
+		const attributeChecks = attributes.map((label, index) => {
+			const previous = label.previousElementSibling;
+			const cell =
+				previous?.matches("rect.attributeBoxOdd, rect.attributeBoxEven")
+					? previous
+					: null;
+			const labelBox = box(label);
+			const cellBox = cell ? box(cell) : null;
+			const outside =
+				!cellBox ||
+				labelBox.left < cellBox.left - geometryTolerance ||
+				labelBox.right > cellBox.right + geometryTolerance ||
+				labelBox.top < cellBox.top - geometryTolerance ||
+				labelBox.bottom > cellBox.bottom + geometryTolerance;
+			if (outside)
+				erFailures.push(
+					failure("er-attribute-text-outside-cell", "text.entityLabel", {
+						index,
+						label: labelBox,
+						cell: cellBox,
+					}),
+				);
+			return { index, label: labelBox, cell: cellBox, outside };
+		});
+
+		const relationshipLabels = Array.from(
+			svg.querySelectorAll("text.relationshipLabel"),
+		);
+		const relationshipBackgrounds = Array.from(
+			svg.querySelectorAll("rect.relationshipLabelBox"),
+		);
+		if (!relationshipLabels.length)
+			erFailures.push(
+				failure("er-relationship-label-missing", "text.relationshipLabel"),
+			);
+		if (relationshipLabels.length !== relationshipBackgrounds.length)
+			erFailures.push(
+				failure("er-relationship-background-count-mismatch", "text.relationshipLabel", {
+					labels: relationshipLabels.length,
+					backgrounds: relationshipBackgrounds.length,
+				}),
+			);
+		const relationshipChecks = relationshipLabels.map((label, index) => {
+			const previous = label.previousElementSibling;
+			const background =
+				previous?.matches("rect.relationshipLabelBox") ? previous : null;
+			const labelBox = box(label);
+			const backgroundBox = background ? box(background) : null;
+			const outside =
+				!backgroundBox ||
+				labelBox.left < backgroundBox.left - geometryTolerance ||
+				labelBox.right > backgroundBox.right + geometryTolerance ||
+				labelBox.top < backgroundBox.top - geometryTolerance ||
+				labelBox.bottom > backgroundBox.bottom + geometryTolerance;
+			const sizeMismatch =
+				backgroundBox !== null &&
+				(Math.abs(labelBox.width - backgroundBox.width) > geometryTolerance ||
+					Math.abs(labelBox.height - backgroundBox.height) > geometryTolerance);
+			if (outside)
+				erFailures.push(
+					failure(
+						"er-relationship-label-outside-background",
+						"text.relationshipLabel",
+						{
+							index,
+							label: labelBox,
+							background: backgroundBox,
+						},
+					),
+				);
+			if (sizeMismatch)
+				erFailures.push(
+					failure(
+						"er-relationship-label-background-size-mismatch",
+						"text.relationshipLabel",
+						{
+							index,
+							label: labelBox,
+							background: backgroundBox,
+						},
+					),
+				);
+			return {
+				index,
+				label: labelBox,
+				background: backgroundBox,
+				sizeMismatch,
+				outside,
+			};
+		});
+
+		return {
+			attributeCount: attributes.length,
+			attributeChecks,
+			relationshipCount: relationshipLabels.length,
+			relationshipChecks,
+			failures: erFailures,
+		};
+	};
 	const mermaid = mermaids.map((svg, index) => {
+		const role = mermaidRoles[index];
 		const rect = box(svg);
 		const viewBox = svg.getAttribute("viewBox") || "";
 		const viewBoxParts = viewBox
@@ -512,6 +821,16 @@ function caseEvidence(root, { mode }) {
 		const contained =
 			rect.left >= rootBox.left - geometryTolerance &&
 			rect.right <= rootBox.right + geometryTolerance;
+		const isIntrinsicMermaid =
+			typeof role === "string" && intrinsicMermaidRoles.has(role) &&
+			svg.parentElement?.matches(
+				'.easymde-mermaid[data-easymde-mermaid-layout="' + role + '"]',
+			) === true;
+		const intrinsicOwner = isIntrinsicMermaid
+			? intrinsicMermaidOwnerEvidence(svg, viewBoxParts, role)
+			: null;
+		const rootHasZeroHorizontalOverflow =
+			root.scrollWidth - root.clientWidth <= geometryTolerance;
 		const positive = rect.width > 0 && rect.height > 0;
 		if (!positive)
 			failures.push(
@@ -529,12 +848,34 @@ function caseEvidence(root, { mode }) {
 					{ viewBox },
 				),
 			);
-		if (!contained)
+		if (
+			typeof role === "string" &&
+			intrinsicMermaidRoles.has(role) &&
+			!intrinsicOwner?.complete
+		)
+			failures.push(
+				failure(
+					"intrinsic-mermaid-local-scroll-owner-invalid",
+					'.easymde-mermaid[data-easymde-mermaid-layout="' + role + '"]',
+					{ intrinsicOwner, role, rootHasZeroHorizontalOverflow },
+				),
+			);
+		const allowedIntrinsicMermaidOverflow =
+			isIntrinsicMermaid &&
+			rootHasZeroHorizontalOverflow &&
+			intrinsicOwner?.complete === true;
+		if (!contained && !allowedIntrinsicMermaidOverflow)
 			failures.push(
 				failure(
 					"mermaid-horizontal-overflow",
 					`.easymde-mermaid svg:nth-of-type(${index + 1})`,
-					{ svg: rect, article: rootBox },
+					{
+						article: rootBox,
+						intrinsicOwner,
+						role,
+						rootHasZeroHorizontalOverflow,
+						svg: rect,
+					},
 				),
 			);
 		if (labelProblems.some((problem) => problem.clipped || problem.outside))
@@ -544,15 +885,22 @@ function caseEvidence(root, { mode }) {
 					`.easymde-mermaid svg:nth-of-type(${index + 1})`,
 					{ labelProblems },
 				),
-			);
+				);
+		const er = completeCanonicalMermaidFixture ? erLayoutEvidence(svg) : null;
+		if (er?.failures.length)
+			failures.push(...er.failures);
 		return {
 			index,
+			role,
 			rect,
 			viewBox,
 			validViewBox,
 			contained,
 			positive,
 			labelProblems,
+			intrinsicOwner,
+			allowedIntrinsicMermaidOverflow,
+			er,
 		};
 	});
 
@@ -610,6 +958,7 @@ function caseEvidence(root, { mode }) {
 		paneOverflow,
 		verticalOwners: verticalOwnerEvidence,
 		mermaid,
+		mermaidRoles,
 	};
 }
 
@@ -899,6 +1248,11 @@ test("audits all registered article themes in ordinary, immersive split, and pur
 	page,
 }, testInfo) => {
 	test.setTimeout(60 * 60_000);
+	expect(fullCapabilityMarkdown.length).toBe(9254);
+	expect(new TextEncoder().encode(fullCapabilityMarkdown).byteLength).toBe(11959);
+	expect(createHash("sha256").update(fullCapabilityMarkdown, "utf8").digest("hex")).toBe(
+		"ee40a02e3bc8d10f1ad0f6452ad1f97a2eedb0fc7c3ca507e9334bab44ec7dfb",
+	);
 	mkdirSync(reportRoot, { recursive: true });
 	const browserErrors = [];
 	const reportPath = resolve(reportRoot, `${auditPhase}-report.json`);
@@ -914,6 +1268,7 @@ test("audits all registered article themes in ordinary, immersive split, and pur
 		printCases: [],
 		setupBrowserErrors: [],
 		cleanupBrowserErrors: [],
+		legacyImageRouteHits: 0,
 		startedAt: new Date().toISOString(),
 	};
 	writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
@@ -931,6 +1286,9 @@ test("audits all registered article themes in ordinary, immersive split, and pur
 		browserErrors.push(`pageerror:${String(error.message).slice(0, 300)}`),
 	);
 
+	let originalImageRouteHits = 0;
+	let legacyImageRouteHits = 0;
+	let legacyImageRouteUrl = null;
 	try {
 		await page.setViewportSize(screenshotViewport);
 		const user = hasIsolatedWordPressCli
@@ -946,15 +1304,43 @@ test("audits all registered article themes in ordinary, immersive split, and pur
 		if (sessionKeepalive) {
 			testInfo.easymdeStopSessionKeepalive = sessionKeepalive.stop;
 		}
+		legacyImageRouteUrl = new URL(
+			"/easymde-e2e-fixtures/markdown-full-capability-image.png",
+			page.url(),
+		).href;
+		await page.route(legacyImageRouteUrl, async (route) => {
+			legacyImageRouteHits += 1;
+			await route.fulfill({
+				status: 200,
+				contentType: "image/png",
+				body: fullCapabilityImage,
+			});
+		});
+		await page.route(fullCapabilityImageSource, async (route) => {
+			originalImageRouteHits += 1;
+			await route.fulfill({
+				status: 200,
+				contentType: "image/png",
+				body: fullCapabilityImage,
+			});
+		});
 		await openEasyMdeNewPost(page);
 		await expect(
 			page.locator('[data-easymde-editor-owner="react"]'),
 		).toBeVisible();
-		const preview = page.locator(".easymde-pane-preview article");
+		const preview = page.locator('.easymde-pane-preview article[data-easymde-preview-html-sink="1"]');
 		await waitForPreviewIdle(preview);
-		const localCapabilityMarkdown = await canonicalMarkdownForPage(page);
+		const localCapabilityMarkdown = fullCapabilityMarkdown;
 		await seedMarkdownAndWaitForPreview(page, localCapabilityMarkdown);
 		await waitForFullCapabilityPreview(preview);
+		const renderedMermaidRoles = await preview.locator(".easymde-mermaid svg").evaluateAll(
+			(svgs) => svgs.map((svg) =>
+				svg.getAttribute("aria-roledescription")?.trim() ?? null,
+			),
+		);
+		expect(renderedMermaidRoles, "canonical Mermaid roles must come from renderer output").toEqual(
+			canonicalMermaidRoles,
+		);
 		await expect
 			.poll(
 				() =>
@@ -976,6 +1362,7 @@ test("audits all registered article themes in ordinary, immersive split, and pur
 				},
 			)
 			.toBe(true);
+		expect(originalImageRouteHits).toBeGreaterThan(0);
 		const bootstrap = await page.evaluate(
 			() => window.EasyMDEEditorRootBootstrap,
 		);
@@ -1016,7 +1403,11 @@ test("audits all registered article themes in ordinary, immersive split, and pur
 				await expect(preview).toHaveClass(
 					new RegExp(`easymde-markdown-theme-${theme.id}`),
 				);
-				const evidence = await preview.evaluate(caseEvidence, { mode });
+				const evidence = await preview.evaluate(caseEvidence, {
+					mode,
+					expectedMermaidCount,
+					expectedMermaidRoles: canonicalMermaidRoles,
+				});
 				if (captureScreenshots) {
 					const caseName = `${safeName(theme.id)}-${mode}`;
 					const diagramIndex = mode === "ordinary" ? 0 : 1;
@@ -1059,6 +1450,8 @@ test("audits all registered article themes in ordinary, immersive split, and pur
 					);
 					const narrowEvidence = await preview.evaluate(caseEvidence, {
 						mode: "pure-narrow",
+						expectedMermaidCount,
+						expectedMermaidRoles: canonicalMermaidRoles,
 					});
 					if (captureScreenshots) {
 						await scrollToMermaid(page, "pure-narrow", 0);
@@ -1130,13 +1523,20 @@ test("audits all registered article themes in ordinary, immersive split, and pur
 		expect(report.codeCases).toHaveLength(codeThemes.length);
 		expect(report.printCases).toHaveLength(printThemes.length);
 		report.completed = true;
-	} finally {
-		try {
+		} finally {
+			try {
+				if (legacyImageRouteUrl) await page.unroute(legacyImageRouteUrl);
+				await page.unroute(fullCapabilityImageSource);
+			} catch {
+				report.cleanupBrowserErrors.push("cleanup:image-routes-failed");
+			}
+			try {
 			if (!page.isClosed()) await page.emulateMedia({ media: "screen" });
 		} catch {
 			report.cleanupBrowserErrors.push("cleanup:emulate-media-screen-failed");
 		}
-		report.trailingBrowserErrors = consumeBrowserErrors();
+			report.trailingBrowserErrors = consumeBrowserErrors();
+			report.legacyImageRouteHits = legacyImageRouteHits;
 		report.finishedAt = new Date().toISOString();
 		report.caseCounts = {
 			article: report.cases.length,

@@ -7,7 +7,10 @@ import {
 	MAX_PREVIEW_EDIT_MAP_BLOCKS,
 	type PreviewEditMapBlock,
 } from "../../../contracts/ports/preview-request";
-import { createWordPressPreviewPort } from "./create-wordpress-preview-port";
+import {
+	createWordPressPreviewPort,
+	PREVIEW_RESPONSE_INVALID_CODE,
+} from "./create-wordpress-preview-port";
 
 const request = {
 	markdown: "# Preview",
@@ -159,6 +162,43 @@ describe("createWordPressPreviewPort", () => {
 				custom_css_id: "custom-1",
 			},
 			signal: controller.signal,
+		});
+	});
+
+	it.each([
+		null,
+		{ html: 7, features: {}, editMap: rawEditMap() },
+		{ html: markedHtml("b0"), features: [], editMap: rawEditMap() },
+		{ html: markedHtml("b0"), features: { toc: "yes" }, editMap: rawEditMap() },
+		{ html: markedHtml("b0"), features: {}, editMap: null },
+		{
+			html: markedHtml("b0"),
+			features: {},
+			editMap: { version: 2, coordinate: "line", blocks: [] },
+		},
+		{
+			html: markedHtml("b0"),
+			features: {},
+			editMap: { version: 1, coordinate: "byte", blocks: [] },
+		},
+		{
+			html: markedHtml("b0"),
+			features: {},
+			editMap: { version: 1, coordinate: "line", blocks: {} },
+		},
+	])("rejects an invalid response shape with stable error code", async (response) => {
+		const port = createWordPressPreviewPort(
+			vi.fn().mockResolvedValue(response),
+			"/wp-json/easymde/v1/preview",
+			"nonce",
+			"https://example.test/wp-admin/post.php",
+		);
+		await expect(
+			port.render(request, new AbortController().signal),
+		).rejects.toMatchObject({
+			code: PREVIEW_RESPONSE_INVALID_CODE,
+			message: PREVIEW_RESPONSE_INVALID_CODE,
+			name: "PreviewResponseError",
 		});
 	});
 

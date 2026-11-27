@@ -233,6 +233,7 @@ export function usePreviewRequestLifecycle(
 
 		const session = createPreviewRequestSession({
 			initialRevision: propsRef.current.initialRevision,
+			onDiagnostic: (code) => propsRef.current.onDiagnostic?.(code),
 			onState: publishRequestState,
 			port: propsRef.current.port,
 		});
@@ -306,7 +307,11 @@ export function usePreviewRequestLifecycle(
 				}
 				return current;
 			}
-			if ("html" !== current.kind || !current.paperPlaceholder) {
+			if (
+				"html" !== current.kind ||
+				!current.paperPlaceholder ||
+				"" !== current.html.trim()
+			) {
 				return current;
 			}
 			if ("ready" === current.phase) {

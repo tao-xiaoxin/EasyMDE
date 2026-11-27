@@ -332,7 +332,10 @@
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus .task-list-item > p > input[type="checkbox"] {
   appearance: none;
   display: inline-block;
+  position: relative;
   width: 13px;
+  min-width: 13px;
+  max-width: 13px;
   height: 13px;
   margin-top: 3px;
   margin-inline-end: 7.5px;
@@ -345,6 +348,12 @@
   line-height: 11px;
   text-align: center;
   vertical-align: baseline;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-crimson-focus .task-list-item > input[type="checkbox"]::before,
+.easymde-rendered-content.easymde-markdown-theme-crimson-focus .task-list-item > p > input[type="checkbox"]::before {
+  display: none;
+  content: none;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus .easymde-task-checkbox.is-checked,
@@ -361,6 +370,8 @@
 
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus .task-list-item > input[type="checkbox"]:checked::after,
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus .task-list-item > p > input[type="checkbox"]:checked::after {
+  position: absolute;
+  inset: 0;
   display: block;
   color: var(--easymde-crimson-focus-surface);
   content: "✓";
@@ -413,7 +424,7 @@
 
 .easymde-rendered-content.easymde-markdown-theme-crimson-focus table {
   width: 100%;
-  min-width: 520px;
+  min-width: max(100%, 520px);
   margin: 18.75px 0;
   border-collapse: collapse;
   font-family: var(--easymde-content-font-family, "EasyMDE Inter", system-ui, sans-serif);

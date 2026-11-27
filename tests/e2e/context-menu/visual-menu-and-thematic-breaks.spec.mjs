@@ -253,7 +253,8 @@ test.describe('Editor context menu production surfaces', () => {
     await login(page);
     await openNewPost(page);
     const { markdown, preview, source, sourceEditor } = await loadCanonicalFixture(page);
-    const root = await page.locator('#easymde-editor-root').elementHandle();
+    const liveRootSelector = '#easymde-editor-root:has(> [data-easymde-editor-owner="react"])';
+    const root = await page.locator(liveRootSelector).elementHandle();
     let nativeSource;
     try {
       nativeSource = await source.elementHandle();
@@ -262,7 +263,7 @@ test.describe('Editor context menu production surfaces', () => {
       await repeatAfterFormalPreview(page, short.strings, source, markdown, 0);
       await assertSourceExactValue(source, markdown, 'short-visual-actions-complete');
       await page.getByRole('button', { name: short.strings.exit, exact: true }).click();
-      await expect(page.locator('.easymde-editor.is-immersive')).toHaveCount(0);
+      await expect(page.locator('[data-easymde-editor-owner="react"].easymde-editor.is-immersive')).toHaveCount(0);
       const longMarkdown = `${markdown}\n${markdown}`;
       await replaceSourceWithNativeInput(page, sourceEditor, source, longMarkdown, 'long-fixture-applied');
       await waitForSourcePreviewAccepted(preview, 'short-to-long-preview');
@@ -270,9 +271,9 @@ test.describe('Editor context menu production surfaces', () => {
       await expectUnifiedVisualSurface(long.visualEditor, 160);
       await repeatAfterFormalPreview(page, long.strings, source, longMarkdown, 0);
       await page.getByRole('button', { name: long.strings.exit, exact: true }).click();
-      await expect(page.locator('.easymde-editor.is-immersive')).toHaveCount(0);
+      await expect(page.locator('[data-easymde-editor-owner="react"].easymde-editor.is-immersive')).toHaveCount(0);
       await assertSourceExactValue(source, longMarkdown, 'long-visual-actions-complete');
-      expect(await root.evaluate((element) => element === document.querySelector('#easymde-editor-root'))).toBe(true);
+      expect(await root.evaluate((element, selector) => element === document.querySelector(selector), liveRootSelector)).toBe(true);
       expect(await nativeSource.evaluate((element) => element === document.querySelector('#easymde-source'))).toBe(true);
     } finally {
       await Promise.all([root?.dispose(), nativeSource?.dispose()]);

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -170,7 +171,15 @@ function createFrontendAssetSources(root) {
 
     for (const copy of component.copies || []) {
       if ('directory' === copy.type) {
-        writeText(root, `${copy.source}/fixture.woff2`, `source:${copy.source}/fixture.woff2`);
+        if (component.id === 'katex') {
+          mkdirSync(join(root, copy.source), { recursive: true });
+          cpSync(
+            join(repoRoot, 'node_modules/katex/dist/fonts/KaTeX_Main-Regular.ttf'),
+            join(root, `${copy.source}/KaTeX_Main-Regular.ttf`)
+          );
+        } else {
+          writeText(root, `${copy.source}/fixture.woff2`, `source:${copy.source}/fixture.woff2`);
+        }
       } else {
         writeText(root, copy.source, `source:${copy.source}`);
       }
@@ -282,6 +291,8 @@ function createCompleteFixture(root) {
   const frontendEntry = 'frontend/src/entrypoints/admin-editor.tsx';
   const frontendScript = 'assets/admin-editor-fixture.js';
   const frontendMetadata = 'assets/admin-editor-fixture.asset.php';
+  const wechatPngEncoderWorkerSource = 'frontend/src/integrations/browser/wechat/wechat-png-encoder.worker.ts';
+  const wechatPngEncoderWorkerScript = 'assets/wechat-png-encoder-fixture.js';
   const frontendDynamicSource = 'frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts';
   const frontendChunk = 'assets/admin-editor-chunk-fixture.js';
   const adminEditorLoaderEntry = 'frontend/src/entrypoints/admin-editor-loader.ts';
@@ -319,6 +330,11 @@ function createCompleteFixture(root) {
         isEntry: true,
         src: frontendEntry
       },
+      [wechatPngEncoderWorkerSource]: {
+        file: wechatPngEncoderWorkerScript,
+        isEntry: false,
+        src: wechatPngEncoderWorkerSource
+      },
       [frontendDynamicSource]: {
         file: frontendChunk,
         isDynamicEntry: true,
@@ -338,13 +354,14 @@ function createCompleteFixture(root) {
           asset: frontendMetadata,
           moduleFormat: 'esm',
           dependencies: ['wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n'],
-          resources: [],
+          resources: [wechatPngEncoderWorkerScript],
           chunks: [frontendChunk]
         }
       }
     })
   );
   writeText(root, `assets/build/${frontendScript}`, 'window.EasyMDEEditorRootBootstrap = {};\n');
+  writeText(root, `assets/build/${wechatPngEncoderWorkerScript}`, 'self.onmessage = () => {};\n');
   writeText(root, `assets/build/${frontendChunk}`, 'export const chunkFixture = true;\n');
   writeText(
     root,
@@ -737,6 +754,7 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/assets\/admin-editor-[A-Za-z0-9_-]+\.js$/.test(entry)));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/assets\/admin-editor-chunk-[A-Za-z0-9_-]+\.js$/.test(entry)));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/assets\/admin-editor-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/assets\/wechat-png-encoder-[A-Za-z0-9_-]+\.js$/.test(entry)));
     assert.ok(entries.includes('easymde/assets/build/admin-editor-loader/manifest.json'));
     assert.ok(entries.includes('easymde/assets/build/admin-editor-loader/wordpress-manifest.json'));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/admin-editor-loader\/assets\/admin-editor-loader-[A-Za-z0-9_-]+\.js$/.test(entry)));
@@ -925,6 +943,51 @@ test('release build rejects frontend artifacts outside the production manifests'
     assert.throws(
       () => buildRelease({ root }),
       /unexpected production frontend artifacts:[\s\S]*admin-editor-chunk-orphan\.js/
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release build requires the declared PNG worker runtime file', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    rmSync(join(root, 'assets/build/assets/wechat-png-encoder-fixture.js'), { force: true });
+
+    const missing = findMissingReleaseRequirements(root).map((requirement) => requirement.path);
+    assert.ok(missing.includes('assets/build/assets/wechat-png-encoder-fixture.js'));
+    assert.throws(
+      () => buildRelease({ root }),
+      /assets\/build\/assets\/wechat-png-encoder-fixture\.js/
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release build rejects altered or unowned PNG worker manifest artifacts', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    const manifestPath = join(root, 'assets/build/manifest.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    manifest['frontend/src/integrations/browser/wechat/wechat-png-encoder.worker.ts'].isEntry = true;
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+
+    assert.throws(
+      () => buildRelease({ root }),
+      /matching production frontend manifest contracts/
+    );
+
+    rmSync(root, { recursive: true, force: true });
+    createCompleteFixture(root);
+    writeText(root, 'assets/build/assets/wechat-png-encoder-unowned.js', 'self.onmessage = () => {};\n');
+    assert.throws(
+      () => buildRelease({ root }),
+      /unexpected production frontend artifacts:[\s\S]*wechat-png-encoder-unowned\.js/
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -1163,6 +1226,14 @@ test('release requirements include assets referenced by enqueue source files', (
   }
 });
 
+test('release requirements include the generated math atlas and its font notice', () => {
+  const requirements = collectReleaseRequirements(repoRoot).map((requirement) => requirement.path);
+
+  assert.ok(requirements.includes('assets/math/easymde-katex-glyph-atlas.json'));
+  assert.ok(requirements.includes('assets/math/KaTeX_FONT_LICENSE.txt'));
+  assert.ok(requirements.includes('assets/vendor/katex/LICENSE'));
+});
+
 test('release requirements include the Qinghe Zhusha article theme stylesheet', () => {
   const requirements = collectReleaseRequirements(repoRoot).map((requirement) => requirement.path);
 
@@ -1289,9 +1360,6 @@ test('release copy filter excludes development directories by path segment', () 
     assert.equal(shouldCopyReleaseFile(root, join(root, 'vendor/league/commonmark/phpcs.xml.dist')), false);
     assert.equal(shouldCopyReleaseFile(root, join(root, 'vendor/league/commonmark/runtime/debug.log')), false);
     assert.equal(shouldCopyReleaseFile(root, join(root, 'vendor/league/commonmark/runtime/Parser.php')), true);
-    assert.equal(shouldCopyReleaseFile(root, join(root, 'vendor/qiniu/php-sdk/src/Qiniu/Auth.php')), true);
-    assert.equal(shouldCopyReleaseFile(root, join(root, 'vendor/qiniu/php-sdk/examples/upload_simple_file.php')), false);
-    assert.equal(shouldCopyReleaseFile(root, join(root, 'vendor/qiniu/php-sdk/test-env.sh')), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

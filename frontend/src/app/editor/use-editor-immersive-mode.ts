@@ -23,8 +23,15 @@ import {
 import type {
   EditorStatusState,
   LayoutScrollRestoreEntry,
+  PreviewPresentation,
   SharedRef
 } from './editor-root-types';
+
+function previewPresentationFromImmersiveMode(
+  mode: ImmersiveViewMode
+): PreviewPresentation {
+  return 'preview' === mode ? 'preview' : 'split';
+}
 
 export type UseEditorImmersiveModeOptions = Readonly<{
   cancelVisualUnlockPreparation: () => void;
@@ -48,6 +55,7 @@ export type UseEditorImmersiveModeOptions = Readonly<{
   ) => Promise<boolean>;
   previewRuntimeGeneration: number;
   previewRuntimeRef: SharedRef<PreviewSurfaceRuntime | null>;
+  rememberWechatPreviewWidth: (surface?: HTMLElement | null) => void;
   reportFailure: (code: string) => void;
   rootActiveRef: SharedRef<boolean>;
   rootRef: SharedRef<HTMLDivElement | null>;
@@ -80,6 +88,7 @@ export function useEditorImmersiveMode({
   prepareSourceMutationWithPreview,
   previewRuntimeGeneration,
   previewRuntimeRef,
+  rememberWechatPreviewWidth,
   reportFailure,
   rootActiveRef,
   rootRef,
@@ -95,6 +104,8 @@ export function useEditorImmersiveMode({
 }: UseEditorImmersiveModeOptions) {
   const immersiveToggleRef = useRef<HTMLButtonElement>(null);
   const restoreImmersiveFocusRef = useRef(false);
+  const [previewPresentation, setPreviewPresentation] =
+    useState<PreviewPresentation>('split');
   /**
    * Every explicit view choice is one request with its own identity. A
    * preparation started for an older request must never commit after the user
@@ -179,13 +190,20 @@ export function useEditorImmersiveMode({
           : currentState.status
     }));
     captureLayoutScrollRestore();
+    const presentation = previewPresentationFromImmersiveMode(
+      immersiveModeRef.current
+    );
+    setPreviewPresentation(presentation);
+    if ('source' === immersiveModeRef.current) rememberWechatPreviewWidth();
     immersiveRef.current = true;
     setImmersive(true);
   }, [
     captureLayoutScrollRestore,
     closeForToolbar,
+    immersiveModeRef,
     immersivePreferencesPort,
     immersiveRef,
+    rememberWechatPreviewWidth,
     setEditorStatusState,
     setImmersive,
     toolbarSessionRef
@@ -197,6 +215,7 @@ export function useEditorImmersiveMode({
     cancelVisualUnlockPreparation();
     if (!visualPreviewEditingRef.current) {
       captureLayoutScrollRestore();
+      setPreviewPresentation('split');
       immersiveRef.current = false;
       setImmersive(false);
       return;
@@ -229,6 +248,7 @@ export function useEditorImmersiveMode({
         return;
       }
       captureLayoutScrollRestore();
+      setPreviewPresentation('split');
       immersiveRef.current = false;
       setImmersive(false);
     });
@@ -255,6 +275,11 @@ export function useEditorImmersiveMode({
       cancelVisualUnlockPreparation();
       if (!visualPreviewEditingRef.current) {
         captureLayoutScrollRestore();
+        if ('source' === mode) {
+          rememberWechatPreviewWidth();
+        } else {
+          setPreviewPresentation(previewPresentationFromImmersiveMode(mode));
+        }
         setImmersiveMode(mode);
         return;
       }
@@ -277,6 +302,11 @@ export function useEditorImmersiveMode({
         // when its preparation has already passed every internal await.
         if (generation !== immersiveModeRequestRef.current) return;
         captureLayoutScrollRestore();
+        if ('source' === mode) {
+          rememberWechatPreviewWidth();
+        } else {
+          setPreviewPresentation(previewPresentationFromImmersiveMode(mode));
+        }
         setImmersiveMode(mode);
       });
     },
@@ -286,6 +316,7 @@ export function useEditorImmersiveMode({
       immersiveModeRef,
       immersiveRef,
       prepareSourceMutationWithPreview,
+      rememberWechatPreviewWidth,
       rootActiveRef,
       setImmersiveMode,
       visualPreviewEditingRef,
@@ -309,9 +340,17 @@ export function useEditorImmersiveMode({
     if (!visualPreviewEditingRef.current) {
       captureLayoutScrollRestore();
       if (null === request.mode) {
+        setPreviewPresentation('split');
         immersiveRef.current = false;
         setImmersive(false);
       } else {
+        if ('source' === request.mode) {
+          rememberWechatPreviewWidth();
+        } else {
+          setPreviewPresentation(
+            previewPresentationFromImmersiveMode(request.mode)
+          );
+        }
         setImmersiveMode(request.mode);
       }
       return;
@@ -347,9 +386,17 @@ export function useEditorImmersiveMode({
       if (deferredImmersiveModeRef.current) return;
       captureLayoutScrollRestore();
       if (null === request.mode) {
+        setPreviewPresentation('split');
         immersiveRef.current = false;
         setImmersive(false);
       } else {
+        if ('source' === request.mode) {
+          rememberWechatPreviewWidth();
+        } else {
+          setPreviewPresentation(
+            previewPresentationFromImmersiveMode(request.mode)
+          );
+        }
         setImmersiveMode(request.mode);
       }
     });
@@ -360,6 +407,7 @@ export function useEditorImmersiveMode({
     immersiveModeRef,
     immersiveRef,
     prepareSourceMutationWithPreview,
+    rememberWechatPreviewWidth,
     rootActiveRef,
     setImmersive,
     setImmersiveMode,
@@ -410,6 +458,7 @@ export function useEditorImmersiveMode({
     exitImmersive,
     immersiveLayoutClass,
     immersivePreferences,
-    immersiveToggleRef
+    immersiveToggleRef,
+    previewPresentation
   };
 }

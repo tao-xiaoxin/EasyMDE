@@ -1,4 +1,10 @@
 import { normalizeMathTex } from '../../shared/markdown/normalize-math-tex';
+import {
+  initializeMermaidRuntime,
+  markIntrinsicMermaidLayout,
+  type MermaidInitializationOptions
+} from '../../shared/mermaid/mermaid-runtime-config';
+import { utf8ByteLength } from '../../shared/utf8-byte-length';
 
 export type FrontendEnhancementConfig = unknown;
 
@@ -31,16 +37,6 @@ type KatexRuntime = Readonly<{
 }>;
 
 type MermaidRenderResult = Readonly<{ svg: string }>;
-
-type MermaidInitializationOptions = Readonly<{
-  startOnLoad: boolean;
-  securityLevel: string;
-  theme: string;
-  fontFamily: string;
-  fontSize: number;
-  flowchart: Readonly<{ diagramPadding: number }>;
-  themeCSS: string;
-}>;
 
 type MermaidRuntime = Readonly<{
   initialize: (options: MermaidInitializationOptions) => void;
@@ -80,30 +76,6 @@ export type FrontendEnhancementWindow = Window & {
 
 let mermaidRenderIndex = 0;
 
-const MERMAID_LABEL_FONT_FAMILY = '"trebuchet ms", verdana, arial, sans-serif';
-const MERMAID_LABEL_GEOMETRY_CSS = `
-.node .label,
-.node .label *,
-.edgeLabel,
-.edgeLabel *,
-foreignObject > div,
-foreignObject > div * {
-  box-sizing: border-box !important;
-  font-family: ${MERMAID_LABEL_FONT_FAMILY} !important;
-  font-size: 16px !important;
-  font-weight: 400 !important;
-  line-height: 20px !important;
-  letter-spacing: normal !important;
-  word-spacing: normal !important;
-  white-space: nowrap !important;
-  margin: 0 !important;
-  padding: 0 !important;
-}
-
-foreignObject > div {
-  display: table-cell !important;
-}`;
-
 const ENHANCEMENT_SLICE_BUDGET_MS = 8;
 const ENHANCEMENT_RAF_FALLBACK_MS = 40;
 // Auto-detection is synchronous per block; keep large immersive previews bounded
@@ -127,7 +99,6 @@ type CachedMermaidSvg = Readonly<{
 }>;
 
 const mermaidSvgCaches = new WeakMap<MermaidRuntime, Map<string, CachedMermaidSvg>>();
-const initializedMermaidRuntimes = new WeakSet<MermaidRuntime>();
 const katexHtmlCaches = new WeakMap<KatexRuntime, Map<string, string>>();
 
 type ScheduledWorkCost = 0 | 1;
@@ -327,8 +298,7 @@ function isLargeImmersivePreviewRoot(root: ParentNode): boolean {
   const text = root.textContent;
   return root instanceof HTMLElement
     && root.classList.contains('easymde-immersive-visual-editor')
-    && new TextEncoder().encode(text ?? '').length
-      > LARGE_IMMERSIVE_PREVIEW_BYTE_LIMIT;
+    && utf8ByteLength(text ?? '') > LARGE_IMMERSIVE_PREVIEW_BYTE_LIMIT;
 }
 
 function stringValue(
@@ -668,21 +638,15 @@ export function renderMathContent(
   ).then(() => undefined);
 }
 
-function initializeMermaid(mermaid: MermaidRuntime): void {
-  if (initializedMermaidRuntimes.has(mermaid)) return;
-
-  mermaid.initialize({
-    startOnLoad: false,
-    securityLevel: 'strict',
-    theme: 'default',
-    fontFamily: MERMAID_LABEL_FONT_FAMILY,
-    fontSize: 16,
-    flowchart: {
-      diagramPadding: 12
-    },
-    themeCSS: MERMAID_LABEL_GEOMETRY_CSS
-  });
-  initializedMermaidRuntimes.add(mermaid);
+function markMermaidRenderError(
+  pre: HTMLElement,
+  config: FrontendEnhancementConfig
+): void {
+  pre.classList.add('easymde-render-error');
+  pre.setAttribute(
+    'data-easymde-error',
+    stringValue(config, 'renderingFailed', '')
+  );
 }
 
 async function renderUncachedMermaidDiagram(
@@ -714,14 +678,11 @@ async function renderUncachedMermaidDiagram(
       );
     }
     container.innerHTML = result.svg;
+    markIntrinsicMermaidLayout(container);
     pre.parentNode.replaceChild(container, pre);
   } catch {
     if (!enhancementIsCurrent(control)) return 1;
-    pre.classList.add('easymde-render-error');
-    pre.setAttribute(
-      'data-easymde-error',
-      stringValue(config, 'renderingFailed', '')
-    );
+    markMermaidRenderError(pre, config);
   }
   return 1;
 }
@@ -786,8 +747,8 @@ export function renderMermaidContent(
   if (0 === mermaidNodes.length) {
     return Promise.resolve();
   }
-  initializeMermaid(mermaid);
   const cache = mermaidSvgCache(mermaid);
+  let mermaidInitFailed = false;
 
   return runScheduled(
     mermaidNodes,
@@ -801,17 +762,32 @@ export function renderMermaidContent(
       const renderId = `easymde-mermaid-${Date.now()}-${++mermaidRenderIndex}`;
 
       container.className = 'easymde-mermaid';
-      element.dataset.easymdeRendered = '1';
 
       const cacheKey = mermaidCacheKey(source);
       const cached = cacheKey.length > 0 ? readLruCache(cache, cacheKey) : undefined;
       if (cached) {
+        element.dataset.easymdeRendered = '1';
         if (!pre.parentNode) return 0;
         container.innerHTML = cached.svg.split(cached.renderId).join(renderId);
+        markIntrinsicMermaidLayout(container);
         pre.parentNode.replaceChild(container, pre);
         return 0;
       }
 
+      if (!mermaidInitFailed) {
+        try {
+          initializeMermaidRuntime(mermaid);
+        } catch {
+          mermaidInitFailed = true;
+        }
+      }
+      if (!enhancementIsCurrent(control)) return 0;
+      if (mermaidInitFailed) {
+        markMermaidRenderError(pre, config);
+        return 0;
+      }
+
+      element.dataset.easymdeRendered = '1';
       return renderUncachedMermaidDiagram(
         mermaid,
         cache,

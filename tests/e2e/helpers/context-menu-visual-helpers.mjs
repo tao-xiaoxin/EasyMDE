@@ -103,7 +103,7 @@ async function recordVisualInteractionDiagnostic(page, phase, target, point = nu
 export async function enterImmersive(page) {
   const strings = await getImmersiveStrings(page);
   await page.getByRole('button', { name: strings.enter, exact: true }).click();
-  await expect(page.locator('.easymde-editor.is-immersive')).toBeVisible();
+  await expect(page.locator('[data-easymde-editor-owner="react"].easymde-editor.is-immersive')).toBeVisible();
   return strings;
 }
 

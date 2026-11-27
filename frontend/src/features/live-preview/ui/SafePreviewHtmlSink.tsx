@@ -13,6 +13,28 @@ export type SafePreviewHtmlSinkCommit = Readonly<{
 	revision: number;
 }>;
 
+export type SafePreviewHtmlSinkVerifiedView = Readonly<{
+	html: SafePreviewHtml | null;
+	htmlRevision: number;
+}>;
+
+export type SafePreviewHtmlSinkFailureOutcome =
+	| Readonly<{
+			error: unknown;
+			kind: "restored";
+			previous: SafePreviewHtmlSinkVerifiedView | null;
+	  }>
+	| Readonly<{
+			error: unknown;
+			kind: "unverified";
+			rollbackError: unknown;
+	  }>;
+
+type DomMutationCallback =
+	| ((surface: HTMLElement) => undefined | Error)
+	| ((surface: HTMLElement) => void)
+	| undefined;
+
 type SafePreviewHtmlSinkProps = Readonly<{
 	acceptedHtml?: boolean;
 	ariaBusy?: boolean;
@@ -22,6 +44,8 @@ type SafePreviewHtmlSinkProps = Readonly<{
 	html: SafePreviewHtml | null;
 	htmlRevision?: number;
 	label?: string;
+	onDomMutation?: DomMutationCallback;
+	onDomMutationFailure?: (outcome: SafePreviewHtmlSinkFailureOutcome) => void;
 	onStagedCommit?: (revision: number) => void;
 	phase?: string;
 	refreshing?: boolean;
@@ -44,6 +68,91 @@ type AppliedSurfaceState = Readonly<{
 	statusMessage: string | undefined;
 	statusRole: string | undefined;
 }>;
+
+type SurfaceSnapshot = Readonly<{
+	canvas: HTMLElement | null;
+	children: ReadonlyArray<Node>;
+	scrollTop: number;
+}>;
+
+function captureSurfaceSnapshot(surface: HTMLElement): SurfaceSnapshot {
+	return {
+		canvas: surface.parentElement,
+		children: Array.from(surface.childNodes),
+		scrollTop: surface.parentElement?.scrollTop ?? 0,
+	};
+}
+
+function restoreSurfaceSnapshot(
+	snapshot: SurfaceSnapshot,
+	surface: HTMLElement,
+): void {
+	if (!surface.parentNode) throw new Error("preview-sink-rollback-failed");
+	surface.replaceChildren(...snapshot.children);
+	if (snapshot.canvas) snapshot.canvas.scrollTop = snapshot.scrollTop;
+}
+
+function notifyDomMutation(
+	surface: HTMLElement,
+	callback: DomMutationCallback,
+): Error | null {
+	try {
+		const result = callback?.(surface);
+		if (result instanceof Error) return result;
+		return null;
+	} catch (error) {
+		return error instanceof Error
+			? error
+			: new Error("preview-sink-dom-mutation-failed");
+	}
+}
+
+function clearUnverifiedSurface(
+	surface: HTMLElement,
+	onDomMutation: DomMutationCallback,
+): void {
+	surface.replaceChildren();
+	const styleError = notifyDomMutation(surface, onDomMutation);
+	if (styleError) throw styleError;
+}
+
+function restoreAfterDomMutationFailure(
+	surface: HTMLElement,
+	mutationError: Error,
+	previous: SafePreviewHtmlSinkVerifiedView | null,
+	restore: () => void,
+	onDomMutation: DomMutationCallback,
+	onFailure?: (outcome: SafePreviewHtmlSinkFailureOutcome) => void,
+): void {
+	let rollbackFailure: Error | null = null;
+	try {
+		restore();
+	} catch (error) {
+		rollbackFailure =
+			error instanceof Error
+				? error
+				: new Error("preview-sink-rollback-failed");
+	}
+	if (!rollbackFailure) {
+		const restoredError = notifyDomMutation(surface, onDomMutation);
+		if (restoredError) rollbackFailure = restoredError;
+	}
+	if (!rollbackFailure) {
+		onFailure?.({ error: mutationError, kind: "restored", previous });
+		return;
+	}
+	try {
+		clearUnverifiedSurface(surface, onDomMutation);
+	} catch {
+		// The first rollback error remains the causal failure; the sink is already
+		// unverified and the owner will discard the corresponding View state.
+	}
+	onFailure?.({
+		error: mutationError,
+		kind: "unverified",
+		rollbackError: rollbackFailure,
+	});
+}
 
 function validateUniqueChildren(desiredNodes: ReadonlyArray<Node>): void {
 	const desired = new Set<Node>();
@@ -85,6 +194,8 @@ export function SafePreviewHtmlSink({
 	html,
 	htmlRevision = 0,
 	label,
+	onDomMutation,
+	onDomMutationFailure,
 	onStagedCommit,
 	phase,
 	refreshing = false,
@@ -98,6 +209,9 @@ export function SafePreviewHtmlSink({
 }: SafePreviewHtmlSinkProps) {
 	const htmlSurfaceRef = useRef<HTMLElement | null>(null);
 	const appliedSurfaceStateRef = useRef<AppliedSurfaceState | null>(null);
+	const lastVerifiedViewRef = useRef<SafePreviewHtmlSinkVerifiedView | null>(
+		null,
+	);
 
 	useImperativeHandle(surfaceRef, () => {
 		if (!htmlSurfaceRef.current) throw new Error("preview-surface-missing");
@@ -109,6 +223,7 @@ export function SafePreviewHtmlSink({
 		if (!surface) throw new Error("preview-surface-missing");
 
 		const appliedSurfaceState = appliedSurfaceStateRef.current;
+		const previousVerifiedView = lastVerifiedViewRef.current;
 		const commit =
 			stagedCommit?.revision === htmlRevision ? stagedCommit : null;
 		if (
@@ -162,6 +277,7 @@ export function SafePreviewHtmlSink({
 
 		if (commit) {
 			validateUniqueChildren(commit.nodes);
+			const snapshot = captureSurfaceSnapshot(surface);
 			if (!hasExactChildren(surface, commit.nodes)) {
 				surface.replaceChildren(...commit.nodes);
 			}
@@ -173,6 +289,22 @@ export function SafePreviewHtmlSink({
 					statusRole,
 				);
 			}
+			const mutationError = notifyDomMutation(surface, onDomMutation);
+			if (mutationError) {
+				restoreAfterDomMutationFailure(
+					surface,
+					mutationError,
+					previousVerifiedView,
+					() => restoreSurfaceSnapshot(snapshot, surface),
+					onDomMutation,
+					onDomMutationFailure,
+				);
+				return;
+			}
+			lastVerifiedViewRef.current = {
+				html,
+				htmlRevision,
+			};
 			appliedSurfaceStateRef.current = {
 				html,
 				revision: htmlRevision,
@@ -186,6 +318,7 @@ export function SafePreviewHtmlSink({
 			return;
 		}
 
+		const snapshot = captureSurfaceSnapshot(surface);
 		if (null !== html) {
 			// Sole sink for PHP-rendered, server-sanitized Preview HTML.
 			if ("" === html) {
@@ -205,6 +338,22 @@ export function SafePreviewHtmlSink({
 			}
 		}
 
+		const mutationError = notifyDomMutation(surface, onDomMutation);
+		if (mutationError) {
+			restoreAfterDomMutationFailure(
+				surface,
+				mutationError,
+				previousVerifiedView,
+				() => restoreSurfaceSnapshot(snapshot, surface),
+				onDomMutation,
+				onDomMutationFailure,
+			);
+			return;
+		}
+		lastVerifiedViewRef.current = {
+			html,
+			htmlRevision,
+		};
 		appliedSurfaceStateRef.current = {
 			html,
 			renderedHtml: surface.innerHTML,
@@ -217,6 +366,8 @@ export function SafePreviewHtmlSink({
 		beforeStagedCommit,
 		html,
 		htmlRevision,
+		onDomMutation,
+		onDomMutationFailure,
 		onStagedCommit,
 		phase,
 		stagedCommit,

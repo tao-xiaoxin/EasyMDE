@@ -1,17 +1,18 @@
 import { Buffer } from 'node:buffer';
-import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
 import { runCleanupSteps } from '../support/run-cleanup-steps.mjs';
-
-const wpPath = process.env.EASYMDE_E2E_WP_PATH;
-
-const wpCli = process.env.EASYMDE_E2E_WP_CLI || 'wp';
+import {
+  createWpFixtureUser,
+  runWpCommand
+} from './wp-cli-runner.mjs';
 
 const adminUser = requiredEnvironment('WORDPRESS_ADMIN_USER');
 
-const adminPassword = requiredEnvironment('WORDPRESS_ADMIN_PASSWORD');
+// Enforce the repository's local credential contract before E2E runs; disposable
+// per-test fixture users still receive fresh per-run passwords via WP-CLI stdin.
+requiredEnvironment('WORDPRESS_ADMIN_PASSWORD');
 
 export const fullCapabilityMarkdown = readFileSync(
   new URL('../../../docs/examples/markdown-full-capability-test.md', import.meta.url),
@@ -143,28 +144,7 @@ export function expectRuntimeAssetRequests(requests, expectedKeys, origin) {
 }
 
 export function runWp(args, options = {}) {
-  if (!wpPath) {
-    throw new Error('EASYMDE_E2E_WP_PATH must point to the WordPress install under test.');
-  }
-
-  const result = spawnSync(
-    wpCli,
-    [...args, `--path=${wpPath}`, '--allow-root'],
-    {
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        WP_CLI_CACHE_DIR: process.env.WP_CLI_CACHE_DIR || '/tmp/easymde-wp-cli-cache'
-      },
-      ...options
-    }
-  );
-
-  if (result.status !== 0) {
-    throw new Error(`wp ${args.join(' ')} failed\n${result.stdout}\n${result.stderr}`);
-  }
-
-  return result.stdout.trim();
+  return runWpCommand(args, options);
 }
 
 export function testSlug(testInfo) {
@@ -172,23 +152,12 @@ export function testSlug(testInfo) {
 }
 
 function createUser(slug, role = 'administrator') {
-  const username = `${adminUser}-${slug}-user`;
-  const email = `${slug}@example.test`;
-  const userId = runWp([
-    'user',
-    'create',
-    username,
-    email,
-    `--role=${role}`,
-    `--user_pass=${adminPassword}`,
-    '--porcelain'
-  ]);
-
-  return {
-    id: userId,
-    username,
-    password: adminPassword
-  };
+  return createWpFixtureUser({
+    role,
+    runWpRef: runWp,
+    slug,
+    usernamePrefix: adminUser
+  });
 }
 
 function deleteUserContent(userId) {
@@ -249,6 +218,11 @@ export async function login(page, user) {
     form.requestSubmit(submit);
   }, user);
   await expect(page.locator('#wpadminbar')).toBeVisible();
+  await page.waitForLoadState('load');
+  // WordPress 7.1+ Dashboard triggers post-load emoji/thickbox asset fetches;
+  // give them a short bounded settle window so navigation to post-new.php does
+  // not abort them under privacy-safe monitoring without hanging on slow widgets.
+  await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
 }
 
 async function pulseWordPressHeartbeat(page) {
@@ -355,6 +329,64 @@ export function startWordPressSessionKeepalive(page, user) {
 export async function openEasyMdeNewPost(page) {
   await page.goto('/wp-admin/post-new.php');
   await expect(page.locator('#easymde-editor')).toBeVisible();
+}
+
+export async function assertOrdinarySideBySideSplit(
+  page,
+  label,
+  { checkPageOverflow = true, direction = 'ltr' } = {}
+) {
+  await expect.poll(
+    () => page.locator('#easymde-editor-root [data-easymde-editor-owner="react"]').evaluate(
+      (owner, { checkOverflow, expectedDirection }) => {
+        const workspace = owner.querySelector('.easymde-workspace');
+        const source = workspace?.querySelector('.easymde-pane-source');
+        const preview = workspace?.querySelector('.easymde-pane-preview');
+        if (!(source instanceof HTMLElement) || !(preview instanceof HTMLElement)) {
+          throw new Error('ordinary-workspace-panes-unavailable');
+        }
+        const sourceStyle = getComputedStyle(source);
+        const previewStyle = getComputedStyle(preview);
+        const sourceBox = source.getBoundingClientRect();
+        const previewBox = preview.getBoundingClientRect();
+        return {
+          hasModeClass: [
+            ...Array.from(owner.classList),
+            ...Array.from(workspace?.classList ?? [])
+          ].some((name) => name.startsWith('is-mode-')),
+          ...(checkOverflow
+            ? {
+                pageOverflow: Math.max(
+                  0,
+                  document.documentElement.scrollWidth - document.documentElement.clientWidth
+                )
+              }
+            : {}),
+          previewVisible: 'none' !== previewStyle.display
+            && 'hidden' !== previewStyle.visibility
+            && previewBox.width > 0
+            && previewBox.height > 0,
+          sideBySide: 'rtl' === expectedDirection
+            ? previewBox.right <= sourceBox.left + 1
+            : sourceBox.right <= previewBox.left + 1,
+          sourceVisible: 'none' !== sourceStyle.display
+            && 'hidden' !== sourceStyle.visibility
+            && sourceBox.width > 0
+            && sourceBox.height > 0,
+          topAligned: Math.abs(sourceBox.top - previewBox.top) <= 1
+        };
+      },
+      { checkOverflow: checkPageOverflow, expectedDirection: direction }
+    ),
+    { message: `${label}: ordinary editor should stay in side-by-side split` }
+  ).toEqual({
+    hasModeClass: false,
+    ...(checkPageOverflow ? { pageOverflow: 0 } : {}),
+    previewVisible: true,
+    sideBySide: true,
+    sourceVisible: true,
+    topAligned: true
+  });
 }
 
 export async function revealNativeMetaBox(page, boxId) {

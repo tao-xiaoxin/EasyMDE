@@ -1814,3 +1814,106 @@ export function replaceVisualSourceOccurrence(markdown, value, replacement, occu
   const start = occurrenceOffset(markdown, value, occurrence);
   return `${markdown.slice(0, start)}${replacement}${markdown.slice(start + value.length)}`;
 }
+
+function assertNoHorizontalContextMenuClip(clipPath, label) {
+  if (!clipPath || 'none' === clipPath) return;
+  const match = clipPath.match(/^inset\(([^)]+)\)$/u);
+  if (!match) {
+    throw new Error(`unexpected-context-menu-clip-path:${label}:${clipPath}`);
+  }
+  const tokens = match[1]
+    .trim()
+    .split(/\s+/u)
+    .map((token) => Number.parseFloat(token));
+  const right = 1 === tokens.length ? tokens[0] : tokens[1];
+  const left = tokens.length <= 2 ? right : 3 === tokens.length ? tokens[1] : tokens[3];
+  expect(right, `${label} horizontal right clip`).toBe(0);
+  expect(left, `${label} horizontal left clip`).toBe(0);
+}
+
+export async function assertOpenContextMenuGeometry(
+  page,
+  { checkShortcuts = false, expectedOverlapped = false, phase }
+) {
+  const submenuFrame = page.locator('.easymde-editor-context-menu__submenu-frame').last();
+  const submenu = submenuFrame.locator('.easymde-editor-context-menu__submenu');
+  await expect(submenuFrame).toBeVisible();
+  await expect(submenu).toBeVisible();
+
+  const geometry = await page.evaluate((rootSelector) => {
+    const root = document.querySelector(rootSelector);
+    const frames = Array.from(
+      document.querySelectorAll('.easymde-editor-context-menu__submenu-frame')
+    );
+    const frame = frames.at(-1);
+    const sub = frame?.querySelector('.easymde-editor-context-menu__submenu') ?? null;
+    const layerPath = sub?.getAttribute('data-easymde-context-menu-layer') ?? null;
+    const pointers = layerPath
+      ? document.querySelectorAll(
+          `.easymde-editor-context-menu__pointer[data-easymde-context-menu-layer="${CSS.escape(layerPath)}"]`
+        )
+      : document.querySelectorAll('.easymde-editor-context-menu__pointer');
+    const shortcuts = Array.from(
+      document.querySelectorAll('.easymde-editor-context-menu__shortcut')
+    );
+    if (!(root instanceof HTMLElement)
+      || !(frame instanceof HTMLElement)
+      || !(sub instanceof HTMLElement)) {
+      throw new Error('context-menu-elements-unavailable');
+    }
+    const rootRect = root.getBoundingClientRect();
+    const frameRect = frame.getBoundingClientRect();
+    const subRect = sub.getBoundingClientRect();
+    return {
+      afterMaskImage: getComputedStyle(frame, '::after').maskImage,
+      frameClipPath: getComputedStyle(frame).clipPath,
+      frameLeft: frameRect.left,
+      frameOverlapped: frame.getAttribute('data-easymde-context-menu-overlapped'),
+      frameRight: frameRect.right,
+      pointerCount: pointers.length,
+      rootClipPath: getComputedStyle(root).clipPath,
+      rootLeft: rootRect.left,
+      rootRight: rootRect.right,
+      shortcutCount: shortcuts.length,
+      shortcutDisplays: shortcuts.map((el) => getComputedStyle(el).display),
+      subClipPath: getComputedStyle(sub).clipPath,
+      subLeft: subRect.left,
+      subRight: subRect.right,
+      viewportWidth: window.innerWidth
+    };
+  }, menuSelector);
+
+  expect(geometry.rootLeft, `${phase} root left`).toBeGreaterThanOrEqual(7.5);
+  expect(geometry.rootRight, `${phase} root right`).toBeLessThanOrEqual(
+    geometry.viewportWidth - 7.5
+  );
+  expect(geometry.frameLeft, `${phase} submenu frame left`).toBeGreaterThanOrEqual(7.5);
+  expect(geometry.frameRight, `${phase} submenu frame right`).toBeLessThanOrEqual(
+    geometry.viewportWidth - 7.5
+  );
+  expect(geometry.subLeft, `${phase} submenu left`).toBeGreaterThanOrEqual(7.5);
+  expect(geometry.subRight, `${phase} submenu right`).toBeLessThanOrEqual(
+    geometry.viewportWidth - 7.5
+  );
+  assertNoHorizontalContextMenuClip(geometry.rootClipPath, `${phase}-root`);
+  assertNoHorizontalContextMenuClip(geometry.frameClipPath, `${phase}-frame`);
+  assertNoHorizontalContextMenuClip(geometry.subClipPath, `${phase}-submenu`);
+
+  if (checkShortcuts) {
+    expect(geometry.shortcutCount, `${phase} shortcuts present`).toBeGreaterThan(0);
+    for (const display of geometry.shortcutDisplays) {
+      expect(display, `${phase} shortcut visible`).not.toBe('none');
+    }
+  }
+
+  if (expectedOverlapped) {
+    expect(geometry.frameOverlapped, `${phase} overlapped flag`).toBe('true');
+    expect(geometry.pointerCount, `${phase} overlapped pointer count`).toBe(0);
+    expect(geometry.afterMaskImage, `${phase} overlapped frame mask`).toBe('none');
+  } else {
+    expect(geometry.frameOverlapped, `${phase} non-overlapped flag`).toBeNull();
+    expect(geometry.pointerCount, `${phase} non-overlapped pointer count`).toBe(1);
+  }
+
+  return geometry;
+}

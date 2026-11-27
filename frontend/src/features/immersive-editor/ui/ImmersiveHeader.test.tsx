@@ -49,7 +49,7 @@ describe('ImmersiveHeader', () => {
       />
     );
 
-    // Simulate `@media (max-width: 640px)` hiding `.easymde-immersive-view-switch button span`.
+    // Simulate hiding `.easymde-immersive-view-switch button span` to verify icon-only accessible names.
     const labelSpans = view.container.querySelectorAll<HTMLSpanElement>(
       '.easymde-immersive-view-switch button span'
     );

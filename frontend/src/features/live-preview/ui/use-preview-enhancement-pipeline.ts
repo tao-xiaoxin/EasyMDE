@@ -192,18 +192,20 @@ export function usePreviewEnhancementPipeline(
 				}
 				refs.enhancementCandidateRef.current = null;
 				refs.committedEnhancementCandidateRef.current = activeCandidate;
-				setState((current) =>
-					"html" === current.kind && current.generation === generation
-						? {
-								...current,
-								html: enhancedHtml,
-								htmlRevision: generation,
-								phase: "committing",
-								signature: activeCandidate.signature,
-								stagedCommit,
-							}
-						: current,
-				);
+				setState((current) => {
+					if ("html" !== current.kind || current.generation !== generation) {
+						return current;
+					}
+					const { paperPlaceholder: _paperPlaceholder, ...rest } = current;
+					return {
+						...rest,
+						html: enhancedHtml,
+						htmlRevision: generation,
+						phase: "committing",
+						signature: activeCandidate.signature,
+						stagedCommit,
+					};
+				});
 			} catch (error) {
 				failEnhancement(error);
 			}

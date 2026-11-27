@@ -1,5 +1,6 @@
 import type { ImageHostingSecretRevealPort } from "../../../contracts/ports/image-hosting-secret-reveal-port";
 import type { SettingsCenterApi } from "../../../contracts/settings-center-settings";
+import { utf8ByteLength } from "../../../shared/utf8-byte-length";
 
 type FetchLike = (
 	input: RequestInfo | URL,
@@ -80,7 +81,7 @@ export function createWordPressImageHostingSecretRevealPort(
 				result.field !== field ||
 				typeof result.value !== "string" ||
 				!result.value ||
-				new TextEncoder().encode(result.value).length > 255
+				utf8ByteLength(result.value) > 255
 			) {
 				throw new Error("settings-center-image-secret-response-invalid");
 			}

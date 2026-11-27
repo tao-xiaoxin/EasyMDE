@@ -1,18 +1,87 @@
 import type { PreparedCodeTheme } from '../../features/live-preview/ports/preview-enhancement-port';
 import {
+  type EditorStylesheetScopeLease,
+  scopeEditorStylesheetLink
+} from '../../shared/css/editor-stylesheet-scope';
+import {
   getDocumentHead,
   RESOURCE_LOAD_TIMEOUT_MS,
   resourceError,
   waitForResource
 } from './browser-preview-enhancement-resource-helpers';
 
-type StyleLoad = Readonly<{
+type StyleLoad = {
   cancel: () => void;
   link: HTMLLinkElement;
   loaded: () => boolean;
   promise: Promise<void>;
+  scopeLease: EditorStylesheetScopeLease | null;
   url: string;
-}>;
+  wait: (signal: AbortSignal) => Promise<void>;
+};
+
+function toStyleScopeError(error: unknown): Error {
+  return error instanceof Error
+    ? error
+    : resourceError('preview-enhancement-style-scope-failed');
+}
+
+function disposeScopeLeaseSafely(
+  lease: EditorStylesheetScopeLease | null
+): void {
+  if (!lease) return;
+  try {
+    lease.dispose();
+  } catch {
+    // Ignore secondary rollback failures during cleanup/teardown so DOM cleanup and settlement still complete.
+  }
+}
+
+function createStyleLoadWait(
+  promise: Promise<void>,
+  isLoaded: () => boolean,
+  cancel: () => void
+): (signal: AbortSignal) => Promise<void> {
+  let activeWaiters = 0;
+  return (signal: AbortSignal): Promise<void> => {
+    if (signal.aborted) {
+      return Promise.reject(resourceError('preview-enhancement-resource-stale'));
+    }
+    if (isLoaded()) {
+      return waitForResource(promise, signal);
+    }
+    activeWaiters += 1;
+    let released = false;
+    const release = (aborted: boolean) => {
+      if (released) return;
+      released = true;
+      activeWaiters = Math.max(0, activeWaiters - 1);
+      if (aborted && 0 === activeWaiters && !isLoaded()) {
+        cancel();
+      }
+    };
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      let abort: () => void;
+      const finish = (callback: () => void, aborted = false) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener('abort', abort);
+        release(aborted);
+        callback();
+      };
+      abort = () => finish(
+        () => reject(resourceError('preview-enhancement-resource-stale')),
+        true
+      );
+      signal.addEventListener('abort', abort, { once: true });
+      void promise.then(
+        () => finish(resolve),
+        (error) => finish(() => reject(error))
+      );
+    });
+  };
+}
 
 export type PreparedStyleOwner = 'activation' | 'enhancement';
 
@@ -33,32 +102,59 @@ type PreparedStyleSlot = {
   enhancementBarriers: Map<number, Set<number>>;
   loads: Set<PreparedStyleLoad>;
   nextSequence: number;
+  reconcilePending: boolean;
   reconciling: boolean;
+  suppressReconcile: boolean;
 };
 
 export function createPreviewStylesheetLoader(
   documentRef: Document,
-  isDisposed: () => boolean
+  isDisposed: () => boolean,
+  editorRootSelector: string
 ) {
   const styleLoads = new Map<string, StyleLoad>();
+  const styleLoadVersions = new Map<string, number>();
   const preparedStyleSlots = new Map<string, PreparedStyleSlot>();
+  let disposed = false;
+  const isLoaderDisposed = () => disposed || isDisposed();
+  const bumpStyleLoadVersion = (id: string): number => {
+    const nextVersion = (styleLoadVersions.get(id) ?? 0) + 1;
+    styleLoadVersions.set(id, nextVersion);
+    return nextVersion;
+  };
+
+  function cancelPreparedSlotLoads(slot: PreparedStyleSlot): void {
+    const loadsToCancel = [...slot.loads];
+    const previousSuppressReconcile = slot.suppressReconcile;
+    slot.suppressReconcile = true;
+    try {
+      for (const load of loadsToCancel) load.cancel();
+    } finally {
+      slot.suppressReconcile = previousSuppressReconcile;
+    }
+  }
 
   function loadStylesheet(id: string, url: string, signal: AbortSignal): Promise<void> {
-    if (isDisposed()) {
+    if (isLoaderDisposed()) {
       return Promise.reject(resourceError('preview-enhancement-runtime-unavailable'));
     }
+    if (signal.aborted) {
+      return Promise.reject(resourceError('preview-enhancement-resource-stale'));
+    }
+    const callVersion = bumpStyleLoadVersion(id);
     const preparedSlot = preparedStyleSlots.get(id);
     if (preparedSlot) {
-      for (const load of [...preparedSlot.loads]) load.cancel();
+      cancelPreparedSlotLoads(preparedSlot);
     }
     const cached = styleLoads.get(id);
     const existing = documentRef.getElementById(id);
     if (
       cached?.url === url
+      && existing === cached.link
       && cached.link.isConnected
       && cached.link.getAttribute('href') === url
     ) {
-      return waitForResource(cached.promise, signal);
+      return cached.wait(signal);
     }
     if (existing && !(existing instanceof HTMLLinkElement)) {
       return Promise.reject(resourceError('preview-enhancement-resource-conflict'));
@@ -66,6 +162,16 @@ export function createPreviewStylesheetLoader(
 
     if (cached && !cached.loaded()) {
       cached.cancel();
+    }
+
+    const restored = styleLoads.get(id);
+    if (
+      restored?.url === url
+      && documentRef.getElementById(id) === restored.link
+      && restored.link.isConnected
+      && restored.link.getAttribute('href') === url
+    ) {
+      return restored.wait(signal);
     }
 
     const current = documentRef.getElementById(id);
@@ -77,83 +183,282 @@ export function createPreviewStylesheetLoader(
       && current.getAttribute('href') === url
       && current.dataset.easymdeLoadedHref === url
     ) {
+      const isReuseInvalidated = () => (
+        isLoaderDisposed()
+        || signal.aborted
+        || styleLoadVersions.get(id) !== callVersion
+        || !current.isConnected
+        || documentRef.getElementById(id) !== current
+      );
+      let acquiredScopeLease: EditorStylesheetScopeLease | null = null;
+      try {
+        acquiredScopeLease = scopeEditorStylesheetLink(
+          current,
+          { rootSelector: editorRootSelector }
+        );
+      } catch (error) {
+        disposeScopeLeaseSafely(acquiredScopeLease);
+        return Promise.reject(toStyleScopeError(error));
+      }
+      if (isReuseInvalidated()) {
+        disposeScopeLeaseSafely(acquiredScopeLease);
+        return Promise.reject(
+          resourceError(
+            isLoaderDisposed()
+              ? 'preview-enhancement-runtime-unavailable'
+              : 'preview-enhancement-resource-stale'
+          )
+        );
+      }
+      const orphanLoad = styleLoads.get(id);
+      if (orphanLoad) {
+        if (!orphanLoad.loaded()) {
+          orphanLoad.cancel();
+        }
+        const orphanScopeLease = orphanLoad.scopeLease;
+        orphanLoad.scopeLease = null;
+        if (orphanScopeLease) {
+          try {
+            orphanScopeLease.dispose();
+          } catch (error) {
+            if (styleLoads.get(id) === orphanLoad) {
+              styleLoads.delete(id);
+            }
+            disposeScopeLeaseSafely(acquiredScopeLease);
+            return Promise.reject(toStyleScopeError(error));
+          }
+        }
+      }
+      if (isReuseInvalidated()) {
+        if (orphanLoad && styleLoads.get(id) === orphanLoad) {
+          styleLoads.delete(id);
+        }
+        disposeScopeLeaseSafely(acquiredScopeLease);
+        return Promise.reject(
+          resourceError(
+            isLoaderDisposed()
+              ? 'preview-enhancement-runtime-unavailable'
+              : 'preview-enhancement-resource-stale'
+          )
+        );
+      }
       const loaded = Promise.resolve();
+      let existingScopeLease: EditorStylesheetScopeLease | null = acquiredScopeLease;
       styleLoads.set(id, {
-        cancel: () => undefined,
+        cancel: () => {
+          disposeScopeLeaseSafely(existingScopeLease);
+          existingScopeLease = null;
+        },
         link: current,
         loaded: () => true,
         promise: loaded,
-        url
+        scopeLease: existingScopeLease,
+        url,
+        wait: (waitSignal) => waitForResource(loaded, waitSignal)
       });
+      const activePreparedSlot = preparedStyleSlots.get(id);
+      if (activePreparedSlot) {
+        activePreparedSlot.authoritativeActivationUrl = null;
+      }
       return waitForResource(loaded, signal);
     }
 
     const previous = current instanceof HTMLLinkElement ? current : null;
-    if (previous) previous.id = `${id}-previous`;
+    const activeLoad = styleLoads.get(id) ?? null;
+    const previousLoad = previous && activeLoad?.link === previous
+      ? activeLoad
+      : null;
+    if (activeLoad && activeLoad !== previousLoad) {
+      disposeScopeLeaseSafely(activeLoad.scopeLease);
+      activeLoad.scopeLease = null;
+    }
+    if (previous) {
+      previous.id = `${id}-previous`;
+    }
     const link = documentRef.createElement('link');
     link.id = id;
     link.rel = 'stylesheet';
     link.dataset.easymdeStylesheetOwner = id;
 
     let loaded = false;
+    let loadEventHandled = false;
+    let cancelled = false;
     let settled = false;
+    let previousRestored = false;
+    let scopeLease: EditorStylesheetScopeLease | null = null;
+    let resolveLoad!: () => void;
     let rejectLoad!: (error: Error) => void;
-    let cleanup = () => undefined;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let load!: StyleLoad;
+    const resolvePromise = () => {
+      if (settled) return;
+      settled = true;
+      resolveLoad();
+    };
+    const rejectPromise = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      rejectLoad(error);
+    };
     const restorePrevious = () => {
       link.remove();
-      if (previous?.isConnected) previous.id = id;
+      if (previousRestored) return;
+      previousRestored = true;
+      const isCurrentLoad = styleLoads.get(id) === load;
+      if (isCurrentLoad && previous?.isConnected) {
+        previous.id = id;
+        if (previousLoad && null !== previousLoad.scopeLease) {
+          styleLoads.set(id, previousLoad);
+        } else {
+          styleLoads.delete(id);
+        }
+        return;
+      }
+      if (
+        previousLoad
+        && null === previousLoad.scopeLease
+        && styleLoads.get(id) === previousLoad
+      ) {
+        styleLoads.delete(id);
+      }
+      if (previousLoad && styleLoads.get(id) !== previousLoad) {
+        disposeScopeLeaseSafely(previousLoad.scopeLease);
+        previousLoad.scopeLease = null;
+      }
+      if (!isCurrentLoad && (!previous || styleLoads.get(id)?.link !== previous)) {
+        previous?.remove();
+      }
+      if (isCurrentLoad) {
+        styleLoads.delete(id);
+      }
+    };
+    let handleLoad: () => void = () => undefined;
+    let handleError: () => void = () => undefined;
+    const cleanup = () => {
+      link.removeEventListener('load', handleLoad);
+      link.removeEventListener('error', handleError);
+      if (null !== timer) clearTimeout(timer);
+      timer = null;
     };
     const promise = new Promise<void>((resolve, reject) => {
+      resolveLoad = resolve;
       rejectLoad = reject;
-      cleanup = () => {
-        link.removeEventListener('load', handleLoad);
-        link.removeEventListener('error', handleError);
-        if (null !== timer) clearTimeout(timer);
-        timer = null;
-      };
-      const handleLoad = () => {
-        if (settled) return;
-        settled = true;
-        cleanup();
+    });
+    void promise.catch(() => undefined);
+    const isLoadInvalidated = () => (
+      isLoaderDisposed()
+      || cancelled
+      || settled
+      || styleLoads.get(id) !== load
+    );
+    const abortHandleLoad = (
+      acquiredScopeLease: EditorStylesheetScopeLease | null
+    ) => {
+      disposeScopeLeaseSafely(acquiredScopeLease);
+      link.remove();
+      if (!cancelled && !settled) {
+        restorePrevious();
+        rejectPromise(
+          resourceError(
+            isLoaderDisposed()
+              ? 'preview-enhancement-runtime-unavailable'
+              : 'preview-enhancement-resource-stale'
+          )
+        );
+      }
+    };
+    handleLoad = () => {
+      if (loadEventHandled || cancelled || settled) return;
+      loadEventHandled = true;
+      cleanup();
+      let acquiredScopeLease: EditorStylesheetScopeLease | null = null;
+      try {
+        acquiredScopeLease = scopeEditorStylesheetLink(
+          link,
+          { rootSelector: editorRootSelector }
+        );
+        if (isLoadInvalidated()) {
+          abortHandleLoad(acquiredScopeLease);
+          acquiredScopeLease = null;
+          return;
+        }
+        if (previousLoad) {
+          const previousScopeLease = previousLoad.scopeLease;
+          previousLoad.scopeLease = null;
+          previousScopeLease?.dispose();
+        }
+        if (isLoadInvalidated()) {
+          abortHandleLoad(acquiredScopeLease);
+          acquiredScopeLease = null;
+          return;
+        }
+        scopeLease = acquiredScopeLease;
+        acquiredScopeLease = null;
+        previous?.remove();
+        load.scopeLease = scopeLease;
         loaded = true;
         link.dataset.easymdeLoadedHref = url;
-        previous?.remove();
-        resolve();
-      };
-      const handleError = () => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        restorePrevious();
-        reject(resourceError('preview-enhancement-resource-load-failed'));
-      };
-      link.addEventListener('load', handleLoad);
-      link.addEventListener('error', handleError);
-      link.href = url;
-      timer = setTimeout(handleError, RESOURCE_LOAD_TIMEOUT_MS);
-      try {
-        if (!link.parentNode) getDocumentHead(documentRef).appendChild(link);
-      } catch {
-        handleError();
-      }
-    });
-    const load: StyleLoad = {
-      cancel: () => {
-        if (settled) return;
-        settled = true;
-        cleanup();
+        const activePreparedSlot = preparedStyleSlots.get(id);
+        if (activePreparedSlot) {
+          activePreparedSlot.authoritativeActivationUrl = null;
+        }
+        resolvePromise();
+      } catch (error) {
+        disposeScopeLeaseSafely(acquiredScopeLease);
+        acquiredScopeLease = null;
+        disposeScopeLeaseSafely(scopeLease);
+        scopeLease = null;
+        load.scopeLease = null;
         link.remove();
-        if (previous?.isConnected) previous.id = id;
-        rejectLoad(resourceError('preview-enhancement-resource-stale'));
-      },
+        if (!cancelled && !settled) {
+          restorePrevious();
+          rejectPromise(toStyleScopeError(error));
+        }
+      }
+    };
+    handleError = () => {
+      if (loadEventHandled || cancelled || settled) return;
+      loadEventHandled = true;
+      cleanup();
+      disposeScopeLeaseSafely(scopeLease);
+      scopeLease = null;
+      load.scopeLease = null;
+      restorePrevious();
+      rejectPromise(resourceError('preview-enhancement-resource-load-failed'));
+    };
+    const cancel = () => {
+      if (cancelled || settled) return;
+      cancelled = true;
+      loadEventHandled = true;
+      cleanup();
+      disposeScopeLeaseSafely(scopeLease);
+      scopeLease = null;
+      load.scopeLease = null;
+      restorePrevious();
+      rejectPromise(resourceError('preview-enhancement-resource-stale'));
+    };
+    const wait = createStyleLoadWait(promise, () => loaded, cancel);
+    const createdLoad: StyleLoad = {
+      cancel,
       link,
       loaded: () => loaded,
       promise,
-      url
+      scopeLease,
+      url,
+      wait
     };
-    styleLoads.set(id, load);
-    return waitForResource(promise, signal);
+    load = createdLoad;
+    styleLoads.set(id, createdLoad);
+    link.addEventListener('load', handleLoad);
+    link.addEventListener('error', handleError);
+    link.href = url;
+    timer = setTimeout(handleError, RESOURCE_LOAD_TIMEOUT_MS);
+    try {
+      if (!link.parentNode) getDocumentHead(documentRef).appendChild(link);
+    } catch {
+      handleError();
+    }
+    return createdLoad.wait(signal);
   }
 
   function prepareStylesheet(
@@ -162,7 +467,7 @@ export function createPreviewStylesheetLoader(
     signal: AbortSignal,
     owner: PreparedStyleOwner
   ): PreparedStyleLoad {
-    if (isDisposed()) {
+    if (isLoaderDisposed()) {
       return {
         attemptCommit: () => undefined,
         cancel: () => undefined,
@@ -191,7 +496,9 @@ export function createPreviewStylesheetLoader(
         enhancementBarriers: new Map(),
         loads: new Set(),
         nextSequence: 0,
-        reconciling: false
+        reconcilePending: false,
+        reconciling: false,
+        suppressReconcile: false
       };
       preparedStyleSlots.set(id, slot);
     }
@@ -217,11 +524,24 @@ export function createPreviewStylesheetLoader(
       link.dataset.easymdeStylesheetOwner = id;
       link.href = url;
     }
-    let state: 'pending' | 'ready' | 'terminal' = reused ? 'ready' : 'pending';
+    let state: 'pending' | 'ready' | 'terminal' = 'pending';
+    let settled = false;
+    let scopeLease: EditorStylesheetScopeLease | null = null;
     let commitRequested = false;
+    let commitError: Error | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let resolveLoad!: (prepared: PreparedCodeTheme) => void;
     let rejectLoad!: (error: Error) => void;
+    const resolvePromise = (prepared: PreparedCodeTheme) => {
+      if (settled) return;
+      settled = true;
+      resolveLoad(prepared);
+    };
+    const rejectPromise = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      rejectLoad(error);
+    };
     let handleLoad: () => void = () => undefined;
     let handleError: () => void = () => undefined;
     let handleAbort: () => void = () => undefined;
@@ -265,30 +585,41 @@ export function createPreviewStylesheetLoader(
       }
     };
     const reconcile = () => {
-      if (slot.reconciling) return;
+      if (slot.suppressReconcile) return;
+      if (slot.reconciling) {
+        slot.reconcilePending = true;
+        return;
+      }
       slot.reconciling = true;
       try {
-        for (const candidate of [...slot.loads].sort((left, right) => {
-          if (left.owner !== right.owner) return 'activation' === left.owner ? -1 : 1;
-          return right.sequence - left.sequence;
-        })) {
-          candidate.attemptCommit();
-        }
+        do {
+          slot.reconcilePending = false;
+          for (const candidate of [...slot.loads].sort((left, right) => {
+            if (left.owner !== right.owner) return 'activation' === left.owner ? -1 : 1;
+            return right.sequence - left.sequence;
+          })) {
+            candidate.attemptCommit();
+          }
+        } while (slot.reconcilePending && !slot.suppressReconcile);
       } finally {
         slot.reconciling = false;
+        slot.reconcilePending = false;
       }
     };
     let load!: PreparedStyleLoad;
     const finish = (
-      errorCode?: string,
+      rejectionError?: Error,
       committedActivationUrl?: string,
       preserveLink = false
     ) => {
       if ('terminal' === state) return;
-      const pending = 'pending' === state;
       state = 'terminal';
       cleanup();
-      if (!preserveLink) link?.remove();
+      if (!preserveLink) {
+        disposeScopeLeaseSafely(scopeLease);
+        scopeLease = null;
+        link?.remove();
+      }
       if ('activation' === owner) {
         slot.activeActivations.delete(sequence);
         if (committedActivationUrl) {
@@ -298,12 +629,16 @@ export function createPreviewStylesheetLoader(
         slot.enhancementBarriers.delete(sequence);
       }
       clearOwner(load);
-      if (pending && errorCode) rejectLoad(resourceError(errorCode));
+      if (!settled) {
+        rejectPromise(
+          rejectionError ?? resourceError('preview-enhancement-resource-stale')
+        );
+      }
       reconcile();
       pruneActivationOutcomes();
     };
-    const applyCommit = () => {
-      if ('ready' !== state || !commitRequested || isDisposed()) return;
+    const applyCommit = (): void => {
+      if ('ready' !== state || !commitRequested || isLoaderDisposed()) return;
       if ('activation' === owner) {
         if (sequence < slot.committedActivationSequence) {
           finish();
@@ -326,29 +661,98 @@ export function createPreviewStylesheetLoader(
         }
       }
 
+      let previousLoadToEvict: StyleLoad | null = null;
+      const failCommit = (error: Error): void => {
+        if (
+          previousLoadToEvict
+          && styleLoads.get(id) === previousLoadToEvict
+        ) {
+          styleLoads.delete(id);
+        }
+        commitError = error;
+        finish(error);
+      };
+
+      if (link && !link.isConnected) {
+        failCommit(resourceError('preview-enhancement-resource-stale'));
+        return;
+      }
+      const existingBeforeCancel = documentRef.getElementById(id);
+      if (existingBeforeCancel && !(existingBeforeCancel instanceof HTMLLinkElement)) {
+        failCommit(resourceError('preview-enhancement-resource-conflict'));
+        return;
+      }
+      const activeLoad = styleLoads.get(id);
+      if (activeLoad && !activeLoad.loaded()) {
+        activeLoad.cancel();
+      }
+      if ('ready' !== state || !commitRequested || isLoaderDisposed()) {
+        failCommit(
+          resourceError(
+            isLoaderDisposed()
+              ? 'preview-enhancement-runtime-unavailable'
+              : 'preview-enhancement-resource-stale'
+          )
+        );
+        return;
+      }
       const current = documentRef.getElementById(id);
       if (current && !(current instanceof HTMLLinkElement)) {
-        finish();
+        failCommit(resourceError('preview-enhancement-resource-conflict'));
+        return;
+      }
+      if (!link && (!(existing instanceof HTMLLinkElement) || current !== existing)) {
+        failCommit(resourceError('preview-enhancement-resource-stale'));
+        return;
+      }
+      const previousLoad = styleLoads.get(id);
+      if (previousLoad) {
+        const previousScopeLease = previousLoad.scopeLease;
+        previousLoad.scopeLease = null;
+        previousLoadToEvict = previousLoad;
+        if (previousScopeLease) {
+          try {
+            previousScopeLease.dispose();
+          } catch (error) {
+            failCommit(toStyleScopeError(error));
+            return;
+          }
+        }
+      }
+      if ('ready' !== state || !commitRequested || isLoaderDisposed()) {
+        failCommit(
+          resourceError(
+            isLoaderDisposed()
+              ? 'preview-enhancement-runtime-unavailable'
+              : 'preview-enhancement-resource-stale'
+          )
+        );
+        return;
+      }
+      if (link && !link.isConnected) {
+        failCommit(resourceError('preview-enhancement-resource-stale'));
+        return;
+      }
+      const currentAfterDispose = documentRef.getElementById(id);
+      if (currentAfterDispose && !(currentAfterDispose instanceof HTMLLinkElement)) {
+        failCommit(resourceError('preview-enhancement-resource-conflict'));
         return;
       }
       let activeLink: HTMLLinkElement;
       if (link) {
-        if (!link.isConnected) {
-          finish();
-          return;
-        }
-        current?.remove();
+        currentAfterDispose?.remove();
         link.id = id;
         link.media = 'all';
         link.dataset.easymdeLoadedHref = url;
         activeLink = link;
       } else {
-        if (!(existing instanceof HTMLLinkElement) || current !== existing) {
-          finish();
+        if (!(existing instanceof HTMLLinkElement) || currentAfterDispose !== existing) {
+          failCommit(resourceError('preview-enhancement-resource-stale'));
           return;
         }
         activeLink = existing;
       }
+      bumpStyleLoadVersion(id);
       if ('activation' === owner) {
         slot.committedActivationSequence = sequence;
         slot.authoritativeActivationUrl = url;
@@ -357,22 +761,33 @@ export function createPreviewStylesheetLoader(
       }
       const ready = Promise.resolve();
       styleLoads.set(id, {
-        cancel: () => undefined,
+        cancel: () => {
+          disposeScopeLeaseSafely(scopeLease);
+          scopeLease = null;
+        },
         link: activeLink,
         loaded: () => true,
         promise: ready,
-        url
+        scopeLease,
+        url,
+        wait: (waitSignal) => waitForResource(ready, waitSignal)
       });
       finish(undefined, 'activation' === owner ? url : undefined, true);
     };
-    const cancel = () => finish('preview-enhancement-resource-stale');
+    const cancel = () => finish(resourceError('preview-enhancement-resource-stale'));
     const commit = () => {
-      if ('ready' !== state || signal.aborted || isDisposed()) {
+      if ('ready' !== state || signal.aborted || isLoaderDisposed()) {
         cancel();
         return;
       }
+      commitError = null;
       commitRequested = true;
       reconcile();
+      if (commitError) {
+        const error = commitError;
+        commitError = null;
+        throw error;
+      }
     };
     const promise = new Promise<PreparedCodeTheme>((resolve, reject) => {
       resolveLoad = resolve;
@@ -389,37 +804,87 @@ export function createPreviewStylesheetLoader(
     handleAbort = cancel;
     signal.addEventListener('abort', handleAbort, { once: true });
     if (reused) {
-      resolveLoad({ cancel, commit });
+      try {
+        if (!(existing instanceof HTMLLinkElement)) {
+          throw resourceError('preview-enhancement-resource-conflict');
+        }
+        const acquiredScopeLease = scopeEditorStylesheetLink(
+          existing,
+          { rootSelector: editorRootSelector }
+        );
+        if ('pending' !== state || isLoaderDisposed() || signal.aborted) {
+          disposeScopeLeaseSafely(acquiredScopeLease);
+          finish(
+            resourceError(
+              isLoaderDisposed()
+                ? 'preview-enhancement-runtime-unavailable'
+                : 'preview-enhancement-resource-stale'
+            )
+          );
+          return load;
+        }
+        scopeLease = acquiredScopeLease;
+        state = 'ready';
+        resolvePromise({ cancel, commit });
+      } catch (error) {
+        finish(toStyleScopeError(error));
+      }
       return load;
     }
     handleLoad = () => {
       if ('pending' !== state || !link) return;
-      state = 'ready';
       cleanupLoad();
-      link.dataset.easymdeLoadedHref = url;
-      resolveLoad({ cancel, commit });
+      try {
+        const acquiredScopeLease = scopeEditorStylesheetLink(
+          link,
+          { rootSelector: editorRootSelector }
+        );
+        if ('pending' !== state || isLoaderDisposed() || signal.aborted) {
+          disposeScopeLeaseSafely(acquiredScopeLease);
+          finish(
+            resourceError(
+              isLoaderDisposed()
+                ? 'preview-enhancement-runtime-unavailable'
+                : 'preview-enhancement-resource-stale'
+            )
+          );
+          return;
+        }
+        scopeLease = acquiredScopeLease;
+        state = 'ready';
+        link.dataset.easymdeLoadedHref = url;
+        resolvePromise({ cancel, commit });
+      } catch (error) {
+        finish(toStyleScopeError(error));
+      }
     };
-    handleError = () => finish('preview-enhancement-resource-load-failed');
+    handleError = () => finish(resourceError('preview-enhancement-resource-load-failed'));
     link?.addEventListener('load', handleLoad);
     link?.addEventListener('error', handleError);
     timer = setTimeout(handleError, RESOURCE_LOAD_TIMEOUT_MS);
     try {
       if (link) getDocumentHead(documentRef).appendChild(link);
     } catch {
-      finish('preview-enhancement-document-head-missing');
+      finish(resourceError('preview-enhancement-document-head-missing'));
     }
     return load;
   }
 
   function dispose(): void {
-    for (const load of styleLoads.values()) {
+    disposed = true;
+    for (const load of [...styleLoads.values()]) {
       if (!load.loaded()) load.cancel();
     }
+    for (const load of [...styleLoads.values()]) {
+      disposeScopeLeaseSafely(load.scopeLease);
+      load.scopeLease = null;
+    }
     for (const slot of preparedStyleSlots.values()) {
-      for (const load of [...slot.loads]) load.cancel();
+      cancelPreparedSlotLoads(slot);
     }
     styleLoads.clear();
     preparedStyleSlots.clear();
+    styleLoadVersions.clear();
   }
 
   return {

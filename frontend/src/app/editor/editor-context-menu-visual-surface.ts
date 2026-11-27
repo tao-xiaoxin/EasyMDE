@@ -47,7 +47,6 @@ import type {
 
 export type CreateVisualContextMenuSurfaceDeps = Readonly<{
   contextMenuBlockIndexFailureRef: SharedRef<ContextMenuBlockIndexFailure | null>;
-  contextMenuWorkspace: HTMLElement | null;
   documentSession: EditorDocumentSession;
   editorClipboardPort: EditorClipboardPort | undefined;
   editorCodeContentQuery: EditorCodeContentQuerySession;
@@ -76,7 +75,6 @@ export function createVisualContextMenuSurface(
 ): EditorContextMenuSurface {
   const {
     contextMenuBlockIndexFailureRef,
-    contextMenuWorkspace,
     documentSession,
     editorClipboardPort,
     editorCodeContentQuery,
@@ -97,7 +95,8 @@ export function createVisualContextMenuSurface(
 
   const previewSurface = previewRuntimeRef.current?.surface;
   const boundaryElement =
-    contextMenuWorkspace
+    visualEditorSurface.closest<HTMLElement>('.easymde-workspace')
+    ?? previewSurface?.closest<HTMLElement>('.easymde-workspace')
     ?? previewSurface?.parentElement
     ?? visualEditorSurface;
 

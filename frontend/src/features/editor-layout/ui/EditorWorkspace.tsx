@@ -8,7 +8,7 @@ import {
 import type {
   CSSProperties,
   KeyboardEvent,
-  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
   ReactNode
 } from 'react';
 
@@ -29,7 +29,6 @@ type OrdinaryEditorStatus = Readonly<{
 
 type EditorWorkspaceProps = Readonly<{
   direction: 'ltr' | 'rtl';
-  mode?: string;
   onLayoutChange?: () => void;
   ordinaryStatus?: OrdinaryEditorStatus;
   statusBarMode?: StatusBarMode;
@@ -66,7 +65,6 @@ function clampSplit(value: number): number {
  */
 export function EditorWorkspace({
   direction,
-  mode = 'live-preview',
   onLayoutChange,
   ordinaryStatus,
   statusBarMode = 'detailed',
@@ -92,6 +90,10 @@ export function EditorWorkspace({
   );
 
   useEffect(() => {
+    if (!splitResizable) releaseDragRef.current?.();
+  }, [splitResizable]);
+
+  useEffect(() => {
     if (!statusDocument) return undefined;
     const publish = () =>
       setCharacterCount(
@@ -107,24 +109,33 @@ export function EditorWorkspace({
     onLayoutChange?.();
   }, [onLayoutChange, split, splitResizable]);
 
-  const startResize = (event: ReactMouseEvent<HTMLElement>) => {
+  const startResize = (event: ReactPointerEvent<HTMLHRElement>) => {
+    if ('mouse' === event.pointerType && 0 !== event.button) return;
     event.preventDefault();
     releaseDragRef.current?.();
-    const documentRef = event.currentTarget.ownerDocument;
+    const divider = event.currentTarget;
+    const documentRef = divider.ownerDocument;
+    const pointerId = event.pointerId;
     const startX = event.clientX;
     const startSplit = split;
     const width = workspaceRef.current?.offsetWidth ?? 0;
     if (width <= 0) throw new Error('immersive-split-workspace-width-unavailable');
     const previousCursor = documentRef.body.style.cursor;
     const previousSelection = documentRef.body.style.userSelect;
-    const onMove = (moveEvent: globalThis.MouseEvent) => {
+    const onMove = (moveEvent: globalThis.PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
       const physicalDelta = ((moveEvent.clientX - startX) / width) * 100;
       const logicalDelta = 'rtl' === direction ? -physicalDelta : physicalDelta;
       setSplit(clampSplit(startSplit + logicalDelta));
     };
-    const release = () => {
-      documentRef.removeEventListener('mousemove', onMove);
-      documentRef.removeEventListener('mouseup', release);
+    const release = (releaseEvent?: globalThis.PointerEvent) => {
+      if (releaseEvent && releaseEvent.pointerId !== pointerId) return;
+      documentRef.removeEventListener('pointermove', onMove);
+      documentRef.removeEventListener('pointerup', release);
+      documentRef.removeEventListener('pointercancel', release);
+      if (divider.hasPointerCapture?.(pointerId)) {
+        divider.releasePointerCapture(pointerId);
+      }
       documentRef.body.style.cursor = previousCursor;
       documentRef.body.style.userSelect = previousSelection;
       releaseDragRef.current = null;
@@ -132,8 +143,10 @@ export function EditorWorkspace({
     releaseDragRef.current = release;
     documentRef.body.style.cursor = 'col-resize';
     documentRef.body.style.userSelect = 'none';
-    documentRef.addEventListener('mousemove', onMove);
-    documentRef.addEventListener('mouseup', release);
+    divider.setPointerCapture?.(pointerId);
+    documentRef.addEventListener('pointermove', onMove);
+    documentRef.addEventListener('pointerup', release);
+    documentRef.addEventListener('pointercancel', release);
   };
 
   const resizeWithKeyboard = (event: KeyboardEvent<HTMLElement>) => {
@@ -159,7 +172,11 @@ export function EditorWorkspace({
   const workspace = (
     <div
       ref={workspaceRef}
-      className={`easymde-workspace is-mode-${mode}${splitResizable ? ' is-split-resizable' : ''}`}
+      className={
+        splitResizable
+          ? 'easymde-workspace is-split-resizable'
+          : 'easymde-workspace'
+      }
       data-easymde-layout-owner="react"
       dir={direction}
       style={style}
@@ -175,7 +192,7 @@ export function EditorWorkspace({
           aria-valuenow={Math.round(split)}
           tabIndex={0}
           onKeyDown={resizeWithKeyboard}
-          onMouseDown={startResize}
+          onPointerDown={startResize}
         />
       ) : null}
       {preview}

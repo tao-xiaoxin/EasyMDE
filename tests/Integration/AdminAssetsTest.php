@@ -173,6 +173,15 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertSame( 'Undo', $bootstrap['toolbar']['strings']['undo'] );
 		$this->assertArrayHasKey( 'wechatExport', $bootstrap );
 		$this->assertFalse( $bootstrap['wechatExport']['pngConversionEnabled'] );
+		$this->assertMatchesRegularExpression( '/^[a-f0-9]{16}$/', $bootstrap['wechatExport']['wechatMathAtlasContentVersion'] );
+		$this->assertSame(
+			add_query_arg(
+				'contentversion',
+				$bootstrap['wechatExport']['wechatMathAtlasContentVersion'],
+				Asset::url( 'assets/math/easymde-katex-glyph-atlas.json' )
+			),
+			$bootstrap['wechatExport']['wechatMathAtlasUrl']
+		);
 		$this->assertArrayHasKey( 'wordpress', $bootstrap );
 		$this->assertArrayHasKey( 'publishCategories', $bootstrap['wordpress'] );
 		$this->assertFalse( $bootstrap['wordpress']['isNewPost'] );
@@ -272,7 +281,9 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 
 		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, $post_id );
 
-		$this->assertSame( array( 'enabled' => true, 'pngConversionEnabled' => true, 'strings' => $bootstrap['wechatExport']['strings'] ), $bootstrap['wechatExport'] );
+		$this->assertSame( true, $bootstrap['wechatExport']['enabled'] );
+		$this->assertSame( true, $bootstrap['wechatExport']['pngConversionEnabled'] );
+		$this->assertArrayHasKey( 'strings', $bootstrap['wechatExport'] );
 	}
 
 	public function test_new_post_bootstrap_exposes_a_media_picker_frame_without_a_post_id() {
@@ -619,8 +630,17 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertSame( 'A different local draft was saved in another tab.', $strings['draftConflict'] );
 	}
 
+	public function test_wechat_residual_upload_failure_has_a_distinct_php_gettext_message() {
+		$strings = $this->get_strings->invoke( $this->admin_assets );
+
+		$this->assertSame(
+			'Copy for WeChat failed. Some generated images may remain in the selected image storage; review them before retrying.',
+			$strings['copyWechatFailedWithUploads']
+		);
+	}
+
 	public function test_context_menu_code_indentation_labels_are_gettext_backed_and_nested() {
-		$strings  = $this->get_strings->invoke( $this->admin_assets );
+		$strings   = $this->get_strings->invoke( $this->admin_assets );
 		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, 0 );
 
 		$this->assertSame( 'Adjust Code Block Indentation', $strings['contextMenuIndentCodeBlock'] );
@@ -996,8 +1016,10 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$build_dir = trailingslashit( get_temp_dir() ) . 'easymde-react-editor-integrity-' . wp_generate_uuid4();
 		$file      = 'assets/admin-editor-synthetic.js';
 		$asset     = 'assets/admin-editor-synthetic.asset.php';
+		$worker    = 'assets/wechat-png-encoder-synthetic.js';
 		wp_mkdir_p( $build_dir . '/assets' );
 		file_put_contents( $build_dir . '/' . $file, 'console.log("corrupted");' );
+		file_put_contents( $build_dir . '/' . $worker, 'self.onmessage = function () {};' );
 		file_put_contents(
 			$build_dir . '/' . $asset,
 			"<?php\nreturn array(\n\t'dependencies' => array( 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ),\n\t'version' => '0000000000000000',\n);\n"
@@ -1013,7 +1035,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 							'file'         => $file,
 							'asset'        => $asset,
 							'dependencies' => array( 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ),
-							'resources'    => array(),
+							'resources'    => array( $worker ),
 						),
 					)
 				)
@@ -1027,6 +1049,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		} finally {
 			wp_delete_file( $build_dir . '/' . $file );
 			wp_delete_file( $build_dir . '/' . $asset );
+			wp_delete_file( $build_dir . '/' . $worker );
 			wp_delete_file( $build_dir . '/wordpress-manifest.json' );
 			rmdir( $build_dir . '/assets' );
 			rmdir( $build_dir );

@@ -54,9 +54,16 @@ npm run test:frontend -- frontend/src/features/wechat-export/wechat-export-sessi
 ```
 
 Use the exact PHP/WordPress, Plugin Check, clean install, and Chromium E2E
-commands documented in `docs/TESTING_AND_RELEASE.md`. Do not claim those gates
-without running them. If a command is unavailable or fails, inspect the real
-step and report its cause; never label it flaky without evidence.
+commands documented in `docs/TESTING_AND_RELEASE.md`. For routine ordinary and
+immersive editor writing acceptance, follow
+`docs/TESTING_AND_RELEASE.md#routine-editor-writing-acceptance` using only the
+three canonical writing viewports (`1280 × 1040`, `1133 × 744`, `744 × 1133`)
+and do not add phone-width (`< 744px`) editor writing cases or pixel-by-pixel
+breakpoint sweeps; narrow mobile viewports (`280–390px`) remain scoped to
+public article reader pages, WeChat mobile reader export columns, and Settings
+Center. Do not claim those gates without running them. If a command is
+unavailable or fails, inspect the real step and report its cause; never label
+it flaky without evidence.
 
 For Settings Center first-paint work, inspect the compositor boundary. The E2E
 gate covers desktop/mobile viewport, cold/warm cache, normal/hard refresh, and

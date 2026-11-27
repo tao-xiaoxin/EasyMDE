@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import {
   anyMenuItem,
+  assertOpenContextMenuGeometry,
   assertSourceExactValue,
   closeMenu,
   expectMenuItemState,
@@ -50,6 +51,11 @@ import {
   selectVisualText,
   waitForVisualPreviewAccepted
 } from '../helpers/context-menu-visual-helpers.mjs';
+import {
+  desktop,
+  editorWritingViewports
+} from '../helpers/editor-viewports.mjs';
+import { attachPrivacySafeBrowserMonitor } from '../helpers/privacy-safe-browser-monitor.mjs';
 
 test.use({
   permissions: ['clipboard-read', 'clipboard-write'],
@@ -224,7 +230,9 @@ test.describe('Editor context menu production surfaces', () => {
 
     const strings = await enterImmersive(page);
     await page.getByRole('button', { name: strings.split, exact: true }).last().click();
-    await expect(page.locator('.easymde-editor.is-immersive.is-immersive-split')).toBeVisible();
+    await expect(
+      page.locator('#easymde-editor-root [data-easymde-editor-owner="react"].is-immersive.is-immersive-split')
+    ).toBeVisible();
     await exerciseMissingSourceActions(page, {
       markdown,
       mode: 'immersive-split-source',
@@ -528,7 +536,9 @@ test.describe('Editor context menu production surfaces', () => {
     const { fixtureImageUrl, markdown, source, sourceEditor } = await loadCanonicalFixture(page);
     const strings = await enterImmersive(page);
     await page.getByRole('button', { name: strings.split, exact: true }).last().click();
-    await expect(page.locator('.easymde-editor.is-immersive.is-immersive-split')).toBeVisible();
+    await expect(
+      page.locator('#easymde-editor-root [data-easymde-editor-owner="react"].is-immersive.is-immersive-split')
+    ).toBeVisible();
     await expect(source).toHaveValue(markdown);
     await assertSourceCategoryMatrix(page, {
       fixtureImageUrl,
@@ -837,6 +847,86 @@ test.describe('Editor context menu production surfaces', () => {
         );
         await expect(shortcutRecorder().locator('kbd')).toHaveText(originalLabels);
       }
+    }
+  });
+
+  test('keeps Source context menu and submenus unclipped across editor writing viewports', async ({ page }, testInfo) => {
+    const browserMonitor = attachPrivacySafeBrowserMonitor(page, {
+      baseURL: testInfo.project.use.baseURL
+    });
+    try {
+      await login(page);
+      await openNewPost(page);
+      const { markdown, source } = await loadCanonicalFixture(page);
+
+      const assertWritingViewportContextMenu = async (viewport, modeLabel) => {
+        await page.setViewportSize(viewport);
+        const activeSourceEditor = page.locator('.easymde-source-react .cm-content');
+        await expect(activeSourceEditor).toBeVisible();
+        await selectSourceText(page, activeSourceEditor, markdown, '普通文本');
+        await openSourceMenu(page, activeSourceEditor);
+        await openRootSubmenu(page, 'insert');
+
+        const phase = `${modeLabel}-${viewport.width}x${viewport.height}`;
+        await assertOpenContextMenuGeometry(page, {
+          checkShortcuts: true,
+          expectedOverlapped: false,
+          phase
+        });
+
+        await closeMenu(page, phase, { expectedSource: markdown });
+        await assertSourceExactValue(source, markdown, phase);
+      };
+
+      for (const viewport of editorWritingViewports) {
+        await assertWritingViewportContextMenu(viewport, 'ordinary-split');
+      }
+
+      await page.setViewportSize(desktop);
+      const strings = await enterImmersive(page);
+      await page.getByRole('button', { name: strings.split, exact: true }).last().click();
+      await expect(
+        page.locator('#easymde-editor-root [data-easymde-editor-owner="react"].is-immersive.is-immersive-split')
+      ).toBeVisible();
+
+      for (const viewport of editorWritingViewports) {
+        await assertWritingViewportContextMenu(viewport, 'immersive-split');
+      }
+
+      // Exercise the overlapped submenu fallback in real Chromium using a narrow desktop
+      // split-screen window (560x900 < root + 2*submenu + 2*gap + 2*gutter = 642px) so
+      // neither side of the centered root menu fits a non-overlapped submenu with pointer outset.
+      await page.setViewportSize({ height: 900, width: 560 });
+      const immersiveRoot = page.locator(
+        '#easymde-editor-root [data-easymde-editor-owner="react"].is-immersive.is-immersive-split'
+      );
+      const outline = immersiveRoot.locator('.easymde-immersive-outline');
+      if (await outline.isVisible()) {
+        await immersiveRoot.getByRole('button', { name: strings.hideOutline }).first().click();
+        await expect(outline).toHaveCount(0);
+      }
+      const sourceScroller = immersiveRoot.locator('.easymde-source-react .cm-scroller');
+      await expect(sourceScroller).toBeVisible();
+      const scrollerRect = await sourceScroller.boundingBox();
+      if (!scrollerRect) throw new Error('immersive-narrow-window-source-box-unavailable');
+      await page.mouse.click(
+        Math.round(Math.min(scrollerRect.x + scrollerRect.width - 20, 180)),
+        Math.round(scrollerRect.y + Math.min(120, scrollerRect.height / 2)),
+        { button: 'right' }
+      );
+      await expect(page.locator(menuSelector)).toBeVisible();
+      await openRootSubmenu(page, 'copy-paste-as');
+      await assertOpenContextMenuGeometry(page, {
+        checkShortcuts: true,
+        expectedOverlapped: true,
+        phase: 'immersive-split-560x900-overlapped'
+      });
+      await closeMenu(page, 'immersive-split-560x900-overlapped', { expectedSource: markdown });
+      await assertSourceExactValue(source, markdown, 'immersive-split-560x900-overlapped');
+
+      browserMonitor.assertClean();
+    } finally {
+      browserMonitor.dispose();
     }
   });
 });

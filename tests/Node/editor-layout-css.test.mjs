@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { JSDOM } from 'jsdom';
 
 const css = readFileSync(new URL('../../assets/css/admin/editor.css', import.meta.url), 'utf8');
 const messageAlertCss = readFileSync(new URL('../../assets/css/admin/message-alert.css', import.meta.url), 'utf8');
 const frontendCss = readFileSync(new URL('../../assets/css/frontend/base.css', import.meta.url), 'utf8');
 const codeFrameCss = readFileSync(new URL('../../assets/css/frontend/code-frame.css', import.meta.url), 'utf8');
 const frontendAssetsPhp = readFileSync(new URL('../../src/Frontend/FrontendAssets.php', import.meta.url), 'utf8');
+const wechatExportPaperSelector = ':where(:not([data-easymde-wechat-export-style-context="1"]))';
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -15,6 +17,12 @@ function escapeRegExp(value) {
 function cssRule(source, selector) {
   const match = source.match(new RegExp(`${escapeRegExp(selector)}\\s*\\{(?<body>[^}]*)\\}`, 's'));
   assert.ok(match?.groups?.body, `Missing CSS rule: ${selector}`);
+  return match.groups.body;
+}
+
+function cssRuleAtLine(source, selector) {
+  const match = source.match(new RegExp(`^${escapeRegExp(selector)}\\s*\\{(?<body>[^}]*)\\}`, 'ms'));
+  assert.ok(match?.groups?.body, `Missing top-level CSS rule: ${selector}`);
   return match.groups.body;
 }
 
@@ -267,39 +275,376 @@ test('ordinary React editor CSS owns the historical fixed 50/50 workspace', () =
     css,
     /\.easymde-workspace\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1fr\);[^}]*grid-template-areas:\s*"source preview";/s
   );
-  assert.match(
+  assert.doesNotMatch(
     css,
-    /@media \(max-width:\s*1080px\)[\s\S]*?\.easymde-workspace\s*\{[^}]*grid-template-columns:\s*1fr;[^}]*grid-template-areas:\s*"source"\s*"preview";/s
+    /\.easymde-workspace\.is-mode-(?:source|preview)\b/,
+    'ordinary workspace must not define single-pane .is-mode-source or .is-mode-preview rules'
   );
-  assert.match(
+  assert.doesNotMatch(
     css,
-    /@media \(max-width:\s*1080px\)[\s\S]*?\.easymde-preview-react-root\s*\{[^}]*flex:\s*0 1 auto;[^}]*height:\s*420px;[^}]*min-height:\s*360px;[^}]*max-height:\s*58vh;/s
+    /grid-template-areas:\s*"source"\s*"preview";/s,
+    'ordinary and immersive split workspaces must stay side-by-side without vertical stacking'
   );
-  const ordinaryPreviewHeightSelector =
-    '.easymde-editor:not(.is-immersive) .easymde-pane-preview,';
-  const ordinaryResponsive = cssBlock(
+  assert.doesNotMatch(
+    css,
+    /\.easymde-immersive-pane-divider\s*\{[^}]*display:\s*none;/s,
+    'immersive split divider must remain visible across all viewport widths'
+  );
+  assert.doesNotMatch(
+    css,
+    /@media \(max-width:\s*1080px\)[^{]*\{[\s\S]*?\.easymde-pane-source\s*\{[^}]*border-bottom:/s,
+    'ordinary source pane must keep its inline-end split border without stacking at 1080px'
+  );
+
+  const intermediateImmersiveMedia = cssBlock(
     css,
     '@media (max-width: 1080px)',
-    css.lastIndexOf(
-      '@media (max-width: 1080px)',
-      css.indexOf(ordinaryPreviewHeightSelector)
-    )
+    css.lastIndexOf('@media (max-width: 1080px)')
   );
-  const ordinaryPreviewHeightRule = ordinaryResponsive.match(
-    /\.easymde-editor:not\(\.is-immersive\) \.easymde-pane-preview,\s*\.easymde-editor:not\(\.is-immersive\) \.easymde-pane-preview > \.easymde-immersive-preview-canvas\s*\{(?<body>[^}]*)\}/s
-  )?.groups?.body;
-  assert.ok(
-    ordinaryPreviewHeightRule,
-    'Missing ordinary Preview pane and canvas height rule'
+  assertDeclaration(
+    cssRule(intermediateImmersiveMedia, '.easymde-immersive-toolbar-row'),
+    'grid-template-rows',
+    'repeat(2, minmax(0, 1fr))'
   );
-  assertDeclaration(ordinaryPreviewHeightRule, 'height', '420px');
-  assertDeclaration(ordinaryPreviewHeightRule, 'min-height', '360px');
-  assertDeclaration(ordinaryPreviewHeightRule, 'max-height', '58vh');
+  const intermediateOutlineRule = cssRule(
+    intermediateImmersiveMedia,
+    '.easymde-editor.is-immersive .easymde-immersive-outline'
+  );
+  assertDeclaration(intermediateOutlineRule, 'min-width', '160px');
+  assertDeclaration(
+    intermediateOutlineRule,
+    'max-width',
+    'clamp(160px, 24vw, 220px)'
+  );
   assert.doesNotMatch(
-    ordinaryResponsive,
-    /\.easymde-editor\.is-immersive[^\n]*\.easymde-pane-preview[^\n]*\{[^}]*height:\s*420px;/s,
-    'immersive preview panes must not inherit the ordinary 420px boundary'
+    intermediateImmersiveMedia,
+    /\.easymde-immersive-pane-divider/,
+    'intermediate immersive breakpoint must not hide the split divider'
   );
+
+  const section17Start = css.lastIndexOf('17. Ordinary Editor & Shared Responsive Breakpoints');
+  const section18Start = css.lastIndexOf('18. WordPress Media Picker Dialog');
+  assert.ok(
+    section17Start > -1 && section18Start > section17Start,
+    'Missing Section 17/18 CSS markers'
+  );
+  const section17Css = css.slice(section17Start, section18Start);
+  const sharedTabletPortraitMedia = cssBlock(
+    section17Css,
+    '@media (max-width: 782px)'
+  );
+  const tabletSplitPreviewPaper = cssRule(
+    sharedTabletPortraitMedia,
+    `#easymde-editor-root .easymde-editor:not(.is-immersive) .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview${wechatExportPaperSelector},\n    #easymde-editor-root .easymde-editor[data-easymde-preview-presentation="split"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview${wechatExportPaperSelector}`
+  );
+  assertDeclaration(tabletSplitPreviewPaper, 'padding', '18px 18px 24px');
+
+  const section19Start = css.lastIndexOf('19. Immersive Mode Responsive Breakpoints');
+  const section20Start = css.lastIndexOf('20. Unified ProseMirror Immersive Visual Editor Surface');
+  assert.ok(
+    section19Start > -1 && section20Start > section19Start,
+    'Missing Section 19/20 CSS markers'
+  );
+  const section19Css = css.slice(section19Start, section20Start);
+
+  const tabletPortraitMedia = cssBlock(
+    section19Css,
+    '@media (max-width: 782px)'
+  );
+  assertDeclaration(
+    cssRule(tabletPortraitMedia, '.easymde-editor.is-immersive'),
+    'grid-template-columns',
+    'minmax(0, 1fr)'
+  );
+  assertDeclaration(
+    cssRule(tabletPortraitMedia, '.easymde-immersive-header'),
+    'grid-template-columns',
+    'auto minmax(0, 1fr) auto'
+  );
+  assertDeclaration(
+    cssRule(tabletPortraitMedia, '.easymde-immersive-stats'),
+    'display',
+    'none'
+  );
+  assertDeclaration(
+    cssRule(tabletPortraitMedia, '.easymde-editor.is-immersive > .easymde-workspace'),
+    'grid-column',
+    '1'
+  );
+  assert.doesNotMatch(
+    tabletPortraitMedia,
+    /\.easymde-editor:not\(\.is-immersive\)/,
+    'ordinary editor preview padding belongs in Section 17 shared breakpoints, not Section 19'
+  );
+  assertDeclaration(
+    cssRule(css, '.easymde-editor.is-immersive .easymde-immersive-pane-divider'),
+    'touch-action',
+    'none'
+  );
+
+  assertDeclaration(
+    cssRule(
+      tabletPortraitMedia,
+      '.easymde-editor.is-immersive.is-immersive-split .easymde-pane-header'
+    ),
+    'padding-inline',
+    '12px'
+  );
+
+  const tabletOutlineOverlay = cssRule(
+    tabletPortraitMedia,
+    '.easymde-editor.is-immersive .easymde-immersive-outline'
+  );
+  assertDeclaration(tabletOutlineOverlay, 'position', 'absolute');
+  assertDeclaration(tabletOutlineOverlay, 'min-width', '0');
+  assertDeclaration(
+    tabletOutlineOverlay,
+    'max-width',
+    'min(240px, calc(100% - 22.5px))'
+  );
+  assertDeclaration(
+    cssRule(
+      tabletPortraitMedia,
+      '.easymde-editor.is-immersive .easymde-immersive-outline-show'
+    ),
+    'position',
+    'absolute'
+  );
+  assertDeclaration(
+    cssRule(
+      tabletPortraitMedia,
+      '.easymde-editor.is-immersive .easymde-immersive-outline-resizer'
+    ),
+    'display',
+    'none'
+  );
+  assert.doesNotMatch(
+    tabletPortraitMedia,
+    /\.easymde-immersive-pane-divider/,
+    'tablet-portrait immersive breakpoint must hide only the outline resizer, never the split divider'
+  );
+  assert.doesNotMatch(
+    section19Css,
+    /@media \(max-width:\s*640px\)/,
+    'Section 19 must not retain the obsolete phone-writing 640px breakpoint'
+  );
+  assert.doesNotMatch(
+    css,
+    /\.easymde-immersive-publish\s*\{[^}]*font-size:\s*0;/s,
+    'obsolete phone-only icon-only publish button rule must be removed'
+  );
+  assert.doesNotMatch(
+    css,
+    /@media \(max-width:\s*480px\)/,
+    'obsolete phone-only 480px breakpoint must be removed'
+  );
+});
+
+test('editor-root preview baselines stay low-specificity and scoped', () => {
+  const paragraphRule = cssRule(css, '#easymde-editor-root :where(.easymde-rendered-content p)');
+  assertDeclaration(paragraphRule, 'font-size', 'inherit');
+  assertDeclaration(paragraphRule, 'line-height', 'inherit');
+  const headingRule = cssRule(
+    css,
+    '#easymde-editor-root :where(.easymde-rendered-content) :is(h1, h2, h3, h4, h5, h6)'
+  );
+  assertDeclaration(headingRule, 'padding', '0');
+  assert.match(
+    '#easymde-editor-root :where(.easymde-rendered-content p)',
+    /^#easymde-editor-root :where\(/,
+  );
+  assert.doesNotMatch(
+    css,
+    /(^|\n)\s*(?:body|html|:root)\s+\.easymde-rendered-content\b/m,
+    'editor baselines must not broaden into public content selectors',
+  );
+});
+
+test('shared Preview task markers override WordPress checkbox geometry', () => {
+  const inputRule = cssRule(
+    css,
+    `.easymde-editor .easymde-rendered-content :where(
+  .task-list-item > input[type="checkbox"],
+  .task-list-item > p > input[type="checkbox"]
+)`
+  );
+  assertDeclaration(inputRule, 'width', '1rem');
+  assertDeclaration(inputRule, 'min-width', '1rem');
+  assertDeclaration(inputRule, 'height', '1rem');
+
+  const pseudoRule = cssRule(
+    css,
+    `.easymde-editor .easymde-rendered-content :where(
+  .task-list-item > input[type="checkbox"],
+  .task-list-item > p > input[type="checkbox"]
+):is(:checked, :not(:checked)):is(:disabled, :enabled)::before`
+  );
+  assertDeclaration(pseudoRule, 'width', '100%');
+  assertDeclaration(pseudoRule, 'height', '100%');
+  assertDeclaration(pseudoRule, 'margin', '0');
+  assertDeclaration(pseudoRule, 'float', 'none');
+  assertDeclaration(pseudoRule, 'opacity', '1');
+});
+
+test('shared rendered list baselines survive the WordPress admin reset without overriding list owners', () => {
+  const wordpressReset = `
+ul { list-style-type: none; }
+ol { list-style-type: decimal; margin-left: 2em; }
+`;
+  const articleThemeCss = (id) => readFileSync(
+    new URL(`../../assets/themes/article/${id}.css`, import.meta.url),
+    'utf8'
+  );
+  const nestedListMarkup = (tag, level = 1) => {
+    const child = level < 6 ? nestedListMarkup(tag, level + 1) : '';
+    return `<${tag} id="${tag}-level-${level}"><li>Level ${level}${child}</li></${tag}>`;
+  };
+  const createListCase = ({
+    theme = 'default',
+    themeCss = '',
+    customCss = '',
+    customTheme = false
+  } = {}) => {
+    const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>', {
+      pretendToBeVisual: true
+    });
+    const document = dom.window.document;
+    const appendStyle = (source) => {
+      const style = document.createElement('style');
+      style.textContent = source;
+      document.head.append(style);
+    };
+
+    appendStyle(wordpressReset);
+    appendStyle(frontendCss);
+    if (themeCss) appendStyle(themeCss);
+    if (customCss) appendStyle(customCss);
+    document.body.innerHTML = `
+      <article id="article" class="easymde-rendered-content easymde-markdown-theme-${theme}${customTheme ? ' easymde-custom-css-active' : ''}">
+        ${nestedListMarkup('ul')}
+        ${nestedListMarkup('ol')}
+        <ol id="mixed"><li id="mixed-item"><ul id="mixed-child"><li>Mixed</li></ul></li></ol>
+        <ul><li><ol><li><ul id="third-nested"><li>Third nested</li></ul></li></ol></li></ul>
+        <ul class="task-list" id="task-list">
+          <li class="task-list-item" id="task-checked">
+            <input id="task-checked-input" type="checkbox" checked>Checked task
+            <ul id="task-nested"><li id="task-nested-item">Nested ordinary</li></ul>
+          </li>
+          <li class="task-list-item" id="task-unchecked"><p><input id="task-unchecked-input" type="checkbox">Unchecked task</p></li>
+        </ul>
+        <ol class="task-list" id="ordered-task-list">
+          <li class="task-list-item" id="ordered-task-item"><input id="ordered-task-input" type="checkbox" checked>Ordered task</li>
+        </ol>
+      </article>`;
+    const styleOf = (id) => dom.window.getComputedStyle(document.getElementById(id)).listStyleType;
+    const customMarkerRule = customCss
+      ? [...document.styleSheets]
+          .flatMap((styleSheet) => [...styleSheet.cssRules])
+          .find((rule) => rule.selectorText === '.easymde-rendered-content.easymde-custom-css-active ul li::marker')
+      : null;
+    const result = {
+      ulLevels: [1, 2, 3, 4, 5, 6].map((level) => styleOf(`ul-level-${level}`)),
+      olLevels: [1, 2, 3, 4, 5, 6].map((level) => styleOf(`ol-level-${level}`)),
+      mixed: styleOf('mixed-child'),
+      thirdNested: styleOf('third-nested'),
+      taskList: styleOf('task-list'),
+      taskItems: ['task-checked', 'task-unchecked', 'ordered-task-item'].map(styleOf),
+      taskNested: styleOf('task-nested'),
+      taskNestedItem: styleOf('task-nested-item'),
+      checkedStates: [
+        document.getElementById('task-checked-input').checked,
+        document.getElementById('task-unchecked-input').checked,
+        document.getElementById('ordered-task-input').checked
+      ],
+      customMarkerColor: customMarkerRule?.style.color ?? null
+    };
+    dom.window.close();
+    return result;
+  };
+
+  const baseline = createListCase();
+  assert.deepEqual(baseline.ulLevels, ['disc', 'circle', 'square', 'square', 'square', 'square']);
+  assert.equal(baseline.mixed, 'circle');
+  assert.equal(baseline.thirdNested, 'square');
+  assert.deepEqual(baseline.taskItems, ['none', 'none', 'none']);
+  assert.equal(baseline.taskNested, 'circle');
+  assert.equal(baseline.taskNestedItem, 'circle');
+  assert.deepEqual(baseline.checkedStates, [true, false, true]);
+
+  const bloomInk = createListCase({
+    theme: 'bloom-ink',
+    themeCss: articleThemeCss('bloom-ink')
+  });
+  assert.equal(bloomInk.ulLevels[0], 'disc');
+  assert.equal(bloomInk.ulLevels[1], 'circle');
+  assert.equal(bloomInk.mixed, 'circle');
+  assert.deepEqual(bloomInk.taskItems, ['none', 'none', 'none']);
+
+  const phycat = createListCase({
+    theme: 'phycat-sky',
+    themeCss: articleThemeCss('phycat-sky')
+  });
+  assert.deepEqual(phycat.ulLevels, ['disc', 'circle', 'square', 'square', 'square', 'square']);
+  assert.deepEqual(phycat.olLevels, ['decimal', 'lower-alpha', 'lower-roman', 'lower-roman', 'lower-roman', 'lower-roman']);
+  assert.deepEqual(phycat.taskItems, ['none', 'none', 'none']);
+  assert.equal(phycat.taskNested, 'circle');
+  assert.equal(phycat.taskNestedItem, 'circle');
+  assert.deepEqual(phycat.checkedStates, [true, false, true]);
+
+  const crimsonFocus = createListCase({
+    theme: 'crimson-focus',
+    themeCss: articleThemeCss('crimson-focus')
+  });
+  assert.equal(crimsonFocus.ulLevels[0], '"—  "');
+  assert.deepEqual(crimsonFocus.taskItems, ['none', 'none', 'none']);
+
+  const mdmdt = createListCase({
+    theme: 'mdmdt',
+    themeCss: articleThemeCss('mdmdt')
+  });
+  assert.equal(mdmdt.taskList, 'none');
+  assert.deepEqual(mdmdt.taskItems, ['none', 'none', 'none']);
+
+  const ningyePurple = createListCase({
+    theme: 'ningye-purple',
+    themeCss: articleThemeCss('ningye-purple')
+  });
+  assert.equal(ningyePurple.ulLevels[0], 'circle');
+  assert.deepEqual(ningyePurple.taskItems, ['none', 'none', 'none']);
+  assert.equal(ningyePurple.taskNested, 'circle');
+  assert.equal(ningyePurple.taskNestedItem, 'circle');
+
+  const minimalBlack = createListCase({
+    theme: 'minimal-black',
+    themeCss: articleThemeCss('minimal-black')
+  });
+  assert.equal(minimalBlack.ulLevels[0], 'square');
+  assert.deepEqual(minimalBlack.taskItems, ['none', 'none', 'none']);
+  assert.equal(minimalBlack.taskNested, 'square');
+  assert.equal(minimalBlack.taskNestedItem, 'circle');
+
+  const custom = createListCase({
+    customTheme: true,
+    customCss: `
+      .easymde-rendered-content.easymde-custom-css-active ul {
+        list-style-type: none;
+      }
+
+      .easymde-rendered-content.easymde-custom-css-active ul ul {
+        list-style-type: square;
+      }
+
+      .easymde-rendered-content.easymde-custom-css-active ul li::marker {
+        color: rgb(1, 2, 3);
+      }
+    `
+  });
+  assert.deepEqual(custom.ulLevels, ['none', 'square', 'square', 'square', 'square', 'square']);
+  assert.deepEqual(custom.taskItems, ['none', 'none', 'none']);
+  assert.equal(custom.taskNested, 'square');
+  assert.equal(custom.taskNestedItem, 'square');
+  assert.deepEqual(custom.checkedStates, [true, false, true]);
+  assert.equal(custom.customMarkerColor, 'rgb(1, 2, 3)');
 });
 
 test('ordinary CodeMirror shows a stable scroll-synchronized line-number gutter', () => {
@@ -332,11 +677,20 @@ test('ordinary Preview uses one continuous white surface and fits wide table con
   );
   assertDeclaration(articleRule, 'width', '100%');
   assertDeclaration(articleRule, 'max-width', 'none');
-  assertDeclaration(articleRule, 'margin', '0');
-  assertDeclaration(articleRule, 'padding', '22px 28px 28px');
-  assertDeclaration(articleRule, 'border-radius', '0');
-  assertDeclaration(articleRule, 'background-color', '#fff');
-  assertDeclaration(articleRule, 'box-shadow', 'none');
+  const articlePaperRule = cssRule(
+    css,
+    `.easymde-editor:not(.is-immersive) .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview${wechatExportPaperSelector}`
+  );
+  assertDeclaration(articlePaperRule, 'margin', '0');
+  assertDeclaration(articlePaperRule, 'padding', '22px 28px 28px');
+  assertDeclaration(articlePaperRule, 'border-radius', '0');
+  assertDeclaration(articlePaperRule, 'background-color', '#fff');
+  assertDeclaration(articlePaperRule, 'box-shadow', 'none');
+  assert.doesNotMatch(
+    articleRule,
+    /(?:^|[;\n])\s*(?:margin|padding|border-radius|background-color|box-shadow)\s*:/s,
+    'the export-style marker must own the paper exclusion while shared geometry remains active'
+  );
   assert.doesNotMatch(
     css,
     /\.easymde-editor:not\(\.is-immersive\) \.easymde-rendered-content table\s*\{[^}]*table-layout:/s
@@ -379,10 +733,14 @@ test('Mermaid labels use stable geometry independent of article typography', () 
   assert.match(labelGeometry, /font-size:\s*16px\s*!important;/);
   assert.match(labelGeometry, /font-weight:\s*400\s*!important;/);
   assert.match(labelGeometry, /line-height:\s*20px\s*!important;/);
-  assert.match(labelGeometry, /letter-spacing:\s*normal\s*!important;/);
   assert.match(labelGeometry, /white-space:\s*nowrap\s*!important;/);
   assert.match(labelGeometry, /margin:\s*0\s*!important;/);
   assert.match(labelGeometry, /padding:\s*0\s*!important;/);
+  assert.doesNotMatch(labelGeometry, /(?:letter|word)-spacing:/);
+
+  const mermaidSvgTypographyRule = cssRule(frontendCss, '.easymde-mermaid > svg');
+  assert.match(mermaidSvgTypographyRule, /letter-spacing:\s*normal;/);
+  assert.match(mermaidSvgTypographyRule, /word-spacing:\s*normal;/);
 
   const foreignObjectLabelRule = cssRule(
     frontendCss,
@@ -442,58 +800,70 @@ test('preview surface ownership differs between continuous and pure Preview mode
     '.easymde-editor:not(.is-immersive) .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview'
   );
   assertDeclaration(ordinaryArticleRule, 'max-width', 'none');
-  assertDeclaration(ordinaryArticleRule, 'margin', '0');
-  assertDeclaration(ordinaryArticleRule, 'padding', '22px 28px 28px');
-  assertDeclaration(ordinaryArticleRule, 'border-radius', '0');
-  assertDeclaration(ordinaryArticleRule, 'background-color', '#fff');
-  assertDeclaration(ordinaryArticleRule, 'box-shadow', 'none');
+  const ordinaryPaperRule = cssRule(
+    css,
+    `.easymde-editor:not(.is-immersive) .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview${wechatExportPaperSelector}`
+  );
+  assertDeclaration(ordinaryPaperRule, 'margin', '0');
+  assertDeclaration(ordinaryPaperRule, 'padding', '22px 28px 28px');
+  assertDeclaration(ordinaryPaperRule, 'border-radius', '0');
+  assertDeclaration(ordinaryPaperRule, 'background-color', '#fff');
+  assertDeclaration(ordinaryPaperRule, 'box-shadow', 'none');
 
   const splitCanvasRule = cssRule(
     css,
-    '.easymde-editor.is-immersive-split .easymde-pane-preview > .easymde-immersive-preview-canvas'
+    '.easymde-editor[data-easymde-preview-presentation="split"] .easymde-pane-preview > .easymde-immersive-preview-canvas'
   );
   assertDeclaration(splitCanvasRule, 'padding', '0');
   assertDeclaration(splitCanvasRule, 'background', '#fff');
   const splitArticleRule = cssRule(
     css,
-    '.easymde-editor.is-immersive-split .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview'
+    '.easymde-editor[data-easymde-preview-presentation="split"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview'
   );
   assertDeclaration(splitArticleRule, 'max-width', 'none');
-  assertDeclaration(splitArticleRule, 'margin', '0');
-  assertDeclaration(splitArticleRule, 'padding', '22px 28px 28px');
-  assertDeclaration(splitArticleRule, 'border-radius', '0');
-  assertDeclaration(splitArticleRule, 'background-color', '#fff');
-  assertDeclaration(splitArticleRule, 'box-shadow', 'none');
+  const splitPaperRule = cssRule(
+    css,
+    `.easymde-editor[data-easymde-preview-presentation="split"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview${wechatExportPaperSelector}`
+  );
+  assertDeclaration(splitPaperRule, 'margin', '0');
+  assertDeclaration(splitPaperRule, 'padding', '22px 28px 28px');
+  assertDeclaration(splitPaperRule, 'border-radius', '0');
+  assertDeclaration(splitPaperRule, 'background-color', '#fff');
+  assertDeclaration(splitPaperRule, 'box-shadow', 'none');
 
   const purePreviewCanvasRule = cssRule(
     css,
-    '.easymde-editor.is-immersive-preview .easymde-pane-preview > .easymde-immersive-preview-canvas'
+    '.easymde-editor[data-easymde-preview-presentation="preview"] .easymde-pane-preview > .easymde-immersive-preview-canvas'
   );
   assertDeclaration(purePreviewCanvasRule, 'padding', '28px 20px');
   assertDeclaration(purePreviewCanvasRule, 'background', '#f6f6f8');
   const purePreviewArticleRule = cssRule(
     css,
-    '.easymde-editor.is-immersive-preview .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview'
+    '.easymde-editor[data-easymde-preview-presentation="preview"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview'
   );
   assertDeclaration(purePreviewArticleRule, 'max-width', '760px');
-  assertDeclaration(purePreviewArticleRule, 'margin', '0 auto');
-  assertDeclaration(purePreviewArticleRule, 'border-radius', '48px');
-  assertDeclaration(purePreviewArticleRule, 'background-color', '#fff');
-  assertDeclaration(purePreviewArticleRule, 'box-shadow', '0 8px 28px rgba(15, 23, 42, .06)');
+  const purePreviewPaperRule = cssRule(
+    css,
+    `.easymde-editor[data-easymde-preview-presentation="preview"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview${wechatExportPaperSelector}`
+  );
+  assertDeclaration(purePreviewPaperRule, 'margin', '0 auto');
+  assertDeclaration(purePreviewPaperRule, 'border-radius', '48px');
+  assertDeclaration(purePreviewPaperRule, 'background-color', '#fff');
+  assertDeclaration(purePreviewPaperRule, 'box-shadow', '0 8px 28px rgba(15, 23, 42, .06)');
   assert.doesNotMatch(
-    purePreviewArticleRule,
+    purePreviewPaperRule,
     /background-image\s*:/,
     'the pure Preview paper must not erase a selected theme background image'
   );
   assert.doesNotMatch(
-    purePreviewArticleRule,
+    purePreviewPaperRule,
     /(?:^|[;\n])\s*(?:color|font-(?:family|size|weight))\s*:/,
     'the pure Preview paper must leave typography to the selected theme'
   );
 
   assert.doesNotMatch(
     css,
-    /\.easymde-editor\.is-immersive-split \.easymde-immersive-preview-canvas > \.easymde-preview\s*\{[^}]*overflow-y:\s*auto;/s
+    /\.easymde-editor\[data-easymde-preview-presentation="split"\] \.easymde-immersive-preview-canvas > \.easymde-preview\s*\{[^}]*overflow-y:\s*auto;/s
   );
   assert.doesNotMatch(
     css,
@@ -512,7 +882,14 @@ test('the shared Preview base has no legacy gray grid or wash', () => {
   );
   assert.ok(sharedPreviewRules.length > 0, 'Missing standalone shared Preview rule');
   const sharedPreviewDeclarations = sharedPreviewRules.join('\n');
-  assertDeclaration(sharedPreviewDeclarations, 'background-color', '#fff');
+  assertDeclaration(sharedPreviewDeclarations, 'font-size', '16px');
+  assertDeclaration(sharedPreviewDeclarations, 'line-height', '1.72');
+  const sharedPreviewPaperRule = cssRuleAtLine(
+    css,
+    `.easymde-preview${wechatExportPaperSelector}`
+  );
+  assertDeclaration(sharedPreviewPaperRule, 'padding', '22px 28px 28px');
+  assertDeclaration(sharedPreviewPaperRule, 'background-color', '#fff');
   assert.doesNotMatch(
     sharedPreviewDeclarations,
     /background(?:-image)?:\s*(?:linear-gradient|radial-gradient)/,
@@ -800,6 +1177,59 @@ test('context submenu border joins the clipped tail without masking its glass or
   assertDeclaration(flipped, '--easymde-context-menu-join-side', '100%');
 });
 
+test('context menu CSS styles overlapped submenus without phone-only breakpoints or forced-colors specificity regressions', () => {
+  const overlappedFrameSelector =
+    '.easymde-editor-context-menu__submenu-frame:where([data-easymde-context-menu-overlapped="true"])';
+  const overlappedFrame = cssRule(css, overlappedFrameSelector);
+  assertDeclaration(
+    overlappedFrame,
+    'filter',
+    'drop-shadow(0 18px 36px rgba(15, 23, 42, .26))'
+  );
+  const overlappedOutline = cssRule(
+    css,
+    `${overlappedFrameSelector}::after`
+  );
+  assertDeclaration(overlappedOutline, 'mask-image', 'none');
+
+  const section7Start = css.lastIndexOf('7. Unified Editor Context Menu');
+  const section8Start = css.lastIndexOf('8. Immersive Font Selector Controls');
+  assert.ok(section7Start > -1 && section8Start > section7Start, 'Missing Section 7/8 CSS markers');
+  const section7Css = css.slice(section7Start, section8Start);
+
+  const overlappedRuleIndex = section7Css.indexOf(overlappedFrameSelector);
+  const forcedColorsIndex = section7Css.indexOf('@media (forced-colors: active)');
+  assert.ok(
+    overlappedRuleIndex > -1 && forcedColorsIndex > overlappedRuleIndex,
+    'forced-colors media override must appear after the (0,1,0) overlapped submenu rule so filter: none wins'
+  );
+  const forcedColorsBlock = cssBlock(section7Css, '@media (forced-colors: active)');
+  assertDeclaration(
+    cssRule(
+      forcedColorsBlock,
+      '.easymde-editor-context-menu,\n    .easymde-editor-context-menu__submenu-frame'
+    ),
+    'filter',
+    'none'
+  );
+  assert.doesNotMatch(
+    section7Css,
+    /\.easymde-editor-context-menu__submenu-frame\[data-easymde-context-menu-overlapped="true"\]/,
+    'overlapped submenu frame must use :where(...) to stay at (0,1,0) specificity'
+  );
+
+  assert.doesNotMatch(
+    section7Css,
+    /@media \(max-width:\s*640px\)/,
+    'Section 7 must not retain the obsolete phone-only 640px context-menu breakpoint'
+  );
+  assert.doesNotMatch(
+    section7Css,
+    /@media \(max-width:\s*480px\)/,
+    'Section 7 must not retain the obsolete phone-only 480px context-menu breakpoint'
+  );
+});
+
 test('immersive publish CSS preserves reference geometry without hiding the password field', () => {
   assert.match(
     css,
@@ -1004,8 +1434,8 @@ test('all preview modes use one canvas without an additional paper wrapper', () 
 
 test('all preview table surfaces use one shared horizontal scroll owner', () => {
   const wrapperRule = cssRule(
-    css,
-    '.easymde-editor .easymde-rendered-content :is(.table-container, .easymde-table-container)'
+    frontendCss,
+    '.easymde-rendered-content :is(.table-container.easymde-table-container)'
   );
   assertDeclaration(wrapperRule, 'display', 'block');
   assertDeclaration(wrapperRule, 'box-sizing', 'border-box');
@@ -1017,6 +1447,23 @@ test('all preview table surfaces use one shared horizontal scroll owner', () => 
 
   const tableRule = cssRule(frontendCss, '.easymde-rendered-content table');
   assertDeclaration(tableRule, 'width', '100%');
+  const filledMinimumRule = cssRule(
+    frontendCss,
+    '.easymde-rendered-content :where(.table-container.easymde-table-container) > table'
+  );
+  assertDeclaration(filledMinimumRule, 'min-width', '100%');
+  assert.doesNotMatch(filledMinimumRule, /!important/s, 'explicit table minimums must be able to override the fill baseline');
+  const intrinsicTableRule = cssRule(
+    frontendCss,
+    '.easymde-rendered-content :is(.table-container.easymde-table-container) > table'
+  );
+  assertDeclaration(intrinsicTableRule, 'width', 'max-content');
+  assertDeclaration(intrinsicTableRule, 'max-width', 'none');
+  assert.doesNotMatch(
+    frontendCss,
+    /:is\(\.table-container\.easymde-table-container\)\s+table\s*\{/s,
+    'the table owner must not rewrite nested tables such as KaTeX internals'
+  );
   assert.doesNotMatch(
     css,
     /\.easymde-editor[^{}]*\.easymde-rendered-content[^{}]*table\s*\{[^}]*table-layout\s*:/s,
@@ -1027,10 +1474,29 @@ test('all preview table surfaces use one shared horizontal scroll owner', () => 
     /\.easymde-editor[^{}]*\.easymde-rendered-content[^{}]*:is\(th, td\)\s*\{[^}]*overflow-wrap\s*:/s,
     'editor containment must not force theme-specific cell reflow'
   );
+});
 
-  assert.match(
+test('shared Phycat nested quotes stay portable and Custom CSS scoped', () => {
+  const selector = '.easymde-rendered-content[class*="easymde-markdown-theme-phycat-"]:not(.easymde-custom-css-active) blockquote blockquote';
+  const quoteRule = cssRule(frontendCss, selector);
+
+  assertDeclaration(quoteRule, 'box-sizing', 'border-box');
+  assertDeclaration(quoteRule, 'max-width', '100%');
+  assertDeclaration(quoteRule, 'margin-inline', '0');
+  assertDeclaration(quoteRule, '--easymde-portable-padding-left', '9%');
+  assertDeclaration(quoteRule, '--easymde-portable-padding-right', '5%');
+  assertDeclaration(quoteRule, 'padding-left', 'var(--easymde-portable-padding-left)');
+  assertDeclaration(quoteRule, 'padding-right', 'var(--easymde-portable-padding-right)');
+  assert.match(selector, /:not\(\.easymde-custom-css-active\)/);
+  assert.doesNotMatch(
     css,
-    /@media \(max-width:\s*760px\)[\s\S]*?\.easymde-editor \.easymde-rendered-content\[class\*="easymde-markdown-theme-phycat-"\]:not\(\.easymde-custom-css-active\) blockquote blockquote\s*\{[^}]*max-width:\s*100%;[^}]*margin-inline:\s*0;[^}]*padding-inline:\s*12px;/s
+    /\.easymde-editor[^{}]*phycat-[^{}]*blockquote\s+blockquote[^{}]*\{[^}]*padding-inline:\s*12px;/s,
+    'the removed WordPress admin quote geometry must not return'
+  );
+  assert.doesNotMatch(
+    quoteRule,
+    /padding-inline:\s*12px/,
+    'the portable base quote owner must not reintroduce the old fixed runtime padding'
   );
 });
 
@@ -1073,20 +1539,24 @@ test('immersive outline and editor panes use the reference 16px card radius', ()
 test('pure Preview preserves its paper width while Preview becomes editable', () => {
   const previewContentRule = cssRule(
     css,
-    '.easymde-editor.is-immersive-preview .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview'
+    '.easymde-editor[data-easymde-preview-presentation="preview"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview'
   );
   assertDeclaration(previewContentRule, 'box-sizing', 'border-box');
   assertDeclaration(previewContentRule, 'max-width', '760px');
   assertDeclaration(previewContentRule, 'min-height', '680px');
-  assertDeclaration(previewContentRule, 'margin', '0 auto');
-  assertDeclaration(previewContentRule, 'padding', '36px 40px');
-  assertDeclaration(previewContentRule, 'border-radius', '48px');
   assertDeclaration(previewContentRule, 'overflow', 'visible');
+  const previewPaperRule = cssRule(
+    css,
+    `.easymde-editor[data-easymde-preview-presentation="preview"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview${wechatExportPaperSelector}`
+  );
+  assertDeclaration(previewPaperRule, 'margin', '0 auto');
+  assertDeclaration(previewPaperRule, 'padding', '36px 40px');
+  assertDeclaration(previewPaperRule, 'border-radius', '48px');
   const desktopImmersivePreview = cssBlock(css, '@media (min-width: 640px)');
   assertDeclaration(
     cssRule(
       desktopImmersivePreview,
-      '.easymde-editor.is-immersive-preview .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview'
+      `.easymde-editor[data-easymde-preview-presentation="preview"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview${wechatExportPaperSelector}`
     ),
     'padding',
     '45px 52.5px'
@@ -1096,12 +1566,19 @@ test('pure Preview preserves its paper width while Preview becomes editable', ()
     '@media (max-width: 760px)',
     css.lastIndexOf('@media (max-width: 760px)')
   );
-  const mobilePreviewPaperRule = cssRule(
+  const mobilePreviewGeometryRule = cssRule(
     mobileImmersivePreview,
-    '.easymde-editor.is-immersive-preview .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview'
+    '.easymde-editor[data-easymde-preview-presentation="preview"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview'
   );
-  assertDeclaration(mobilePreviewPaperRule, 'min-height', '520px');
-  assertDeclaration(mobilePreviewPaperRule, 'padding', '28px 24px');
+  assertDeclaration(mobilePreviewGeometryRule, 'min-height', '520px');
+  assertDeclaration(
+    cssRule(
+      mobileImmersivePreview,
+      `.easymde-editor[data-easymde-preview-presentation="preview"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview${wechatExportPaperSelector}`
+    ),
+    'padding',
+    '28px 24px'
+  );
   assert.match(
     css,
     /\.easymde-immersive-preview-status > \.easymde-immersive-preview-lock\s*\{[^}]*display:\s*grid;[^}]*width:\s*26\.25px;[^}]*height:\s*26\.25px;[^}]*border:\s*1px solid #d8dee8;[^}]*border-radius:\s*3\.625px;[^}]*background:\s*#fff;[^}]*color:\s*#64748b;[^}]*font-size:\s*15px;[^}]*font-weight:\s*500;/s
@@ -1131,7 +1608,7 @@ test('immersive pure Preview inherits the shared canvas scroll owner', () => {
 
   const previewContentRule = cssRule(
     css,
-    '.easymde-editor.is-immersive-preview .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview'
+    '.easymde-editor[data-easymde-preview-presentation="preview"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview'
   );
   assertDeclaration(previewContentRule, 'display', 'block');
   assertDeclaration(previewContentRule, 'flex', '0 0 auto');
@@ -1141,7 +1618,7 @@ test('immersive pure Preview inherits the shared canvas scroll owner', () => {
 
   const previewCanvasRule = cssRule(
     css,
-    '.easymde-editor.is-immersive-preview .easymde-pane-preview > .easymde-immersive-preview-canvas'
+    '.easymde-editor[data-easymde-preview-presentation="preview"] .easymde-pane-preview > .easymde-immersive-preview-canvas'
   );
   assertDeclaration(previewCanvasRule, 'overflow-y', 'auto');
   assert.doesNotMatch(

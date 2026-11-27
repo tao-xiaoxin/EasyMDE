@@ -84,6 +84,9 @@ function createGitFixture(root) {
   writeText(root, 'frontend/vite.config.ts', 'export default {};\n');
   writeText(root, 'frontend/test/build-contract/entry.tsx', 'export const fixture = true;\n');
   writeText(root, 'frontend/test/build-contract/fixture.svg', '<svg xmlns="http://www.w3.org/2000/svg"/>\n');
+  writeText(root, 'assets/math/easymde-katex-glyph-atlas.json', '{"schema":"easymde-katex-glyph-atlas/1"}\n');
+  writeText(root, 'assets/math/KaTeX_FONT_LICENSE.txt', 'SIL OFL-1.1\n');
+  writeText(root, 'scripts/wechat-math-outline-atlas.mjs', 'export const schema = 1;\n');
   writeText(root, '.github/workflows/ci.yml', 'name: CI\n');
 
   run(root, 'git', [
@@ -97,6 +100,9 @@ function createGitFixture(root) {
     'frontend/vite.config.ts',
     'frontend/test/build-contract/entry.tsx',
     'frontend/test/build-contract/fixture.svg',
+    'assets/math/easymde-katex-glyph-atlas.json',
+    'assets/math/KaTeX_FONT_LICENSE.txt',
+    'scripts/wechat-math-outline-atlas.mjs',
     '.github/workflows/ci.yml'
   ]);
   run(root, 'git', ['commit', '--quiet', '-m', 'Initial source fixture']);
@@ -168,6 +174,9 @@ function assertArchiveEntries(entries, version) {
   assert.ok(entries.includes(`${prefix}frontend/vite.config.ts`));
   assert.ok(entries.includes(`${prefix}frontend/test/build-contract/entry.tsx`));
   assert.ok(entries.includes(`${prefix}frontend/test/build-contract/fixture.svg`));
+  assert.ok(entries.includes(`${prefix}assets/math/easymde-katex-glyph-atlas.json`));
+  assert.ok(entries.includes(`${prefix}assets/math/KaTeX_FONT_LICENSE.txt`));
+  assert.ok(entries.includes(`${prefix}scripts/wechat-math-outline-atlas.mjs`));
   assert.ok(entries.includes(`${prefix}.github/workflows/ci.yml`));
   assert.equal(entries.some((entry) => entry.includes('/.git/')), false);
   assert.equal(entries.some((entry) => entry.includes('/node_modules/')), false);

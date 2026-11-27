@@ -29,12 +29,16 @@ import {
 } from '../immersive-editor';
 import { ImmersiveHeader } from './ImmersiveHeader';
 import { ImmersiveHistoryDialog } from './ImmersiveHistoryDialog';
-import { ImmersiveOutline } from './ImmersiveOutline';
+import {
+  COMPACT_OUTLINE_MAX_WIDTH,
+  ImmersiveOutline
+} from './ImmersiveOutline';
 import { ImmersiveToolbar } from './ImmersiveToolbar';
 import type {
   ImmersiveSettings,
   ImmersiveStrings
 } from './immersive-editor-ui-types';
+import type { WechatCopyStatusStore } from '../../wechat-export/wechat-copy-status';
 import { LazyImmersivePublishDialog } from './LazyImmersivePublishDialog';
 import { useImmersiveDocumentDerivations } from './use-immersive-document-derivations';
 
@@ -55,6 +59,7 @@ type Props = Readonly<{
   restoreRevision: (restoreUrl: string) => void;
   styleControls: ReactNode;
   toolbar: ReactNode;
+  wechatCopyStatus: WechatCopyStatusStore;
   onCopyWechat: () => Promise<boolean>;
   onBeforeSourceMutation: () => boolean;
   /**
@@ -90,6 +95,7 @@ export function ImmersiveEditor({
   restoreRevision,
   styleControls,
   toolbar,
+  wechatCopyStatus,
   mode,
   onCopyWechat,
   onBeforeSourceMutation,
@@ -111,6 +117,9 @@ export function ImmersiveEditor({
   );
   const [dirty, setDirty] = useState(() => documentSession.getSnapshot().dirty);
   const [outlineOpen, setOutlineOpen] = useState(true);
+  const [viewportWidth, setViewportWidth] = useState<number | undefined>(
+    undefined
+  );
   const previousVisualPreviewEditableRef = useRef(visualPreviewEditable);
   const responsivePreviewStateRef = useRef({ mode, visualPreviewEditable });
   const previousViewportCompactRef = useRef<boolean | null>(null);
@@ -148,7 +157,8 @@ export function ImmersiveEditor({
       || !visualPreviewEditable
       || 'preview' !== mode
     ) return;
-    const isCompactViewport = environment.viewportWidth() <= 640;
+    const isCompactViewport =
+      environment.viewportWidth() <= COMPACT_OUTLINE_MAX_WIDTH;
     previousViewportCompactRef.current = isCompactViewport;
     if (!isCompactViewport) {
       outlineAutoClosedInCompactVisitRef.current = false;
@@ -167,13 +177,17 @@ export function ImmersiveEditor({
 
   useLayoutEffect(() => {
     const initialWidth = environment.viewportWidth();
-    previousViewportCompactRef.current = initialWidth <= 640;
-    if (initialWidth > 640) {
+    setViewportWidth(initialWidth);
+    previousViewportCompactRef.current =
+      initialWidth <= COMPACT_OUTLINE_MAX_WIDTH;
+    if (initialWidth > COMPACT_OUTLINE_MAX_WIDTH) {
       outlineAutoClosedInCompactVisitRef.current = false;
     }
 
     return environment.subscribeResize(() => {
-      const isCompactViewport = environment.viewportWidth() <= 640;
+      const currentWidth = environment.viewportWidth();
+      setViewportWidth(currentWidth);
+      const isCompactViewport = currentWidth <= COMPACT_OUTLINE_MAX_WIDTH;
       const wasCompactViewport = previousViewportCompactRef.current;
       previousViewportCompactRef.current = isCompactViewport;
       if (!isCompactViewport) {
@@ -316,6 +330,9 @@ export function ImmersiveEditor({
     documentSession.document.focus();
   };
   const copyWechat = () => {
+    const { pending, unavailable } = wechatCopyStatus.getSnapshot();
+    if (pending || unavailable) return;
+    setWechatCopied(false);
     void onCopyWechat().then((success) => {
       if (success) setWechatCopied(true);
     });
@@ -395,6 +412,7 @@ export function ImmersiveEditor({
         strings={strings}
         styleControls={styleControls}
         toolbar={toolbar}
+        wechatCopyStatus={wechatCopyStatus}
         wechatCopied={wechatCopied}
         onCopyWechat={copyWechat}
         onExit={onExit}
@@ -413,6 +431,7 @@ export function ImmersiveEditor({
           items={outline}
           open={outlineOpen}
           strings={strings}
+          viewportWidth={viewportWidth}
           onOpenChange={handleOutlineOpenChange}
           onSelect={handleOutlineSelect}
         />

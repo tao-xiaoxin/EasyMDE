@@ -10,6 +10,7 @@ import type { ImmersivePreferencesPort } from '../../../contracts/ports/immersiv
 import type { GeneralSettings } from '../../../contracts/settings-center-settings';
 import { createBrowserImmersiveEnvironment } from '../../../integrations/browser/immersive/create-browser-immersive-environment';
 import type { EditorDocumentSession } from '../../document-source/editor-document-session';
+import { createWechatCopyStatusStore } from '../../wechat-export/wechat-copy-status';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -233,6 +234,7 @@ function createImmersiveEditorFixture(initial: string, viewportWidth = 1280) {
       onBeforeSourceMutation: () => true,
       onConfirmPublish: () => true,
       onCopyWechat: async () => true,
+      wechatCopyStatus: createWechatCopyStatusStore(),
       onExit: () => {},
       onFailure,
       onSelectFeaturedImage: async () => null,
@@ -588,8 +590,8 @@ describe('ImmersiveEditor document derivations', () => {
     expect(fixture.revealPosition).toHaveBeenCalledWith(8);
   });
 
-  it('keeps the mobile outline open while Preview is not editable', () => {
-    const fixture = createImmersiveEditorFixture('# Heading\n\nbody', 390);
+  it('keeps the compact outline open while Preview is not editable', () => {
+    const fixture = createImmersiveEditorFixture('# Heading\n\nbody', 744);
     const view = render(
       <ImmersiveEditor {...fixture.props} mode="preview" />
     );
@@ -709,8 +711,8 @@ describe('ImmersiveEditor document derivations', () => {
     expect(plain.defaultPrevented).toBe(true);
   });
 
-  it('closes the mobile outline once on the editable Preview transition and preserves manual reopen', () => {
-    const fixture = createImmersiveEditorFixture('# Heading\n\nbody', 390);
+  it('closes the compact outline once on the editable Preview transition and preserves manual reopen', () => {
+    const fixture = createImmersiveEditorFixture('# Heading\n\nbody', 744);
     const view = render(
       <ImmersiveEditor {...fixture.props} mode="preview" />
     );
@@ -754,10 +756,12 @@ describe('ImmersiveEditor document derivations', () => {
   });
 
   it.each([
-    { mode: 'preview' as const, viewportWidth: 641 },
+    { mode: 'preview' as const, viewportWidth: 783 },
+    { mode: 'preview' as const, viewportWidth: 1133 },
     { mode: 'preview' as const, viewportWidth: 1280 },
-    { mode: 'source' as const, viewportWidth: 390 },
-    { mode: 'split' as const, viewportWidth: 390 }
+    { mode: 'source' as const, viewportWidth: 744 },
+    { mode: 'split' as const, viewportWidth: 744 },
+    { mode: 'split' as const, viewportWidth: 782 }
   ])(
     'keeps the outline open for $mode at $viewportWidth pixels',
     ({ mode, viewportWidth }) => {
@@ -786,7 +790,7 @@ describe('ImmersiveEditor document derivations', () => {
   );
 
   it('closes once for each wide-to-compact editable Preview visit', () => {
-    const fixture = createImmersiveEditorFixture('# Heading\n\nbody', 760);
+    const fixture = createImmersiveEditorFixture('# Heading\n\nbody', 1133);
     const view = render(
       <ImmersiveEditor
         {...fixture.props}
@@ -806,10 +810,10 @@ describe('ImmersiveEditor document derivations', () => {
     expect(view.container.querySelector('.easymde-immersive-outline'))
       .not.toBeNull();
 
-    act(() => fixture.resizeTo(641));
+    act(() => fixture.resizeTo(783));
     expect(view.container.querySelector('.easymde-immersive-outline'))
       .not.toBeNull();
-    act(() => fixture.resizeTo(640));
+    act(() => fixture.resizeTo(782));
     expect(view.container.querySelector('.easymde-immersive-outline'))
       .toBeNull();
     expect(fixture.focusVisualPreview).not.toHaveBeenCalled();
@@ -817,11 +821,11 @@ describe('ImmersiveEditor document derivations', () => {
     fireEvent.click(view.getByRole('button', { name: 'showOutline' }));
     expect(view.container.querySelector('.easymde-immersive-outline'))
       .not.toBeNull();
-    act(() => fixture.resizeTo(640));
+    act(() => fixture.resizeTo(744));
     expect(view.container.querySelector('.easymde-immersive-outline'))
       .not.toBeNull();
 
-    act(() => fixture.resizeTo(760));
+    act(() => fixture.resizeTo(1133));
     expect(view.container.querySelector('.easymde-immersive-outline'))
       .not.toBeNull();
     const focusedOutlineControl = view.container.querySelector<HTMLButtonElement>(
@@ -831,14 +835,14 @@ describe('ImmersiveEditor document derivations', () => {
       throw new Error('test-focused-outline-control-unavailable');
     }
     fixture.setActiveElement(focusedOutlineControl);
-    act(() => fixture.resizeTo(640));
+    act(() => fixture.resizeTo(744));
     expect(view.container.querySelector('.easymde-immersive-outline'))
       .toBeNull();
     expect(fixture.focusVisualPreview).toHaveBeenCalledOnce();
   });
 
   it('keeps resize decisions on committed Preview props during a suspended transition', async () => {
-    const fixture = createImmersiveEditorFixture('# Heading\n\nbody', 760);
+    const fixture = createImmersiveEditorFixture('# Heading\n\nbody', 1133);
     const editorElement = (visualPreviewEditable: boolean) => (
       <Suspense fallback={<output data-testid="suspended-editor">pending</output>}>
         <ImmersiveEditor
@@ -864,7 +868,7 @@ describe('ImmersiveEditor document derivations', () => {
       .not.toBeNull();
 
     fixture.readActiveElement.mockClear();
-    act(() => fixture.resizeTo(640));
+    act(() => fixture.resizeTo(744));
     expect(fixture.readActiveElement).not.toHaveBeenCalled();
     expect(view.container.querySelector('.easymde-immersive-outline'))
       .not.toBeNull();
@@ -878,5 +882,24 @@ describe('ImmersiveEditor document derivations', () => {
       expect(view.container.querySelector('.easymde-immersive-outline'))
         .toBeNull();
     });
+  });
+
+  it('propagates live viewport width to the docked Outline resizer bounds across resizes', () => {
+    const fixture = createImmersiveEditorFixture('# Heading\n\nbody', 800);
+    const view = render(<ImmersiveEditor {...fixture.props} mode="split" />);
+    const outline = view.container.querySelector<HTMLElement>(
+      '.easymde-immersive-outline'
+    );
+    const resizer = view.getByRole('separator', { name: 'resizeOutline' });
+    expect(outline?.style.width).toBe('192px');
+    expect(resizer.getAttribute('aria-valuemin')).toBe('160');
+    expect(resizer.getAttribute('aria-valuemax')).toBe('192');
+    expect(resizer.getAttribute('aria-valuenow')).toBe('192');
+
+    act(() => fixture.resizeTo(1280));
+    expect(outline?.style.width).toBe('240px');
+    expect(resizer.getAttribute('aria-valuemin')).toBe('190');
+    expect(resizer.getAttribute('aria-valuemax')).toBe('360');
+    expect(resizer.getAttribute('aria-valuenow')).toBe('240');
   });
 });

@@ -361,9 +361,15 @@
 
 .easymde-rendered-content.easymde-markdown-theme-bloom-petal .easymde-mermaid text{
     fill: var(--text) !important;
-    font-family: var(--font-sans) !important;
 }
 
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-petal .easymde-mermaid .mindmap-node.section-root rect,
+.easymde-rendered-content.easymde-markdown-theme-bloom-petal .easymde-mermaid .mindmap-node.section-root path,
+.easymde-rendered-content.easymde-markdown-theme-bloom-petal .easymde-mermaid .mindmap-node.section-root circle,
+.easymde-rendered-content.easymde-markdown-theme-bloom-petal .easymde-mermaid .mindmap-node.section-root polygon {
+    fill: var(--bg) !important;
+}
 
 .easymde-rendered-content.easymde-markdown-theme-bloom-petal .easymde-mermaid .node rect,
 .easymde-rendered-content.easymde-markdown-theme-bloom-petal .easymde-mermaid .node circle,

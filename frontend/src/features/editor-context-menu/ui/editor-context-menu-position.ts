@@ -28,15 +28,36 @@ type EditorContextMenuSize = Readonly<{
 
 export type EditorContextMenuSubmenuPlacement = 'left' | 'right';
 
-export type EditorContextMenuPosition = Readonly<{
-  clipPath?: string;
+type EditorContextMenuSubmenuBase = Readonly<{
   left: number;
-  maxBlockSize?: number;
+  placement: EditorContextMenuSubmenuPlacement;
   top: number;
-  placement?: EditorContextMenuSubmenuPlacement;
-  pointerLeft?: number;
-  pointerTop?: number;
 }>;
+
+export type EditorContextMenuSubmenuLayout =
+  | (EditorContextMenuSubmenuBase & Readonly<{ overlapped: true }>)
+  | (EditorContextMenuSubmenuBase
+      & Readonly<{
+        overlapped: false;
+        pointerTop: number;
+      }>);
+
+type EditorContextMenuPositionExtras = Readonly<{
+  clipPath?: string;
+  maxBlockSize?: number;
+}>;
+
+export type EditorContextMenuPosition =
+  | (EditorContextMenuSubmenuBase
+      & EditorContextMenuPositionExtras
+      & Readonly<{ overlapped: true }>)
+  | (EditorContextMenuSubmenuBase
+      & EditorContextMenuPositionExtras
+      & Readonly<{
+        overlapped: false;
+        pointerLeft: number;
+        pointerTop: number;
+      }>);
 
 export type EditorContextMenuRootPosition = Readonly<{
   clipPath?: string;
@@ -65,9 +86,9 @@ function viewportBoundary(
   viewport: EditorContextMenuViewport
 ): EditorContextMenuBoundary {
   return {
-    bottom: viewport.height - VIEWPORT_GUTTER,
+    bottom: Math.max(VIEWPORT_GUTTER, viewport.height - VIEWPORT_GUTTER),
     left: VIEWPORT_GUTTER,
-    right: viewport.width - VIEWPORT_GUTTER,
+    right: Math.max(VIEWPORT_GUTTER, viewport.width - VIEWPORT_GUTTER),
     top: VIEWPORT_GUTTER
   };
 }
@@ -205,10 +226,17 @@ export function sameSubmenuPositions(
       leftValue.left !== rightValue.left
       || leftValue.top !== rightValue.top
       || leftValue.placement !== rightValue.placement
-      || leftValue.pointerLeft !== rightValue.pointerLeft
-      || leftValue.pointerTop !== rightValue.pointerTop
+      || leftValue.overlapped !== rightValue.overlapped
       || leftValue.maxBlockSize !== rightValue.maxBlockSize
       || leftValue.clipPath !== rightValue.clipPath
+    ) {
+      return false;
+    }
+    if (
+      !leftValue.overlapped
+      && !rightValue.overlapped
+      && (leftValue.pointerLeft !== rightValue.pointerLeft
+        || leftValue.pointerTop !== rightValue.pointerTop)
     ) {
       return false;
     }
@@ -225,12 +253,16 @@ export function computeRootMenuPosition(input: Readonly<{
 }>): EditorContextMenuRootPosition {
   const { boundary, layout, mode, origin, viewport } = input;
   const bounds = visibleBoundary(boundary, viewport);
+  const vpBounds = viewportBoundary(viewport);
   const width = layout.rootWidth;
   const measuredHeight = layout.rootHeight;
   const fullBoundaryHeight = availableBlockSize(boundary, viewport);
+  const effectiveBoundary = bounds.right - bounds.left < width
+    ? { ...bounds, left: vpBounds.left, right: vpBounds.right }
+    : bounds;
   const nextLeft = Math.max(
-    bounds.left,
-    Math.min(origin.left, Math.max(bounds.left, bounds.right - width))
+    effectiveBoundary.left,
+    Math.min(origin.left, Math.max(effectiveBoundary.left, effectiveBoundary.right - width))
   );
   const nextTop = 'anchor' === mode
     ? Math.max(
@@ -252,7 +284,7 @@ export function computeRootMenuPosition(input: Readonly<{
     nextTop,
     width,
     effectiveHeight,
-    boundary,
+    effectiveBoundary,
     viewport
   );
   return {
@@ -269,22 +301,8 @@ export function positionEditorContextSubmenu(input: Readonly<{
   trigger: EditorContextMenuRect;
   boundary: EditorContextMenuBoundary;
   viewport: EditorContextMenuViewport;
-}>): Readonly<{
-  left: number;
-  placement: EditorContextMenuSubmenuPlacement;
-  pointerTop: number;
-  top: number;
-}> {
-  const boundaryLeft = Math.max(VIEWPORT_GUTTER, input.boundary.left);
-  const boundaryRight = Math.max(
-    boundaryLeft,
-    Math.min(input.viewport.width - VIEWPORT_GUTTER, input.boundary.right)
-  );
-  const boundaryTop = Math.max(VIEWPORT_GUTTER, input.boundary.top);
-  const boundaryBottom = Math.max(
-    boundaryTop,
-    Math.min(input.viewport.height - VIEWPORT_GUTTER, input.boundary.bottom)
-  );
+}>): EditorContextMenuSubmenuLayout {
+  const bounds = visibleBoundary(input.boundary, input.viewport);
   const preferredLeft = 'ltr' === input.direction
     ? input.trigger.right + MENU_GAP
     : input.trigger.left - input.menu.width - MENU_GAP;
@@ -300,34 +318,50 @@ export function positionEditorContextSubmenu(input: Readonly<{
     placement: EditorContextMenuSubmenuPlacement
   ): boolean => {
     const panelRight = left + input.menu.width;
-    return left >= boundaryLeft
-      && panelRight <= boundaryRight
+    return left >= bounds.left
+      && panelRight <= bounds.right
       && ('right' === placement
-        ? left >= boundaryLeft + POINTER_OUTSET
-        : panelRight <= boundaryRight - POINTER_OUTSET);
+        ? left >= bounds.left + POINTER_OUTSET
+        : panelRight <= bounds.right - POINTER_OUTSET);
   };
-  const placement = fits(preferredLeft, preferredPlacement)
-    ? preferredPlacement
-    : fits(oppositeLeft, oppositePlacement)
-      ? oppositePlacement
-      : preferredPlacement;
+  const fitsPreferred = fits(preferredLeft, preferredPlacement);
+  const fitsOpposite = fits(oppositeLeft, oppositePlacement);
+  const overlapped = !fitsPreferred && !fitsOpposite;
+  let placement: EditorContextMenuSubmenuPlacement;
+  if (fitsPreferred) {
+    placement = preferredPlacement;
+  } else if (fitsOpposite) {
+    placement = oppositePlacement;
+  } else {
+    const spaceRight = bounds.right - input.trigger.right;
+    const spaceLeft = input.trigger.left - bounds.left;
+    placement = spaceRight > spaceLeft
+      ? 'right'
+      : spaceLeft > spaceRight
+        ? 'left'
+        : preferredPlacement;
+  }
   const candidateLeft = preferredPlacement === placement
     ? preferredLeft
     : oppositeLeft;
-  const minLeft = 'right' === placement
-    ? boundaryLeft + POINTER_OUTSET
-    : boundaryLeft;
-  const maxLeft = Math.max(
-    minLeft,
-    boundaryRight
-      - ('left' === placement ? POINTER_OUTSET : 0)
-      - input.menu.width
-  );
-  const nextLeft = Math.max(minLeft, Math.min(maxLeft, candidateLeft));
-  const minTop = boundaryTop;
-  const maxTop = Math.max(minTop, boundaryBottom - input.menu.height);
+  const nextLeft = overlapped
+    ? Math.max(
+        bounds.left,
+        Math.min(Math.max(bounds.left, bounds.right - input.menu.width), candidateLeft)
+      )
+    : candidateLeft;
+  const minTop = bounds.top;
+  const maxTop = Math.max(minTop, bounds.bottom - input.menu.height);
   const preferredTop = input.trigger.top + input.trigger.height / 2 - POINTER_SAFE_EDGE;
   const nextTop = Math.max(minTop, Math.min(maxTop, preferredTop));
+  if (overlapped) {
+    return {
+      left: nextLeft,
+      overlapped: true,
+      placement,
+      top: nextTop
+    };
+  }
   const pointerMax = Math.max(POINTER_SAFE_EDGE, input.menu.height - POINTER_SAFE_EDGE);
   const pointerTop = Math.max(
     POINTER_SAFE_EDGE,
@@ -335,6 +369,7 @@ export function positionEditorContextSubmenu(input: Readonly<{
   );
   return {
     left: nextLeft,
+    overlapped: false,
     placement,
     pointerTop,
     top: nextTop
@@ -409,14 +444,22 @@ export function computeOpenSubmenuPositions(input: Readonly<{
       childBoundary,
       viewport
     );
-    nextPositions[path] = {
-      ...nextPosition,
+    const extras = {
       ...(clipPath ? { clipPath } : {}),
-      maxBlockSize,
-      pointerLeft: 'right' === nextPosition.placement
-        ? nextPosition.left
-        : nextPosition.left + submenuWidth
+      maxBlockSize
     };
+    nextPositions[path] = nextPosition.overlapped
+      ? {
+          ...nextPosition,
+          ...extras
+        }
+      : {
+          ...nextPosition,
+          ...extras,
+          pointerLeft: 'right' === nextPosition.placement
+            ? nextPosition.left
+            : nextPosition.left + submenuWidth
+        };
     const currentLeft = Number.parseFloat(submenu.style.left);
     const currentTop = Number.parseFloat(submenu.style.top);
     positionDeltas.set(path, {

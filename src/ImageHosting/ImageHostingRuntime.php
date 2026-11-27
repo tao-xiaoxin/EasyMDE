@@ -240,7 +240,7 @@ final class ImageHostingRuntime {
 	}
 
 	private function upload_provider( $provider, $bytes, $mime_type, $key, array $context ) {
-		if ( $provider instanceof QiniuKodoProvider ) {
+		if ( $provider instanceof CloudflareR2Provider ) {
 			return $provider->upload( $bytes, $mime_type, $key, $context );
 		}
 
@@ -285,12 +285,18 @@ final class ImageHostingRuntime {
 		}
 
 		if ( 'qiniu-kodo' === $service ) {
+			$clock = $this->clock;
 			return new QiniuKodoProvider(
 				$this->transport,
 				isset( $config['accessKey'] ) ? $config['accessKey'] : '',
 				isset( $config['secretKey'] ) ? $config['secretKey'] : '',
 				isset( $config['bucket'] ) ? $config['bucket'] : '',
-				isset( $config['domain'] ) ? $config['domain'] : ''
+				isset( $config['domain'] ) ? $config['domain'] : '',
+				static function () use ( $clock ) {
+					$now = call_user_func( $clock );
+
+					return $now instanceof DateTimeImmutable ? $now->getTimestamp() : 0;
+				}
 			);
 		}
 

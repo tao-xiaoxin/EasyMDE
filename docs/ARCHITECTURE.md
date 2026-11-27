@@ -73,6 +73,36 @@ Legacy admin Browser Runtime files and Focus Mode assets have no ordinary
 Editor consumer and are excluded from the release package. Historical data and
 public PHP compatibility contracts remain preserved as described below.
 
+The ordinary Editor startup stylesheet transaction is coordinated by
+`frontend/src/entrypoints/admin-editor.tsx` via
+`frontend/src/entrypoints/admin-editor-stylesheets.ts`
+(`prepareInitialEditorStylesheets`, `scopeBaseEditorStylesheet`, and
+`disposeStylesheetLeases`). It waits for the base content
+stylesheet and the selected article-theme stylesheet through
+`createEditorStylesheetReadiness`; a changed article theme remains an inactive
+candidate until it is readable and scoped. The preparation lease moves through
+`pending`, `provisional`, `committed`, and `closed` phases. It transfers the
+canonical ID and media before the React Root and Appearance ports are
+constructed, and removes the old link only after the mount succeeds. Cancel,
+load/error failure, teardown, and mount failure remove candidates, dispose
+leases, and restore the old link before `onStartupFailure` reports the stable
+failure code. Alongside `admin-editor-stylesheets.ts`, `admin-editor.tsx`
+delegates DOM field discovery, native WordPress bridges, and browser adapter
+helpers to `frontend/src/entrypoints/admin-editor-browser-adapters.ts`, and
+lazy WeChat clipboard/rasterizer port loading, cold-copy freshness guarding,
+and prestarted modern clipboard write handoff to
+`frontend/src/entrypoints/admin-editor-lazy-wechat-ports.ts`.
+
+`createWordPressAppearancePort` owns the runtime appearance transaction after
+startup. It scopes article and Custom CSS styles through
+`frontend/src/shared/css/editor-stylesheet-scope.ts`, publishes the four native
+appearance bridge fields and its in-memory snapshot only after stylesheet
+preparation and DOM handoff, and rolls back fields, snapshot, nodes, and leases
+on failure. An unchanged Custom CSS node and text with its tracked lease are
+reused; changed Custom CSS uses an inactive candidate. If restoration cannot
+verify its stylesheet lease, the port marks its state unverified and rejects
+later appearance applications until the owner is refreshed.
+
 ## Repository Structure
 
 ```text
@@ -117,7 +147,11 @@ public PHP compatibility contracts remain preserved as described below.
 |   |   |   |-- preview-runtime/         # Preview enhancement runtime adapters.
 |   |   |   `-- wordpress/               # WordPress, REST, media, and native-form adapters.
 |   |   |-- shared/                      # Stable cross-feature utilities and UI primitives.
+|   |   |   |-- css/                     # Editor stylesheet scoping and CSS selector-list helpers.
+|   |   |   |-- dom/                     # Protected visual-node DOM adoption and attribute helpers.
 |   |   |   |-- keyboard/                # Shared keyboard and shortcut utilities.
+|   |   |   |-- markdown/                # Shared Markdown line-model and math TeX normalization helpers.
+|   |   |   |-- mermaid/                 # Single cross-bundle Mermaid runtime initialization and intrinsic layout owner (`mermaid-runtime-config.ts`).
 |   |   |   `-- ui/                      # Shared UI primitives.
 |   |   |-- test/                        # Frontend-only setup and fixtures.
 |   |   |   `-- fixtures/                # Frontend contract fixtures.
@@ -194,7 +228,7 @@ menu capture reads prepared structure without synchronously reparsing a document
 
 The Vite entry under `frontend/test/build-contract/` remains test-only. It proves that React, ReactDOM, and `@wordpress/element` resolve to the WordPress-provided `wp-element` runtime, while the configured classic JSX transform emits calls to its public `createElement` API instead of assuming an unavailable automatic JSX-runtime global. It also proves that Vite and WordPress manifests agree on the generated script, dependency metadata, and plugin-relative resource paths. Its output is written to `.cache/easymde-frontend-contract/`, is not enqueued by WordPress, and is excluded from the installable plugin ZIP.
 
-`frontend/src/entrypoints/admin-editor-loader.ts` is the PHP-enqueued production loader for the ordinary Editor. `AdminAssets` validates `assets/build/admin-editor-loader/wordpress-manifest.json` and `assets/build/wordpress-manifest.json`, enqueues the stable `easymde-admin-editor-toolbar` loader handle, emits `<link rel="modulepreload">` hints for the main entry, and serializes the versioned loader Bootstrap with `mainScriptUrl` and `moduleFormat: "esm"`. The loader reads and same-origin-validates `mainScriptUrl`, dynamically loads the hashed local ES Module entry (`frontend/src/entrypoints/admin-editor.tsx`, compiled with Vite `format: "es"`, target `es2020`, reusing the WordPress 6.7 React 18 `wp.element` global via `wordpressEsmExternals()`), and starts the same React Editor Root after its DOM gate is ready. Heavy on-demand capabilities—specifically the unified ProseMirror + `markdown-it` immersive visual editor (`frontend/src/features/immersive-visual/MountedProseMirrorVisualEditor.tsx`), the WeChat Clipboard serializer/rasterizer (`frontend/src/integrations/browser/wechat/`), and secondary CodeMirror indentation language packs—are dynamically code-split into local chunks loaded only when activated. `templates/admin/editor-shell.php` provides one empty `#easymde-editor-root` mount and native WordPress submission fields. The Markdown field remains visible until CodeMirror owns a working document session; React then hides both that bridge field and `#postdivrich`, restoring them on teardown or failure; there is no parallel Legacy editor container.
+`frontend/src/entrypoints/admin-editor-loader.ts` is the PHP-enqueued production loader for the ordinary Editor. `AdminAssets` validates `assets/build/admin-editor-loader/wordpress-manifest.json` and `assets/build/wordpress-manifest.json`, enqueues the stable `easymde-admin-editor-toolbar` loader handle, emits `<link rel="modulepreload">` hints for the main entry, and serializes the versioned loader Bootstrap with `mainScriptUrl` and `moduleFormat: "esm"`. The loader reads and same-origin-validates `mainScriptUrl`, dynamically loads the hashed local ES Module entry (`frontend/src/entrypoints/admin-editor.tsx`, compiled with Vite `format: "es"`, target `es2020`, reusing the WordPress 6.7 React 18 `wp.element` global via `wordpressEsmExternals()`), and starts the same React Editor Root after its DOM gate is ready. Heavy on-demand capabilities—specifically the unified ProseMirror + `markdown-it` immersive visual editor (`frontend/src/features/immersive-visual/MountedProseMirrorVisualEditor.tsx`), the WeChat Clipboard serializer/rasterizer (`frontend/src/integrations/browser/wechat/`), and secondary CodeMirror indentation language packs—are dynamically code-split into local chunks loaded only when activated. The Editor manifest also owns exactly one local `assets/wechat-png-encoder-[hash].js` resource for explicit PNG conversion; release validation requires that worker resource alongside the entry, dynamic chunks, and `.asset.php` metadata. `templates/admin/editor-shell.php` provides one empty `#easymde-editor-root` mount and native WordPress submission fields. The Markdown field remains visible until CodeMirror owns a working document session; React then hides both that bridge field and `#postdivrich`, restoring them on teardown or failure; there is no parallel Legacy editor container.
 
 `frontend/src/entrypoints/frontend-code-copy.ts` is a separate, non-React
 production entry for published EasyMDE content. `FrontendAssets` conditionally
@@ -255,8 +289,20 @@ partial, unknown, or later blank frames fail. A reload that emits no
 distinguishable new frame is accepted only when the visible Settings pixels
 before and after are exactly equal across the complete analysis.
 
-The entrypoint parses external data before mounting, constructs focused
-WordPress and browser Adapters, mounts one modular `EditorRoot` (`frontend/src/app/editor/EditorRoot.tsx` composed from focused feature-bridge hooks and `ImmersiveVisualEditorHost.tsx`), and owns idempotent
+The `frontend/src/entrypoints/admin-editor.tsx` entrypoint parses external data
+before mounting, delegates startup stylesheet transactions to
+`frontend/src/entrypoints/admin-editor-stylesheets.ts`, DOM field discovery,
+native Save/Publish/Revision bridges, clipboard and PNG-encoder runtime helpers,
+and simplified formatting parsing to
+`frontend/src/entrypoints/admin-editor-browser-adapters.ts`, and lazy WeChat
+clipboard/rasterizer port loading, cold-copy freshness guarding, and prestarted
+modern clipboard write handoff to
+`frontend/src/entrypoints/admin-editor-lazy-wechat-ports.ts`, constructs focused
+WordPress and browser Adapters (reading cached Preview widths directly from
+`frontend/src/integrations/browser/wechat/wechat-preview-width-store.ts` so the
+WeChat export chunk remains dynamically code-split), mounts one modular
+`EditorRoot` (`frontend/src/app/editor/EditorRoot.tsx` composed from focused
+feature-bridge hooks and `ImmersiveVisualEditorHost.tsx`), and owns idempotent
 teardown. The Root composes Toolbar/commands, CodeMirror document and title
 sessions, the modular read-only `PreviewSurfaceOwner` (`frontend/src/features/live-preview/ui/`, with dormant windowed/editable-adoption layers retired) and local post-response enhancements, the modular immersive editor (`frontend/src/features/immersive-editor/`: `immersive-document-derivations.ts` for bounded streaming document statistics and heading-outline scanning, `immersive-publish-excerpt.ts` for Lezer-tree plain-text publish-excerpt derivation, `ui/use-immersive-document-derivations.ts` for debounced/sliced React outline and stats scheduling, `ui/ImmersiveHistoryDialog.tsx` for the revision history modal delegating restore to WordPress, plus `ImmersiveCustomCssDialog` and `ImmersivePublishDialog` lazily loaded as separate ESM chunks), Appearance and
 Custom CSS, Fonts, Media and image upload, Local Drafts, the modular WeChat export pipeline (`frontend/src/integrations/browser/wechat/`),
@@ -335,10 +381,13 @@ themes applies identically to formal Preview.
   Preview without making ProseMirror a persistence or formal rendering
   authority. When the formal Preview sink is hidden (`easymde-preview-surface-hidden`
   while unlocked, or hidden `.easymde-pane-preview` in source modes),
-  `frontend/src/integrations/browser/wechat/wechat-payload-serializer.ts`
-  serializes and measures from a temporary off-screen layout-participating clone
-  of the formal Preview sink (reading only container width, never ProseMirror
-  DOM) and removes it in `finally`.
+  `frontend/src/integrations/browser/wechat/wechat-preview-measurement.ts`
+  (backed by `frontend/src/integrations/browser/wechat/wechat-preview-width-store.ts`)
+  mounts a temporary off-screen layout-participating clone of the formal Preview
+  sink (reading only container width, never ProseMirror DOM) and removes it in
+  `finally`, while
+  `frontend/src/integrations/browser/wechat/wechat-portable-serialization.ts`
+  serializes the measured clone.
 React neither submits a closed field allowlist nor treats synchronization as a
 successful Save, so unknown WordPress and extension fields remain intact.
 
@@ -720,23 +769,595 @@ current exception; Verify Upload remains single-attempt.
 
 Local Draft recovery uses the versioned `easymde:draft:v1:<site>:<user>:<post-or-new>` identity, a 1 MiB limit, a 500-millisecond latest-write scheduler, explicit read/write/discard failures, and cross-tab conflict handling. New-post identity comes from the stable PHP Bootstrap contract rather than WordPress's temporary auto-draft ID.
 
-WeChat export is user-initiated compatibility output from the current stable, sanitized, locally enhanced Preview. `createWechatExportSession` owns the ordinary and immersive surfaces, and `createBrowserWechatClipboard` owns the browser Clipboard adapter and its single clone-and-serialize pipeline; the data flow is Preview sink -> session -> adapter -> browser Clipboard path. When the formal Preview sink is under `display:none` (hidden by `easymde-preview-surface-hidden` during unlocked visual editing or by source-only modes), `wechat-payload-serializer.ts` mounts an off-screen, layout-participating clone of that formal Preview sink beside the nearest rendered ancestor—reading only container width (never ProseMirror DOM)—and disposes it in `finally`. Copy never writes Markdown, `post_content`, metadata, revisions, or publication state.
+WeChat export is user-initiated compatibility output from the current stable, sanitized, locally enhanced Preview. `createWechatExportSession` owns the ordinary and immersive surfaces, and `createBrowserWechatClipboard` owns the browser Clipboard adapter and its single clone-and-serialize pipeline; the data flow is Preview sink -> session -> adapter -> browser Clipboard path. When the formal Preview sink is under `display:none` (hidden by `easymde-preview-surface-hidden` during unlocked ProseMirror visual editing or by source-only modes), `wechat-preview-measurement.ts` mounts an off-screen, layout-participating clone of that formal Preview sink with its ancestor chain—reading only container width (from the visible ProseMirror surface or remembered width, never ProseMirror DOM)—and disposes it on transaction cleanup. Copy never writes Markdown, `post_content`, metadata, revisions, or publication state. The session coalesces one active operation, signals cancellation and sequence-invalidates it during disposal or replacement, and suppresses late status. `EditorRoot` projects that operation to both ordinary and immersive controls, which share one pending state and clear it only after the session returns the browser owner's result.
+Under `frontend/src/integrations/browser/wechat/`, both adapters stay
+composition owners: `create-browser-wechat-clipboard.ts` owns the public
+`WechatClipboardPort` factory and shared caches while delegating copy
+orchestration to `wechat-clipboard-copy-transaction.ts` (modern deferred-Blob
+browser commit, timeouts, and Preview readiness resolution),
+`wechat-clipboard-copy-portable.ts` (portable Copy transactions),
+`wechat-clipboard-copy-png.ts` (PNG-conversion Copy transactions), and
+`wechat-clipboard-copy-legacy.ts` (the activation-sensitive synchronous legacy
+`execCommand` driver and synchronous modern-failure fallback), while
+`create-browser-wechat-visual-rasterizer.ts` keeps SVG assembly (delegating
+direct-SVG backdrop synthesis, `preserveAspectRatio` viewport mapping, and
+opacity/radius routing to `wechat-mermaid-direct-svg-backdrop.ts`), decode,
+encode (with `create-browser-wechat-png-encoder.ts`,
+`wechat-png-encoder-protocol.ts`, and `wechat-png-encoder.worker.ts`), and its
+factory. The browser-facing responsibilities live in modular private families
+beside them:
+
+- clone metadata (`wechat-clone-metadata.ts`), lightweight shared copy
+  preconditions (`wechat-copy-preconditions.ts`, shared with
+  `admin-editor-lazy-wechat-ports.ts`, `wechat-source-freshness.ts`, and
+  `create-browser-wechat-clipboard.ts`), and source freshness
+  (`wechat-source-freshness.ts`);
+- style policy (`wechat-style-policy.ts`, `wechat-style-policy-catalog.ts`,
+  `wechat-style-policy-content-box.ts`, `wechat-style-policy-semantics.ts`) and
+  portable declaration emission (`wechat-style-declarations.ts`);
+- background theme images (`wechat-background-images.ts`), pseudo-elements and
+  quote/heading pseudo-flow (`wechat-pseudo-content.ts`,
+  `wechat-pseudo-elements.ts`, `wechat-heading-pseudo-flow.ts`,
+  `wechat-quote-pseudo-flow.ts`), and the inline pseudo-paint pipeline
+  (`wechat-inline-pseudo-paint.ts` over `wechat-inline-pseudo-paint-types.ts`,
+  `wechat-inline-pseudo-paint-core.ts`,
+  `wechat-inline-pseudo-paint-admission.ts`,
+  `wechat-inline-pseudo-paint-source.ts`,
+  `wechat-inline-pseudo-paint-plan.ts`, `wechat-inline-pseudo-paint-bind.ts`,
+  and `wechat-inline-pseudo-paint-apply.ts`);
+- portable content and media (`wechat-portable-content.ts`,
+  `wechat-portable-media.ts`) and portable serialization
+  (`wechat-portable-serialization.ts` composed with
+  `wechat-portable-serialization-inline-styles.ts`,
+  `wechat-portable-serialization-math.ts`,
+  `wechat-portable-serialization-pseudo-paint.ts`,
+  `wechat-portable-serialization-finalize.ts`, and
+  `wechat-portable-serialization-plaintext.ts`);
+- prepared-payload lifecycle (`wechat-prepared-payload.ts` composed with
+  `wechat-prepared-payload-state.ts`, `wechat-prepared-payload-builder.ts`, and
+  `wechat-prepared-payload-background.ts`);
+- preview measurement and geometry caching (`wechat-preview-measurement.ts`,
+  `wechat-preview-geometry-cache.ts`, and the lightweight
+  `wechat-preview-width-store.ts`), dimension semantics
+  (`wechat-dimension-semantics.ts`), and fidelity signatures
+  (`wechat-fidelity-signature.ts`);
+- task caption, checkbox style, layout policy, geometry, paint, list
+  projection, and static flow (`wechat-task-caption.ts`,
+  `wechat-task-checkbox-style.ts`, `wechat-task-layout-policy.ts`,
+  `wechat-task-geometry.ts`, `wechat-task-paint.ts`,
+  `wechat-task-list-projection.ts`, `wechat-task-static-flow.ts`,
+  `wechat-task-static-flow-policy.ts`,
+  `wechat-task-static-flow-projection.ts`), nested lists and native table grids
+  (`wechat-list-table-layout.ts`, `wechat-nested-list-projection.ts`,
+  `wechat-table-native-grid.ts`, `wechat-table-native-grid-integration.ts`), and
+  SVG markers (`wechat-svg-marker-geometry.ts`,
+  `wechat-svg-marker-projection.ts`, `wechat-svg-portable-integration.ts`);
+- math static-flow (`wechat-math-static-flow.ts` composed with
+  `wechat-math-static-flow-model.ts`, `wechat-math-static-flow-admission.ts`,
+  and `wechat-math-static-flow-capture.ts`) and atlas-backed math vector
+  capture, portable binding, and scene materialization
+  (`wechat-math-vector-capture.ts` composed with
+  `wechat-math-vector-capture-primitives.ts`,
+  `wechat-math-vector-capture-fonts.ts`,
+  `wechat-math-vector-capture-graphics.ts`, and
+  `wechat-math-vector-capture-layout.ts`, alongside
+  `wechat-math-vector-portable.ts` and `wechat-math-vector-scene.ts`);
+- Mermaid geometry, background resolution, CSS color compositing, direct-SVG
+  backdrop synthesis, content-box, policy, capture plans, and PNG conversion
+  (`wechat-mermaid-geometry.ts`, `wechat-css-color.ts`,
+  `wechat-mermaid-background.ts`, `wechat-mermaid-direct-svg-backdrop.ts`,
+  `wechat-mermaid-content-box.ts`, `wechat-mermaid-policy.ts`,
+  `wechat-capture-plan.ts`, `wechat-png-conversion-policy.ts`,
+  `wechat-png-conversion.ts`, `wechat-png-replacement.ts`,
+  `wechat-rasterizer-mermaid.ts`), managed fonts (`wechat-managed-fonts.ts`,
+  `wechat-font-assets.ts`), math capture geometry
+  (`wechat-math-capture-geometry.ts`), CSS scanning (`wechat-css-list.ts`,
+  `wechat-css-property-reader.ts`), and runtime/UserTiming helpers
+  (`wechat-clipboard-runtime.ts`, `wechat-copy-timing.ts`, `wechat-timing.ts`).
+
+Their focused Vitest suites are partitioned the same way.
+Native table-grid admission and application preserve the existing scroll owner
+while correcting only the final table display. Table inputs also participate in
+prepared fidelity checks and the existing transaction's final Source guard;
+connected measurement cleanup remains transaction-owned, including cancellation
+after Blob delivery while the native write is pending. The executable boundary
+belongs to the [WeChat export reference](../.agents/skills/easymde/references/wechat-export.md#layout-and-special-content).
+Block-vector installation preserves a responsive decorated math scroll owner,
+with intrinsic normal-flow content and measured vertical allocation; it does not
+freeze the source column width or depend on native Save retaining absolute SVG
+positioning. The complete allocation contract belongs to the
+[WeChat export reference](../.agents/skills/easymde/references/wechat-export.md).
+Ordinary transform origins use the raw dimension context when the CSSOM value
+is a validated center, axis-keyword, percentage, or pixel semantic; unsupported
+raw grammar keeps the measured value. The asynchronous and synchronous
+serializers share this style-policy owner, and the transportable raw semantic is
+included in ordinary fidelity freshness signatures.
+
+While Copy is pending, both ordinary and immersive controls remain focusable and expose `aria-busy="true"` and `aria-disabled="true"` instead of native `disabled`; the shared pending reference rejects duplicate click and keyboard activation. The static WeChat glyph preserves control geometry while Copy is pending. Native `disabled` remains reserved for an unavailable capability.
+An article-theme, code-theme, or Custom CSS change owns cancellation of an active Copy. The session returns `status: cancelled` with `wechat-copy-cancelled`, emits an info diagnostic for the intentional cancellation, and emits no success or failure status. A real Adapter failure or residual upload remains an explicit diagnostic and side-effect result. The appearance change refreshes Preview only; it never starts Copy automatically, so a new theme requires a new explicit Copy. During style loading, both controls remain focusable with `aria-disabled="true"` and without `aria-busy`.
+Unexpected synchronous throws and asynchronous rejections from the Clipboard
+adapter become the fixed privacy-safe `wechat-copy-unexpected-error` diagnostic;
+raw errors never cross the session boundary. A late unexpected result after
+session disposal records that cause before
+`wechat-export-completed-after-teardown`, but publishes no late UI status. A
+typed late result keeps only the teardown diagnostic.
+Generated textual pseudos are materialized only while their computed paint is
+visible. A hidden text pseudo does not become Clipboard content merely because
+its `content` value remains non-empty; modern and legacy Clipboard paths share
+this rule. Visible theme decoration and CSS-only carriers retain their existing
+serialization behavior.
+Static inline circle and mask pseudo paint is captured during the existing
+async or synchronous XHTML style walk, with its already computed owner style
+and clone identity. Hidden/rasterized roots and later Source omissions are
+excluded. After final math, SVG, PNG, and structure transforms, one admitted
+inventory resolves final owners through the canonical generated-marker and
+structure replacement maps, then performs one atomic detached apply. Missing
+or duplicate markers fail explicitly, and the apply owner preserves anchor
+attributes, original child identities, plaintext, and rollback. The actual
+measurement/transition readiness owner and original Source freshness owner are
+threaded through preparation; full CSSOM fidelity signatures guard Blob and
+post-write boundaries in addition to DOM freshness.
+For an ordinary native `outside` list whose Source has zero logical-start
+padding, the Clipboard adapter measures the browser's native marker advance in
+a temporary shallow probe and writes that measured gutter on the copied list.
+This keeps markers inside destination clipping boundaries without replacing
+`OL`/`UL`/`LI`, changing numbering attributes, or converting to `inside`.
+Lists with an existing gutter and task/custom/mixed-direction owners remain
+unchanged; unavailable geometry fails explicitly and every probe is removed.
+The serializer marks generated pseudo and text owners rather than inferring
+them from sanitized attributes. When a proven visible static inline textual
+`LI::before` directly precedes one generated raw-text leaf, that leaf omits the
+internal `leaf` marker and remains inline so WeChat cannot promote the text to
+a block independently from its marker. Ambiguous and special owners retain the
+ordinary leaf path.
+Task-marker SVG path syntax is parsed by the exact locked `svg-pathdata`
+dependency in the Clipboard adapter. This parser does not render Markdown,
+authorize SVG markup, or prove visible paint; namespace/element/attribute
+validation, finite resource bounds and native pixel validation are separate.
+Version 7.2.0 retains the Node 20 toolchain baseline as a local build-time source
+for the admin adapter, with its MIT notice. The Clipboard owner updates this pin when
+the Node baseline changes and removes it if task SVG path parsing is removed.
+Task checkbox owners and their emitted pseudo layers keep the settled Preview
+allocation after WeChat strips inline positioning. The private
+`wechat-task-static-flow.ts` owner holds the normalization sequence and the
+terminal validation, `wechat-task-static-flow-projection.ts` holds the
+containing-block traversal, measurement and per-layer allocation records, and
+`wechat-task-static-flow-policy.ts` holds the pure CSS and geometry policy.
+Portable serialization imports the normalizers and invokes the root-level
+allocation assertion after the paint assertion, so the paint module does not
+depend back on the static-flow owner. The serializer replaces the projected
+position, inset, margin, and float declarations of every emitted layer with a
+static float allocation whose
+margins reproduce the captured layer box and leave a zero net advance, so list
+rows and captions keep their Preview spacing.
+The allocation reads measured layout values only, namely the untransformed border
+box projected into the declarations plus the layer offsets and containing block
+plane, so a retained paint transform applies exactly once and no transformed
+viewport rectangle is used. Anchoring is physical left, so the emitted allocation
+never embeds the captured source container width or direction; how a destination
+reflows the emitted float allocation is not measured by the Clipboard capture.
+Owners and their layout inputs come from the registered clone owners of the
+emitted caption owner inventory rather than a root-wide discovery query, so a
+recorded owner the serializer never projected stays with the terminal owner
+validation, an emitted absolute layer is converted regardless of current
+opacity, a projected layer whose marker is missing fails explicitly, a recorded
+owner outside the serialized root fails instead of writing elsewhere, and
+predecessor boxes without a derivable prospective float origin fail instead of
+guessing a line position. That origin, and every consumed chain box offset, is
+anchored at the container content edge, so a prior float that still participates
+in float placement fails explicitly at either slot, including logical float
+values, while the normalized zero-net layers this owner already emitted stay
+ignorable. Static insets
+stay inert while fixed, sticky, and active relative positioning fail explicitly.
+Containers where float is inert, such as flex and grid items, and active effects
+the portable emission cannot preserve are rejected. The asynchronous entry
+checks abort and conversion currentness around every owner and suspends only
+between owners on the caller's existing serialization budget, while the legacy
+synchronous entry shares the same per-owner core without suspension. The terminal
+owner assertion re-derives every recorded allocation from the final declarations
+so a later overwrite cannot silently deform the row. Native WeChat Paste, Save,
+and Reader acceptance remains required destination evidence and is not
+established by this capture-side contract.
+For ordinary tables, Source paint metadata may project an opaque solid THEAD
+background onto transparent TH cells. Source-owned rounded tables with
+separate zero-spacing borders and two-axis clipping retain those table values;
+the generated outer section continues to own horizontal scrolling and width.
+These rules never hard-code a theme color or radius.
 
 The strict-boolean `images.wechatPngExportEnabled` setting defaults to `false`,
-and Editor bootstrap projects it as `wechatExport.pngConversionEnabled`. When
-enabled, an explicit ordinary or immersive Copy uses the modern Clipboard
-deferred payload path to serially rasterize only outermost rendered Mermaid and
-KaTeX math roots, then uploads each PNG through the Editor's selected
-`ImageUploadPort`. Image Hosting enabled selects the existing Image Hosting
-owner; disabled selects the existing WordPress Media Library owner. Ordinary
-tables, existing images, ordinary SVG, code, other media, and unknown content
-retain portable HTML. Background preparation for ordinary Preview remains
-compatibility-only and never runs from visual editing; explicit Copy prepares
-the current stable surface on demand. Legacy Clipboard and synchronous modern
-setup failure upload nothing. A failed selected owner never switches;
-Copy publishes no partial Clipboard payload, though an upload completed before
-a later transaction failure can remain. The live Preview and document remain
-unchanged.
+and Editor bootstrap projects it as `wechatExport.pngConversionEnabled`. The
+same Bootstrap supplies the required `wechatMathAtlasUrl` and
+`wechatMathAtlasContentVersion`; the URL carries exactly the matching lowercase
+16-hex content version in its `contentversion` query and resolves beneath the
+validated `previewEnhancement.assetBaseUrl` to the exact
+`assets/math/easymde-katex-glyph-atlas.json` runtime path. PHP derives that
+version from the atlas file's SHA-256. The atlas is one manifest-owned generated
+`easymde-katex-glyph-atlas/1` asset derived from the complete locked KaTeX TTF
+inventory; its companion font notice is shipped in the installable ZIP.
+
+With PNG conversion disabled, the default portable serializer uses this atlas
+for eligible outermost KaTeX owners. Eligibility accepts `inline-block` and
+`inline-flex` math plus `block` or `flow-root` owners with the recognized KaTeX
+block role and neutral authored outer width. Nested owners stay with the
+outermost owner; true `display:inline` math, non-KaTeX math, and a Preview with
+no eligible owner stay on the existing portable path without an atlas request.
+The lower-level legacy compatibility path also keeps that portable path when
+both atlas fields are absent; production Bootstrap requires the pair. The browser validates
+the exact same-origin URL/version pair, fetches only for an eligible owner,
+limits the response to 8 MiB, validates the complete frozen glyph graph, and
+reuses it only for that exact URL/version. Cancellation or a stale owner does
+not publish a cache entry.
+
+Atlas-backed capture uses the current hidden measurement lease and requires
+paired source, measurement, and final clone identities plus identical source
+and measurement text. It records managed KaTeX text runs, rule and static SVG
+paint, and the direct visual viewport, then builds detached SVG scenes from
+atlas outlines. Only the proven paired KaTeX `vlist-s` strut is omitted.
+Unsupported visible paint, unresolved clips or matrices, missing or ambiguous
+managed faces, unknown glyphs, invalid paths, incomplete pairing, and text
+mismatch fail explicitly. The final serialized root records connected plain
+text before scenes replace the visible math tree, so Clipboard `text/plain`
+retains the formula text. All targets and scenes are validated before mutation;
+a failed installation restores each target's children and style and propagates
+the failure. The source Preview remains unchanged.
+
+Vector geometry separates neutral flow allocation `A`, the measured owner
+border-box `R`, and the direct visual union `V`. For atomic inline math, `A` is
+the fractional parent line-box allocation including vertical margins; an outer
+wrapper owns that allocation, while `R` preserves the styled target's
+background, border, and padding exactly once. Block math uses `R` as the block
+target directly and has no inline `A`. `V` supplies the scene viewBox and paint
+translation. Internal solid `colorbox`/`fcolorbox` background and border paint
+is emitted once as measured scene rectangles; outer shell paint remains on the
+sanitized HTML owner and is not duplicated into the generated scene.
+Unsupported visible owner paint, missing or non-finite geometry, and
+out-of-bounds or inconsistent allocation/viewport data fail explicitly. The
+measurement lease and capture probes are released once on success, failure,
+abort, stale, timeout, and teardown.
+
+PNG-enabled Copy bypasses atlas loading, glyph runs, SVG vector scenes, and
+vector materialization. It uses the modern Clipboard deferred payload path to
+serially rasterize only outermost rendered Mermaid and KaTeX math roots in
+stable source order, then uploads each PNG through the Editor's selected
+`ImageUploadPort` with backpressure and at most three in-flight uploads.
+Completion is retained by candidate order and visual clones are replaced only
+after all selected-owner uploads succeed, in that order.
+Each upload invocation tracks whether it was rejected before write, remains
+unknown, or completed. Only the exact whitelisted
+`easymde_rest_invalid_image_hosting_nonce` permission rejection proves no write
+for that invocation. Unknown service codes, arbitrary 403s, network/provider/
+Abort/response failures, completed writes, and mixed concurrent states preserve
+the `uploads-may-remain` side effect; one proven pre-write rejection never clears
+another invocation's possible residual write.
+Image Hosting enabled selects the existing Image Hosting owner; disabled selects
+the existing WordPress Media Library owner. Ordinary tables, existing images,
+ordinary SVG, code, other media, and unknown content retain portable HTML.
+Background preparation for ordinary Preview remains compatibility-only and
+never runs from visual editing; explicit Copy prepares the current stable
+surface on demand. With PNG conversion enabled, EditorRoot schedules only a
+hidden-Preview geometry-only lease through the existing resize/layout owner;
+it skips portable serialization, rasterization, and upload. An explicit Copy
+transfers one matching pending lease and cleans it on every terminal path, so
+measurement DOM never persists across Copy operations. The disabled/default
+path prepares the portable payload, including the hidden measurement, atlas
+load/validation, and local SVG-path scene materialization for eligible outermost
+KaTeX owners. It never rasterizes or uploads in the background. A vector cache
+entry is published only after complete validation; cancel, stale, HTTP, decode,
+graph, capture, scene, or installation failure rejects that preparation without
+a silent portable-only substitution or partial success. The source Preview
+remains unchanged.
+The shared Mermaid runtime gives Gantt diagrams a deterministic 1200px logical
+layout width while retaining responsive `useMaxWidth` display. This prevents a
+narrow Preview host from changing task and date geometry. PNG Copy may recover
+a downscaled Mermaid SVG's intrinsic viewport scale only from a connected
+auto-height owner whose direct SVG fills the owner's content box and uses
+untransformed default `xMidYMid meet` geometry. That compensation path leaves fixed height, animation,
+clipping, transforms, non-filling SVGs, borders, padding, and other aspect modes
+retain captured geometry. Compensated output keeps overflow local and height
+automatic.
+For a neutral normal-flow Mermaid root with one capped, responsive direct SVG,
+the separate `responsive-viewport` capture mode omits the editor row's external
+transparent space. It captures the styled SVG clone while retaining the SVG
+scene and viewBox padding. The output retains the serialized outer-root layout;
+only its generated image receives percentage width, the original SVG cap,
+automatic height and verified centering. It adds no width-check exemption.
+Capture choice and effective dimension/centering semantics are frozen before
+asynchronous cloning, checked after cloning and at final freshness using
+root-relative geometry. Unknown effective dimension semantics decline this
+mode. Its PNG width rounds upward at the selected DPR; height rounds from that
+integer width and the captured SVG aspect. Actual output edges and pixel limits
+remain validated. The full eligibility and lifecycle contract belongs to the
+WeChat export reference.
+Legacy Clipboard and synchronous modern setup failure upload nothing. A failed
+selected owner never switches; stale or aborted conversion aborts remaining
+uploads and rejects the deferred payload. Copy publishes no
+partial Clipboard payload, though an upload completed before a later
+transaction failure can remain. The live Preview and document remain unchanged.
+The PNG conversion branch still prepares computed root metadata, removes class
+and transient attributes, and registers the outer visual root before inserting
+the native image into the converted output. It therefore skips descendant,
+pseudo-element, and theme-background portable serialization for the converted
+candidate while native capture reads the current source tree; portable,
+background, legacy, table, and ordinary-SVG serialization remains unchanged.
+After drawing that capture, an injected PNG encoding Port transfers its
+ImageBitmap to a temporary local worker for OffscreenCanvas PNG encoding.
+Capability selection occurs before encoding; runtime worker failure is
+terminal. Encoding remains serial and preserves the existing rasterization
+geometry, digest and limits. The executable capability, strict-message,
+bitmap-ownership, abort and timeout contract is owned by
+`.agents/skills/easymde/references/wechat-export.md`.
+When the resolved Safe Preview is hidden or source mode is active, the
+Clipboard adapter obtains one ephemeral measurement lease for the current
+enhanced Preview and reuses it for portable HTML/plain-text serialization and
+PNG visual-root capture, including original parent typography. The original
+Safe Preview remains the source, prepared-cache key, and freshness owner.
+`EditorRoot` keeps `preview`/`split` presentation separate from source mode;
+ordinary entry is `split`, and source-mode entry records the last visible width.
+The lease retains the Preview presentation marker and class context, paper
+geometry, canvas media-query presentation, and full Preview wrapping while
+neutralizing hidden ancestor layout at the measured workspace width. It is not
+a cached measurement DOM; transfer into the active preparation and cleanup
+cover every success, failure, abort, stale, timeout, and teardown path.
+Cloned images settle through load/decode or explicit failure before any
+freshness fingerprint, including warm-cache reuse, or payload commit. Lazy
+clones are temporarily eager and restore their loading attributes; readiness
+stays within the existing per-resource and transaction bounds without resetting
+the transaction clock. Abort cancels immediately, late events cannot publish
+or cache work, and cleanup is terminal.
+Hidden readiness attaches clone image listeners before the temporary host is
+attached; after attachment it forces one layout on the measurement root and
+reads the current owner's `document.fonts.ready`. Initial, current, and final
+freshness fingerprints and payload work wait for that font readiness and every
+clone image load/decode. An absent or already-loaded FontFaceSet with no clone
+images and no active eligible finite CSS effects retains the synchronous
+legacy-ready path. The lease does not listen to
+document-wide `loadingerror`; managed font fetch/parse failures remain owned by
+the visual rasterizer. Abort, cleanup, and late font resolution are terminal.
+The existing 10-second resource deadline, 60-second transaction, 8ms
+serialization yield budget, and write-first activation remain unchanged.
+Initial readiness includes finite native CSS transitions and animations owned
+by Preview and its attached measurement tree before style, geometry, and cache
+snapshots. JavaScript and infinite effects are excluded. Pending, running, or paused finite effects
+share the fonts/images resource deadline, which clears on successful readiness.
+API and `finished` failures remain latched for that lease; synchronous cache and
+legacy paths cannot bypass them. Final gates reject changed finite CSS effects as stale
+without another readiness wait or source rebaseline. Source animations remain
+untouched, and settled uploads retain the transaction deadline.
+Dimension semantics use a bounded raw clone-context batch separate from the
+serialization tree. Visible layout geometry remains measured from the original
+source; hidden/source layout reuses the measurement tree with raw source
+semantics. The ordinary preservation path has a bounded seven-field raw tuple:
+`box-sizing` plus `width`, `min-width`, `max-width`, `height`, `min-height`, and
+`max-height`. It applies only to same-namespace normal-flow elements with
+`display:block`, `position:static|relative`, `float:none`, a non-replaced
+element, and raw `box-sizing:content-box`; every dimension is a finite
+non-negative `px` or `%` token or its property-specific `auto`/`none` keyword,
+and at least one percentage has positive padding-plus-border edges on its
+axis. Root and pseudo-elements, replaced elements, descendants whose raw
+formatting owner (including through `display:contents`) is flex/grid/table,
+elements under `svg`, `math`, `pre`, `code`, or `table`, visual-rasterization
+and KaTeX/Mermaid owners or descendants, and generated clones are excluded.
+Eligible tuples preserve the six raw dimensions and `box-sizing`; only
+`box-sizing` and `max-width` receive `!important` in this dimension path to
+survive native rules. Ordinary content-box values outside this tuple keep the
+existing projection behavior: finite pixels add CSSOM padding and border widths
+for border-box output, while percentage and `calc()` values retain the CSSOM
+projection path. SVG, math, PNG, pseudo-element, and other special geometry
+stays atomic; ordinary images retain semantic width growth and `height:auto`.
+Raw `box-sizing` and dimensions participate in initial, current, final, and
+warm freshness signatures, so equal used geometry does not hide a raw semantic
+change. Raw/measurement/serialization contexts clean up temporary display,
+attributes, and clones in `finally`.
+The batch uses at most two deep clones, with the raw context and serialization
+tree kept separate. Temporary geometry and raw semantic trees exclude runtime
+sink, acceptance, refresh, error, and editor-owner identity markers on creation
+and refresh; the original Preview remains their only owner.
+Raw CSSOM auto and finite percentage margins remain responsive on ordinary elements, eligible
+static/relative pseudos, and outermost ordinary/Mermaid SVG roots. Other
+computed geometry, fixed margins, absolute pseudos, internal SVG, and math
+remain unchanged. Raw margin semantics join every freshness/cache phase, and
+the raw snapshot refreshes before guarded serialization/signature reads.
+Async serialization uses the existing budget for conditional task checkpoints
+after HTML capture and connected plain-text measurement. Abort and PNG
+currentness checks bracket each actual yield; final source/semantic guards and
+the synchronous legacy path remain intact. This splits layout work without
+changing HTML or deriving text through another renderer.
+The exporter-owned portable root projection adds only `max-width:100%` and
+`margin:0 auto` after computed Preview styles. This root-level declaration step
+is separate from hidden-surface measurement, whose lease retains the original
+paper geometry. Root styles use the current root-export property mask, including
+root background, layout, and pseudo-element styles. Visible serialization reads
+the marked temporary raw context clone, whose marker lasts only for the
+controlled temporary-host lifetime. Hidden measurement briefly sets
+`data-easymde-wechat-export-style-context` on the measurement clone while taking
+the root snapshot and restores it in `finally`; the original Safe Preview root
+is never marked. Neither temporary context is persisted on the live Preview or
+payload, and root-projected styles participate in the prepared freshness
+signature. The live Preview and article content remain unchanged and no fixed
+MDNice
+spacing value is encoded.
+
+For the portable path, a successful modern setup constructs deferred HTML and
+plain text Blob payloads and invokes the browser `write()` owner in the
+originating click task before yielding or reading computed styles and geometry.
+After that write starts, a pending entry's `sourceMarkup` is compared with the
+current full key before it is awaited; an obsolete entry is ignored locally and
+the existing fresh-preparation path runs without cache deletion or catch-all
+retry. For portable modern Copy, the non-windowed source-freshness guard is
+captured after the native `write()` starts and before the first browser-task
+yield, while a windowed baseline waits for `resolvePreview` to complete
+legitimate materialization. An older same-source background promise may trigger
+one fresh preparation only for the two narrow internal recoverable errors:
+`wechat-copy-stale` and an `AbortError` whose message is
+`wechat-background-preparation-cancelled`. Before recovery, the
+activation-source, session, and signal guards must remain current; a
+current/user abort or stale owner propagates cancellation and does not retry.
+All other failures propagate unless a completed same-source fallback was
+recovered. The stale/cancelled path performs one fresh preparation, preserves
+completed same-source fallback reuse, does not retry other failures, and
+never starts a second native write. All terminal
+paths clean up freshness state; this transaction-local guard adds no global
+activation layout lock and changes no limits.
+The later freshness walk includes the complete sink markup, root attributes
+except the three refresh bookkeeping attributes, viewport, computed export and
+pseudo-element styles, and element dimensions; scroll-coordinate-only changes
+may reuse a payload. Ordinary and pseudo-element logical text alignment is
+converted to physical values using source direction. The bounded raw tuple is
+the only ordinary percentage-preservation exception; outside it, ordinary
+`content-box` finite pixel dimensions are projected to border-box by adding
+padding and borders, while percentage and `calc()` values retain the existing
+CSSOM projection path. Intrinsic values and special SVG/Math/KaTeX/Mermaid
+geometry remain unchanged. Raw `box-sizing` remains in the semantic freshness
+signature. The legacy `execCommand` path retains its synchronous
+activation requirement and consumes only a source- and layout-fresh prepared
+payload. A non-emitted pseudo-element (`pseudoContent(rawContent) === null`)
+contributes only its raw `content` sentinel to freshness and skips unused
+pseudo-style reads, serialization, and asset fetch; quoted empty and text
+pseudos retain full styles and existing limits. Ordinary-node, source, and
+geometry handling is unchanged.
+For generated H1-H4 `::after` decorations whose parsed content is empty,
+space-only, tab-only, or non-breaking-space-only, with visible normal-flow
+placement, positive emitted dimensions, and retained paint, the paired
+sync/async serializer marks the generated span and converts its generated
+whitespace Text to one U+2060 glyph after normalization. Retained paint is
+emitted background paint or at least one border edge with a visible color and
+positive emitted width; zero-alpha transparent edges supply geometry only,
+while nonzero-alpha colors count as visible paint. The existing root-scoped
+Text map restores the original whitespace content during connected plaintext
+measurement and restores encoded HTML in `finally`. Root, special-layout,
+textual, hidden, absolute/fixed/sticky, zero-size, invisible-paint, and
+unexportable pseudos are excluded; only heading-after visibility extends the
+pseudo freshness signature.
+The canonical `pseudoContent()` boundary decodes CSSOM quoted strings with CSS
+character escapes before generated-whitespace qualification: up to six
+hexadecimal digits plus one following CSS whitespace code point form one code
+point (`\9 ` and `\000009 ` both become U+0009, while `\a ` becomes a newline).
+Escaped quotes and literal backslashes keep their CSS string meaning, so
+newline, authored text, and literal `\\9 ` content remain textual.
+Portable output retains safe computed inherited typography defaults on
+each node and pseudo-element for `font-style`, `font-variant`, `font-stretch`,
+`letter-spacing`, `text-transform`, `white-space`, `text-indent`, `text-shadow`,
+`tab-size`, and `list-style-position`, while omitting layout defaults. Anchors
+retain their computed `text-decoration`, including `none`, rather than
+inheriting a destination platform default. For this portable text rule,
+`overflow-wrap` preserves its computed source value with
+`!important` so it outranks WeChat's global `word-wrap:break-word!important`
+alias; the serializer does not blanket-apply `!important` or hardcode platform
+values, and native PNG capture is unchanged. Fenced-code hash boundaries use
+root-scoped Text records to prevent destination topic links from overriding
+syntax colors; the shared HTML/plaintext rules are owned by the
+[WeChat export reference](../.agents/skills/easymde/references/wechat-export.md).
+Each transaction-local source
+guard observes the sink before taking
+its immutable initial canonical key and drains `MutationObserver.takeRecords()`
+at initial, current, and final checkpoints. Each currentness check scans
+recognized task inputs' current `checked` properties, since a property
+change need not emit a DOM mutation. The clean path reuses the initial
+source key without rebuilding full markup only when that state is
+unchanged and no meaningful mutation is pending; otherwise the guard
+recomputes and compares the complete key, allowing same-value mutations to
+reuse while making real source changes stale. Final source and layout keys and
+the existing owner/layout guards remain authoritative. Only the three
+refresh-bookkeeping attributes on the sink root are ignored; matching
+descendant attributes remain source changes. Abort, timeout, stale, and
+teardown gates reject deferred work, and `finally` disconnects the observer,
+including late cleanup.
+Portable structure normalization maps copied article, div, and blockquote roots
+to sections only after safe computed styles and pseudo-elements are captured;
+blockquote borders, backgrounds, spacing, nested children, and plain-text order
+remain observable in the copied result while the source Preview is unchanged.
+The quote pseudo-flow owner plans from immutable source snapshots and projects
+admitted decorations into static floats with a separate padding carrier;
+admission and lifecycle requirements belong to the WeChat export reference.
+The portable serializer also owns one bounded ordinary nested-list projection:
+admitted nested unordered `ul`/`li` clones become `section[role=list]` and
+`section[role=listitem]` while outer list structure, attributes, child identity,
+and plain-text order remain intact. Structural admission does not depend on an
+optional stem; the separate stem paint projection uses source-relative
+first/last child edges and is skipped when its closed geometry contract is not
+proved. Tasks, ordered lists, counters, custom marker semantics, and mixed
+unsupported trees retain their existing owners.
+After the HTML string is captured, browser layout measures plain text from the
+exclusive detached serialization tree. Non-layout DOM environments retain the
+existing line-aware source-text fallback when connected text flattens block
+boundaries; the temporary host is removed in `finally`. Source tables
+retain authored/computed `min-width`, while only their generated scroll wrapper
+uses `min-width:0`; source and table RGBA colors remain computed-source values
+with no platform or theme hardcoding.
+
+The visual rasterizer waits for document font readiness and resolves managed
+font roots from the approved `previewEnhancement.assetBaseUrl` and approved
+KaTeX stylesheet URL supplied by bootstrap. It embeds only matching managed
+same-origin EasyMDE `@font-face` sources in the raster SVG; remote or
+unrecognized URLs are omitted. For each matching face, the first approved
+source in existing CSS order is the only source downloaded and natively
+validated, while all retained weight, style, stretch, unicode-range, and other
+face descriptors remain attached to their separate faces; failure of that
+selected source fails conversion explicitly without an alternate-source retry
+or fallback substitution. A required managed family with no source face,
+invalid or rejected bytes, or failed browser-font validation fails explicitly;
+only nonmanaged or system families may remain on the browser fallback. Bounded
+font work is cancellable. Each successful PNG filename includes the SHA-256
+digest of its final bytes, which preserves repeated output names while
+distinguishing different output bytes.
+
+Math rasterization first receives a native computed-style clone of the same Safe
+Preview source and its original parent context for inline line-box typography.
+The snapshot retains all safe computed dimensions and normal defaults, including
+KaTeX, table, and pstrut geometry; computed `table-layout` remains native and
+there is no authored-dimension preference rule. Inline allocation is
+measured before capture normalization as fractional `inlineLayout` data
+containing width, height, baseline, paint offsets, and optional viewport
+geometry. The outer inline-block wrapper always owns the source allocation and
+line box. Its inner original source-root viewport owns `auto`/`scroll`/
+`hidden`/`clip` independently per axis; `autoX`/`hiddenY` expands X while
+clipping Y, and `hiddenX`/`autoY` does the inverse. The PNG uses root-local
+union paint offsets plus viewport offsets. Physical left margin is owned by the outer wrapper once and subtracted
+once from the local paint offset; vertical margin remains allocation-only, and
+source `vertical-align:top` and `bottom` retain their neighboring line-box
+keywords while other modes use the measured allocation `B-H` relation. Paint
+placement uses root-local union and viewport offsets rather than a fixed offset.
+Capture
+bounds retain full scroll/descendant extent
+when appropriate and floor minima/ceil maxima once on the paint grid to remove
+fractional phase drift. Missing or invalid allocation fails explicitly.
+Display math retains a centered intrinsic wrapper with local horizontal overflow
+and a block image; source padding, borders, backgrounds, and capture geometry
+are baked into the PNG once. All output dimensions remain subject to the
+existing 4096-edge and PNG-pixel bounds. Ordinary media keeps its responsive
+sizing.
+PNG natural pixel dimensions use the captured CSS dimensions multiplied by the
+clamped device pixel ratio, while the pasted image keeps the captured CSS width
+and height for display. Responsive destination rules therefore do not replace
+the measured generated-image geometry.
+
+The existing table, block-math, and direct-code normalizers declare intentional
+local horizontal overflow through destination width-check metadata after
+untrusted source attributes are removed. Article roots, PRE/header, and
+ordinary content receive no exemption. Geometry, image dimensions, and plain
+text remain unchanged; the executable boundaries and native negative-case
+verification are owned by the WeChat export reference.
+
+Modern Clipboard preparation has a 60-second bound for the serialized payload
+and deferred HTML/plain Blob values; once they are ready, the actual browser
+commit has a separate 10-second bound. Early browser-write rejection fails fast,
+while late payload, stale-source, abort, and teardown gates prevent a deferred
+value from reporting success after the operation is no longer current.
+
+Focused unit coverage does not replace the native CSS allocation matrix. Native
+production verification is the evidence boundary for fractional and
+superscript source-to-PNG geometry; residual 1/64 CSS-pixel precision and DPR1
+text anti-aliasing differences are rendering limits, not exporter offsets.
+
+Preview request diagnostics use the current request session and the active
+owner's latest callback reference. Known failures expose only the stable,
+privacy-safe `preview-response-invalid` or `preview-request-failed` codes;
+superseded, aborted, stale, or torn-down work does not publish a diagnostic or
+error state. The owner is not recreated merely because the callback identity
+changes. PHP owns strict source provenance, type, order, and range bounds; the
+connected-overlap union is flushed once into readonly zero-width map entries.
+The same editable map is enforced by both visual surfaces through the existing
+marker/repository paths.
 EditorRoot cancels a queued or active background demand when visual unlock
 begins, Preview loses `ready` status, an ordinary or immersive Preview sink is
 disposed or replaced, the Root tears down, or the WeChat Port/export ownership
@@ -787,13 +1408,19 @@ the validated Editor Root bootstrap and consumed by the Editor Root's
 document source, workspace layout, Preview feature overrides, focus behavior,
 and local-draft session. The Settings Center auto-save switch and interval are
 the only local-draft configuration for ordinary and immersive editing;
-browser-session immersive preferences own presentation only. The browser
-preference port persists only the immersive Outline choice. The Editor Root
-maps Settings Center `general.editingMode` from `live-preview` to immersive
-split, `source` to source, and `preview` to Preview when the Root mounts.
-At narrow widths, the Outline overlays a full-width workspace. A completed
-transition into editable immersive Preview, or a width crossing into narrow
-layout while Preview is already editable, closes that overlay once as local
+browser-session immersive preferences own presentation only. The browser preference port persists only the immersive Outline choice.
+Settings Center `general.editingMode` applies only to Immersive Editing: the
+Editor Root maps `live-preview` to immersive split, `source` to immersive
+source, and `preview` to immersive Preview when the Root mounts, while the
+ordinary editor always keeps its fixed side-by-side split workspace across all
+viewport widths. Both ordinary and immersive split layouts remain side-by-side
+across all viewport widths with the immersive split divider preserved
+(single-pane presentation occurs only when the user selects Source-only or
+Preview-only inside Immersive Editing). At tablet-portrait widths (`<= 782px`,
+matching WordPress Core's 782px admin breakpoint and covering iPad mini
+portrait `744 × 1133`), the Outline overlays the full-width workspace. A
+completed transition into editable immersive Preview, or a width crossing into
+`<= 782px` while Preview is already editable, closes that overlay once as local
 presentation state. Pending or failed unlocks do not close it; a manual reopen
 at the same width remains open. These changes never write the Outline
 preference.
@@ -869,7 +1496,7 @@ formal PHP renderer and serialized by the shared visual/source contract; the
 original alt text, destination, and non-marker title remain part of the same
 image syntax. Unsupported, repeated, or malformed markers fail explicitly.
 The renderer emits `data-easymde-image-scale` only for those validated values.
-Shared `frontend/base.css`, loaded in both editor and public output, applies
+Shared `assets/css/frontend/base.css`, loaded in both editor and public output, applies
 the exact percentage up to 100%, and caps 150% and 200% at `max-width: 100%` so
 rendered output is capped by containing content width with no horizontal overflow,
 while preserving canonical scale markers. Unmarked images retain the theme's
@@ -887,6 +1514,16 @@ Rendering behavior:
 - final rendered HTML is passed through `wp_kses_post()`.
 
 If Composer dependencies are missing, EasyMDE shows an admin notice, preview requests return a REST error, and save/frontend paths avoid generating fallback HTML.
+
+`frontend/src/features/live-preview/ui/SafePreviewHtmlSink.tsx` is the sole
+client sink for accepted Preview HTML. It applies plain HTML and staged-node
+commits while preserving the prior verified surface snapshot.
+`PreviewSurfaceOwner` reacquires rendered SVG stylesheet scope synchronously
+after each DOM mutation and releases the previous lease only after the
+replacement lease is ready. A mutation failure restores the prior verified view
+when possible; an unverified rollback clears the sink, discards pending
+enhancement and staged-commit state, and reports the primary and rollback
+failures without publishing `ready`.
 
 ## Revisions
 
@@ -964,6 +1601,17 @@ or report success before the server response has been validated. The existing
 hidden Custom CSS ID and snapshot fields remain the WordPress submission
 bridge. The post-level snapshot also remains usable when its library entry is
 later detached.
+
+The browser CSSOM owner is
+`frontend/src/shared/css/editor-stylesheet-scope.ts`. It leaves source rules in
+place and adds root-scoped aliases under `#easymde-editor-root`, preserving
+selector order and supported nested rule, at-rule, and imported-sheet context.
+It validates a whole batch before insertion, returns a reference-counted lease,
+and removes only the rules owned by that lease. Missing sheets/imports,
+CSSOM-read failures, invalid selectors, and root-scope conflicts fail
+explicitly. Startup, Appearance, Preview enhancement, and rendered SVG style
+handling use this owner; its scoping behavior does not replace the server-side
+Custom CSS policy.
 
 ## REST Boundaries
 
@@ -1123,19 +1771,10 @@ Cloudflare R2, Qiniu Kodo, Alibaba Cloud OSS, and Tencent Cloud COS are supporte
 symmetrically: any one may be the primary or the optional backup. Primary and
 backup writes use one generated object key as a fixed runtime invariant, not a
 configurable setting. R2 uses the administrator-saved, validated HTTPS S3 API
-endpoint; Kodo resolves the bucket's official upload domains through one bounded
-HTTPS region query over the WordPress HTTP transport, validates every returned
-`up*`/`upload*`.qiniup.com host, and bounds the ordered host list to four entries.
-Source `up*` hosts are ordered before `upload*` hosts because they are the official
-SDK source-upload origins. The runtime supplies the current bounded destination
-attempt index to the provider; each attempt selects one validated host and performs
-exactly one SDK-compatible form write. It supplies that host to an explicit SDK
-`Region`/`Config` with HTTPS enabled and CDN domains disabled. The pinned Qiniu
-SDK form uploader bypasses its middleware option, so EasyMDE builds only the
-SDK-compatible form request and routes it through a narrow middleware bridge;
-the SDK cURL handler and its region/back-up retries are never used. Host selection
-across explicit destination retry attempts is internal to the selected Qiniu
-destination, not a new setting or provider switch. OSS and COS derive their
+endpoint; Kodo uses
+one direct multipart POST per destination attempt to the fixed
+`https://upload.qiniup.com` origin, without an SDK, region query, or internal
+host rotation. OSS and COS derive their
 official API hosts from the validated provider endpoint and bucket. OSS and COS
 derive the signing region from that endpoint rather than persisting a separate
 region setting. These HTTPS provider API origins are separate from the

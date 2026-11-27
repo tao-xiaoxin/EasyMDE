@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,7 +22,7 @@ function cssRuleBodies(source, selector) {
   let match;
 
   while ((match = rulePattern.exec(source)) !== null) {
-    const selectors = match[1].split(',').map((item) => item.trim());
+    const selectors = splitCssSelectors(match[1]);
 
     if (selectors.includes(selector)) {
       bodies.push(match[2]);
@@ -37,7 +38,7 @@ function cssRuleSelectors(source) {
   let match;
 
   while ((match = rulePattern.exec(source)) !== null) {
-    selectors.push(...match[1].split(',').map((item) => item.trim()));
+    selectors.push(...splitCssSelectors(match[1]));
   }
 
   return selectors;
@@ -48,10 +49,9 @@ function cssRuleBodyMatching(source, selector, predicate = () => true) {
   let match;
 
   while ((match = rulePattern.exec(source)) !== null) {
-    const selectors = match[1]
-      .replaceAll(/\/\*[\s\S]*?\*\//g, '')
-      .split(',')
-      .map((item) => item.trim());
+    const selectors = splitCssSelectors(
+      match[1].replaceAll(/\/\*[\s\S]*?\*\//g, '')
+    );
     if (selectors.includes(selector) && predicate(match[2])) return match[2];
   }
 
@@ -75,6 +75,48 @@ function assertInlineCodeRule(theme, selectorSuffix, declarations) {
 
   assert.ok(body, `${theme} should preserve the pinned inline-code rule ${selectorSuffix}`);
   return css;
+}
+
+function dataImageUrlsFromRule(css, selector) {
+  const body = cssRuleBodyMatching(css, selector);
+  assert.ok(body, `Mdmdt should define ${selector}`);
+  return [...body.matchAll(/url\(\s*["']?(data:image\/[^"')\s]+)["']?\s*\)/g)]
+    .map((match) => match[1]);
+}
+
+function decodePngDataUrl(value, label) {
+  assert.match(value, /^data:image\/png;base64,/i, `${label} should be a PNG data URI`);
+  const bytes = Buffer.from(value.slice(value.indexOf(',') + 1), 'base64');
+  assert.deepEqual(
+    [...bytes.subarray(0, 8)],
+    [137, 80, 78, 71, 13, 10, 26, 10],
+    `${label} should have a PNG signature`
+  );
+  assert.equal(bytes.readUInt32BE(16), 200, `${label} width`);
+  assert.equal(bytes.readUInt32BE(20), 200, `${label} height`);
+  assert.equal(bytes[24], 8, `${label} bit depth`);
+  assert.equal(bytes[25], 6, `${label} RGBA color type`);
+
+  const chunkTypes = [];
+  let offset = 8;
+  while (offset < bytes.length) {
+    const length = bytes.readUInt32BE(offset);
+    const type = bytes.toString('ascii', offset + 4, offset + 8);
+    chunkTypes.push(type);
+    offset += 12 + length;
+  }
+  assert.equal(offset, bytes.length, `${label} should have complete PNG chunks`);
+  assert.deepEqual(
+    chunkTypes,
+    ['IHDR', 'sRGB', 'IDAT', 'IEND'],
+    `${label} should contain only the deterministic image chunks`
+  );
+  assert.deepEqual(
+    chunkTypes.filter((type) => ['tEXt', 'zTXt', 'iTXt', 'eXIf', 'tIME'].includes(type)),
+    [],
+    `${label} must not contain textual, EXIF, or timestamp metadata`
+  );
+  return bytes;
 }
 
 const TYPORA_ARTICLE_THEME_IDS = Object.freeze([
@@ -499,6 +541,25 @@ test('Qingbi Liujin and Qinghe Zhusha keep a compact, separated first heading', 
     assert.match(h1Rule, /line-height:\s*1\.25;/);
   }
 });
+
+test('Qingbi Liujin hr uses a pure CSS repeating-linear-gradient without data:image URIs', () => {
+  const css = readFileSync(join(repoRoot, 'assets/themes/article/qingbi-liujin.css'), 'utf8');
+  const root = scopedArticleRoot('qingbi-liujin');
+  const ruleTexture = cssVariable(css, '--easymde-qingbi-rule-texture');
+  const hrRules = cssRuleBodies(css, `${root} hr`);
+
+  assert.equal(
+    ruleTexture,
+    'repeating-linear-gradient(135deg, rgba(0, 0, 0, 0.2) 0, rgba(0, 0, 0, 0.2) 2.12px, transparent 2.12px, transparent 4.24px)'
+  );
+  assert.doesNotMatch(ruleTexture, /data:image\//i);
+  assert.equal(hrRules.length, 1);
+  assert.match(hrRules[0], /background:\s*transparent var\(--easymde-qingbi-rule-texture\);/);
+  assert.doesNotMatch(hrRules[0], /data:image\//i);
+  assert.doesNotMatch(hrRules[0], /repeat-x/i);
+  assert.doesNotMatch(css, /data:image\//i);
+});
+
 test('Crimson focus follows the reference light surface and preserves code-theme ownership', () => {
   const css = readFileSync(join(repoRoot, 'assets/themes/article/crimson-focus.css'), 'utf8');
   const root = '.easymde-rendered-content.easymde-markdown-theme-crimson-focus';
@@ -674,7 +735,7 @@ test('Crimson focus follows the reference light surface and preserves code-theme
   assert.match(css, /\.easymde-rendered-content\.easymde-markdown-theme-crimson-focus img\s*\{[\s\S]*display:\s*block;[\s\S]*margin:\s*11\.25px auto;/);
   assert.match(
     css,
-    /\.easymde-rendered-content\.easymde-markdown-theme-crimson-focus table\s*\{[\s\S]*min-width:\s*520px;/
+    /\.easymde-rendered-content\.easymde-markdown-theme-crimson-focus table\s*\{[\s\S]*min-width:\s*max\(100%,\s*520px\);/
   );
   assert.match(
     css,
@@ -812,6 +873,58 @@ test('shared code typography prefers the neutral Mac terminal font stack', () =>
     'SFMono-Regular, Consolas, "Liberation Mono", Menlo, Courier, monospace'
   );
   assert.doesNotMatch(css, /--easymde-code-font-family:[^;]*Operator Mono/);
+});
+
+test('Mermaid root tracking isolation is direct-root scoped and preserves descendant spacing', () => {
+  const baseCss = readFileSync(join(repoRoot, 'assets/css/frontend/base.css'), 'utf8');
+  const rootSelector = '.easymde-mermaid > svg';
+  const rootBody = cssRuleBodyMatching(baseCss, rootSelector);
+
+  assert.ok(rootBody, `${rootSelector} should own Mermaid typography isolation`);
+  assert.match(rootBody, /letter-spacing:\s*normal;/);
+  assert.match(rootBody, /word-spacing:\s*normal;/);
+  const genericBody = cssRuleBodyMatching(baseCss, '.easymde-mermaid svg');
+  assert.ok(genericBody, 'the shared Mermaid SVG layout rule should remain available');
+  assert.doesNotMatch(genericBody, /(?:letter|word)-spacing:/);
+  for (const role of ['gantt', 'sequence', 'timeline']) {
+    const intrinsicBody = cssRuleBodyMatching(
+      baseCss,
+      `.easymde-mermaid[data-easymde-mermaid-layout="${role}"] > svg`
+    );
+    assert.ok(intrinsicBody, `${role} should retain its intrinsic Mermaid width`);
+    assert.match(intrinsicBody, /max-width:\s*none;/);
+  }
+
+  const greenCss = readFileSync(join(repoRoot, 'assets/themes/article/green-vitality.css'), 'utf8');
+  const dom = new JSDOM(`
+    <style>${baseCss}\n${greenCss}
+      .easymde-rendered-content.easymde-markdown-theme-green-vitality
+      .easymde-mermaid .entityLabel {
+        letter-spacing: 2px;
+        word-spacing: 3px;
+      }
+    </style>
+    <article class="easymde-rendered-content easymde-markdown-theme-green-vitality">
+      <svg id="ordinary-svg"><text>ordinary</text></svg>
+      <div class="easymde-mermaid">
+        <svg id="mermaid-svg">
+          <text class="entityLabel">created_at</text>
+        </svg>
+      </div>
+    </article>
+  `);
+  const ordinarySvg = dom.window.document.querySelector('#ordinary-svg');
+  const mermaidSvg = dom.window.document.querySelector('#mermaid-svg');
+  const entityLabel = dom.window.document.querySelector('.entityLabel');
+
+  assert.ok(ordinarySvg);
+  assert.ok(mermaidSvg);
+  assert.ok(entityLabel);
+  assert.equal(dom.window.getComputedStyle(ordinarySvg).letterSpacing, '0.05em');
+  assert.equal(dom.window.getComputedStyle(mermaidSvg).letterSpacing, 'normal');
+  assert.equal(dom.window.getComputedStyle(mermaidSvg).wordSpacing, 'normal');
+  assert.equal(dom.window.getComputedStyle(entityLabel).letterSpacing, '2px');
+  assert.equal(dom.window.getComputedStyle(entityLabel).wordSpacing, '3px');
 });
 
 test('Inkwell light keeps its scoped palette', () => {
@@ -979,6 +1092,182 @@ test('Mdmdt retains the pinned nested-list rhythm', () => {
     css,
     new RegExp(`${escapedRegExp(root)} ul\\s*,\\s*${escapedRegExp(root)} ul\\s*\\{`),
     'Mdmdt must not reintroduce the duplicate broad-list override'
+  );
+});
+
+test('Mdmdt restores ordinary unordered-list marker semantics without task bullets', () => {
+  const css = readFileSync(join(repoRoot, 'assets/themes/article/mdmdt.css'), 'utf8');
+  const root = scopedArticleRoot('mdmdt');
+  const expected = [
+    [`${root} ul:not(.task-list)`, /list-style-type:\s*disc;/],
+    [`${root} :is(ul, ol) ul:not(.task-list)`, /list-style-type:\s*circle;/],
+    [`${root} :is(ul, ol) :is(ul, ol) ul:not(.task-list)`, /list-style-type:\s*square;/],
+    [`${root} ul.task-list`, /list-style-type:\s*none;/],
+    [`${root} ol.task-list`, /list-style-type:\s*none;/],
+    [`${root} .task-list-item`, /list-style-type:\s*none;/],
+    [`${root} .task-list-item::marker`, /content:\s*none;/]
+  ];
+
+  for (const [selector, declaration] of expected) {
+    assert.ok(
+      cssRuleBodyMatching(css, selector, (body) => declaration.test(body)),
+      `Mdmdt should define ${selector} with ${declaration}`
+    );
+  }
+});
+
+test('Mdmdt link pseudo assets are deterministic 200x200 PNG data images', () => {
+  const css = readFileSync(join(repoRoot, 'assets/themes/article/mdmdt.css'), 'utf8');
+  const root = scopedArticleRoot('mdmdt');
+  assert.match(css, /\* \(c\) 2024-2025/);
+  assert.match(css, /\* Author: cayxc/);
+  assert.match(css, /\* Homepage:\s+https:\/\/gitee\.com\/cayxc\/mdmdt\s+https:\/\/github\.com\/cayxc\/Mdmdt/);
+  assert.match(css, /\* License: Apache-2\.0/);
+  assert.match(css, /cayxc\/Mdmdt fixed commit a2f7d357144e38670727e876243a7fe58df2e848/);
+  const normal = dataImageUrlsFromRule(css, `${root} p a::before`);
+  const hover = dataImageUrlsFromRule(css, `${root} a:hover::before`);
+
+  assert.equal(normal.length, 1, 'Mdmdt normal link pseudo should have one image');
+  assert.equal(hover.length, 1, 'Mdmdt hover link pseudo should have one image');
+  const normalBytes = decodePngDataUrl(normal[0], 'Mdmdt normal link icon');
+  const hoverBytes = decodePngDataUrl(hover[0], 'Mdmdt hover link icon');
+  assert.equal(
+    createHash('sha256').update(normalBytes).digest('hex'),
+    'bc3e0e6608577697dc637543cc18da1b1693885074c886f85dec8ef4827ebf0b',
+    'Mdmdt normal link icon must remain deterministic'
+  );
+  assert.equal(
+    createHash('sha256').update(hoverBytes).digest('hex'),
+    'ce19afa2113e61b3e357aee067188386f5b847ac3b7e225543e33a0c6b9713d7',
+    'Mdmdt hover link icon must remain deterministic'
+  );
+  assert.notEqual(normal[0], hover[0], 'Mdmdt normal and hover colors must differ');
+  assert.doesNotMatch(css, /data:image\/svg\+xml/i, 'Mdmdt must not ship SVG link pseudo data');
+});
+
+test('Mdmdt list markers follow ancestor list depth through wrappers and mixed lists', () => {
+  const css = readFileSync(join(repoRoot, 'assets/themes/article/mdmdt.css'), 'utf8');
+  const root = scopedArticleRoot('mdmdt');
+  const dom = new JSDOM(`
+    <style>${css}</style>
+    <article class="easymde-rendered-content easymde-markdown-theme-mdmdt">
+      <ul id="root-list">
+        <li>
+          <blockquote>
+            <ul id="blockquote-list">
+              <li>
+                <blockquote>
+                  <ol id="mixed-list">
+                    <li>
+                      <blockquote>
+                        <ul id="square-list"><li>Square</li></ul>
+                      </blockquote>
+                    </li>
+                  </ol>
+                </blockquote>
+              </li>
+            </ul>
+          </blockquote>
+        </li>
+      </ul>
+      <ul id="task-list" class="task-list">
+        <li class="task-list-item"><input type="checkbox" disabled>Task</li>
+        <li><blockquote><ul id="task-nested-list"><li>Nested</li></ul></blockquote></li>
+      </ul>
+    </article>
+  `);
+  const styleOf = (id) => dom.window.getComputedStyle(dom.window.document.getElementById(id));
+
+  assert.equal(styleOf('root-list').listStyleType, 'disc');
+  assert.equal(styleOf('blockquote-list').listStyleType, 'circle');
+  assert.equal(styleOf('mixed-list').listStyleType, 'decimal');
+  assert.equal(styleOf('square-list').listStyleType, 'square');
+  assert.equal(styleOf('task-list').listStyleType, 'none');
+  assert.equal(
+    dom.window.getComputedStyle(dom.window.document.querySelector('.task-list-item')).listStyleType,
+    'none'
+  );
+  assert.equal(styleOf('task-nested-list').listStyleType, 'circle');
+  assert.ok(dom.window.document.querySelector(`${root} .task-list-item`));
+});
+
+test('Mdmdt shares task checkbox paint across native and visual markers', () => {
+  const css = readFileSync(join(repoRoot, 'assets/themes/article/mdmdt.css'), 'utf8');
+  const root = scopedArticleRoot('mdmdt');
+  const markerSelectors = [
+    `${root} .task-list-item > input[type="checkbox"]`,
+    `${root} .task-list-item > p > input[type="checkbox"]`,
+    `${root} .task-list-item > .easymde-task-checkbox`,
+    `${root} .task-list-item > p > .easymde-task-checkbox`
+  ];
+  const sharedDeclarations = [
+    /position:\s*relative;/,
+    /display:\s*inline-block;/,
+    /width:\s*14px\s*!important;/,
+    /height:\s*14px\s*!important;/,
+    /min-width:\s*14px\s*!important;/,
+    /min-height:\s*14px\s*!important;/,
+    /max-width:\s*14px\s*!important;/,
+    /max-height:\s*14px\s*!important;/,
+    /box-sizing:\s*border-box;/,
+    /border:\s*1px\s+solid\s+var\(--border-color\)\s*!important;/
+  ];
+
+  for (const selector of markerSelectors) {
+    assert.ok(
+      cssRuleBodyMatching(css, selector, (body) => sharedDeclarations.every((declaration) => declaration.test(body))),
+      `Mdmdt should share task marker declarations for ${selector}`
+    );
+  }
+
+  for (const selector of markerSelectors) {
+    assert.ok(
+      cssRuleBodyMatching(css, selector, (body) => /margin-left:\s*-22px;/.test(body)),
+      `Mdmdt should anchor task markers for ${selector}`
+    );
+  }
+
+  const checkedSelectors = [
+    `${root} .task-list-item > input[type="checkbox"]:checked`,
+    `${root} .task-list-item > p > input[type="checkbox"]:checked`,
+    `${root} .task-list-item > .easymde-task-checkbox.is-checked`,
+    `${root} .task-list-item > p > .easymde-task-checkbox.is-checked`
+  ];
+  for (const selector of checkedSelectors) {
+    assert.ok(
+      cssRuleBodyMatching(css, selector, (body) => /background:\s*var\(--color-1\)\s*!important;/.test(body)),
+      `Mdmdt should paint checked task markers for ${selector}`
+    );
+  }
+
+  const checkedPseudoSelectors = [
+    `${root} .task-list-item > input[type="checkbox"]:checked::after`,
+    `${root} .task-list-item > p > input[type="checkbox"]:checked::after`,
+    `${root} .task-list-item > .easymde-task-checkbox.is-checked::after`,
+    `${root} .task-list-item > p > .easymde-task-checkbox.is-checked::after`
+  ];
+  for (const selector of checkedPseudoSelectors) {
+    assert.ok(
+      cssRuleBodyMatching(css, selector, (body) => /border:\s*2px\s+solid\s+#fff;/.test(body)),
+      `Mdmdt should reuse the checked marker tick for ${selector}`
+    );
+  }
+
+  assert.ok(
+    cssRuleBodyMatching(
+      css,
+      `${root} .task-list-item > .easymde-task-checkbox.is-checked`,
+      (body) => /font-size:\s*0;/.test(body)
+    ),
+    'Mdmdt should visually hide the span marker text while retaining its DOM/ARIA value'
+  );
+  assert.ok(
+    cssRuleBodyMatching(
+      css,
+      `${root} .task-list-item > input[type="checkbox"]::before`,
+      (body) => /content:\s*none\s*!important;/.test(body)
+    ),
+    'Mdmdt should suppress a host input before pseudo'
   );
 });
 
@@ -1258,8 +1547,61 @@ test('Bloom adapters target live Mermaid roots and contain no unreachable focus 
       new RegExp(`${literalRoot}\\s+\\.easymde-mermaid(?:\\b|\\s)`),
       `${file} must style the live EasyMDE Mermaid root`
     );
+    const articleRootBodies = cssRuleBodies(css, root);
+    assert.ok(articleRootBodies.length, `${file} should preserve its scoped article root`);
+    assert.ok(
+      articleRootBodies.some((body) => /font-family:\s*var\(--font-sans\);/.test(body)),
+      `${file} should keep the Bloom font for ordinary article text`
+    );
+    const mermaidTextBody = cssRuleBodyMatching(css, `${root} .easymde-mermaid text`);
+    assert.ok(mermaidTextBody, `${file} should define its Mermaid text palette rule`);
+    assert.match(
+      mermaidTextBody,
+      /fill:\s*var\(--text\)\s*!important;/,
+      `${file} should preserve Mermaid text color`
+    );
+    assert.doesNotMatch(
+      mermaidTextBody,
+      /font-family\s*:/,
+      `${file} must not override the Mermaid text font used during layout measurement`
+    );
     assert.doesNotMatch(css, /(^|[\s,>+~])\.mermaid(?:\b|[\s>.:#[])/m, `${file} has a dead Mermaid class`);
     assert.doesNotMatch(css, /\.on-focus-mode\b|\.md-focus-element\b/, `${file} has dead Typora focus hooks`);
+  }
+});
+
+test('Bloom mindmap roots pair theme text with a readable background', () => {
+  const bloomFiles = readdirSync(join(repoRoot, 'assets/themes/article'))
+    .filter((name) => /^bloom-.*\.css$/.test(name));
+  assert.equal(bloomFiles.length, 12, 'all Bloom light variants should be present');
+
+  const dom = new JSDOM('<span></span>');
+  const probe = dom.window.document.querySelector('span');
+  const toHex = (value) => {
+    probe.style.color = '';
+    probe.style.color = `color-mix(in srgb, ${value} 100%, black)`;
+    const color = dom.window.getComputedStyle(probe).color;
+    const match = color.match(/^color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)\)$/);
+    assert.ok(match, `expected an opaque sRGB color for ${value}`);
+    return `#${match.slice(1).map((channel) => Math.round(Number(channel) * 255).toString(16).padStart(2, '0')).join('')}`;
+  };
+
+  for (const file of bloomFiles) {
+    const css = readFileSync(join(repoRoot, 'assets/themes/article', file), 'utf8');
+    const root = scopedArticleRoot(file.replace(/\.css$/, ''));
+    const textBody = cssRuleBodyMatching(css, `${root} .easymde-mermaid text`);
+    assert.match(textBody ?? '', /fill:\s*var\(--text\)\s*!important;/, `${file} should retain its Mermaid text color`);
+    assert.ok(
+      contrast(toHex(cssVariable(css, '--text')), toHex(cssVariable(css, '--bg'))) >= 4.5,
+      `${file} text and background should meet AA contrast`
+    );
+
+    for (const shape of ['rect', 'path', 'circle', 'polygon']) {
+      const selector = `${root} .easymde-mermaid .mindmap-node.section-root ${shape}`;
+      const body = cssRuleBodyMatching(css, selector);
+      assert.ok(body, `${file} should style the mindmap root ${shape}`);
+      assert.match(body.trim(), /^fill:\s*var\(--bg\)\s*!important;$/, `${file} should only set the root background fill`);
+    }
   }
 });
 
@@ -1290,6 +1632,295 @@ test('Phycat and Mdmdt adapters contain no document-host numbering, scrollbar, o
     /@page\b/,
     'Mdmdt must not own the global print page'
   );
+});
+
+test('all Phycat list items anchor their task and connector decorations', () => {
+  const phycatThemes = [
+    'phycat-cherry',
+    'phycat-caramel',
+    'phycat-forest',
+    'phycat-mint',
+    'phycat-sky',
+    'phycat-prussian',
+    'phycat-sakura',
+    'phycat-mauve'
+  ];
+
+  for (const theme of phycatThemes) {
+    const css = readFileSync(join(repoRoot, `assets/themes/article/${theme}.css`), 'utf8');
+    const body = cssRuleBodyMatching(
+      css,
+      `${scopedArticleRoot(theme)} li`,
+      (candidate) => /(?:^|;)\s*position\s*:\s*relative\s*(?:;|$)/.test(candidate)
+    );
+
+    assert.ok(body, `${theme} list items must establish the containing block for absolute decorations`);
+  }
+});
+
+test('all Phycat task adapters neutralize host checkbox rules and anchor loose rows to direct paragraphs', () => {
+  const phycatThemes = [
+    'phycat-cherry',
+    'phycat-caramel',
+    'phycat-forest',
+    'phycat-mint',
+    'phycat-sky',
+    'phycat-prussian',
+    'phycat-sakura',
+    'phycat-mauve'
+  ];
+  const hostCheckboxCss = `
+    input[type="checkbox"] {
+      box-sizing: content-box;
+      font-size: 14px;
+      margin: -4px 4px 0;
+      opacity: .4;
+      padding: 6px;
+      background: rgb(1 2 3);
+      box-shadow: 0 0 0 2px rgb(4 5 6);
+    }
+  `;
+
+  for (const theme of phycatThemes) {
+    const css = readFileSync(join(repoRoot, `assets/themes/article/${theme}.css`), 'utf8');
+    const root = scopedArticleRoot(theme);
+    const taskItemBody = cssRuleBodyMatching(
+      css,
+      `${root} .task-list-item`,
+      (body) => /position:\s*relative/.test(body)
+        && /list-style-type:\s*none/.test(body)
+        && /padding-left:\s*0/.test(body)
+    );
+    const inputBody = cssRuleBodyMatching(
+      css,
+      `${root} .task-list-item input`,
+      (body) => /font:\s*inherit/.test(body)
+        && /line-height:\s*normal/.test(body)
+        && /box-sizing:\s*border-box/.test(body)
+        && /padding:\s*0/.test(body)
+        && /margin:\s*calc\(1em - 10px\)\s+0\s+0\s+-1\.2em/.test(body)
+        && /border:\s*none/.test(body)
+        && /background:\s*transparent/.test(body)
+        && /box-shadow:\s*none/.test(body)
+        && /opacity:\s*1/.test(body)
+        && /width:\s*1\.3rem/.test(body)
+        && /height:\s*1\.3rem/.test(body)
+        && /top:\s*3px/.test(body)
+        && /left:\s*-22px/.test(body)
+    );
+    const beforeBody = cssRuleBodyMatching(
+      css,
+      `${root} .task-list-item input::before`,
+      (body) => /opacity:\s*1/.test(body)
+        && /top:\s*-2px/.test(body)
+        && /left:\s*18px/.test(body)
+    );
+    const afterBody = cssRuleBodyMatching(
+      css,
+      `${root} .task-list-item input::after`,
+      (body) => /top:\s*40%/.test(body)
+        && /left:\s*138%/.test(body)
+        && /opacity:\s*0/.test(body)
+    );
+    const paragraphBody = cssRuleBodyMatching(
+      css,
+      `${root} .task-list-item > p:has(> input[type="checkbox"])`,
+      (body) => /position:\s*relative/.test(body)
+        && /line-height:\s*inherit/.test(body)
+    );
+
+    assert.ok(taskItemBody, `${theme} task rows should own list positioning and marker removal`);
+    assert.ok(inputBody, `${theme} task inputs should restore the Typora base input contract`);
+    assert.ok(beforeBody, `${theme} task marker circles should keep their upstream offset and isolate host pseudo-element opacity`);
+    assert.ok(afterBody, `${theme} task checkmarks should keep their upstream offset`);
+    assert.ok(paragraphBody, `${theme} loose task rows should anchor direct paragraph owners`);
+
+    const dom = new JSDOM(
+      `<style>${hostCheckboxCss}${css}</style>
+      <article class="easymde-rendered-content easymde-markdown-theme-${theme}">
+        <ul>
+          <li class="task-list-item"><input id="${theme}-tight" type="checkbox">Tight</li>
+          <li class="task-list-item"><p id="${theme}-owner"><input type="checkbox">Loose</p></li>
+          <li class="task-list-item"><div><p id="${theme}-nested">Ordinary nested paragraph</p></div></li>
+        </ul>
+      </article>`
+    );
+    const { window } = dom;
+    const inputStyle = window.getComputedStyle(
+      window.document.querySelector(`#${theme}-tight`)
+    );
+    const ownerStyle = window.getComputedStyle(
+      window.document.querySelector(`#${theme}-owner`)
+    );
+    const nestedStyle = window.getComputedStyle(
+      window.document.querySelector(`#${theme}-nested`)
+    );
+
+    assert.equal(inputStyle.boxSizing, 'border-box', `${theme} should override host content-box sizing`);
+    assert.equal(inputStyle.opacity, '1', `${theme} should override host disabled opacity`);
+    assert.equal(inputStyle.padding, '0px', `${theme} should override host checkbox padding`);
+    assert.equal(ownerStyle.position, 'relative', `${theme} should position loose task content from its direct paragraph`);
+    assert.equal(nestedStyle.position, 'static', `${theme} should not position nested ordinary paragraphs`);
+  }
+});
+
+test('all Phycat H1 decorations use normal flow and preserve neighboring declarations', () => {
+  const phycatThemes = [
+    'phycat-cherry',
+    'phycat-caramel',
+    'phycat-forest',
+    'phycat-mint',
+    'phycat-sky',
+    'phycat-prussian',
+    'phycat-sakura',
+    'phycat-mauve'
+  ];
+  const expectedDeclarations = {
+    h3: [
+      ['position', 'relative'],
+      ['width', 'fit-content'],
+      ['margin', '20px 0'],
+      ['text-align', 'left'],
+      ['font-size', '1.3rem'],
+      ['padding-left', '10px'],
+      ['transition', 'all .3s cubic-bezier(.25, .8, .25, 1)']
+    ],
+    blockquote: [
+      ['position', 'relative'],
+      ['margin', '20px 0'],
+      ['padding', '18px 20px 18px 48px'],
+      ['background-color', 'var(--element-color-soo-shallow)'],
+      ['border', 'none'],
+      ['border-radius', '16px'],
+      ['color', '#555'],
+      ['line-height', '1.6'],
+      ['transition', 'transform .3s cubic-bezier(.34, 1.56, .64, 1), background-color .3s ease']
+    ],
+    link: [
+      ['color', '#333'],
+      ['text-decoration', 'none'],
+      ['font-weight', '500'],
+      ['padding', '2px 4px'],
+      ['margin', '0 -2px'],
+      ['border-radius', '4px'],
+      ['background', '0 0'],
+      ['border-bottom', 'none'],
+      ['transition', 'all .2s ease']
+    ]
+  };
+
+  const normalizeDeclarations = (body, label) => {
+    assert.ok(body, `${label} should be declared`);
+    return splitCssDeclarations(body).map(({ property, value }) => [
+      property,
+      value.replace(/\s+/g, ' ').trim()
+    ]);
+  };
+
+  for (const theme of phycatThemes) {
+    const css = readFileSync(join(repoRoot, `assets/themes/article/${theme}.css`), 'utf8');
+    const root = scopedArticleRoot(theme);
+    const h1 = cssRuleBodyMatching(css, `${root} h1`);
+    const after = cssRuleBodyMatching(css, `${root} h1::after`);
+    const hoverAfter = cssRuleBodyMatching(css, `${root} h1:hover::after`);
+
+    assert.ok(h1, `${theme} should define an H1 rule`);
+    assert.ok(after, `${theme} should define an H1 after rule`);
+    assert.ok(hoverAfter, `${theme} should define an H1 hover after rule`);
+
+    const h1Declarations = Object.fromEntries(normalizeDeclarations(h1, `${theme} H1`));
+    const afterDeclarations = Object.fromEntries(normalizeDeclarations(after, `${theme} H1 after`));
+    const hoverAfterDeclarations = Object.fromEntries(
+      normalizeDeclarations(hoverAfter, `${theme} H1 hover after`)
+    );
+
+    assert.equal(h1Declarations['padding-bottom'], '0', `${theme} H1 should reserve no bottom padding`);
+    assert.equal(afterDeclarations.display, 'block', `${theme} H1 after should stay in normal flow`);
+    assert.equal(afterDeclarations.width, '40px', `${theme} H1 after width`);
+    assert.equal(afterDeclarations.height, '4px', `${theme} H1 after height`);
+    assert.equal(afterDeclarations.margin, '8px auto 0', `${theme} H1 after spacing and centering`);
+    assert.equal(
+      Number.parseFloat(afterDeclarations.margin) + Number.parseFloat(afterDeclarations.height),
+      12,
+      `${theme} H1 after should retain the 12px total decoration space`
+    );
+    assert.equal(afterDeclarations.position, undefined, `${theme} H1 after must not be positioned`);
+    assert.equal(afterDeclarations.left, undefined, `${theme} H1 after must not use left positioning`);
+    assert.equal(afterDeclarations.bottom, undefined, `${theme} H1 after must not use bottom positioning`);
+    assert.equal(afterDeclarations.transform, undefined, `${theme} H1 after must not translate for centering`);
+    assert.equal(hoverAfterDeclarations.width, '100%', `${theme} H1 hover width`);
+
+    const h3BeforeDeclarations = Object.fromEntries(
+      normalizeDeclarations(
+        cssRuleBodyMatching(css, `${root} h3::before`),
+        `${theme} H3 before`
+      )
+    );
+    assert.equal(h3BeforeDeclarations.position, 'absolute', `${theme} H3 marker positioning`);
+    assert.equal(h3BeforeDeclarations.left, '-6px', `${theme} H3 marker horizontal offset`);
+    assert.equal(h3BeforeDeclarations.top, '50%', `${theme} H3 marker vertical anchor`);
+    assert.equal(h3BeforeDeclarations.transform, 'translateY(-50%)', `${theme} H3 marker centering`);
+    assert.equal(h3BeforeDeclarations.width, '5px', `${theme} H3 marker width`);
+    assert.equal(h3BeforeDeclarations.height, '61%', `${theme} H3 marker height`);
+
+    const blockquoteBeforeDeclarations = Object.fromEntries(
+      normalizeDeclarations(
+        cssRuleBodyMatching(css, `${root} blockquote::before`),
+        `${theme} blockquote before`
+      )
+    );
+    assert.equal(
+      blockquoteBeforeDeclarations.position,
+      'absolute',
+      `${theme} blockquote marker positioning`
+    );
+    assert.equal(
+      blockquoteBeforeDeclarations.left,
+      '16px',
+      `${theme} blockquote marker horizontal offset`
+    );
+    assert.equal(
+      blockquoteBeforeDeclarations.top,
+      '18px',
+      `${theme} blockquote marker vertical offset`
+    );
+
+    const linkBefore = cssRuleBodyMatching(
+      css,
+      `${root} p a:not(.md-toc-inner)::before`
+    );
+    assert.ok(linkBefore, `${theme} link marker should be declared`);
+    assert.match(linkBefore, /display:\s*inline-block/);
+    assert.match(linkBefore, /width:\s*1em/);
+    assert.match(linkBefore, /height:\s*1em/);
+    assert.match(linkBefore, /background-color:\s*var\(--element-color\)/);
+    assert.match(
+      linkBefore,
+      /(?:^|;)\s*-webkit-mask:\s*url\(["']?data:image\/svg\+xml/i,
+      `${theme} link marker should retain its WebKit SVG mask`
+    );
+    assert.match(
+      linkBefore,
+      /(?:^|;)\s*mask:\s*url\(["']?data:image\/svg\+xml/i,
+      `${theme} link marker should retain its standard SVG mask`
+    );
+
+    assert.deepEqual(
+      normalizeDeclarations(cssRuleBodyMatching(css, `${root} h3`), `${theme} H3`),
+      expectedDeclarations.h3,
+      `${theme} H3 declarations should remain unchanged`
+    );
+    assert.deepEqual(
+      normalizeDeclarations(cssRuleBodyMatching(css, `${root} blockquote`), `${theme} blockquote`),
+      expectedDeclarations.blockquote,
+      `${theme} blockquote declarations should remain unchanged`
+    );
+    assert.deepEqual(
+      normalizeDeclarations(cssRuleBodyMatching(css, `${root} a`), `${theme} link`),
+      expectedDeclarations.link,
+      `${theme} link declarations should remain unchanged`
+    );
+  }
 });
 
 test('Terminal Noir preserves the reference terminal palette and readable contrast', () => {
@@ -1450,5 +2081,70 @@ test('shared code-block CSS preserves horizontal scrolling while hiding bottom s
     assert.equal(codeStyle.overflowX, 'auto');
     assert.equal(codeStyle.overflowY, 'hidden');
     assert.equal(codeStyle.whiteSpace, 'pre');
+  }
+});
+
+function targetsHeadingTextContainer(selector) {
+  const normalized = normalizeCssSelector(selector);
+  if (/:{1,2}(?:before|after)\b/i.test(normalized)) {
+    return false;
+  }
+
+  return /(?:^|[\s>+~])h[1-6](?:[.#][a-zA-Z0-9_-]+|\[[^\]]*\]|:[a-z-]+(?:\([^)]*\))?)*(?:\s*(?:>\s*)?(?:span)?\.content(?:[.#][a-zA-Z0-9_-]+|\[[^\]]*\]|:[a-z-]+(?:\([^)]*\))?)*)?$/i.test(
+    normalized
+  );
+}
+
+test('non-default article themes avoid fixed pixel heights on heading text containers', () => {
+  const nonDefaultThemes = registeredArticleThemes().filter(({ id }) => id !== 'default');
+  assert.ok(nonDefaultThemes.length >= 45, 'expected at least 45 non-default registered article themes');
+
+  const violations = [];
+  for (const { id, assetPath } of nonDefaultThemes) {
+    const css = readFileSync(join(repoRoot, assetPath), 'utf8');
+    for (const rule of parseCssRules(css)) {
+      const headingSelectors = rule.selectors
+        .map(normalizeCssSelector)
+        .filter(targetsHeadingTextContainer);
+      if (headingSelectors.length === 0) continue;
+
+      const declarations = splitCssDeclarations(rule.body);
+      const heightDeclarations = declarations.filter((declaration) => declaration.property === 'height');
+      if (heightDeclarations.length === 0) continue;
+
+      const effectiveHeight = heightDeclarations[heightDeclarations.length - 1].value;
+      if (/^\d+(?:\.\d+)?px(?:\s*!important)?$/i.test(effectiveHeight)) {
+        violations.push({
+          assetPath,
+          height: effectiveHeight,
+          id,
+          selectors: headingSelectors
+        });
+      }
+    }
+  }
+
+  assert.deepEqual(
+    violations,
+    [],
+    `article themes must use min-height + height: auto instead of fixed pixel height on heading text containers: ${JSON.stringify(violations)}`
+  );
+
+  for (const [themeId, headingTag] of [
+    ['cute-green', 'h2'],
+    ['frontend-peak', 'h2'],
+    ['fullstack-blue', 'h3']
+  ]) {
+    const css = readFileSync(join(repoRoot, `assets/themes/article/${themeId}.css`), 'utf8');
+    const dom = new JSDOM(
+      `<style>${css}</style>
+      <article class="easymde-rendered-content easymde-markdown-theme-${themeId}">
+        <${headingTag}><span class="prefix"></span><span class="content">Wrapped heading title</span><span class="suffix"></span></${headingTag}>
+      </article>`
+    );
+    const contentEl = dom.window.document.querySelector(`${headingTag} .content`);
+    const style = dom.window.getComputedStyle(contentEl);
+    assert.equal(style.minHeight, '38px', `${themeId} ${headingTag} .content should preserve min-height: 38px`);
+    assert.equal(style.height, 'auto', `${themeId} ${headingTag} .content should allow height: auto wrapping`);
   }
 });

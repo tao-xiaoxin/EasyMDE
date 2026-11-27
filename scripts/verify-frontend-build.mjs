@@ -22,9 +22,22 @@ const contractSpec = {
 	resourceReferencedByScript: true,
 	label: "build contract",
 };
+const FIRST_PARTY_FORBIDDEN_SCRIPT_PATTERNS = [
+	{ pattern: /frontend\/src/, label: "frontend source path" },
+	{ pattern: /\.at\(/, label: "post-ES2020 .at() call" },
+	{ pattern: /Object\.hasOwn\(/, label: "post-ES2020 Object.hasOwn() call" },
+	{ pattern: /\.replaceAll\(/, label: "post-ES2020 .replaceAll() call" },
+];
 const productionSpec = {
 	outputRoot: join(repositoryRoot, "assets/build"),
 	sourceEntry: "frontend/src/entrypoints/admin-editor.tsx",
+	manifestResources: [
+		{
+			sourceEntry:
+				"frontend/src/integrations/browser/wechat/wechat-png-encoder.worker.ts",
+			filePattern: /^assets\/wechat-png-encoder-[A-Za-z0-9_-]+\.js$/,
+		},
+	],
 	expectedHandle: "easymde-admin-editor-toolbar",
 	expectedDependencies: [
 		"wp-api-fetch",
@@ -36,20 +49,16 @@ const productionSpec = {
 	expectedModuleFormat: "esm",
 	chunkFilePattern: /^assets\/admin-editor-chunk-[A-Za-z0-9_-]+\.js$/,
 	resourceField: null,
-	expectedResourceCount: 0,
+	expectedResourceCount: 1,
 	resourceHasManifestRecord: false,
-	resourceReferencedByScript: false,
+	resourceReferencedByScript: true,
 	label: "production build",
 	ignoredOutputPrefixes: ["admin-editor-loader/", "code-copy/", "editor-block-index-worker/", "frontend-enhancements/", "frontend-bootstrap/", "frontend-mermaid/", "media-picker/", "settings-center/"],
 	requiredRuntimePatterns: [
 		{ pattern: /\bwp\.element\b/, label: "WordPress element runtime" },
 		{ pattern: /\bwp\.i18n\b/, label: "WordPress i18n runtime" },
 	],
-	forbiddenScriptPatterns: [
-		{ pattern: /frontend\/src/, label: "frontend source path" },
-		{ pattern: /\.at\(/, label: "post-ES2020 .at() call" },
-		{ pattern: /Object\.hasOwn\(/, label: "post-ES2020 Object.hasOwn() call" },
-	],
+	forbiddenScriptPatterns: FIRST_PARTY_FORBIDDEN_SCRIPT_PATTERNS,
 };
 const adminEditorLoaderProductionSpec = {
 	outputRoot: join(repositoryRoot, "assets/build/admin-editor-loader"),
@@ -72,6 +81,7 @@ const adminEditorLoaderProductionSpec = {
 		{ pattern: /MutationObserver/, label: "editor DOM gate" },
 		{ pattern: /pagehide/, label: "editor loader teardown" },
 	],
+	forbiddenScriptPatterns: FIRST_PARTY_FORBIDDEN_SCRIPT_PATTERNS,
 };
 const adminEditorLoaderProductionCheckRoot = join(
 	repositoryRoot,
@@ -93,6 +103,7 @@ const codeCopyProductionSpec = {
 	label: "code-copy production build",
 	requiredRuntimePattern: /easymde-code-copy__button/,
 	requiredRuntimeLabel: "code-copy runtime",
+	forbiddenScriptPatterns: FIRST_PARTY_FORBIDDEN_SCRIPT_PATTERNS,
 };
 const codeCopyProductionCheckRoot = join(
 	repositoryRoot,
@@ -110,6 +121,7 @@ const settingsProductionSpec = {
 	label: "settings-center production build",
 	requiredRuntimePattern: /EasyMDESettingsCenterBootstrap/,
 	requiredRuntimeLabel: "settings-center bootstrap",
+	forbiddenScriptPatterns: FIRST_PARTY_FORBIDDEN_SCRIPT_PATTERNS,
 };
 const settingsProductionCheckRoot = join(
 	repositoryRoot,
@@ -135,6 +147,7 @@ const enhancementsProductionSpec = {
 			label: "Mermaid strict security level",
 		},
 	],
+	forbiddenScriptPatterns: FIRST_PARTY_FORBIDDEN_SCRIPT_PATTERNS,
 };
 const enhancementsProductionCheckRoot = join(
 	repositoryRoot,
@@ -152,6 +165,7 @@ const bootstrapProductionSpec = {
 	label: "frontend bootstrap production build",
 	requiredRuntimePattern: /DOMContentLoaded/,
 	requiredRuntimeLabel: "frontend DOM bootstrap",
+	forbiddenScriptPatterns: FIRST_PARTY_FORBIDDEN_SCRIPT_PATTERNS,
 };
 const bootstrapProductionCheckRoot = join(
 	repositoryRoot,
@@ -171,6 +185,7 @@ const mermaidProductionSpec = {
 		{ pattern: /\.mermaid=/, label: "Mermaid browser runtime" },
 		{ pattern: /startOnLoad/, label: "Mermaid configuration" },
 	],
+	// Upstream mermaid@10.9.6 runtime bundle is intentionally exempt from FIRST_PARTY_FORBIDDEN_SCRIPT_PATTERNS.
 };
 const mermaidProductionCheckRoot = join(
 	repositoryRoot,
@@ -188,6 +203,7 @@ const mediaPickerProductionSpec = {
 	label: "media picker bridge production build",
 	requiredRuntimePattern: /easymde-media-picker-connect/,
 	requiredRuntimeLabel: "media picker bridge handshake",
+	forbiddenScriptPatterns: FIRST_PARTY_FORBIDDEN_SCRIPT_PATTERNS,
 };
 const mediaPickerProductionCheckRoot = join(
 	repositoryRoot,
@@ -205,6 +221,7 @@ const editorBlockIndexWorkerProductionSpec = {
 	label: "editor block-index worker production build",
 	requiredRuntimePattern: /editor-block-index/,
 	requiredRuntimeLabel: "editor block-index worker protocol",
+	forbiddenScriptPatterns: FIRST_PARTY_FORBIDDEN_SCRIPT_PATTERNS,
 };
 const editorBlockIndexWorkerProductionCheckRoot = join(
 	repositoryRoot,
@@ -446,6 +463,44 @@ function validateBuild(spec, outputRoot = spec.outputRoot) {
 		);
 	}
 
+	const explicitResourceKeys = new Set(
+		(spec.manifestResources ?? []).map((resource) => resource.sourceEntry),
+	);
+	const explicitManifestResources = (spec.manifestResources ?? []).map(
+		(resource) => {
+			assertRelativeAssetPath(resource.sourceEntry, "Vite resource source");
+			if (undefined === manifest[resource.sourceEntry]) {
+				throw new Error(
+					`Vite manifest is missing the resource record ${resource.sourceEntry}.`,
+				);
+			}
+			const record = assertObject(
+				manifest[resource.sourceEntry],
+				`Vite resource ${resource.sourceEntry}`,
+			);
+			if (
+				record.isEntry !== false ||
+				record.src !== resource.sourceEntry ||
+				"string" !== typeof record.file
+			) {
+				throw new Error(
+					`Vite manifest resource ${resource.sourceEntry} must be a non-entry record.`,
+				);
+			}
+			assertRelativeAssetPath(
+				record.file,
+				`Vite resource ${resource.sourceEntry} file`,
+			);
+			resource.filePattern.lastIndex = 0;
+			if (!resource.filePattern.test(record.file)) {
+				throw new Error(
+					`Vite manifest resource ${resource.sourceEntry} has an unexpected file name.`,
+				);
+			}
+			return record.file;
+		},
+	);
+
 	if (spec.expectedModuleFormat) {
 		if (spec.expectedModuleFormat !== wordpressEntry.moduleFormat) {
 			throw new Error(
@@ -464,7 +519,7 @@ function validateBuild(spec, outputRoot = spec.outputRoot) {
 				spec.expectedResourceCount,
 				"Vite resources",
 			)
-		: [];
+		: explicitManifestResources;
 	const wordpressResources = assertAssetList(
 		wordpressEntry.resources,
 		spec.expectedResourceCount,
@@ -519,6 +574,7 @@ function validateBuild(spec, outputRoot = spec.outputRoot) {
 			assertRelativeAssetPath(dynamicImportKey, "Vite dynamic import source");
 			if (
 				dynamicImportKey === spec.sourceEntry ||
+				explicitResourceKeys.has(dynamicImportKey) ||
 				!Object.hasOwn(manifest, dynamicImportKey)
 			) {
 				throw new Error(
@@ -528,7 +584,9 @@ function validateBuild(spec, outputRoot = spec.outputRoot) {
 		}
 
 		const viteChunkRecords = manifestKeys
-			.filter((key) => key !== spec.sourceEntry)
+			.filter(
+				(key) => key !== spec.sourceEntry && !explicitResourceKeys.has(key),
+			)
 			.map((key) => {
 				assertRelativeAssetPath(key, "Vite chunk source");
 				return assertObject(manifest[key], `Vite chunk ${key}`);
@@ -567,7 +625,20 @@ function validateBuild(spec, outputRoot = spec.outputRoot) {
 		);
 	}
 
-	if (spec.resourceHasManifestRecord) {
+	if (!spec.allowDynamicChunks && spec.manifestResources?.length) {
+		const expectedManifestKeys = [
+			spec.sourceEntry,
+			...spec.manifestResources.map((resource) => resource.sourceEntry),
+		].sort();
+		if (
+			JSON.stringify([...manifestKeys].sort()) !==
+			JSON.stringify(expectedManifestKeys)
+		) {
+			throw new Error(
+				"Vite manifest contains missing or unowned resource records.",
+			);
+		}
+	} else if (spec.resourceHasManifestRecord) {
 		const viteResourceRecords = manifestKeys
 			.filter((key) => key !== spec.sourceEntry)
 			.map((key) => {
@@ -695,7 +766,11 @@ function validateBuild(spec, outputRoot = spec.outputRoot) {
 	}
 
 	const resourceName = viteResources[0] ? posix.basename(viteResources[0]) : "";
-	if (spec.resourceReferencedByScript && !script.includes(resourceName)) {
+	const allBuiltScripts = [script, ...chunkScriptsByFile.values()];
+	if (
+		spec.resourceReferencedByScript &&
+		!allBuiltScripts.some((source) => source.includes(resourceName))
+	) {
 		throw new Error(
 			"Built script does not resolve the Vite manifest resource.",
 		);

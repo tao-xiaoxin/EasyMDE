@@ -433,6 +433,7 @@ final class AdminEditorStrings {
 			'renderingFailed'                          => __( 'Rendering failed.', 'easymde' ),
 			'copyWechatSuccess'                        => __( 'Copied preview for WeChat.', 'easymde' ),
 			'copyWechatFailed'                         => __( 'Copy for WeChat failed. Please try again in this browser.', 'easymde' ),
+			'copyWechatFailedWithUploads'              => __( 'Copy for WeChat failed. Some generated images may remain in the selected image storage; review them before retrying.', 'easymde' ),
 			'copyWechatUnsupported'                    => __( 'Clipboard access is not available in this browser.', 'easymde' ),
 			'imagePasteUploading'                      => __( 'Uploading pasted image...', 'easymde' ),
 			'imagePasteUploaded'                       => __( 'Pasted image uploaded.', 'easymde' ),

@@ -11,6 +11,10 @@ type WordPressClassicMetadataOptions = Readonly<{
   scriptHandle: string;
   dependencies: ReadonlyArray<string>;
   manifestResourceField: 'assets' | null;
+  manifestResources?: ReadonlyArray<Readonly<{
+    sourceEntry: string;
+    filePattern: RegExp;
+  }>>;
 }>;
 
 const WORDPRESS_ELEMENT_VIRTUAL_ID = '\0easymde-wordpress-esm:element';
@@ -137,13 +141,35 @@ function singleResourceList(value: unknown, label: string): ReadonlyArray<string
   return [value[0]];
 }
 
+function matchingBundleAssets(
+  bundle: Record<string, { type: string; fileName: string }>,
+  resource: Readonly<{ sourceEntry: string; filePattern: RegExp }>
+): ReadonlyArray<string> {
+  const matches = Object.values(bundle)
+    .filter((output) => 'asset' === output.type)
+    .map((output) => output.fileName)
+    .filter((fileName) => {
+      resource.filePattern.lastIndex = 0;
+      return resource.filePattern.test(fileName);
+    });
+
+  if (1 !== matches.length) {
+    throw new Error(
+      `Expected exactly one emitted resource for ${resource.sourceEntry}; received ${matches.length}.`
+    );
+  }
+
+  return matches;
+}
+
 export function wordpressClassicMetadata({
   allowDynamicChunks = false,
   repositoryRoot,
   sourceEntry,
   scriptHandle,
   dependencies,
-  manifestResourceField
+  manifestResourceField,
+  manifestResources = []
 }: WordPressClassicMetadataOptions): Plugin {
   return {
     name: 'easymde-wordpress-classic-metadata',
@@ -192,6 +218,7 @@ export function wordpressClassicMetadata({
       if (entry.fileName !== manifestEntry.file) {
         throw new Error('The completed Vite manifest does not match the built entry.');
       }
+      let manifestChanged = false;
       if (!allowDynamicChunks && undefined !== manifestEntry.dynamicImports) {
         if (
           !Array.isArray(manifestEntry.dynamicImports)
@@ -211,14 +238,74 @@ export function wordpressClassicMetadata({
         }
 
         delete manifestEntry.dynamicImports;
+        manifestChanged = true;
+      }
+      const explicitResources = manifestResources.flatMap((resource) => {
+        if (sourceEntry === resource.sourceEntry) {
+          throw new Error('A WordPress manifest resource cannot reuse the entry source.');
+        }
+        if (Object.hasOwn(manifest, resource.sourceEntry)) {
+          throw new Error(`Vite manifest already contains the resource ${resource.sourceEntry}.`);
+        }
+
+        const [file] = matchingBundleAssets(bundle, resource);
+        if (!file) {
+          throw new Error(`The emitted resource file is missing for ${resource.sourceEntry}.`);
+        }
+
+        manifest[resource.sourceEntry] = {
+          file,
+          isEntry: false,
+          src: resource.sourceEntry
+        };
+        manifestChanged = true;
+        return [file];
+      });
+      const resources = [
+        ...(manifestResourceField
+          ? singleResourceList(
+              manifestEntry[manifestResourceField],
+              `Vite manifest ${manifestResourceField}`
+            )
+          : []),
+        ...explicitResources
+      ];
+      if (new Set(resources).size !== resources.length) {
+        throw new Error('WordPress manifest resources must be unique.');
+      }
+      if (manifestResources.length) {
+        const allowedManifestKeys = new Set([
+          sourceEntry,
+          ...manifestResources.map((resource) => resource.sourceEntry)
+        ]);
+        const allowedChunkFiles = new Set(chunks);
+        const unexpectedManifestKeys = Object.keys(manifest).filter((key) => {
+          if (allowedManifestKeys.has(key)) {
+            return false;
+          }
+          if (allowDynamicChunks) {
+            const record = manifest[key];
+            if (
+              record
+              && 'object' === typeof record
+              && !Array.isArray(record)
+              && 'string' === typeof (record as Record<string, unknown>).file
+              && allowedChunkFiles.has((record as Record<string, unknown>).file as string)
+            ) {
+              return false;
+            }
+          }
+          return true;
+        });
+        if (unexpectedManifestKeys.length) {
+          throw new Error(
+            `Vite manifest contains unowned resource records: ${unexpectedManifestKeys.join(', ')}.`
+          );
+        }
+      }
+      if (manifestChanged) {
         writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
       }
-      const resources = manifestResourceField
-        ? singleResourceList(
-            manifestEntry[manifestResourceField],
-            `Vite manifest ${manifestResourceField}`
-          )
-        : [];
       const version = createHash('sha256').update(entry.code).digest('hex').slice(0, 16);
       const phpDependencies = dependencies.map((dependency) => `'${dependency}'`).join(', ');
 

@@ -23,9 +23,11 @@ import { openFeaturedImagePicker } from '../../features/immersive-editor/open-fe
 import type { PreviewSurfaceRuntime } from '../../features/live-preview/ui/PreviewSurfaceOwner';
 import { openMediaPickerSession } from '../../features/media-picker/media-picker-session';
 import {
+  type WechatExportSession,
   type WechatExportStatus,
   createWechatExportSession
 } from '../../features/wechat-export/wechat-export-session';
+import type { WechatCopyStatusStore } from '../../features/wechat-export/wechat-copy-status';
 import {
   documentPort,
   mediaPickerFailureCode,
@@ -41,7 +43,9 @@ import type {
 } from './editor-root-types';
 
 export type UseEditorMediaUploadBridgeOptions = Readonly<{
+  appearanceTransitionPendingRef: SharedRef<number | null>;
   applyVisualCanonicalChange: ApplyVisualCanonicalChange;
+  clearScheduledWechatPreparation: () => void;
   documentSession: EditorDocumentSession | null;
   executeExternalCommand: EditorRootProps['executeExternalCommand'];
   imageUpload: EditorRootProps['imageUpload'];
@@ -56,8 +60,9 @@ export type UseEditorMediaUploadBridgeOptions = Readonly<{
   protectedOperationError: (operation: EditorSessionOperation) => Error | null;
   publishEditorStatus: (status: EditorStatus) => void;
   remoteImageImportPort: RemoteImageImportPort;
-  reportFailure: (code: string) => void;
+  reportFailure: (code: string, level?: 'error' | 'info') => void;
   rootActiveRef: SharedRef<boolean>;
+  scheduleCurrentWechatPreviewPreparation: () => void;
   toolbar: EditorRootProps['toolbar'];
   visualEditorRuntimeRef: SharedRef<ImmersiveVisualEditorRuntime | null>;
   visualEditorSurface: HTMLElement | null;
@@ -65,12 +70,18 @@ export type UseEditorMediaUploadBridgeOptions = Readonly<{
   visualPreviewEditingRef: SharedRef<boolean>;
   waitForFreshFormalPreview: (signal?: AbortSignal) => Promise<HTMLElement | null>;
   wechatClipboard: EditorRootProps['wechatClipboard'];
+  wechatCopyPendingRef: SharedRef<boolean>;
+  wechatCopySequenceRef: SharedRef<number>;
+  wechatCopyStatus: WechatCopyStatusStore;
   wechatExport: EditorRootProps['wechatExport'];
+  wechatSessionRef: SharedRef<WechatExportSession | null>;
   wechatVisualRasterizationPort: EditorRootProps['wechatVisualRasterizationPort'];
 }>;
 
 export function useEditorMediaUploadBridge({
+  appearanceTransitionPendingRef,
   applyVisualCanonicalChange,
+  clearScheduledWechatPreparation,
   documentSession,
   executeExternalCommand,
   imageUpload,
@@ -87,6 +98,7 @@ export function useEditorMediaUploadBridge({
   remoteImageImportPort: rawRemoteImageImportPort,
   reportFailure,
   rootActiveRef,
+  scheduleCurrentWechatPreviewPreparation,
   toolbar,
   visualEditorRuntimeRef,
   visualEditorSurface,
@@ -94,9 +106,18 @@ export function useEditorMediaUploadBridge({
   visualPreviewEditingRef,
   waitForFreshFormalPreview,
   wechatClipboard,
+  wechatCopyPendingRef,
+  wechatCopySequenceRef,
+  wechatCopyStatus,
   wechatExport,
+  wechatSessionRef,
   wechatVisualRasterizationPort
 }: UseEditorMediaUploadBridgeOptions) {
+  const scheduleWechatPreparationAfterCopyRef = useRef<(() => void) | null>(
+    null
+  );
+  scheduleWechatPreparationAfterCopyRef.current =
+    scheduleCurrentWechatPreviewPreparation;
   const mediaOperationRef = useRef<Promise<unknown> | null>(null);
   const featuredImageOperationRef =
     useRef<Promise<NativeFeaturedImage | null> | null>(null);
@@ -283,9 +304,65 @@ export function useEditorMediaUploadBridge({
     wechatVisualRasterizationPort
   ]);
 
-  const copyWechatFromImmersive = useCallback(async () => {
-    return 'copied' === (await wechatSession.copy()).status;
-  }, [wechatSession]);
+  wechatSessionRef.current = wechatSession;
+
+  const requestWechatCopy = useCallback(() => {
+    if (
+      !rootActiveRef.current
+      || wechatCopyPendingRef.current
+      || null !== appearanceTransitionPendingRef.current
+    ) {
+      return Promise.resolve(false);
+    }
+    const sequence = ++wechatCopySequenceRef.current;
+    wechatCopyPendingRef.current = true;
+    clearScheduledWechatPreparation();
+    let operation: ReturnType<typeof wechatSession.copy>;
+    try {
+      // Keep the session call in the originating click/key activation task. The
+      // Clipboard adapter owns the activation-sensitive browser write.
+      operation = wechatSession.copy();
+      wechatCopyStatus.setPending(true);
+    } catch (error) {
+      if (wechatCopySequenceRef.current === sequence) {
+        wechatCopyPendingRef.current = false;
+      }
+      throw error;
+    }
+    return operation
+      .then(
+        (result) =>
+          rootActiveRef.current
+          && wechatCopySequenceRef.current === sequence
+          && 'copied' === result.status
+      )
+      .finally(() => {
+        if (
+          rootActiveRef.current
+          && wechatCopySequenceRef.current === sequence
+        ) {
+          wechatCopyPendingRef.current = false;
+          wechatCopyStatus.setPending(false);
+          if (!wechatExport.pngConversionEnabled) {
+            scheduleWechatPreparationAfterCopyRef.current?.();
+          }
+        }
+      });
+  }, [
+    appearanceTransitionPendingRef,
+    clearScheduledWechatPreparation,
+    rootActiveRef,
+    wechatCopyPendingRef,
+    wechatCopySequenceRef,
+    wechatCopyStatus,
+    wechatExport.pngConversionEnabled,
+    wechatSession
+  ]);
+
+  const copyWechatFromImmersive = useCallback(
+    () => requestWechatCopy(),
+    [requestWechatCopy]
+  );
 
   const remoteImageImportPort = useMemo<RemoteImageImportPort>(
     () => ({
@@ -399,7 +476,7 @@ export function useEditorMediaUploadBridge({
         'copyWechat'
         === toolbar.commands.find((command) => command.id === commandId)?.action
       ) {
-        void wechatSession.copy();
+        void requestWechatCopy();
         return true;
       }
       return executeExternalCommand(commandId, session);
@@ -409,11 +486,11 @@ export function useEditorMediaUploadBridge({
       documentSession,
       executeExternalCommand,
       openMediaPicker,
+      requestWechatCopy,
       rootActiveRef,
       toolbar.commands,
       visualEditorRuntimeRef,
-      visualPreviewEditingRef,
-      wechatSession
+      visualPreviewEditingRef
     ]
   );
 
@@ -424,7 +501,24 @@ export function useEditorMediaUploadBridge({
     [mediaPickerFrame]
   );
 
-  useEffect(() => () => wechatSession.dispose(), [wechatSession]);
+  useEffect(
+    () => () => {
+      wechatCopySequenceRef.current += 1;
+      wechatCopyPendingRef.current = false;
+      wechatCopyStatus.setPending(false);
+      if (wechatSessionRef.current === wechatSession) {
+        wechatSessionRef.current = null;
+      }
+      wechatSession.dispose();
+    },
+    [
+      wechatCopyPendingRef,
+      wechatCopySequenceRef,
+      wechatCopyStatus,
+      wechatSession,
+      wechatSessionRef
+    ]
+  );
 
   const handleVisualImagePasteFiles = useCallback(
     (files: ReadonlyArray<File>, event: ClipboardEvent) => {

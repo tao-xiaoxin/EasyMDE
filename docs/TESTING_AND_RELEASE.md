@@ -101,20 +101,6 @@ under the primary Viewing Image Domain. Secret-reveal coverage must prove
 `Cache-Control: no-store`, one-field response projection, and continued
 redaction from bootstrap, ordinary settings, exports, and diagnostics.
 
-Qiniu-focused tests must use the locked `qiniu/php-sdk` Auth, CRC32 helper,
-Region/Config host selection, Request/Response parser, and the EasyMDE transport
-bridge with deterministic fake WordPress transports. They must cover one bounded
-region query before one validated official-host form write per destination
-attempt, official HTTPS host validation, source-host ordering, attempt-index host
-selection, actual response Content-Type handling, exact returned-key matching,
-malformed/201/204/unsafe-host/transport failures, and no SDK cURL or hidden region
-retries. A failed first host must not cause a second POST within one provider call;
-only the explicit administrator `uploadRetryCount` may start another destination
-attempt, and that attempt may select the next validated host without switching
-providers. The pinned SDK's `UploadManager::put` path bypasses its middleware in
-v7.14.0; the adapter must document and test this public-interface limitation
-instead of shadowing vendor classes or reintroducing a handwritten token parser.
-
 Split-rule tests must prove the defaults `{year}/{month}` and suffix-free
 `{md5}`; the fixed registry order is `webp`, `png`, `jpg`, `jpeg`, `jfif`,
 `gif`, all six default to enabled, canonical payloads contain exactly those
@@ -236,6 +222,7 @@ Useful local commands:
 npm install
 npm run icons:check
 npm run assets:check
+npm run math-atlas:check
 npm run lint:frontend
 npm run frontend:check
 git ls-files -z -- '*.js' '*.mjs' | xargs -0 -n1 node --check
@@ -244,7 +231,7 @@ npm run notices:check
 npm test
 ```
 
-`npm run frontend:check` verifies the locked generated Lucide nodes, runs Biome linting, strict TypeScript checking, Vitest component and contract tests, the test-only WordPress Classic Script contract, and read-only production comparisons for all nine manifest-backed Vite entries (including the local ESM `format: "es"` + dynamic code-splitting chunks of `admin-editor.tsx` for ProseMirror visual editing, WeChat export, optional CodeMirror indentation parsers, `ImmersivePublishDialog`, and `ImmersiveCustomCssDialog`). `npm test` runs all Node tests including `tests/Node/frontend-architecture-guardrails.test.mjs` and `tests/Node/php-architecture-guardrails.test.mjs`, which enforce unidirectional frontend layering, zero runtime circular dependencies across production frontend modules, a 1,200-line warning threshold and strict 1,500-line hard production file ceiling with zero legacy exceptions across both `frontend/src/` and `src/`, a 400-line zero-JSX `.tsx` controller ceiling, and PHP PSR-4/`ABSPATH`/`Support`+`Frontend` isolation. The current locked toolchain uses Biome 2.5.4, Vite 8.1.5, TypeScript 7.0.2, CodeMirror 6, ProseMirror core (`prosemirror-*`) + `markdown-it`, and development-only `lucide-react@0.487.0` on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime.
+`npm run frontend:check` verifies the locked generated Lucide nodes, runs Biome linting, strict TypeScript checking, Vitest component and contract tests, the test-only WordPress Classic Script contract, and read-only production comparisons for all nine manifest-backed Vite entries (including the local ESM `format: "es"` + dynamic code-splitting chunks of `admin-editor.tsx` for ProseMirror visual editing, WeChat export, optional CodeMirror indentation parsers, `ImmersivePublishDialog`, and `ImmersiveCustomCssDialog`, plus the Editor entry's exactly one explicit manifest-owned PNG encoder worker resource). `npm test` runs all Node tests including `tests/Node/frontend-architecture-guardrails.test.mjs` and `tests/Node/php-architecture-guardrails.test.mjs`, which enforce unidirectional frontend layering, zero runtime circular dependencies across production frontend modules, a 1,200-line warning threshold and strict 1,500-line hard production file ceiling with zero legacy exceptions across both `frontend/src/` and `src/`, a 400-line zero-JSX `.tsx` controller ceiling, and PHP PSR-4/`ABSPATH`/`Support`+`Frontend` isolation. The current locked toolchain uses Biome 2.5.4, Vite 8.1.5, TypeScript 7.0.2, CodeMirror 6, ProseMirror core (`prosemirror-*`) + `markdown-it`, and development-only `lucide-react@0.487.0` on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime.
 
 The test-only build writes to `.cache/easymde-frontend-contract/`. `npm run build:frontend` writes the committed outputs for the nine Vite configs below, while `npm run check:frontend-production` writes temporary outputs, validates each output, and compares each complete file set and its bytes with the committed runtimes without rewriting them. The validators fail on private React, invalid or inconsistent manifests, missing or stale output, non-plugin-relative resource paths, remote or development URLs, absolute local paths, and source maps.
 
@@ -539,22 +526,270 @@ The session boundary has a separate focused command:
 npm run test:frontend -- frontend/src/features/wechat-export/wechat-export-session.test.ts
 ```
 
-The browser rasterizer has a separate focused command:
+The browser Clipboard adapter, copy-orchestration, prepared-payload, portable
+serialization, style-policy, inline pseudo-paint, math static-flow and vector
+capture, visual rasterizer, and PNG encoder owners are partitioned into focused
+suites under `frontend/src/integrations/browser/wechat/`; one command runs
+every owner suite together:
 
 ```bash
-npm run test:frontend -- frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.test.ts
+npm run test:frontend -- frontend/src/integrations/browser/wechat
 ```
+
+The focused Chromium copy regression spec is:
+
+```bash
+npm run test:e2e -- tests/e2e/wechat-copy.spec.mjs
+```
+
+The task-marker pixel oracle also has a dependency-free Chromium regression
+that exercises the real PNG decoder and both payload and stripped-marker
+comparisons, including center-glyph loss and sub-region rounding negatives:
+
+```bash
+npx playwright test tests/e2e/wechat-task-marker-pixel.spec.mjs --project=chromium
+```
+
+The live cases in `wechat-copy-performance.spec.mjs` and
+`wechat-task-context.spec.mjs` are local diagnostics. They run only with
+`EASYMDE_E2E_WECHAT_LOCAL_DIAGNOSTICS=1`; regular CI retains the synthetic
+task-context cases and the normal WeChat regression spec. Opt-in runs require
+the configured WordPress and upload owners, credentials supplied through the
+existing private E2E environment, and a private performance evidence directory.
+Missing prerequisites fail explicitly. Performance evidence binds to the
+current manifest and artifact hashes rather than a historical bundle name.
+These diagnostics do not establish native WeChat or per-theme visual acceptance.
+
+Bloom theme palette checks must pair Mermaid text with the root-node background.
+For each Bloom variant, inspect the rendered mindmap root and a non-root node,
+verify text contrast and unchanged geometry, and compare the other diagram types.
+Source palette checks do not establish native WeChat or Reader fidelity.
+
+The neutral `phycat-sky` full-example DPR1/2 case verifies responsive SVG
+capture separately from decorated Bloom coverage. It derives eligible roles
+from each live layout, decodes the actual uploaded PNG bytes, checks integer
+dimensions and aspect, and inspects preserved root layout and capped image
+placement across 280, 335, 390, and 677 CSS-pixel destination columns, plus
+the immersive Split and wide Copy surfaces. The browser layout check subtracts
+applied inline padding from the owner content width before validating the IMG's
+explicit source cap and `max-width:100%` mobile bound. Run it with the configured
+isolated WordPress E2E environment:
+
+```bash
+npm run test:e2e -- tests/e2e/wechat-copy.spec.mjs --project=chromium --grep "copies neutral phycat-sky full-fixture responsive Mermaid roles at DPR1/2"
+```
+
+This controlled regression does not establish genuine WeChat image loading,
+QR Reader paint, individual theme visual acceptance or real-provider latency.
 
 The WeChat export implementation contract is owned by the [EasyMDE WeChat export reference](../.agents/skills/easymde/references/wechat-export.md); this section records verification steps only.
 
-The focused frontend tests verify modern and legacy output parity, activation timing, preparation failure, unsafe-value removal, theme and layout-sensitive content, Preview readiness, concurrent requests, and teardown. PNG coverage verifies that the default-disabled strict boolean reaches `wechatExport.pngConversionEnabled`; transfer schemas 1 through 11 import compatible values and schema 12 requires the explicit boolean; the split image settings and exact six-key extension map are present in Settings Center bootstrap schema 4; legacy imports 1 through 11 derive `storagePath` and the suffix-free basename `fileNameRule`, expand the old four-key format map, and migrate only one terminal `.{ext}`; schema 12 rejects missing or extra canonical fields; and changing either split field or the format map invalidates verification state. Preview coverage asserts first-enabled ordering and the exact default `2026/07/a8f4c2d1.webp`, while real upload coverage preserves the verified source extension and rejects MIME mismatches, disabled suffixes, and independent JPG/JPEG/JFIF violations. Background preparation, legacy Clipboard, and synchronous modern setup failure upload nothing; the modern path invokes `write()` before serial rasterization/upload; only outermost Mermaid and KaTeX math roots become PNG; and ordinary tables, existing images, ordinary SVG, code, media, and unknown content remain HTML. It also exercises the 32-candidate, 4096-edge, DPR `1..2`, 16/32-megapixel, per-file authoritative `maxBytes`, 32 MiB total, 10-second raster, and 60-second transaction bounds; selected-owner dispatch, no owner switch, no partial Clipboard result, residual-upload reporting, cancellation, stale Preview, timeout, and failure paths.
+Focused frontend coverage for ordinary nested-list projection exercises tight
+and loose source items, source-relative stem geometry, opaque and transparent
+paint, ordered/task/custom-marker and invalid-geometry exclusions, sync/async
+serialization, PNG-enabled serialization without list rasterization, exact
+connected plaintext, clone identity and source immutability. These JSDOM tests
+verify the serializer contract only; they do not establish native WeChat Paste,
+Save, or Reader fidelity.
+
+Code-topic verification includes hash tokens split across syntax spans, authored FEFF/U2060, punctuation stops, emoji variation/keycap sequences, line boundaries, unchanged body/inline code, and plaintext measurement failure cleanup. Compare ordinary and immersive payloads through native WeChat insertion, Save and fresh desktop/phone Reader: assert no new topic links, original token colors, complete long code lines, local scrolling and shared-frame paint. Record destination CSS normalization separately from demonstrated layout equivalence. For the generated Mac marker, compare native insertion, Save and fresh Reader; confirm all three colors, 12px paint, unchanged header geometry and plaintext, and that ordinary whitespace or unrelated pseudos were not replaced. For an empty painted heading suffix, verify generated-template ownership, transparent and hidden negatives, unchanged authored text, and exact plaintext restoration after a measurement error. Exercise actual ordinary and hidden immersive Source-mode PNG Copy, then native Save and fresh desktop/phone Reader; compare the suffix paint and heading geometry at the same article width. For a generated empty or whitespace-only H1-H4 `::after`, verify sync/async and modern/legacy parity, root and special-layout exclusions, emitted dimensions and retained paint, patch-form border paint (`border-right-width`/`-style`/`-color` with a transparent edge) and background paint, positive border-edge coverage, filtered URL, transparent shorthand, transparent-border-only, hidden, opacity-zero, absolute, and zero-size negatives, native-like empty-span deletion, scoped visibility freshness for warm and in-flight work, unchanged Source bytes, and root-scoped plaintext restoration. The parser fixture must use the CSSOM tab serialization `content: "\\9 "` and cover `\000009 `, `\a `, authored text, escaped quotes, and literal `\\9 ` negatives before asserting the generated marker. Actual native evidence must include Paste, one Save, normal reload, and fresh desktop/phone Reader; one verified theme is not universal theme or pixel acceptance.
+
+Lossless theme-image encoding changes require matching decoded RGBA, dimensions and color interpretation; verify actual copied bytes after cache refresh, then native Save, normal draft reload and fresh desktop/phone Reader. Uploaded file IDs alone are not persistence or image-decoding evidence.
+
+The focused frontend tests verify modern and legacy output parity, activation timing, preparation failure, unsafe-value removal, theme and layout-sensitive content, Preview readiness, concurrent requests, and teardown. They also verify that modern `write()` is invoked before freshness style and geometry reads, logical `text-align` values are normalized by source direction, and ordinary content-box pixel dimensions are projected for a border-box destination. The ordinary dimension matrix covers modern/legacy parity for eligible raw tuples, the bounded seven-field grammar (`box-sizing` plus six dimensions using finite non-negative `px`/`%` or property-specific `auto`/`none`), the positive percentage-edge requirement, invalid `calc()`/negative/unit/zero-edge cases, and excluded roots, pseudos, replaced media, SVG/math/pre/code/table content, and flex/grid/table formatting owners. Warm and in-flight cases change raw `box-sizing` or raw bounds at equal used geometry and require freshness invalidation or regeneration. These focused cases are verification requirements, not a pixel, full-theme, or universal native-WeChat acceptance claim. PNG coverage verifies that the default-disabled strict boolean reaches `wechatExport.pngConversionEnabled`; transfer schemas 1 through 11 import compatible values and schema 12 requires the explicit boolean; the split image settings and exact six-key extension map (`webp`, `png`, `jpg`, `jpeg`, `jfif`, `gif`) are present in Settings Center bootstrap schema 4; legacy imports 1 through 11 derive `storagePath` and the suffix-free basename `fileNameRule`, expand the old four-key format map, and migrate only one terminal `.{ext}`; schema 12 rejects missing or extra canonical fields; and changing either split field or the format map invalidates verification state. Preview coverage asserts first-enabled ordering and the exact default `2026/07/a8f4c2d1.webp`, while real upload coverage preserves the verified source extension and rejects MIME mismatches, disabled suffixes, and independent JPG/JPEG/JFIF violations. Background preparation, legacy Clipboard, and synchronous modern setup failure upload nothing; the modern path invokes `write()` before serial rasterization and bounded upload work; only outermost Mermaid and KaTeX math roots become PNG; and ordinary tables, existing images, ordinary SVG, code, media, and unknown content remain HTML. Rasterization stays serial while selected-owner uploads are backpressured at three in flight; completion replaces visuals in stable candidate order; and any upload failure aborts remaining uploads without committing a partial Clipboard payload. Math coverage verifies the native Safe Preview capture clone, original inline parent typography, complete safe computed dimensions and normal defaults, native computed `table-layout`, retained KaTeX/table/pstrut dimensions, no portable empty-span leakage, full scroll and descendant bounds for wide formulas, axis-independent clipped versus scrollable inline viewport geometry including `autoX/hiddenY` and `hiddenX/autoY`, retained 4096-edge and PNG-pixel validation, fractional `inlineLayout` allocation with optional viewport and paint offsets, top/bottom neighboring-line-box keywords, measured `B-H` margins for other vertical-align modes, explicit failure for missing or invalid allocation, paint-grid floor/ceil quantization, centered local wrapper overflow, and fixed full-root block-image sizing with paint captured once; eligible content-mode blocks retain decoration on their HTML owner. It also exercises the 32-candidate, 4096-edge, DPR `1..2`, 16/32-megapixel, per-file authoritative `maxBytes`, 32 MiB total, 10-second raster, and 60-second transaction bounds; selected-owner dispatch, no owner switch, no partial Clipboard result, residual-upload reporting, cancellation, stale Preview, timeout, and failure paths.
+
+Quote flow regressions additionally require fresh foreground and background
+prepared-payload transactions, including a newly acquired hidden measurement
+identity. Planning an unchanged quote must preserve its canonical freshness
+signatures. Exercise responsive and opposite-edge pseudo-offset rejection,
+modern/legacy parity, cancellation and installation rollback, then verify the
+production result through native Paste, explicit Save, normal reload and a
+fresh Reader at desktop and narrow phone widths. Helper tests and private
+projection prototypes do not satisfy that production gate.
+
+The session matrix must verify owned `theme-change` cancellation, residual-upload side effects, safe unexpected-error diagnostics, late teardown ordering, textual-pseudo visibility, list-marker fixtures, generated inline leaves, table paint and overflow ownership, code-frame source-to-native geometry, and native evidence at the registered widths. The atlas-backed portable matrix must additionally prove: required Bootstrap pair validation and malformed/pair-mismatch failure; no fetch for true-inline, non-KaTeX, or no-eligible Preview; outermost eligible owner selection across `inline-block`, `inline-flex`, and neutral recognized block/`flow-root` owners; exact URL/version cache reuse, no cache publication on cancellation/stale/failure, and later retry; hidden measurement acquisition, source/measurement/final clone pairing, and no hidden host after every terminal path; managed-face ambiguity or absence, unloaded faces, unknown glyphs, invalid SVG/path/clip/matrix data, unsupported visible paint, source-text mismatch, and hidden/zero-opacity/transparent omission; one paired `vlist-s` strut omission without dropping authored zero-width text; neutral flow allocation `A`, styled border-box `R`, visual union `V`, viewport, baseline, and paint-offset consistency; one-time owner background/border/padding ownership with internal solid `colorbox`/`fcolorbox` paint; plaintext capture before visible SVG replacement; final-target prevalidation; batch rollback; unchanged Source Preview; no silent portable fallback or partial success for an admitted owner; and exactly-once lease/probe cleanup across success, failure, abort, stale, timeout, and teardown. A PNG-enabled test must assert that atlas fetch, glyph capture, scene construction, and vector materialization do not run. These focused checks establish implementation contracts only; the near-wrap, fragmented true-inline, full theme/mode, and production native WeChat Save/Reader matrix remain unverified until real evidence is executed. The immediate Inkwell-to-Animal regression runs without an external transition wait and requires an active finite transition at the actual browser write. The PHYcat regression follows predecessor Source mode, exit, remembered Source re-entry, and Split reveal. With diagnostic animation waiting disabled, it requires an active finite CSS animation and no active CSS transitions at the trusted click and native write, then verifies one successful Copy, unchanged Source, and payload fidelity at all three widths. Separate hidden-Source tests cover finite effects restarted by attaching the measurement clone under the same initial resource deadline; JavaScript and infinite effects remain excluded. The focused rasterizer tests additionally verify that document font readiness is awaited, approved bootstrap asset roots are used for matching managed local font faces, remote sources are omitted, missing managed KaTeX faces fail explicitly, valid font bytes are signature- and browser-font-validated, successful bytes are cached, failed entries can retry, cancellation remains explicit, nonmanaged/system families retain the browser fallback, and final PNG names use a deterministic SHA-256 content digest. The Clipboard regression matrix must cover nested blockquotes with computed border, background, spacing, and `::before` content in both modern and legacy paths. It must verify identical normalized HTML, blockquotes replaced by portable sections, preserved nested text and plain-text order, and an unchanged source Preview; this is a verification requirement, not a passed-result claim. The freshness-signature property masks must retain per-node `direction` context, root `position`, root pseudo `box-sizing`, all-node traversal, source markup, element dimensions, viewport signature, cancellation, and initial, current, and final comparisons while reducing unrelated computed-style reads; ordinary raw `box-sizing` and six-dimension semantics remain in the warm and in-flight freshness signatures.
 Focused cancellation coverage verifies Root cancellation when visual editing starts, per-sink adapter cancellation of an active serialization while explicit Copy remains independent, and all-waiter cancellation followed by a fresh background run; it also verifies no post-await plain-text work or prepared-cache publication after cancellation and preserves shared asset-fetch work. The same cancellation contract applies when Preview leaves `ready` status, an ordinary or immersive sink is disposed or replaced, the Root tears down, or the WeChat Port/export owner changes; canceled background work is not a Copy failure.
 
-The Chromium E2E coverage exercises Copy to WeChat from ordinary and immersive surfaces against the same ready Preview and confirms local runtime assets remain the only loaded executable resources. With conversion enabled, it must also prove generated Mermaid and formula PNG upload requests use the selected WordPress Media or Image Hosting owner, ordinary tables remain HTML, no request occurs before explicit Copy, and the live Preview and document do not change. Shared Preview enhancements are scheduled per code, math, and Mermaid node with stale/abort checks between slices so connected-staging work does not monopolize the main thread; focused runtime tests cover yield counts and serial Mermaid cancellation.
+Preview request tests verify that current failures use only the stable privacy-safe
+`preview-response-invalid` and `preview-request-failed` diagnostics, while
+superseded, aborted, stale, and teardown callbacks remain silent and do not
+recreate the Preview owner when callback identities change. PHP integration tests
+verify strict source provenance, source type/order/bounds, and connected-overlap
+union projection: one linear flush makes every connected group root readonly
+with a zero-width range at the union end. Both visual surface paths enforce
+`editable=false` through `contenteditable=false`.
+Clipboard tests also verify the separate 60-second payload/HTML/plain-Blob
+preparation bound and 10-second browser-commit bound, including fail-fast early
+write rejection and late deferred-payload gating.
+The hidden-surface Clipboard regression must verify one ephemeral measurement
+lease from the current enhanced Safe Preview is reused for portable
+HTML/plain-text serialization and PNG visual-root capture, including original
+parent typography and native candidate geometry. It must cover the Root's
+separate `preview`/`split` presentation state, ordinary split entry, source-mode
+last-visible-width retention, the Preview presentation marker/class context,
+paper/canvas media-query wrapping, initial-never-visible workspace constraints,
+original source/cache/freshness ownership, no cached measurement DOM, and lease
+transfer plus cleanup on every terminal path. Image-readiness coverage must
+settle every clone through load/decode or explicit failure before all freshness
+fingerprints, including warm-cache reuse, and before commit; it must temporarily
+promote lazy clones to eager loading, restore attributes, keep readiness inside
+the existing per-resource and transaction bounds without resetting the
+transaction clock, and reject on abort with immediate cleanup and no late cache
+publication. The synchronous legacy case must fail before `execCommand` when
+readiness is unsettled and must perform zero resource work when the lease is
+already ready. Plain-text coverage must capture HTML first, derive browser-layout
+text from the exclusive detached serialization tree, retain the existing
+line-aware source fallback for non-layout DOM environments, compare the
+captured HTML bytes and derived text for parity,
+and verify host removal in
+`finally`. Table coverage must retain authored/computed table `min-width` while
+the generated wrapper owns `min-width:0`, keep ordinary filled tables intrinsic
+with a `min-width:100%` lower bound, retain `width:100%` for existing
+`display:block` theme shims, exercise the Crimson intrinsic-width regression
+that must not compress 520 to 412, and preserve source and table RGBA colors
+without theme hardcoding. This remains a verification requirement; no new
+native acceptance result is claimed.
+Font-readiness coverage must attach clone image listeners before host attachment,
+force one initial layout after attachment, and read the current
+`document.fonts.ready`. A cold source case must hold that readiness and verify
+that initial, current, and final freshness fingerprints and payload work wait
+for both fonts and image load/decode. An absent or already-loaded FontFaceSet
+with no clone images and no active eligible finite CSS effects must retain the
+synchronous legacy-ready path. Abort,
+cleanup, and late font resolution must be terminal; the test must verify that no
+document-wide `loadingerror` listener captures unrelated failures while managed
+font fetch/parse failures remain rasterizer-owned. Retain the existing 10-second
+resource deadline, 60-second transaction, 8ms serialization yield budget, and
+write-first activation. This remains a verification requirement and is not a
+passed-result claim.
+The responsive width regression must capture one source payload at a `412.5px`
+source layout and project that same payload through both ordinary and immersive
+Copy entrypoints at destination widths `375`, `578`, and `760`. It must assert
+the authored `300px`, `50%`, and `calc(100% - 32px)` child containing widths,
+automatic text-height growth, local image/code/table overflow ownership, and
+zero overlap among text rectangles. Body-level overflow alone is insufficient;
+the fixture must check each child containing box and its neighboring content.
+This remains a verification requirement until the local implementation and
+browser evidence are complete.
+The portable-root projection regression must verify that the exporter-owned final
+root adds only `max-width:100%` and `margin:0 auto` after computed Preview
+styles. Hidden-surface measurement must retain the original paper geometry,
+while the live Preview and article content remain unchanged and no fixed MDNice
+spacing value is encoded.
+It must also verify the current root-export property mask for root background,
+layout, and pseudo-element styles, root-projected freshness invalidation, the
+marked temporary raw context clone used by visible serialization, and the
+measurement clone's momentary context marker restoration in `finally`; the
+original Safe Preview root must never be marked and hidden raw context markers
+must remain temporary and absent from the payload.
+PNG scale coverage must compare natural pixel dimensions with displayed CSS
+dimensions at DPR 1 and 2 across ordinary and immersive Copy; responsive rules
+must not overwrite the captured display geometry.
+The canonical Mermaid matrix renders the full-capability fixture at 255, 335,
+and 677 CSS-pixel viewports. It requires a 1200px Gantt logical viewBox, zero
+intersecting date labels, stable authored task/date/milestone geometry,
+strict Sequence geometry, and stable labels, structure, marker definitions,
+and coordinate-independent paint styles for the other eight responsive
+diagrams. It also requires exact DPR-scaled PNG dimensions,
+reachable local scroll endpoints, and no article-root horizontal overflow.
+Intrinsic Mermaid PNGs retain captured CSS width and readable label scale in
+the saved Reader; their bounded wrapper scrolls rather than shrinking wide
+scenes into unreadable thumbnails. Small captures must not upscale. Truly
+responsive and compensated output retain their existing image bounds.
+Focused geometry cases cover Gantt and Sequence viewport quantization plus
+non-filling SVG, wrapper padding, SVG border, transform, fixed height,
+animation, alternate aspect behavior, and invalid Typed OM negatives.
+
+Raw candidate PNGs for local pixel review are opt-in only. Set
+`EASYMDE_E2E_PRIVATE_PIXEL_EVIDENCE_DIR` to an absolute, real temporary
+subdirectory to write mode-`0600` Sequence/Gantt PNGs and privacy-safe JSON;
+the directory is mode `0700`. The test rejects the temporary root itself,
+relative/outside paths, and symlink escapes. CI and public artifacts leave this
+variable unset. Private DPR1/2 review binds fixture, source, carrier, and PNG
+hashes before inspecting glyphs, arrows, labels, scroll endpoints, and negative
+controls; it remains separate from real WeChat Reader acceptance.
+Freshness tests verify that the transaction-local `MutationObserver` is
+installed before the initial snapshot, that `takeRecords()` checkpoints cover
+initial, current, and final comparisons, and that the clean path avoids a
+complete markup/style/geometry recomputation while still checking the current
+task-input checked state. A dirty path recomputes the current complete key and
+compares it with the immutable initial key. Same-value mutations remain
+reusable; an observed real source change remains permanently stale. They also verify
+root-only refresh-bookkeeping exclusions, descendant mutations, complete final
+source/layout comparisons, unchanged Preview-owner/layout guards, and observer
+disconnect on abort, timeout, teardown, and late `finally` cleanup.
+The portable freshness regression matrix should also verify that non-windowed
+source freshness is initialized after native `write()` and before its first
+browser-task yield, while a windowed baseline waits for legitimate
+`resolvePreview` materialization. It must cover an older same-source background
+promise refreshing only its internal `wechat-copy-stale` rejection while
+the session, signal, and source captured for the Copy remain current; propagation
+of nonstale failures when no completed fallback is recovered; one fresh
+preparation without retry or a second native write;
+completed same-source fallback reuse; and cleanup on success, stale, abort,
+timeout, teardown, and synchronous write failure. The matrix must not introduce
+a global activation layout lock or alter existing limits.
+Focused tests do not replace the native CSS allocation matrix, which is the
+evidence boundary for fractional and superscript source-to-PNG geometry.
+Residual 1/64 CSS-pixel precision and DPR1 text anti-aliasing differences are
+rendering limits, not exporter offsets. Real R2, WeChat, and CI results remain
+separate evidence.
+
+The Chromium E2E coverage exercises Copy to WeChat from ordinary and immersive surfaces against the same ready Preview and confirms local runtime assets remain the only loaded executable resources. The focused `tests/e2e/wechat-copy.spec.mjs` covers a cold medium fixture with duplicate-click coalescing, click-to-pending and click-to-write timing, deferred success, rejected browser writes, stable control geometry, and zero document/Preview writes; its warm full-capability case checks rich output and ordinary/immersive pending feedback against the same Preview. PNG conversion owner dispatch, selected-owner failure, ordinary-table preservation, and no-upload background behavior remain covered by the focused frontend tests; native-browser evidence must additionally inspect Mermaid inner-SVG capture, wrapper background/border/padding ownership, complete wide-formula bounds, and responsive image sizing. Settings/editor E2E coverage separately exercises the persisted switch and WordPress image-upload owner contracts. Shared Preview enhancements are scheduled per code, math, and Mermaid node with stale/abort checks between slices so connected-staging work does not monopolize the main thread; focused runtime tests cover yield counts and serial Mermaid cancellation.
+The keyboard-activation regression matrix must verify that ordinary and immersive pending Copy controls retain focus on the originating control before and after native Enter renders the pending state, expose `aria-busy="true"` and `aria-disabled="true"` without native `disabled`, and suppress duplicate click and Enter activation through the shared pending reference. It must also verify that the static WeChat glyph preserves stable control geometry while pending; native `disabled` remains valid only for unavailable capability.
+
+The registered-theme Clipboard payload matrices read the live registries and
+copy each selected article/code theme through the browser owner. Isolated
+destinations at 375, 578, and 760 CSS pixels check semantic content, code token
+styles, frame markers, last painted rows, and local overflow without EasyMDE
+stylesheets. Code height must match the source rather than add a blank row for
+the renderer's terminal LF; deliberate extra blank rows remain intact.
+The Mdmdt link-decoration gate decodes the actual Clipboard raster, requires a
+200x200 intrinsic PNG to match its 14x14 marker on every edge, and proves that
+real isolated SVG and wrong-size mutations fail. The code-mode matrix exercises
+every dynamically registered code theme through ordinary, immersive Split,
+Preview, and Source Copy while rotating Cupid, Phycat, and Mdmdt article owners.
+Each activation requires a finite pending measurement, the existing activation
+and pending budgets, one native write, no Copy-window Long Task, stable Source
+and Preview, exact token/frame/text projection at 335 and 677 CSS pixels, and
+an ordinary live long line that reaches both horizontal ends through wheel input
+without moving the page.
+These portable-payload projections do not prove WeChat importer or reader
+fidelity. Record actual WeChat desktop/phone checks separately, including loaded
+images and the themes and editor modes actually exercised. Keep any opt-in
+payload captures private and outside the repository and public artifacts.
+
+Block-math PNG checks compare intrinsic content bounds for multiple short
+formulas in the same source column. Keep the original decorated math-block
+once; verify short formulas center without unnecessary horizontal scrolling
+and long formulas retain reachable ends. Inspect the saved, refreshed QR Reader
+at narrow widths independently of the native editor's intermediate DOM.
+Inline math baseline and overflow remain separate regression requirements.
 
 For authorized browser verification, run the synthetic full-capability fixture in a local authenticated WordPress and WeChat session.
 Capture source Preview and pasted WeChat output at the same viewport, inspect the sanitized payload and pasted DOM, and measure horizontal overflow owners for long code, tables, and display formulas. For PNG conversion, inspect the generated images at DPR 1 and 2, compare ordinary and immersive results, verify table HTML remains selectable, and record the selected upload owner and request count without publishing provider credentials or article content.
 Verify Preview readiness, task-list state, removal of editor-only or unsafe content, and absence of exporter-created article-wide vertical scrolling.
+For OFF block-vector math, enumerate every bound formula before filtering for
+self-overflow. Require a responsive outer shell, centered short scenes and a
+positive local scroll range for over-wide scenes, with no containing-article
+expansion. Compare measured padding/borders and vertical allocation once; test
+missing/`auto` padding and missing active-border width rejection, plus rollback
+after a later installation fails.
+Native endpoint evidence must guard ancestor scroll offsets/rectangles and the
+visual viewport as well as window scroll. Capture guarded viewport tiles with
+overlap; stitched full-page images that repeat or skip content are invalid.
+
+For task lists, first verify that the source Preview is correct independently
+of export parity: marker paint must not overlap its caption, duplicate a native
+bullet or retain WordPress form-control paint. Typora-derived adapters must
+include the host layout rules required by their theme, including tight and loose
+task-item containing blocks. Then compare every checked and unchecked marker
+with that settled Preview after native paste, Save and QR-opened Reader. Disabled inputs
+remaining in Clipboard HTML are not destination evidence: the native importer
+may remove them. Check marker paint, geometry, text alignment, effective opacity,
+RTL and nested-list indentation at each tested width; reject missing states or
+duplicate ordinary bullets. Exercise the same state through ordinary and
+immersive Source Copy without changing the canonical example.
 Keep the article synthetic and do not publish or send it.
 
 When a required browser, destination, or failure branch is unavailable, record it as unverified rather than treating the focused tests or Chromium stub as proof of real WeChat paste behavior.
@@ -627,6 +862,7 @@ The release job builds the installable plugin ZIP from runtime files:
 composer install --no-dev --no-interaction --prefer-dist
 npm ci
 npm run assets:check
+npm run math-atlas:check
 npm run frontend:check
 npm run i18n:check
 npm run notices:check
@@ -644,6 +880,46 @@ license, and notice destination with its declared local source;
 npm-backed sources must also exist in the root dependency and lockfile
 metadata. Validation fails on missing, changed, or unexpected managed files.
 
+`npm run prepare:assets` is the full runtime-asset preparation path. It removes
+managed destinations, copies the locked npm sources, then invokes the same atlas
+writer as `npm run prepare:math-atlas`. `npm run prepare:math-atlas` is the
+focused preparation command for `assets/math/easymde-katex-glyph-atlas.json`;
+it requires the locked KaTeX inputs to match `assets/vendor/katex/fonts` and
+writes that atlas without refreshing the managed vendor tree or notice. The shared writer reads the complete sorted TTF inventory
+from the locked `katex` package, requires an exact inventory and byte-parity
+match in `assets/vendor/katex/fonts`, and emits one trailing-newline
+`easymde-katex-glyph-atlas/1` JSON document using sorted fonts, ordered cmap
+entries and glyph IDs, six decimal places, `flipY:false`, `optimize:false`, and
+`font-units-y-up`. The generator rejects unsupported or unknown SFNT tables,
+variation or non-glyf fonts, duplicate maps or IDs, invalid outlines, and
+non-finite values.
+
+Both preparation commands require installed locked npm dependencies and the
+exact vendored KaTeX font inventory. Neither command is a release/CI repair
+step. `npm run math-atlas:check` rebuilds the
+expected document in memory and compares its bytes with the committed file.
+`npm run assets:check` performs the same generated-content check, validates
+every manifest-owned vendored destination and notice, checks lockfile/package
+ownership, and fails on missing, changed, untracked, or unexpected managed
+files. The release builder performs its own read-only asset comparison. Run
+`math-atlas:check`, `assets:check`, and `notices:check` after changing the
+generator, input fonts, notice, or committed atlas; record the command result
+instead of assuming generated output is current.
+
+The committed atlas currently present in this checkout is 1,747,745 bytes with SHA-256
+`235e758b006c24325b222ec59f49f89ef780c2812d2325df9a72662dd63f8e23`; it contains
+20 fonts and 2,255 glyph records. These are observed artifact facts, not a test
+result or a permanent spec: `math-atlas:check`, `frontend:check`, and the
+release build must verify the bytes. Any intentional font or generator change
+must produce and review a new exact byte/hash identity. The manifest component owns
+`assets/math/easymde-katex-glyph-atlas.json` and the reviewed
+`assets/math/KaTeX_FONT_LICENSE.txt`. The installable ZIP includes both files;
+source archives retain both plus `scripts/wechat-math-outline-atlas.mjs` and the
+tracked font inputs for contributors. The Editor Bootstrap exposes the local
+atlas URL with exactly one `contentversion` query equal to
+`wechatExport.wechatMathAtlasContentVersion`; both fields are finite strings
+validated against the approved Asset Base URL and exact local atlas path.
+
 The build verifies version consistency across all six canonical release identity
 fields: the plugin header and `EASYMDE_VERSION` in `easymde.php`, the `readme.txt`
 Stable tag, the root `package.json` version, the top-level `package-lock.json`
@@ -652,8 +928,10 @@ must be present non-empty strings; invalid JSON, missing fields, empty strings,
 and non-string values fail with the field named in the error. It also fails if
 required runtime dependencies, local runtime assets, registered theme assets,
 any of the nine production Frontend manifest pairs, any manifest-referenced
-production entry script or matching `.asset.php` artifact, translation files,
-or third-party notices are missing, or if the generated third-party notice
+production entry script, its dynamic chunks, its matching `.asset.php`
+artifact, or the Editor's manifest-owned PNG worker resource, translation
+files, or third-party notices are missing, or if the generated third-party
+notice
 content is stale. CodeMirror and its compiled runtime dependencies are listed
 with their full license notices in `THIRD-PARTY-NOTICES.md`.
 
@@ -670,7 +948,7 @@ cannot change the source archive identity:
 
 Those source archives use `EasyMDE-<version>/` as their root directory. They are separate from the installable runtime plugin ZIP and are not consumed by Plugin Check or E2E.
 
-The installable plugin ZIP includes all nine committed production entries under their manifest-backed `assets/build/` roots, including the Editor, loader, media-picker, public code-copy, shared enhancement/bootstrap, Settings Center, feature-gated Mermaid, and editor structural Worker artifacts; it excludes `frontend/`, TypeScript and TSX source, Vite configuration, frontend test fixtures, `.cache/`, and development metadata. Source ZIP and tar.gz archives are created from the tracked Git tree and intentionally retain tracked `frontend/` source and configuration for contributors.
+The installable plugin ZIP includes all nine committed production entries under their manifest-backed `assets/build/` roots, including the Editor (with its dynamic ESM chunks and its exactly one manifest-owned `assets/wechat-png-encoder-[hash].js` worker resource), loader, media-picker, public code-copy, shared enhancement/bootstrap, Settings Center, feature-gated Mermaid, and editor structural Worker artifacts. It also includes `assets/math/easymde-katex-glyph-atlas.json` and `assets/math/KaTeX_FONT_LICENSE.txt`. It excludes `frontend/`, TypeScript and TSX source, Vite configuration, frontend test fixtures, `.cache/`, and development metadata. Source ZIP and tar.gz archives are created from the tracked Git tree and intentionally retain tracked `frontend/` source and configuration for contributors plus the atlas, notice, and `scripts/wechat-math-outline-atlas.mjs` generator.
 
 CI uploads the release outputs as separate Actions artifacts:
 
@@ -747,21 +1025,100 @@ and restores the Settings Center editing mode after both normal and CDP hard
 reloads. It loads no Legacy Focus assets and remains zero-write until the user
 invokes a legitimate WordPress mutation.
 
-The Playwright E2E suites are organized into domain-focused directories under
-`tests/e2e/`:
+### Routine Editor Writing Acceptance
 
-- `tests/e2e/ordinary/`: ordinary split editor, toolbar/bridge, themes and
-  appearance, publishing/revisions/WeChat export, and performance budgets.
+Routine ordinary and immersive editor layout and interaction acceptance uses
+**only three realistic writing viewports** exported from
+`tests/e2e/helpers/editor-viewports.mjs`:
+
+| Scenario | Viewport | Input mode | Immersive Outline |
+| --- | --- | --- | --- |
+| Desktop | `1280 × 1040` | Mouse + keyboard (`hasTouch: false`) | Docked, resizer visible |
+| iPad mini landscape | `1133 × 744` | Chromium touch emulation (`hasTouch: true, isMobile: true`) | Docked, resizer visible |
+| iPad mini portrait | `744 × 1133` | Chromium touch emulation (`hasTouch: true, isMobile: true`) | Overlay (`position: absolute`, `<= 782px`), resizer hidden, split divider visible |
+
+Normative policy:
+
+- Routine ordinary and immersive editor layout and interaction acceptance MUST
+  use only these three canonical writing viewports (`1280 × 1040`,
+  `1133 × 744`, `744 × 1133`). Do not add phone-width (`< 744px`, such as
+  `280–640px`) editor writing tests or pixel-by-pixel breakpoint sweeps.
+- Narrow mobile viewports (`280–390px`) remain strictly scoped to public
+  article reader pages, WeChat mobile reader export columns, and Settings
+  Center surfaces.
+
+Workflow checklist verified by the routine writing suite:
+
+1. Ordinary editor opens in fixed side-by-side split (Source left of Preview,
+   top-aligned within 1px, no `is-mode-*` class, zero horizontal page
+   overflow) even when `general.editingMode` is `'source'` or `'preview'`.
+2. Markdown input settles in the live Preview with rendered heading output and
+   `aria-busy="false"`.
+3. Source context menu and expanded `insert` submenu stay within
+   `[7.5, viewport.width - 7.5]` with zero horizontal `clip-path` slicing,
+   consistent overlapped-state pointer/mask rendering, and clean dismissal with
+   zero source mutation across both ordinary split and immersive split.
+4. Immersive Editing opens with the configured initial mode, supports Split
+   mode with side-by-side panes, visible `.easymde-immersive-pane-divider`, and
+   docked (`1280 × 1040`, `1133 × 744`) versus overlay (`744 × 1133`) Outline
+   behavior, plus Source-only and Preview-only round-trip edits back to
+   ordinary split.
+5. On Desktop (`1280 × 1040`), native draft Save after Preview settlement
+   shows the WordPress success notice and persists the exact normalized
+   `_easymde_markdown` post meta.
+
+Run the routine writing acceptance suite with:
+
+```bash
+npm run test:e2e -- tests/e2e/ordinary/editor-writing-scenarios.spec.mjs --project=chromium
+```
+
+The Playwright E2E suites are organized into domain-focused directories and
+focused standalone specs under `tests/e2e/`:
+
+- `tests/e2e/ordinary/`:
+  - `tests/e2e/ordinary/editor-writing-scenarios.spec.mjs`: routine three-viewport
+    (`1280 × 1040` Desktop, `1133 × 744` iPad mini landscape, `744 × 1133` iPad
+    mini portrait) ordinary split, Source context menu, immersive editing,
+    desktop draft persistence, and `general.editingMode` acceptance suite;
+  - `tests/e2e/ordinary/editor-core-and-bridge.spec.mjs`: ordinary split
+    editor, toolbar commands, native bridge, local drafts, and the integrated
+    immersive desktop/tablet header/toolbar/outline, long-title, and
+    three-viewport split-plus-outline layout regressions;
+  - `tests/e2e/ordinary/themes-and-appearance.spec.mjs`: registered article
+    and code themes, Custom CSS scoping, ordinary settings popover, and the
+    integrated Crimson Focus native task-marker layout regressions;
+  - `tests/e2e/ordinary/publishing-revisions-and-export.spec.mjs`: immersive
+    publishing, excerpts, autosaves, native revisions, local preview
+    enhancements/WeChat export, and the integrated published full-capability
+    Gantt intrinsic local-scroll width regression;
+  - `tests/e2e/ordinary/performance-budgets.spec.mjs`: near-threshold
+    edit-phase Long Task budget and unified ProseMirror large-document
+    `@performance` suites.
 - `tests/e2e/visual/`: unified ProseMirror immersive visual editing suites
-  (`prosemirror-core-editing.spec.mjs`, `prosemirror-rich-blocks.spec.mjs`) and
-  preview-monitor contract checks (`monitor-contracts.spec.mjs`).
+  (`tests/e2e/visual/prosemirror-core-editing.spec.mjs`,
+  `tests/e2e/visual/prosemirror-rich-blocks.spec.mjs`) and preview-monitor
+  contract checks (`tests/e2e/visual/monitor-contracts.spec.mjs`).
 - `tests/e2e/settings-center/`: Settings Center domain suites
-  (`first-paint-and-resilience.spec.mjs`, `navigation-and-search.spec.mjs`,
-  `layout-and-sections.spec.mjs`, `image-hosting-and-uploads.spec.mjs`, and
-  `shortcuts-and-remote-import.spec.mjs`).
+  (`tests/e2e/settings-center/first-paint-and-resilience.spec.mjs`,
+  `tests/e2e/settings-center/navigation-and-search.spec.mjs`,
+  `tests/e2e/settings-center/layout-and-sections.spec.mjs`,
+  `tests/e2e/settings-center/image-hosting-and-uploads.spec.mjs`, and
+  `tests/e2e/settings-center/shortcuts-and-remote-import.spec.mjs`).
 - `tests/e2e/context-menu/`: shared context-menu suites across Source and
-  immersive visual surfaces.
+  immersive visual surfaces
+  (`tests/e2e/context-menu/image-export-and-probes.spec.mjs`,
+  `tests/e2e/context-menu/source-menu-and-media.spec.mjs`,
+  `tests/e2e/context-menu/table-link-and-code-menu.spec.mjs`, and
+  `tests/e2e/context-menu/visual-menu-and-thematic-breaks.spec.mjs`).
+- WeChat export and task-context suites: `tests/e2e/wechat-copy.spec.mjs`,
+  `tests/e2e/wechat-task-marker-pixel.spec.mjs`,
+  `tests/e2e/wechat-task-context.spec.mjs`,
+  `tests/e2e/wechat-task-context/source-only-cdp-cpu-contracts.spec.mjs`, and
+  the opt-in local diagnostic suite
+  `tests/e2e/wechat-copy-performance.spec.mjs`.
 - Standalone suites: `tests/e2e/inkwell.spec.mjs`,
+  `tests/e2e/phycat-task-layout.spec.mjs`,
   `tests/e2e/theme-layout-audit.spec.mjs`, and
   `tests/e2e/immersive-unlock-latency.spec.mjs`.
 
@@ -892,13 +1249,14 @@ attribution URLs and identifiers are not recorded. This budget applies only to
 this near-threshold sequence; other performance cases retain their
 separate gates. The JSON attachment and structured output contain counts and
 timings needed to locate a failure without recording article content.
-The 390px immersive cases begin with Outline open. They check that its overlay
-does not narrow Source, Split, Preview, or the Mac frame, then verify pending
-unlock keeps the Outline open, editable readiness closes it without changing
-Markdown, Preview, or the preference, and manual reopen remains available.
-They also cover desktop-to-compact resize while Preview remains editable,
-repeated crossings after a manual reopen, focus and caret preservation, RTL
-placement, and page-level horizontal overflow.
+The tablet-portrait (`744 × 1133`) immersive compact-Outline cases begin with
+Outline open. They check that its overlay does not narrow Source, Split,
+Preview, or the Mac frame, then verify pending unlock keeps the Outline open,
+editable readiness closes it without changing Markdown, Preview, or the
+preference, and manual reopen remains available. They also cover
+tablet-landscape-to-portrait (`1133 × 744` to `744 × 1133`) resize while
+Preview remains editable, repeated crossings after a manual reopen, focus and
+caret preservation, RTL placement, and page-level horizontal overflow.
 The 194 KB unified ProseMirror paste-and-edit case (`@performance keeps a synthetic large Markdown paste and unified ProseMirror visual editing responsive`)
 pastes 2,038 synthetic blocks (including 454 headings plus language-free and
 explicit-language code fences) into the unlocked ProseMirror `textbox` via the
@@ -1135,12 +1493,13 @@ The current release package includes runtime plugin files such as:
 - `easymde.php`, `uninstall.php`, and `readme.txt`;
 - root `README.md`, `SECURITY.md`, `UPGRADING.md`, `THIRD-PARTY-NOTICES.md`, and `LICENSE`;
 - `composer.json` and `composer.lock`;
-- `includes/`, `src/`, `templates/`, `assets/` including all nine manifest-backed production browser entries, `languages/`, and runtime `vendor/`.
+- `includes/`, `src/`, `templates/`, `assets/` including all nine manifest-backed production browser entries, the generated KaTeX glyph atlas and its font notice, `languages/`, and runtime `vendor/`.
 
 The package must include Composer runtime dependencies, local Highlight.js and
-KaTeX assets, the manifest-backed Mermaid TypeScript bundle, KaTeX fonts,
-registered article and code themes, bundled language files, templates, source
-files, and generated third-party notices.
+KaTeX assets, the generated KaTeX glyph atlas and its font notice, the
+manifest-backed Mermaid TypeScript bundle, KaTeX fonts, registered article and
+code themes, bundled language files, templates, source files, and generated
+third-party notices.
 
 The package must not ship local-only or development artifacts such as:
 
@@ -1149,7 +1508,6 @@ The package must not ship local-only or development artifacts such as:
 - `.git/`, `.github/`, IDE settings, or OS metadata;
 - `node_modules/`;
 - PHPUnit, Playwright, Node test files, or test result directories;
-- Composer development packages;
-- Composer runtime packages' development examples and environment fixtures, including the Qiniu SDK `examples/` tree and `test-env.sh`;
+- Composer development packages.
 
 Repository-only docs such as `docs/`, `CONTRIBUTING.md`, and `README.en.md` are not part of the current release package unless the release packaging script is changed deliberately.

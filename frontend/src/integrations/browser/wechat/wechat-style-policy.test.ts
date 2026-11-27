@@ -1,0 +1,1947 @@
+import { describe, expect, it, vi } from "vitest";
+
+import { declaration } from "./wechat-clipboard-test-fixtures";
+import type { BrowserWechatClipboardRuntime } from "./wechat-clipboard-runtime";
+import type { WechatDimensionSemanticsContext } from "./wechat-dimension-semantics";
+import { ordinaryDimensionSemanticsSignature } from "./wechat-fidelity-signature";
+import {
+	appendPortableStyleDeclaration,
+	COPY_STYLE_PROPERTIES,
+	createStyleDeclarationContext,
+	hasFinalizedBackgroundGradient,
+	keepStyle,
+	markWechatGradientDarkmodeExemptions,
+	portableStyleProperties,
+	portableStyleValue,
+	removeTransientAttributes,
+	semanticPaddingValue,
+	semanticTransformOriginSignature,
+	transportableTransformOriginSemantics,
+} from "./wechat-style-policy";
+import {
+	styleDeclarations,
+	styleDeclarationsSynchronously,
+} from "./wechat-pseudo-elements";
+
+function style(values: Record<string, string>): CSSStyleDeclaration {
+	return declaration(values);
+}
+
+function dimensionSemantics(
+	transformOrigin: string,
+): WechatDimensionSemanticsContext {
+	const computed = style({
+		"box-sizing": "border-box",
+		height: "3px",
+		"margin-bottom": "0px",
+		"margin-left": "0px",
+		"margin-right": "0px",
+		"margin-top": "0px",
+		"transform-origin": transformOrigin,
+		width: "100px",
+	});
+	return {
+		cleanup: vi.fn(),
+		getComputedStyle: () => computed,
+		getFormattingOwnerDisplay: () => null,
+		getRefreshGeneration: () => 1,
+		getRootComputedStyle: () => computed,
+		getSourceComputedStyle: () => computed,
+		rasterizesVisualRoots: false,
+		refresh: vi.fn(),
+	};
+}
+
+function runtime(measured: CSSStyleDeclaration): BrowserWechatClipboardRuntime {
+	return {
+		blob: Blob,
+		clipboardItem: null,
+		document,
+		getComputedStyle: () => measured,
+		getSelection: () => null,
+		pageOffset: () => ({ x: 0, y: 0 }),
+		scrollTo: () => undefined,
+		write: null,
+	};
+}
+
+function transformOriginDeclaration(
+	declarations: readonly string[],
+): string | undefined {
+	return declarations.find((declaration) =>
+		declaration.startsWith("transform-origin:"),
+	);
+}
+
+async function serializeTransformOrigin(
+	rawTransformOrigin: string,
+	measuredTransformOrigin = "327.5px 1.5px",
+): Promise<
+	Readonly<{ modern: string | undefined; legacy: string | undefined }>
+> {
+	const source = document.createElement("hr");
+	const measured = style({
+		display: "block",
+		height: "3px",
+		position: "static",
+		transform: "matrix(0.8, 0, 0, 1, 0, 0)",
+		"transform-origin": measuredTransformOrigin,
+		width: "655px",
+	});
+	const semantics = dimensionSemantics(rawTransformOrigin);
+	const modern = await styleDeclarations(
+		source,
+		measured,
+		false,
+		false,
+		runtime(measured),
+		new Map(),
+		null,
+		undefined,
+		semantics,
+	);
+	const legacy = styleDeclarationsSynchronously(
+		source,
+		measured,
+		false,
+		false,
+		runtime(measured),
+		semantics,
+	);
+	if (null === legacy)
+		throw new Error(
+			"wechat-style-policy-test-legacy-style-serialization-failed",
+		);
+	return {
+		legacy: transformOriginDeclaration(legacy),
+		modern: transformOriginDeclaration(modern),
+	};
+}
+
+describe("transform-origin portable style semantics", () => {
+	it.each([
+		["50% 50%", "50% 50%"],
+		["left top", "left top"],
+		["25% 10px", "25% 10px"],
+		["120px 40px", "120px 40px"],
+	])(
+		"preserves the raw %s origin instead of the measured pixels",
+		async (raw, expected) => {
+			await expect(serializeTransformOrigin(raw)).resolves.toEqual({
+				legacy: `transform-origin:${expected}`,
+				modern: `transform-origin:${expected}`,
+			});
+		},
+	);
+
+	it("keeps modern and legacy style serialization identical for an explicit pixel origin", async () => {
+		await expect(serializeTransformOrigin("120px 40px")).resolves.toEqual({
+			legacy: "transform-origin:120px 40px",
+			modern: "transform-origin:120px 40px",
+		});
+	});
+
+	it("keeps measured pixels when the raw origin grammar is not transportable", async () => {
+		await expect(
+			serializeTransformOrigin("calc(50% + 1px) 50%"),
+		).resolves.toEqual({
+			legacy: "transform-origin:327.5px 1.5px",
+			modern: "transform-origin:327.5px 1.5px",
+		});
+	});
+
+	it("distinguishes raw semantics with the same resolved center used value", () => {
+		const source = document.createElement("hr");
+		const percentageSignature = ordinaryDimensionSemanticsSignature(
+			source,
+			dimensionSemantics("50% 50%"),
+		);
+		const keywordSignature = ordinaryDimensionSemanticsSignature(
+			source,
+			dimensionSemantics("center center"),
+		);
+		expect(percentageSignature).not.toBe(keywordSignature);
+		expect(
+			semanticTransformOriginSignature(
+				source,
+				style({ "transform-origin": "50% 50%" }),
+			),
+		).toBe("transform-origin=50% 50%");
+		expect(
+			semanticTransformOriginSignature(
+				source,
+				style({ "transform-origin": "center center" }),
+			),
+		).toBe("transform-origin=center center");
+	});
+
+	it("does not transport transform-origin semantics from special layout nodes", () => {
+		const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+		expect(transportableTransformOriginSemantics("50% 50%")).toBe("50% 50%");
+		expect(
+			semanticTransformOriginSignature(
+				svg,
+				style({ "transform-origin": "50% 50%" }),
+			),
+		).toBe("");
+	});
+
+	it("uses the measured value when no raw dimension context is available", () => {
+		const source = document.createElement("hr");
+		const measured = style({ "transform-origin": "327.5px 1.5px" });
+		const declarations: string[] = [];
+		appendPortableStyleDeclaration(
+			createStyleDeclarationContext(source, measured, false, false, null),
+			"transform-origin",
+			"327.5px 1.5px",
+			"327.5px 1.5px",
+			declarations,
+		);
+		expect(declarations).toContain("transform-origin:327.5px 1.5px");
+	});
+});
+
+describe("responsive portable padding semantics", () => {
+	function paddingSemantics(
+		left: string,
+		right: string,
+		extra: Record<string, string> = {},
+	): WechatDimensionSemanticsContext {
+		const raw = style({
+			"--easymde-portable-padding-left": left,
+			"--easymde-portable-padding-right": right,
+			"padding-left": "48px",
+			"padding-right": "20px",
+			position: "static",
+			...extra,
+		});
+		return {
+			cleanup: vi.fn(),
+			getComputedStyle: () => raw,
+			getFormattingOwnerDisplay: () => null,
+			getRefreshGeneration: () => 1,
+			getRootComputedStyle: () => raw,
+			getSourceComputedStyle: () => raw,
+			rasterizesVisualRoots: false,
+			refresh: vi.fn(),
+		};
+	}
+
+	function portableQuoteFixture(): Readonly<{
+		cleanup: () => void;
+		source: HTMLElement;
+	}> {
+		const stylesheet = document.createElement("style");
+		stylesheet.textContent = `
+      .easymde-rendered-content[class*="easymde-markdown-theme-phycat-"]:not(.easymde-custom-css-active) blockquote blockquote {
+        --easymde-portable-padding-left: 9%;
+        --easymde-portable-padding-right: 5%;
+        padding-left: var(--easymde-portable-padding-left);
+        padding-right: var(--easymde-portable-padding-right);
+      }
+    `;
+		document.head.append(stylesheet);
+		const root = document.createElement("article");
+		root.className =
+			"easymde-rendered-content easymde-markdown-theme-phycat-sky";
+		const outer = document.createElement("blockquote");
+		const source = document.createElement("blockquote");
+		outer.append(source);
+		root.append(outer);
+		document.body.append(root);
+		return {
+			cleanup: () => {
+				root.remove();
+				stylesheet.remove();
+			},
+			source,
+		};
+	}
+
+	it("transports authored percentage insets while measured pixels remain the source value", () => {
+		const fixture = portableQuoteFixture();
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			const context = createStyleDeclarationContext(
+				fixture.source,
+				measured,
+				false,
+				false,
+				semantics,
+			);
+			const declarations: string[] = [];
+
+			appendPortableStyleDeclaration(
+				context,
+				"padding-left",
+				"48px",
+				"48px",
+				declarations,
+			);
+			appendPortableStyleDeclaration(
+				context,
+				"padding-right",
+				"20px",
+				"20px",
+				declarations,
+			);
+
+			expect(declarations).toContain("padding-left:9%");
+			expect(declarations).toContain("padding-right:5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBe("9%");
+		} finally {
+			fixture.cleanup();
+		}
+	});
+
+	it("rejects unsupported functions instead of freezing a false responsive value", () => {
+		const fixture = portableQuoteFixture();
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("clamp(12px, 9%, 48px)", "5%");
+
+			expect(() =>
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toThrow("wechat-invalid-portable-padding-padding-left");
+		} finally {
+			fixture.cleanup();
+		}
+	});
+
+	it("falls back to effective padding when an inline or stylesheet override wins", () => {
+		const fixture = portableQuoteFixture();
+		const override = document.createElement("style");
+		override.textContent = `.easymde-rendered-content[class*="easymde-markdown-theme-phycat-"]:not(.easymde-custom-css-active) blockquote blockquote { padding-left: 18px !important; }`;
+		document.head.append(override);
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+			fixture.source.style.setProperty("padding-right", "20px", "important");
+			expect(
+				semanticPaddingValue(
+					"padding-right",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			override.remove();
+			fixture.cleanup();
+		}
+	});
+
+	it("does not restore percentage insets when an equal-specificity rule overrides base transport", () => {
+		const fixture = portableQuoteFixture();
+		const root = fixture.source.closest(".easymde-rendered-content") as HTMLElement;
+		root.classList.add("extra");
+		const override = document.createElement("style");
+		override.textContent = `
+			.easymde-rendered-content.easymde-markdown-theme-phycat-sky.extra blockquote blockquote {
+				padding-left: 18px;
+			}
+		`;
+		document.head.append(override);
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			override.remove();
+			root.classList.remove("extra");
+			fixture.cleanup();
+		}
+	});
+
+	it("falls back to effective padding when an override uses functional pseudo-class selector list with commas", () => {
+		const fixture = portableQuoteFixture();
+		const root = fixture.source.closest(".easymde-rendered-content") as HTMLElement;
+		root.classList.add("extra");
+		const override = document.createElement("style");
+		override.textContent = `
+			.easymde-rendered-content.easymde-markdown-theme-phycat-sky:is(.extra,.never) blockquote blockquote {
+				padding-left: 18px;
+			}
+		`;
+		document.head.append(override);
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			override.remove();
+			root.classList.remove("extra");
+			fixture.cleanup();
+		}
+	});
+
+	it("falls back to effective padding when a nonmatching parent rule owns a nested important override", () => {
+		const fixture = portableQuoteFixture();
+		const override = document.createElement("style");
+		override.textContent = `
+			.easymde-rendered-content {
+				& blockquote blockquote {
+					padding-left: 18px !important;
+				}
+			}
+		`;
+		document.head.append(override);
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			override.remove();
+			fixture.cleanup();
+		}
+	});
+
+	it("keeps matching parent declarations when the same rule also owns nested rules", () => {
+		const fixture = portableQuoteFixture();
+		fixture.source.id = "parent-with-child";
+		const override = document.createElement("style");
+		override.textContent = `
+			#parent-with-child {
+				padding-left: 18px !important;
+				& .never {
+					color: red;
+				}
+			}
+		`;
+		document.head.append(override);
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			override.remove();
+			fixture.source.removeAttribute("id");
+			fixture.cleanup();
+		}
+	});
+
+	it("ignores unrelated nested padding rules from non-matching WordPress UI classes", () => {
+		const fixture = portableQuoteFixture();
+		const wpUiInput = document.createElement("style");
+		wpUiInput.textContent = `
+			.wp-ui-input {
+				&:is(textarea, [type="text"]) {
+					padding: 6px 10px;
+				}
+			}
+			.wp-ui-slot {
+				[data-slot-type="prefix"] & {
+					padding-inline-start: 12px;
+				}
+			}
+		`;
+		document.head.append(wpUiInput);
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBe("9%");
+		} finally {
+			wpUiInput.remove();
+			fixture.cleanup();
+		}
+	});
+
+	it("fails closed when an unrelated parent rule contains a nested @scope rule", () => {
+		const fixture = portableQuoteFixture();
+		const hostStyle = document.createElement("style");
+		hostStyle.textContent = ".absent {}";
+		document.head.append(hostStyle);
+		try {
+			const parentRule = hostStyle.sheet?.cssRules.item(0);
+			if (!parentRule) throw new Error("absent parent rule missing");
+			const innerRule = document.createElement("style");
+			innerRule.textContent = "blockquote { padding-left: 41px !important; }";
+			document.head.append(innerRule);
+			const scopedChild = innerRule.sheet?.cssRules.item(0);
+			innerRule.remove();
+			if (!scopedChild) throw new Error("scoped child rule missing");
+			class FakeScopeRule {
+				readonly type = 0;
+				readonly cssRules = [scopedChild];
+				get [Symbol.toStringTag](): string {
+					return "CSSScopeRule";
+				}
+			}
+			Object.defineProperty(parentRule, "cssRules", {
+				configurable: true,
+				value: [new FakeScopeRule()],
+			});
+			const measured = style({
+				padding: "18px 20px 18px 41px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			hostStyle.remove();
+			fixture.cleanup();
+		}
+	});
+
+	it("fails closed on :scope, escaped pseudo-classes, and top-level & selectors without false positives on escaped classes or attribute values", () => {
+		const createStyleRule = (
+			selectorText: string,
+			declaration = "",
+			nestedRules: readonly unknown[] = [],
+		): CSSRule => {
+			const holder = document.createElement("style");
+			holder.textContent = `.placeholder { ${declaration} }`;
+			document.head.append(holder);
+			const rule = holder.sheet?.cssRules.item(0);
+			holder.remove();
+			if (!rule) throw new Error("placeholder rule missing");
+			Object.defineProperty(rule, "selectorText", {
+				configurable: true,
+				value: selectorText,
+			});
+			if (nestedRules.length > 0) {
+				Object.defineProperty(rule, "cssRules", {
+					configurable: true,
+					value: nestedRules,
+				});
+			}
+			return rule;
+		};
+
+		const createMediaRule = (nestedRules: readonly unknown[]): CSSRule => {
+			const holder = document.createElement("style");
+			holder.textContent = "@media all { .placeholder { color: inherit; } }";
+			document.head.append(holder);
+			const rule = holder.sheet?.cssRules.item(0);
+			holder.remove();
+			if (!rule) throw new Error("placeholder media rule missing");
+			Object.defineProperty(rule, "cssRules", {
+				configurable: true,
+				value: nestedRules,
+			});
+			return rule;
+		};
+
+		const assertRuleFailsClosed = (label: string, rule: CSSRule): void => {
+			const fixture = portableQuoteFixture();
+			const host = document.createElement("style");
+			host.textContent = ".host-placeholder {}";
+			document.head.append(host);
+			try {
+				if (!host.sheet) throw new Error("host sheet missing");
+				Object.defineProperty(host.sheet, "cssRules", {
+					configurable: true,
+					value: [rule],
+				});
+				const measured = style({
+					padding: "18px 20px 18px 41px",
+					position: "static",
+				});
+				const semantics = paddingSemantics("9%", "5%");
+				expect(
+					semanticPaddingValue(
+						"padding-left",
+						fixture.source,
+						measured,
+						semantics,
+						semantics.getComputedStyle(fixture.source),
+					),
+					label,
+				).toBeNull();
+			} finally {
+				host.remove();
+				fixture.cleanup();
+			}
+		};
+
+		const paddingDecl = "padding-left: 41px !important;";
+		const nestedBlockquote = (): CSSRule =>
+			createStyleRule("blockquote", paddingDecl);
+
+		assertRuleFailsClosed(
+			"top-level :scope",
+			createStyleRule(":scope blockquote", paddingDecl),
+		);
+		assertRuleFailsClosed(
+			"top-level &",
+			createStyleRule("& blockquote", paddingDecl),
+		);
+		assertRuleFailsClosed(
+			"top-level :is(&)",
+			createStyleRule(":is(&) blockquote", paddingDecl),
+		);
+		assertRuleFailsClosed(
+			"top-level escaped :scope",
+			createStyleRule(":\\73 cope blockquote", paddingDecl),
+		);
+		assertRuleFailsClosed(
+			"parent html:scope with nested blockquote",
+			createStyleRule("html:scope", "", [nestedBlockquote()]),
+		);
+		assertRuleFailsClosed(
+			"parent html& with nested blockquote",
+			createStyleRule("html&", "", [nestedBlockquote()]),
+		);
+		assertRuleFailsClosed(
+			"parent :is(html&) with nested blockquote",
+			createStyleRule(":is(html&)", "", [nestedBlockquote()]),
+		);
+		assertRuleFailsClosed(
+			"nested :is(html:scope, &) under .absent",
+			createStyleRule(".absent", "", [
+				createStyleRule(":is(html:scope, &)", "", [nestedBlockquote()]),
+			]),
+		);
+		assertRuleFailsClosed(
+			"nested :is(:scope > body, &) under .absent",
+			createStyleRule(".absent", "", [
+				createStyleRule(":is(:scope > body, &)", "", [nestedBlockquote()]),
+			]),
+		);
+		assertRuleFailsClosed(
+			"nested @media > :is(html:scope, &) under .absent",
+			createStyleRule(".absent", "", [
+				createMediaRule([
+					createStyleRule(":is(html:scope, &)", "", [nestedBlockquote()]),
+				]),
+			]),
+		);
+		assertRuleFailsClosed(
+			"Unicode U+0130 preceding top-level :scope",
+			createStyleRule("html:not(.İ):scope blockquote", paddingDecl),
+		);
+		assertRuleFailsClosed(
+			"Unicode U+0130 class preceding :scope",
+			createStyleRule(".İ:scope blockquote", paddingDecl),
+		);
+		assertRuleFailsClosed(
+			"Unicode U+0130 inside nested :is(.İ, html:scope, &)",
+			createStyleRule(".absent", "", [
+				createStyleRule(":is(.İ, html:scope, &)", "", [nestedBlockquote()]),
+			]),
+		);
+		assertRuleFailsClosed(
+			"Unicode U+0130 preceding nested :not(&)",
+			createStyleRule(".absent", "", [
+				createStyleRule(".İ:not(&)", paddingDecl),
+			]),
+		);
+		assertRuleFailsClosed(
+			"escaped nested pseudo-class :\\6e ot(&)",
+			createStyleRule(".absent", "", [
+				createStyleRule(":\\6e ot(&)", paddingDecl),
+			]),
+		);
+
+		const benignFixture = portableQuoteFixture();
+		const benignStyle = document.createElement("style");
+		benignStyle.textContent = `
+			.sm\\:px-4 { padding-left: 16px !important; }
+			[data-test=":scope &"] { padding-left: 16px !important; }
+			[data-a="İİİİİİİİ:scope"]:hover { color: red; }
+		`;
+		document.head.append(benignStyle);
+		const nestedBenignHost = document.createElement("style");
+		nestedBenignHost.textContent = ".host-placeholder {}";
+		document.head.append(nestedBenignHost);
+		if (!nestedBenignHost.sheet) throw new Error("nested benign sheet missing");
+		Object.defineProperty(nestedBenignHost.sheet, "cssRules", {
+			configurable: true,
+			value: [
+				createStyleRule(".absent", "", [
+					createStyleRule(".sm\\:px-4", "padding-left: 16px !important;"),
+				]),
+			],
+		});
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					benignFixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(benignFixture.source),
+				),
+			).toBe("9%");
+		} finally {
+			nestedBenignHost.remove();
+			benignStyle.remove();
+			benignFixture.cleanup();
+		}
+	});
+
+	it("walks nested child and grandchild rules before falling back", () => {
+		const fixture = portableQuoteFixture();
+		const override = document.createElement("style");
+		override.textContent = `
+			.easymde-rendered-content {
+				& blockquote {
+					& blockquote {
+						padding-left: 18px !important;
+					}
+				}
+			}
+		`;
+		document.head.append(override);
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			override.remove();
+			fixture.cleanup();
+		}
+	});
+
+	it("uses the maximum specificity from the full nesting parent selector list", () => {
+		const override = document.createElement("style");
+		override.textContent = `
+			.easymde-rendered-content.easymde-markdown-theme-phycat-sky.extra, #never {
+				& blockquote blockquote {
+					padding-left: 18px;
+				}
+			}
+		`;
+		document.head.append(override);
+		const fixture = portableQuoteFixture();
+		const root = fixture.source.closest(".easymde-rendered-content") as HTMLElement;
+		root.classList.add("extra");
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			root.classList.remove("extra");
+			fixture.cleanup();
+			override.remove();
+		}
+	});
+
+	it("conservatively rejects a nested rule whose intermediate selector does not match but descendant does", () => {
+		const fixture = portableQuoteFixture();
+		const override = document.createElement("style");
+		override.textContent = `
+			.easymde-rendered-content {
+				& .intermediate-never {
+					& blockquote {
+						padding-left: 18px !important;
+					}
+				}
+			}
+		`;
+		document.head.append(override);
+		try {
+			const measured = style({ padding: "18px 20px 18px 48px", position: "static" });
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			override.remove();
+			fixture.cleanup();
+		}
+	});
+
+	it("conservatively rejects nested source-order ambiguity", () => {
+		const fixture = portableQuoteFixture();
+		const root = fixture.source.closest(".easymde-rendered-content") as HTMLElement;
+		root.classList.add("extra");
+		const override = document.createElement("style");
+		override.textContent = `
+			.easymde-rendered-content.easymde-markdown-theme-phycat-sky.extra {
+				& blockquote blockquote {
+					padding-left: var(--easymde-portable-padding-left);
+				}
+				& blockquote blockquote {
+					padding-left: 18px;
+				}
+			}
+		`;
+		document.head.append(override);
+		try {
+			const measured = style({ padding: "18px 20px 18px 48px", position: "static" });
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			override.remove();
+			root.classList.remove("extra");
+			fixture.cleanup();
+		}
+	});
+
+	it("conservatively rejects alternative-specificity ambiguity in nested child selectors", () => {
+		const override = document.createElement("style");
+		override.textContent = `
+			.easymde-rendered-content.easymde-markdown-theme-phycat-sky.extra {
+				& :is(.never, #highly-specific) {
+					padding-left: 18px;
+				}
+			}
+		`;
+		document.head.append(override);
+		const fixture = portableQuoteFixture();
+		const root = fixture.source.closest(".easymde-rendered-content") as HTMLElement;
+		root.classList.add("extra");
+		try {
+			const measured = style({ padding: "18px 20px 18px 48px", position: "static" });
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			root.classList.remove("extra");
+			fixture.cleanup();
+			override.remove();
+		}
+	});
+
+	it("keeps base transport when a normal declaration is inside a cascade layer", () => {
+		const fixture = portableQuoteFixture();
+		fixture.source.id = "normal-layer-target";
+		const override = document.createElement("style");
+		override.textContent = `
+			@layer override {
+				#normal-layer-target {
+					padding-left: 18px;
+				}
+			}
+		`;
+		document.head.append(override);
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBe("9%");
+		} finally {
+			override.remove();
+			fixture.source.removeAttribute("id");
+			fixture.cleanup();
+		}
+	});
+
+	it("conservatively rejects CSSNestedDeclarations rules appearing after a nested child rule", () => {
+		const fixture = portableQuoteFixture();
+		fixture.source.id = "nested-decl-target";
+		const override = document.createElement("style");
+		override.textContent = `
+			#nested-decl-target {
+				& p {
+					color: red;
+				}
+				padding-left: 18px !important;
+			}
+		`;
+		document.head.append(override);
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			override.remove();
+			fixture.source.removeAttribute("id");
+			fixture.cleanup();
+		}
+	});
+
+	it("conservatively rejects CSSNestedDeclarations rules nested inside descendant rules", () => {
+		const fixture = portableQuoteFixture();
+		const override = document.createElement("style");
+		override.textContent = `
+			.easymde-rendered-content {
+				& p {
+					color: red;
+				}
+				& blockquote blockquote {
+					& span {
+						color: blue;
+					}
+					padding-left: 18px !important;
+				}
+			}
+		`;
+		document.head.append(override);
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			override.remove();
+			fixture.cleanup();
+		}
+	});
+
+	it("emits the effective pixel padding through synchronous and asynchronous declaration serializers", async () => {
+		const fixture = portableQuoteFixture();
+		const override = document.createElement("style");
+		override.textContent = `
+			.easymde-rendered-content {
+				& blockquote blockquote {
+					padding-left: 18px !important;
+				}
+			}
+		`;
+		document.head.append(override);
+		try {
+			const measured = style({
+				display: "block",
+				padding: "18px 20px 18px 18px",
+				"padding-left": "18px",
+				"padding-right": "20px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			const modern = await styleDeclarations(
+				fixture.source,
+				measured,
+				false,
+				false,
+				runtime(measured),
+				new Map(),
+				null,
+				undefined,
+				semantics,
+			);
+			const legacy = styleDeclarationsSynchronously(
+				fixture.source,
+				measured,
+				false,
+				false,
+				runtime(measured),
+				semantics,
+			);
+			if (!legacy) throw new Error("synchronous style serialization failed");
+			expect(modern).toContain("padding-left:18px");
+			expect(modern).not.toContain("padding-left:9%");
+			expect(legacy).toContain("padding-left:18px");
+			expect(legacy).not.toContain("padding-left:9%");
+		} finally {
+			override.remove();
+			fixture.cleanup();
+		}
+	});
+
+	it("falls back to effective padding when an @layer rule with !important overrides base transport", () => {
+		const fixture = portableQuoteFixture();
+		fixture.source.id = "target";
+		const override = document.createElement("style");
+		override.textContent = `
+			@layer override {
+				#target {
+					padding-left: 18px !important;
+				}
+			}
+		`;
+		document.head.append(override);
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			override.remove();
+			fixture.source.removeAttribute("id");
+			fixture.cleanup();
+		}
+	});
+
+	it("conservatively uses computed padding for an unknown nested grouping rule", () => {
+		const fixture = portableQuoteFixture();
+		fixture.source.id = "unknown-group-target";
+		const override = document.createElement("style");
+		override.textContent = `
+			@container (min-width: 1px) {
+				#unknown-group-target {
+					padding-left: 18px;
+				}
+			}
+		`;
+		document.head.append(override);
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			override.remove();
+			fixture.source.removeAttribute("id");
+			fixture.cleanup();
+		}
+	});
+
+	it("conservatively uses computed padding when an import rule cannot be resolved", () => {
+		const fixture = portableQuoteFixture();
+		const override = document.createElement("style");
+		override.textContent = `@import url("https://example.invalid/unavailable-cascade.css");`;
+		document.head.append(override);
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			override.remove();
+			fixture.cleanup();
+		}
+	});
+
+	it("preserves effective computed padding when a @keyframes animation overrides padding while ignoring unrelated @keyframes", () => {
+		const fixture = portableQuoteFixture();
+		const animSheet = document.createElement("style");
+		animSheet.textContent = `
+			@keyframes unrelated-spin {
+				from { transform: rotate(0deg); }
+				to { transform: rotate(360deg); }
+			}
+			@keyframes pad-override {
+				to { padding-left: 10px; }
+			}
+			.easymde-rendered-content blockquote blockquote {
+				animation: pad-override 0.01s linear forwards;
+			}
+		`;
+		document.head.append(animSheet);
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 10px",
+				"padding-left": "10px",
+				position: "static",
+			});
+			// 1. Element running/retaining a finished fill-mode:forwards padding animation keeps effective pixels.
+			const animatedSemantics = paddingSemantics("10%", "5%", {
+				"animation-name": "pad-override",
+				"padding-left": "10px",
+			});
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					animatedSemantics,
+					animatedSemantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+			// Unaffected axis (`padding-right`) is not declared in pad-override and stays portable.
+			expect(
+				semanticPaddingValue(
+					"padding-right",
+					fixture.source,
+					measured,
+					animatedSemantics,
+					animatedSemantics.getComputedStyle(fixture.source),
+				),
+			).toBe("5%");
+
+			// 2. Unrelated element with animation-name: none (or only unrelated-spin) keeps portable percentage.
+			fixture.source.style.setProperty("animation-name", "none");
+			const unaffectedSemantics = paddingSemantics("10%", "5%", {
+				"animation-name": "unrelated-spin",
+			});
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					unaffectedSemantics,
+					unaffectedSemantics.getComputedStyle(fixture.source),
+				),
+			).toBe("10%");
+		} finally {
+			fixture.source.style.removeProperty("animation-name");
+			animSheet.remove();
+			fixture.cleanup();
+		}
+	});
+
+	it("decodes CSS-escaped and quoted @keyframes names (including escaped commas and hex escapes) and fails closed on malformed animation-name lists", () => {
+		const fixture = portableQuoteFixture();
+		const animSheet = document.createElement("style");
+		animSheet.textContent = `
+			@keyframes pad-comma-placeholder {
+				to { padding-left: 10px; }
+			}
+			@keyframes quoted-none-placeholder {
+				to { padding-left: 10px; }
+			}
+		`;
+		document.head.append(animSheet);
+		const rules = animSheet.sheet?.cssRules;
+		if (rules?.[0]) {
+			Object.defineProperty(rules[0], "name", {
+				configurable: true,
+				value: "pad,override",
+			});
+		}
+		if (rules?.[1]) {
+			Object.defineProperty(rules[1], "name", {
+				configurable: true,
+				value: "none",
+			});
+		}
+		try {
+			fixture.source.style.setProperty("animation-name", "none");
+			const measured = style({
+				padding: "18px 20px 18px 10px",
+				"padding-left": "10px",
+				position: "static",
+			});
+
+			// Escaped comma (`pad\,override`), hex escape (`\70 ad\,override`), quoted `"pad,override"`,
+			// multi-animation list, quoted/escaped `"none"`/`\6e one`, and malformed lists all preserve effective pixels.
+			for (const animationName of [
+				"pad\\,override",
+				"\\70 ad\\,override",
+				'"pad,override"',
+				"unrelated-spin, pad\\,override",
+				'"none"',
+				"\\6e one",
+				"pad\\,override\\",
+				'"unterminated',
+				"unrelated-spin,",
+			]) {
+				const semantics = paddingSemantics("10%", "5%", {
+					"animation-name": animationName,
+					"padding-left": "10px",
+				});
+				expect(
+					semanticPaddingValue(
+						"padding-left",
+						fixture.source,
+						measured,
+						semantics,
+						semantics.getComputedStyle(fixture.source),
+					),
+					`expected effective padding fallback for animation-name=${animationName}`,
+				).toBeNull();
+				// Unaffected axis remains portable for valid lists (malformed lists fail closed on the affected axis only).
+				expect(
+					semanticPaddingValue(
+						"padding-right",
+						fixture.source,
+						measured,
+						semantics,
+						semantics.getComputedStyle(fixture.source),
+					),
+				).toBe("5%");
+			}
+
+			// Unquoted `none` keyword still stays portable even when `@keyframes "none"` exists.
+			const noneKeywordSemantics = paddingSemantics("10%", "5%", {
+				"animation-name": "none",
+			});
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					noneKeywordSemantics,
+					noneKeywordSemantics.getComputedStyle(fixture.source),
+				),
+			).toBe("10%");
+		} finally {
+			fixture.source.style.removeProperty("animation-name");
+			animSheet.remove();
+			fixture.cleanup();
+		}
+	});
+
+	it("does not double-decode CSSKeyframesRule.name into a false alias for a distinct opacity-only animation", () => {
+		const fixture = portableQuoteFixture();
+		const animSheet = document.createElement("style");
+		animSheet.textContent = `
+			@keyframes literal-backslash-placeholder {
+				to { padding-left: 10px; }
+			}
+			@keyframes pad {
+				to { opacity: 0.75; }
+			}
+		`;
+		document.head.append(animSheet);
+		const rules = animSheet.sheet?.cssRules;
+		if (rules?.[0]) {
+			// Browser CSSOM already exposes the decoded logical name `\70 ad` for `@keyframes "\\70 ad"`.
+			Object.defineProperty(rules[0], "name", {
+				configurable: true,
+				value: "\\70 ad",
+			});
+		}
+		try {
+			fixture.source.style.setProperty("animation-name", "none");
+			const measured = style({
+				padding: "18px 20px 18px 40px",
+				"padding-left": "40px",
+				position: "static",
+			});
+
+			// Running the distinct opacity-only `pad` animation keeps portable 10% (no false alias from `\70 ad`).
+			const padOnlySemantics = paddingSemantics("10%", "5%", {
+				"animation-name": "pad",
+				"padding-left": "40px",
+			});
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					padOnlySemantics,
+					padOnlySemantics.getComputedStyle(fixture.source),
+				),
+			).toBe("10%");
+
+			// Running the actual `\70 ad` animation (serialized as CSS ident or quoted string) preserves effective pixels.
+			for (const serializedLiteralName of ['"\\\\70 ad"', "\\5c 70\\ ad"]) {
+				const literalAnimSemantics = paddingSemantics("10%", "5%", {
+					"animation-name": serializedLiteralName,
+					"padding-left": "10px",
+				});
+				expect(
+					semanticPaddingValue(
+						"padding-left",
+						fixture.source,
+						measured,
+						literalAnimSemantics,
+						literalAnimSemantics.getComputedStyle(fixture.source),
+					),
+					`expected effective pixel fallback for animation-name=${serializedLiteralName}`,
+				).toBeNull();
+			}
+		} finally {
+			fixture.source.style.removeProperty("animation-name");
+			animSheet.remove();
+			fixture.cleanup();
+		}
+	});
+
+	it("changes dimension freshness when token and effective semantics differ at equal used pixels", () => {
+		const fixture = portableQuoteFixture();
+		try {
+			const first = paddingSemantics("9%", "5%");
+			const second = paddingSemantics("9%", "5%");
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const firstSignature = ordinaryDimensionSemanticsSignature(
+				fixture.source,
+				first,
+			);
+			fixture.source.style.setProperty("padding-left", "18px");
+			const secondSignature = ordinaryDimensionSemanticsSignature(
+				fixture.source,
+				second,
+			);
+			expect(firstSignature).not.toBe(secondSignature);
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					second,
+					second.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			fixture.cleanup();
+		}
+	});
+});
+
+describe("portable style property catalog deduplication", () => {
+	it("contains zero duplicate properties in COPY_STYLE_PROPERTIES", () => {
+		expect(new Set(COPY_STYLE_PROPERTIES).size).toBe(
+			COPY_STYLE_PROPERTIES.length,
+		);
+		for (const property of [
+			"border-top-width",
+			"border-right-width",
+			"border-bottom-width",
+			"border-left-width",
+			"border-radius",
+		]) {
+			expect(
+				COPY_STYLE_PROPERTIES.filter((entry) => entry === property),
+			).toHaveLength(1);
+		}
+	});
+
+	it("emits zero duplicate properties from portableStyleProperties across all combinations", () => {
+		const ordinary = document.createElement("div");
+
+		const taskItem = document.createElement("li");
+		taskItem.className = "task-list-item";
+		const taskCheckbox = document.createElement("input");
+		taskCheckbox.type = "checkbox";
+		taskItem.append(taskCheckbox);
+
+		const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+		const svgPath = document.createElementNS(
+			"http://www.w3.org/2000/svg",
+			"path",
+		);
+		svg.append(svgPath);
+		const detachedSvgPath = document.createElementNS(
+			"http://www.w3.org/2000/svg",
+			"path",
+		);
+
+		const katex = document.createElement("span");
+		katex.className = "katex";
+		const katexChild = document.createElement("span");
+		katex.append(katexChild);
+
+		const math = document.createElementNS(
+			"http://www.w3.org/1998/Math/MathML",
+			"math",
+		);
+
+		const katexTaskItem = document.createElement("li");
+		katexTaskItem.className = "task-list-item";
+		const katexCheckbox = document.createElement("input");
+		katexCheckbox.type = "checkbox";
+		katexTaskItem.append(katexCheckbox);
+		katex.append(katexTaskItem);
+
+		const samples: ReadonlyArray<
+			Readonly<{ element: Element; label: string }>
+		> = [
+			{ element: ordinary, label: "ordinary" },
+			{ element: taskCheckbox, label: "task-checkbox" },
+			{ element: svg, label: "svg" },
+			{ element: svgPath, label: "svg-child" },
+			{ element: detachedSvgPath, label: "detached-svg-child" },
+			{ element: katex, label: "special-katex" },
+			{ element: katexChild, label: "special-katex-child" },
+			{ element: math, label: "special-math" },
+			{ element: katexCheckbox, label: "special-task-checkbox" },
+		];
+
+		for (const { element, label } of samples) {
+			for (const root of [false, true]) {
+				for (const pseudoElement of [false, true]) {
+					const properties = portableStyleProperties(
+						element,
+						pseudoElement,
+						root,
+					);
+					const unique = new Set(properties);
+					expect(
+						unique.size,
+						`${label} (root=${String(root)}, pseudo=${String(pseudoElement)})`,
+					).toBe(properties.length);
+				}
+			}
+		}
+
+		expect(portableStyleProperties(ordinary, false, true)).not.toContain(
+			"width",
+		);
+		expect(portableStyleProperties(ordinary, false, true)).not.toContain(
+			"height",
+		);
+		expect(
+			portableStyleProperties(ordinary, true, true).filter(
+				(property) => "width" === property || "height" === property,
+			),
+		).toEqual(["width", "height"]);
+		expect(
+			portableStyleProperties(ordinary, true, false).filter(
+				(property) => "width" === property || "height" === property,
+			),
+		).toEqual(["width", "height"]);
+		expect(
+			portableStyleProperties(katex, true, true).filter(
+				(property) => "width" === property || "height" === property,
+			),
+		).toEqual(["width", "height"]);
+	});
+
+	it("emits border and pseudo dimension declarations once in modern and legacy serializers", async () => {
+		const source = document.createElement("h2");
+		const measured = style({
+			"border-top-width": "2px",
+			"border-right-width": "2px",
+			"border-bottom-width": "2px",
+			"border-left-width": "2px",
+			"border-radius": "6px",
+			content: '""',
+			display: "block",
+			height: "4px",
+			width: "40px",
+		});
+		const modern = await styleDeclarations(
+			source,
+			measured,
+			true,
+			false,
+			runtime(measured),
+			new Map(),
+		);
+		const legacy = styleDeclarationsSynchronously(
+			source,
+			measured,
+			true,
+			false,
+			runtime(measured),
+		);
+		if (null === legacy) {
+			throw new Error("synchronous style serialization failed");
+		}
+		expect(legacy).toEqual(modern);
+		for (const property of [
+			"border-top-width",
+			"border-right-width",
+			"border-bottom-width",
+			"border-left-width",
+			"border-radius",
+			"width",
+			"height",
+		]) {
+			expect(
+				modern.filter((entry) => entry.startsWith(`${property}:`)),
+			).toHaveLength(1);
+		}
+	});
+});
+
+describe("WeChat gradient darkmode exemption metadata", () => {
+	it("strips untrusted data-ignore-width and data-ignore-dm in removeTransientAttributes", () => {
+		const element = document.createElement("p");
+		element.setAttribute("data-ignore-width", "untrusted");
+		element.setAttribute("data-ignore-dm", "text-bg-gradient");
+		element.setAttribute("data-custom", "1");
+		element.setAttribute("id", "keep-id");
+
+		removeTransientAttributes(element);
+
+		expect(element.hasAttribute("data-ignore-width")).toBe(false);
+		expect(element.hasAttribute("data-ignore-dm")).toBe(false);
+		expect(element.hasAttribute("data-custom")).toBe(false);
+		expect(element.getAttribute("id")).toBe("keep-id");
+	});
+
+	it("detects effective finalized CSS gradient declarations in background and background-image only", () => {
+		expect(
+			hasFinalizedBackgroundGradient(
+				"background-image:linear-gradient(90deg, red, blue)",
+			),
+		).toBe(true);
+		expect(
+			hasFinalizedBackgroundGradient(
+				"background:rgb(255, 255, 255) radial-gradient(circle, red, blue) no-repeat",
+			),
+		).toBe(true);
+		expect(
+			hasFinalizedBackgroundGradient(
+				"background-image:conic-gradient(from 90deg, red, blue)",
+			),
+		).toBe(true);
+		expect(
+			hasFinalizedBackgroundGradient(
+				"background-image:repeating-linear-gradient(45deg, red 0px, blue 4px)",
+			),
+		).toBe(true);
+		expect(
+			hasFinalizedBackgroundGradient(
+				"background-image:none, linear-gradient(90deg, red, blue)",
+			),
+		).toBe(true);
+		expect(
+			hasFinalizedBackgroundGradient(
+				"background:linear-gradient(90deg, red, blue)!important;background-image:none",
+			),
+		).toBe(true);
+		expect(
+			hasFinalizedBackgroundGradient(
+				"background-image:linear-gradient(90deg, red, blue);background-image:none",
+			),
+		).toBe(false);
+		expect(
+			hasFinalizedBackgroundGradient(
+				"background-image:linear-gradient(90deg, red, blue);background:rgb(255, 255, 255)",
+			),
+		).toBe(false);
+		expect(
+			hasFinalizedBackgroundGradient("background-color:rgb(255, 255, 255)"),
+		).toBe(false);
+		expect(
+			hasFinalizedBackgroundGradient(
+				"border-image:linear-gradient(90deg, red, blue)",
+			),
+		).toBe(false);
+	});
+
+	it("marks finalized non-SVG gradient elements including root while skipping plain and SVG nodes", () => {
+		const root = document.createElement("section");
+		root.setAttribute(
+			"style",
+			"background:linear-gradient(180deg, rgb(255, 255, 255), rgb(248, 250, 252))",
+		);
+		root.innerHTML = [
+			'<p style="background-color:rgb(255, 255, 255)">Solid</p>',
+			'<span style="background-image:repeating-radial-gradient(circle, rgb(1, 2, 3), rgb(4, 5, 6))">Gradient</span>',
+			'<svg style="background-image:linear-gradient(red, blue)"><foreignObject><div style="background-image:linear-gradient(red, blue)">SVG HTML</div></foreignObject></svg>',
+		].join("");
+
+		markWechatGradientDarkmodeExemptions(root);
+
+		expect(root.getAttribute("data-ignore-dm")).toBe("text-bg-gradient");
+		expect(root.querySelector("p")?.hasAttribute("data-ignore-dm")).toBe(false);
+		expect(root.querySelector("span")?.getAttribute("data-ignore-dm")).toBe(
+			"text-bg-gradient",
+		);
+		expect(root.querySelector("svg")?.hasAttribute("data-ignore-dm")).toBe(
+			false,
+		);
+		expect(root.querySelector("div")?.hasAttribute("data-ignore-dm")).toBe(
+			false,
+		);
+	});
+});
+
+describe("zero line-height normalization for inline script elements and task checkboxes", () => {
+	async function serializeBothPaths(
+		source: Element,
+		measured: CSSStyleDeclaration,
+		pseudoElement = false,
+	): Promise<Readonly<{ modern: string[]; legacy: string[] }>> {
+		const modern = await styleDeclarations(
+			source,
+			measured,
+			pseudoElement,
+			false,
+			runtime(measured),
+			new Map(),
+		);
+		const legacy = styleDeclarationsSynchronously(
+			source,
+			measured,
+			pseudoElement,
+			false,
+			runtime(measured),
+		);
+		if (null === legacy) {
+			throw new Error("synchronous style serialization failed");
+		}
+		return { legacy, modern };
+	}
+
+	function createTaskCheckbox(): HTMLInputElement {
+		const item = document.createElement("li");
+		item.className = "task-list-item";
+		const input = document.createElement("input");
+		input.type = "checkbox";
+		item.append(input);
+		return input;
+	}
+
+	it.each(["sup", "sub"] as const)(
+		"strips zero line-height from font shorthand and omits zero line-height on <%s> in modern and legacy serialization",
+		async (tag) => {
+			const source = document.createElement(tag);
+			const measured = style({
+				display: "inline",
+				font: '700 12px / 0px "Optima", sans-serif',
+				"line-height": "0px",
+				"vertical-align": "sup" === tag ? "super" : "sub",
+			});
+
+			const { modern, legacy } = await serializeBothPaths(source, measured);
+
+			expect(legacy).toEqual(modern);
+			expect(modern).toContain('font:700 12px "Optima", sans-serif');
+			expect(modern.some((entry) => entry.startsWith("line-height:"))).toBe(
+				false,
+			);
+		},
+	);
+
+	it.each(["0", "0px", "0.0px", "0.00", ".0px", "0em", "0rem", "0%", "0PX"])(
+		"normalizes zero line-height token %s on inline script elements",
+		async (zeroToken) => {
+			const source = document.createElement("sup");
+			const measured = style({
+				display: "inline",
+				font: `700 12px / ${zeroToken} Inter, sans-serif`,
+				"line-height": zeroToken,
+			});
+
+			const { modern, legacy } = await serializeBothPaths(source, measured);
+
+			expect(legacy).toEqual(modern);
+			expect(modern).toContain("font:700 12px Inter, sans-serif");
+			expect(modern.some((entry) => entry.startsWith("line-height:"))).toBe(
+				false,
+			);
+		},
+	);
+
+	it("respects quoted font names containing slashes when stripping zero line-height", () => {
+		const sup = document.createElement("sup");
+		const computed = style({});
+
+		expect(
+			portableStyleValue(
+				"font",
+				'700 12px / 0px "Optima / Pro", sans-serif',
+				sup,
+				computed,
+			),
+		).toBe('700 12px "Optima / Pro", sans-serif');
+
+		expect(
+			portableStyleValue(
+				"font",
+				'700 12px "Optima / 0px Pro", sans-serif',
+				sup,
+				computed,
+			),
+		).toBe('700 12px "Optima / 0px Pro", sans-serif');
+	});
+
+	it.each([
+		["sup", "18px"],
+		["sup", "1.2"],
+		["sub", "18px"],
+		["sub", "0.5"],
+		["sub", "0.1px"],
+	] as const)(
+		"preserves non-zero line-height %s on <%s> verbatim in modern and legacy serialization",
+		async (tag, lineHeight) => {
+			const source = document.createElement(tag);
+			const font = `700 12px / ${lineHeight} "Optima", sans-serif`;
+			const measured = style({
+				display: "inline",
+				font,
+				"line-height": lineHeight,
+			});
+
+			const { modern, legacy } = await serializeBothPaths(source, measured);
+
+			expect(legacy).toEqual(modern);
+			expect(modern).toContain(`font:${font}`);
+			expect(modern).toContain(`line-height:${lineHeight}`);
+		},
+	);
+
+	it.each(["p", "span"] as const)(
+		"leaves zero line-height unchanged on ordinary <%s> elements in modern and legacy serialization",
+		async (tag) => {
+			const source = document.createElement(tag);
+			const font = '400 16px / 0px "Optima", sans-serif';
+			const measured = style({
+				display: "p" === tag ? "block" : "inline",
+				font,
+				"line-height": "0px",
+			});
+
+			const { modern, legacy } = await serializeBothPaths(source, measured);
+
+			expect(legacy).toEqual(modern);
+			expect(modern).toContain(`font:${font}`);
+			expect(modern).toContain("line-height:0px");
+		},
+	);
+
+	it("preserves existing task checkbox zero line-height behavior for owners, empty pseudos, and text pseudos", async () => {
+		const checkbox = createTaskCheckbox();
+		const font = "16px / 0px Arial";
+
+		const ownerMeasured = style({
+			display: "inline-block",
+			font,
+			"line-height": "0px",
+		});
+		const owner = await serializeBothPaths(checkbox, ownerMeasured, false);
+		expect(owner.legacy).toEqual(owner.modern);
+		expect(owner.modern).toContain("font:16px Arial");
+		expect(owner.modern.some((entry) => entry.startsWith("line-height:"))).toBe(
+			false,
+		);
+
+		const emptyPseudoMeasured = style({
+			content: '""',
+			display: "inline-block",
+			font,
+			"line-height": "0em",
+		});
+		const emptyPseudo = await serializeBothPaths(
+			checkbox,
+			emptyPseudoMeasured,
+			true,
+		);
+		expect(emptyPseudo.legacy).toEqual(emptyPseudo.modern);
+		expect(emptyPseudo.modern).toContain("font:16px Arial");
+		expect(
+			emptyPseudo.modern.some((entry) => entry.startsWith("line-height:")),
+		).toBe(false);
+
+		const textPseudoMeasured = style({
+			content: '"✓"',
+			display: "inline-block",
+			font,
+			"line-height": "0px",
+		});
+		const textPseudo = await serializeBothPaths(
+			checkbox,
+			textPseudoMeasured,
+			true,
+		);
+		expect(textPseudo.legacy).toEqual(textPseudo.modern);
+		expect(textPseudo.modern).toContain(`font:${font}`);
+		expect(textPseudo.modern).toContain("line-height:0px");
+	});
+
+	it("leaves SVG elements and pseudo-elements unaffected", async () => {
+		const font = '700 12px / 0px "Optima", sans-serif';
+		const measured = style({
+			content: '"*"',
+			display: "inline",
+			font,
+			"line-height": "0px",
+		});
+
+		const sup = document.createElement("sup");
+		const supPseudo = await serializeBothPaths(sup, measured, true);
+		expect(supPseudo.legacy).toEqual(supPseudo.modern);
+		expect(supPseudo.modern).toContain(`font:${font}`);
+		expect(supPseudo.modern).toContain("line-height:0px");
+
+		const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+		const svgText = document.createElementNS(
+			"http://www.w3.org/2000/svg",
+			"text",
+		);
+		const foreignObject = document.createElementNS(
+			"http://www.w3.org/2000/svg",
+			"foreignObject",
+		);
+		const svgSup = document.createElement("sup");
+		foreignObject.append(svgSup);
+		svg.append(svgText, foreignObject);
+
+		const svgTextResult = await serializeBothPaths(svgText, measured, false);
+		expect(svgTextResult.legacy).toEqual(svgTextResult.modern);
+		expect(svgTextResult.modern).toContain(`font:${font}`);
+		expect(svgTextResult.modern).toContain("line-height:0px");
+
+		const svgSupResult = await serializeBothPaths(svgSup, measured, false);
+		expect(svgSupResult.legacy).toEqual(svgSupResult.modern);
+		expect(svgSupResult.modern).toContain(`font:${font}`);
+		expect(svgSupResult.modern).toContain("line-height:0px");
+	});
+
+	it("does not omit zero line-height on <sup> when omitDefaultValues is false", () => {
+		const sup = document.createElement("sup");
+		expect(
+			keepStyle("line-height", "0px", sup, { omitDefaultValues: true }),
+		).toBe(false);
+		expect(
+			keepStyle("line-height", "0px", sup, { omitDefaultValues: false }),
+		).toBe(true);
+	});
+});

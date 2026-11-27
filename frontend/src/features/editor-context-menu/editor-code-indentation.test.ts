@@ -1,11 +1,12 @@
 import type * as CodeMirrorLanguage from "@codemirror/language";
 import type { EditorState } from "@codemirror/state";
 import type { Tree } from "@lezer/common";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
 	canIndentEditorCode,
 	EDITOR_CODE_INDENTATION_MAX_PARSE_SLICES,
+	EDITOR_CODE_INDENTATION_PARSE_TIMEOUT_MS,
 	type EditorCodeIndentationResult,
 	indentEditorCode,
 } from "./editor-code-indentation";
@@ -16,18 +17,18 @@ type CpuSnapshot = Readonly<{
 	user: number;
 }>;
 
+type EnsureSyntaxTreeOverride = (
+	call: number,
+	state: EditorState,
+	upto: number,
+	timeout: number | undefined,
+	actualEnsure: typeof CodeMirrorLanguage.ensureSyntaxTree,
+) => Tree | null;
+
 const indentationProbe = vi.hoisted(() => ({
 	active: false,
 	calls: 0,
-	ensureOverride: null as
-		| ((
-				call: number,
-				state: EditorState,
-				upto: number,
-				timeout: number | undefined,
-				actualEnsure: typeof CodeMirrorLanguage.ensureSyntaxTree,
-		  ) => Tree | null)
-		| null,
+	ensureOverride: null as EnsureSyntaxTreeOverride | null,
 }));
 
 vi.mock("@codemirror/language", async (importOriginal) => {
@@ -83,9 +84,10 @@ vi.mock("@codemirror/language", async (importOriginal) => {
 			let result: Tree | null = null;
 			let errorName: string | null = null;
 			const callIndex = indentationProbe.calls + 1;
+			const override = indentationProbe.ensureOverride;
 			try {
-				result = indentationProbe.ensureOverride
-					? indentationProbe.ensureOverride(
+				result = override
+					? override(
 							callIndex,
 							state,
 							upto,
@@ -98,7 +100,7 @@ vi.mock("@codemirror/language", async (importOriginal) => {
 				errorName = error instanceof Error ? error.name : typeof error;
 				throw error;
 			} finally {
-				if (indentationProbe.active || indentationProbe.ensureOverride) {
+				if (indentationProbe.active || override) {
 					indentationProbe.calls = callIndex;
 				}
 				if (indentationProbe.active) {
@@ -153,13 +155,37 @@ function contentOf(result: EditorCodeIndentationResult): string {
 	return result.content;
 }
 
+function longJavaScriptTailSource(): string {
+	const prefix = Array.from(
+		{ length: 220 },
+		(_, index) => `const value${index} = ${index};`,
+	).join("\n");
+	return `${prefix}\nfunction tail(value) {\nreturn value + 1;\n}\n`;
+}
+
+async function withEnsureSyntaxTreeOverride<T>(
+	override: EnsureSyntaxTreeOverride,
+	run: () => Promise<T>,
+): Promise<T> {
+	indentationProbe.calls = 0;
+	indentationProbe.ensureOverride = override;
+	try {
+		return await run();
+	} finally {
+		indentationProbe.ensureOverride = null;
+		indentationProbe.calls = 0;
+	}
+}
+
 describe("indentEditorCode", () => {
+	afterEach(() => {
+		indentationProbe.active = false;
+		indentationProbe.calls = 0;
+		indentationProbe.ensureOverride = null;
+	});
+
 	it("fully parses a long JavaScript tail before indenting", async () => {
-		const prefix = Array.from(
-			{ length: 220 },
-			(_, index) => `const value${index} = ${index};`,
-		).join("\n");
-		const source = `${prefix}\nfunction tail(value) {\nreturn value + 1;\n}\n`;
+		const source = longJavaScriptTailSource();
 
 		const result = await (async () => {
 			indentationProbe.active = true;
@@ -345,92 +371,97 @@ describe("indentEditorCode", () => {
 	});
 
 	it("resumes incremental syntax parsing across bounded slices after a single-slice timeout", async () => {
-		const prefix = Array.from(
-			{ length: 220 },
-			(_, index) => `const value${index} = ${index};`,
-		).join("\n");
-		const source = `${prefix}\nfunction tail(value) {\nreturn value + 1;\n}\n`;
+		const source = longJavaScriptTailSource();
+		const seenStates: EditorState[] = [];
+		const seenTimeouts: Array<number | undefined> = [];
+		let firstSliceResult: Tree | null | undefined;
 
-		indentationProbe.calls = 0;
-		indentationProbe.ensureOverride = (
-			call,
-			state,
-			upto,
-			timeout,
-			actualEnsure,
-		) => {
-			if (1 === call) {
-				// Advance the real ParseContext partially and return null to
-				// deterministically exercise multi-slice resumption even on fast CPUs.
-				actualEnsure(state, Math.min(upto, 128), 0);
-				return null;
-			}
-			return actualEnsure(state, upto, timeout);
-		};
-		try {
-			const result = await indentEditorCode({
-				content: source,
-				info: "js",
-				language: "javascript",
-			});
+		const result = await withEnsureSyntaxTreeOverride(
+			(call, state, upto, timeout, actualEnsure) => {
+				seenStates.push(state);
+				seenTimeouts.push(timeout);
+				if (1 === call) {
+					// A -1ms budget lets ParseContext.work() execute one real advance()
+					// step and naturally return null with an active mid-document parse.
+					firstSliceResult = actualEnsure(state, upto, -1);
+					return firstSliceResult;
+				}
+				return actualEnsure(state, upto, timeout);
+			},
+			() =>
+				indentEditorCode({
+					content: source,
+					info: "js",
+					language: "javascript",
+				}),
+		);
 
-			expect(indentationProbe.calls).toBeGreaterThanOrEqual(2);
-			expect(["changed", "unchanged"]).toContain(result.status);
-			expect(contentOf(result)).toContain("  return value + 1;");
-			expect(contentOf(result)).toContain("const value219 = 219;");
-		} finally {
-			indentationProbe.ensureOverride = null;
-			indentationProbe.calls = 0;
-		}
+		expect(firstSliceResult).toBeNull();
+		expect(seenStates.length).toBeGreaterThanOrEqual(2);
+		expect(seenStates[1]).toBe(seenStates[0]);
+		expect(seenTimeouts).toEqual(
+			Array.from(
+				{ length: seenStates.length },
+				() => EDITOR_CODE_INDENTATION_PARSE_TIMEOUT_MS,
+			),
+		);
+		expect(["changed", "unchanged"]).toContain(result.status);
+		expect(contentOf(result)).toContain("  return value + 1;");
+		expect(contentOf(result)).toContain("const value219 = 219;");
 	});
 
-	it("aborts between parse slices when cancelled after an incomplete slice", async () => {
+	it("aborts between parse slices when cancellation arrives asynchronously after an incomplete slice", async () => {
 		const controller = new AbortController();
-		indentationProbe.calls = 0;
-		indentationProbe.ensureOverride = (call) => {
-			if (1 === call) {
-				controller.abort();
-			}
-			return null;
-		};
-		try {
-			await expect(
+		let callsObserved = 0;
+
+		const result = await withEnsureSyntaxTreeOverride(
+			(call, state, upto, _timeout, actualEnsure) => {
+				callsObserved = call;
+				if (1 === call) {
+					setTimeout(() => {
+						controller.abort();
+					}, 0);
+					return actualEnsure(state, upto, -1);
+				}
+				return null;
+			},
+			() =>
 				indentEditorCode({
-					content: "if (true) {\nvalue();\n}",
+					content: longJavaScriptTailSource(),
+					info: "js",
 					language: "javascript",
 					signal: controller.signal,
 				}),
-			).resolves.toEqual({
-				code: "editor-code-indentation-cancelled",
-				status: "unavailable",
-			});
-			expect(indentationProbe.calls).toBe(1);
-		} finally {
-			indentationProbe.ensureOverride = null;
-			indentationProbe.calls = 0;
-		}
+		);
+
+		expect(result).toEqual({
+			code: "editor-code-indentation-cancelled",
+			status: "unavailable",
+		});
+		expect(callsObserved).toBe(1);
 	});
 
 	it("returns parse-timeout after exhausting bounded incremental parse slices", async () => {
-		indentationProbe.calls = 0;
-		indentationProbe.ensureOverride = () => null;
-		try {
-			await expect(
+		let callsObserved = 0;
+
+		const result = await withEnsureSyntaxTreeOverride(
+			(call) => {
+				callsObserved = call;
+				return null;
+			},
+			() =>
 				indentEditorCode({
-					content: "if (true) {\nvalue();\n}",
+					content: longJavaScriptTailSource(),
+					info: "js",
 					language: "javascript",
 				}),
-			).resolves.toEqual({
-				code: "editor-code-indentation-parse-timeout",
-				status: "unavailable",
-			});
-			expect(indentationProbe.calls).toBe(
-				EDITOR_CODE_INDENTATION_MAX_PARSE_SLICES,
-			);
-		} finally {
-			indentationProbe.ensureOverride = null;
-			indentationProbe.calls = 0;
-		}
+		);
+
+		expect(result).toEqual({
+			code: "editor-code-indentation-parse-timeout",
+			status: "unavailable",
+		});
+		expect(callsObserved).toBe(EDITOR_CODE_INDENTATION_MAX_PARSE_SLICES);
 	});
 
 	it("preserves an unchanged result without inventing a mutation", async () => {

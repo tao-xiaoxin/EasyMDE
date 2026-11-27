@@ -7,6 +7,7 @@ import {
 	indentUnit,
 	type LanguageSupport,
 	syntaxTree,
+	syntaxTreeAvailable,
 } from "@codemirror/language";
 import { EditorState } from "@codemirror/state";
 
@@ -290,6 +291,37 @@ async function yieldForCancellation(
 	return !signal?.aborted;
 }
 
+async function ensureCompleteSyntaxTree(
+	state: EditorState,
+	signal: AbortSignal | undefined,
+): Promise<"cancelled" | "complete" | "timeout"> {
+	if (
+		0 === state.doc.length ||
+		(syntaxTreeAvailable(state, state.doc.length) &&
+			syntaxTree(state).length >= state.doc.length)
+	) {
+		return "complete";
+	}
+	for (
+		let slice = 0;
+		slice < EDITOR_CODE_INDENTATION_MAX_PARSE_SLICES;
+		slice += 1
+	) {
+		if (!(await yieldForCancellation(signal))) {
+			return "cancelled";
+		}
+		const ensured = ensureSyntaxTree(
+			state,
+			state.doc.length,
+			EDITOR_CODE_INDENTATION_PARSE_TIMEOUT_MS,
+		);
+		if (ensured && ensured.length >= state.doc.length) {
+			return "complete";
+		}
+	}
+	return "timeout";
+}
+
 export async function indentEditorCode({
 	content,
 	info,
@@ -335,27 +367,11 @@ export async function indentEditorCode({
 			doc: normalized,
 			extensions: [resolved.support, indentUnit.of("  ")],
 		});
-		let ensured = ensureSyntaxTree(
-			state,
-			state.doc.length,
-			EDITOR_CODE_INDENTATION_PARSE_TIMEOUT_MS,
-		);
-		for (
-			let slice = 1;
-			(!ensured || ensured.length < state.doc.length) &&
-			slice < EDITOR_CODE_INDENTATION_MAX_PARSE_SLICES;
-			slice += 1
-		) {
-			if (!(await yieldForCancellation(signal))) {
-				return unavailable("editor-code-indentation-cancelled");
-			}
-			ensured = ensureSyntaxTree(
-				state,
-				state.doc.length,
-				EDITOR_CODE_INDENTATION_PARSE_TIMEOUT_MS,
-			);
+		const parseStatus = await ensureCompleteSyntaxTree(state, signal);
+		if ("cancelled" === parseStatus) {
+			return unavailable("editor-code-indentation-cancelled");
 		}
-		if (!ensured || ensured.length < state.doc.length) {
+		if ("timeout" === parseStatus) {
 			return unavailable("editor-code-indentation-parse-timeout");
 		}
 		// ensureSyntaxTree returns a tree without updating state.syntaxTree. Rebuild

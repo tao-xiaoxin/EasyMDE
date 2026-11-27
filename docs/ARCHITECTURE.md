@@ -1408,11 +1408,16 @@ the validated Editor Root bootstrap and consumed by the Editor Root's
 document source, workspace layout, Preview feature overrides, focus behavior,
 and local-draft session. The Settings Center auto-save switch and interval are
 the only local-draft configuration for ordinary and immersive editing;
-browser-session immersive preferences own presentation only. The browser
-preference port persists only the immersive Outline choice. The Editor Root
-maps Settings Center `general.editingMode` from `live-preview` to immersive
-split, `source` to source, and `preview` to Preview when the Root mounts.
-At narrow widths, the Outline overlays a full-width workspace. A completed
+browser-session immersive preferences own presentation only. The browser preference port persists only the immersive Outline choice.
+Settings Center `general.editingMode` applies only to Immersive Editing: the
+Editor Root maps `live-preview` to immersive split, `source` to immersive
+source, and `preview` to immersive Preview when the Root mounts, while the
+ordinary editor always keeps its fixed side-by-side split workspace across all
+viewport widths. Both ordinary and immersive split layouts remain side-by-side
+across all viewport widths with the immersive split divider preserved
+(single-pane presentation occurs only when the user selects Source-only or
+Preview-only inside Immersive Editing). At narrow widths (`<= 640px`), the
+Outline overlays the full-width workspace. A completed
 transition into editable immersive Preview, or a width crossing into narrow
 layout while Preview is already editable, closes that overlay once as local
 presentation state. Pending or failed unlocks do not close it; a manual reopen

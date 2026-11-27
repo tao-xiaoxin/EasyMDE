@@ -275,38 +275,94 @@ test('ordinary React editor CSS owns the historical fixed 50/50 workspace', () =
     css,
     /\.easymde-workspace\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1fr\);[^}]*grid-template-areas:\s*"source preview";/s
   );
-  assert.match(
+  assert.doesNotMatch(
     css,
-    /@media \(max-width:\s*1080px\)[\s\S]*?\.easymde-workspace\s*\{[^}]*grid-template-columns:\s*1fr;[^}]*grid-template-areas:\s*"source"\s*"preview";/s
+    /\.easymde-workspace\.is-mode-(?:source|preview)\b/,
+    'ordinary workspace must not define single-pane .is-mode-source or .is-mode-preview rules'
   );
-  assert.match(
+  assert.doesNotMatch(
     css,
-    /@media \(max-width:\s*1080px\)[\s\S]*?\.easymde-preview-react-root\s*\{[^}]*flex:\s*0 1 auto;[^}]*height:\s*420px;[^}]*min-height:\s*360px;[^}]*max-height:\s*58vh;/s
+    /grid-template-areas:\s*"source"\s*"preview";/s,
+    'ordinary and immersive split workspaces must stay side-by-side without vertical stacking'
   );
-  const ordinaryPreviewHeightSelector =
-    '.easymde-editor:not(.is-immersive) .easymde-pane-preview,';
-  const ordinaryResponsive = cssBlock(
+  assert.doesNotMatch(
+    css,
+    /\.easymde-immersive-pane-divider\s*\{[^}]*display:\s*none;/s,
+    'immersive split divider must remain visible across all viewport widths'
+  );
+  assert.doesNotMatch(
+    css,
+    /@media \(max-width:\s*1080px\)[^{]*\{[\s\S]*?\.easymde-pane-source\s*\{[^}]*border-bottom:/s,
+    'ordinary source pane must keep its inline-end split border without stacking at 1080px'
+  );
+
+  const intermediateImmersiveMedia = cssBlock(
     css,
     '@media (max-width: 1080px)',
-    css.lastIndexOf(
-      '@media (max-width: 1080px)',
-      css.indexOf(ordinaryPreviewHeightSelector)
-    )
+    css.lastIndexOf('@media (max-width: 1080px)')
   );
-  const ordinaryPreviewHeightRule = ordinaryResponsive.match(
-    /\.easymde-editor:not\(\.is-immersive\) \.easymde-pane-preview,\s*\.easymde-editor:not\(\.is-immersive\) \.easymde-pane-preview > \.easymde-immersive-preview-canvas\s*\{(?<body>[^}]*)\}/s
-  )?.groups?.body;
-  assert.ok(
-    ordinaryPreviewHeightRule,
-    'Missing ordinary Preview pane and canvas height rule'
+  assertDeclaration(
+    cssRule(intermediateImmersiveMedia, '.easymde-immersive-toolbar-row'),
+    'grid-template-rows',
+    'repeat(2, minmax(0, 1fr))'
   );
-  assertDeclaration(ordinaryPreviewHeightRule, 'height', '420px');
-  assertDeclaration(ordinaryPreviewHeightRule, 'min-height', '360px');
-  assertDeclaration(ordinaryPreviewHeightRule, 'max-height', '58vh');
+  const intermediateOutlineRule = cssRule(
+    intermediateImmersiveMedia,
+    '.easymde-editor.is-immersive .easymde-immersive-outline'
+  );
+  assertDeclaration(intermediateOutlineRule, 'min-width', '160px');
+  assertDeclaration(
+    intermediateOutlineRule,
+    'max-width',
+    'clamp(160px, 24vw, 220px)'
+  );
   assert.doesNotMatch(
-    ordinaryResponsive,
-    /\.easymde-editor\.is-immersive[^\n]*\.easymde-pane-preview[^\n]*\{[^}]*height:\s*420px;/s,
-    'immersive preview panes must not inherit the ordinary 420px boundary'
+    intermediateImmersiveMedia,
+    /\.easymde-immersive-pane-divider/,
+    'intermediate immersive breakpoint must not hide the split divider'
+  );
+
+  const narrowLayoutMedia = cssBlock(
+    css,
+    '@media (max-width: 640px)',
+    css.lastIndexOf('@media (max-width: 640px)')
+  );
+  const narrowOrdinaryWorkspace = cssRule(
+    narrowLayoutMedia,
+    '.easymde-editor:not(.is-immersive) .easymde-workspace'
+  );
+  assertDeclaration(narrowOrdinaryWorkspace, 'height', 'clamp(420px, 64vh, 720px)');
+  assertDeclaration(narrowOrdinaryWorkspace, 'min-height', '420px');
+
+  const narrowOrdinaryPreviewPaper = cssRule(
+    narrowLayoutMedia,
+    `.easymde-editor:not(.is-immersive) .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview${wechatExportPaperSelector}`
+  );
+  assertDeclaration(narrowOrdinaryPreviewPaper, 'padding', '16px 14px 20px');
+
+  const narrowSplitPreviewPaper = cssRule(
+    narrowLayoutMedia,
+    `.easymde-editor[data-easymde-preview-presentation="split"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview${wechatExportPaperSelector}`
+  );
+  assertDeclaration(narrowSplitPreviewPaper, 'padding', '16px 14px 20px');
+
+  const narrowOutlineOverlay = cssRule(
+    narrowLayoutMedia,
+    '.easymde-editor.is-immersive .easymde-immersive-outline'
+  );
+  assertDeclaration(narrowOutlineOverlay, 'position', 'absolute');
+  assertDeclaration(
+    cssRule(
+      narrowLayoutMedia,
+      '.easymde-editor.is-immersive .easymde-immersive-outline-resizer'
+    ),
+    'display',
+    'none'
+  );
+  assert.doesNotMatch(
+    narrowLayoutMedia,
+    /\.easymde-immersive-pane-divider/,
+    'narrow immersive breakpoint must hide only the outline resizer, never the split divider'
   );
 });
 

@@ -14,7 +14,7 @@ Those entries open the WordPress post editor screen with EasyMDE for supported p
 
 ## Split Editor And Preview
 
-The EasyMDE editor shows Markdown source on the left and a live preview on the right. The source and preview panes synchronize their scroll position so long articles remain easier to review while writing.
+The ordinary EasyMDE editor stays in a fixed side-by-side split layout with Markdown source on the left and a live preview on the right across all viewport widths (mirrored in RTL). The source and preview panes synchronize their scroll position so long articles remain easier to review while writing.
 
 The preview uses the EasyMDE REST preview endpoint, which renders through the same server-side Markdown renderer used for saves. Loading, empty, and failure states remain visible; EasyMDE does not replace a failed formal Preview with a browser Markdown renderer.
 
@@ -26,9 +26,11 @@ authority.
 
 ## Immersive Writing View
 
-The Settings Center **Default Editing Mode** controls the immersive view used
-when the editor page loads: Live Preview opens split mode, Source opens the
-Markdown source, and Preview opens the rendered article. The immersive
+The Settings Center **Default Editing Mode** applies only to Immersive Editing
+and controls the immersive view used when the editor page loads: Live Preview
+opens split mode, Source opens the Markdown source, and Preview opens the
+rendered article (ordinary editing always stays in fixed side-by-side split
+mode). The immersive
 **Split preview** checkbox is a temporary control for the current page session.
 It does not save a browser preference or update WordPress settings. Its choice
 survives leaving and re-entering immersive writing in the same page, while a
@@ -63,10 +65,12 @@ read-only, switching to Source/Split, or invoking Copy to WeChat synchronizes
 and refreshes the authoritative server-rendered PHP Preview. Leaving Preview
 cancels any in-flight unlock cleanly without adding an edit or history step.
 
-On narrow screens, the Outline opens over the writing area. It closes when
-Preview becomes editable or an editable Preview is resized into a narrow
-screen. Its show control can reopen it without changing the saved Outline
-preference.
+In immersive Split mode, Source and Preview remain side-by-side with their
+resizable divider across all viewport widths unless you explicitly switch to
+Source-only or Preview-only. On narrow screens (`<= 640px`), the Outline opens
+as an overlay over the writing area. It closes when Preview becomes editable or
+an editable Preview is resized into a narrow screen. Its show control can reopen
+it without changing the saved Outline preference.
 
 ## Toolbar And Shortcuts
 

@@ -212,9 +212,26 @@ async function copyHeading(
 	wrapParentInContents = false,
 	wrapInBlockquote = false,
 	followingOverrides: Record<string, string> = {},
+	parentRectWidth?: number,
+	sourceRectLeft = 0,
 ) {
 	const preview = document.createElement("article");
 	preview.setAttribute("data-easymde-preview-html-sink", "1");
+	if (typeof parentRectWidth === "number") {
+		Object.defineProperty(preview, "getBoundingClientRect", {
+			configurable: true,
+			value: () => ({
+				bottom: 400,
+				height: 400,
+				left: 0,
+				right: parentRectWidth,
+				top: 0,
+				width: parentRectWidth,
+				x: 0,
+				y: 0,
+			}),
+		});
+	}
 	preview.innerHTML = wrapInBlockquote
 		? `<blockquote><${fixture.tag}>${fixture.markup}</${fixture.tag}><p>Following</p></blockquote>`
 		: wrapParentInContents
@@ -247,11 +264,11 @@ async function copyHeading(
 		value: () => ({
 			bottom: fixture.height,
 			height: fixture.height,
-			left: 0,
-			right: headingWidth,
+			left: sourceRectLeft,
+			right: sourceRectLeft + headingWidth,
 			top: 0,
 			width: headingWidth,
-			x: 0,
+			x: sourceRectLeft,
 			y: 0,
 		}),
 	});
@@ -1274,7 +1291,8 @@ describe("empty absolute heading after decoration", () => {
 			);
 		}
 
-		// C3: Heading with margin-left: 40px + dir="rtl" parent preserves horizontal offset and left anchor.
+		// C3: Heading with margin-left: 40px + dir="rtl" parent preserves horizontal offset and left anchor
+		// when the promoted bar fits within the RTL containing block.
 		const shifted = await copyHeading(
 			bloomH2,
 			"none",
@@ -1283,6 +1301,11 @@ describe("empty absolute heading after decoration", () => {
 			{},
 			{ "margin-left": "40px", direction: "rtl" },
 			{ direction: "rtl" },
+			false,
+			false,
+			{},
+			720,
+			40,
 		);
 		const shiftedBar = shifted.holder.querySelector("h2")?.nextElementSibling;
 		if (!shiftedBar) throw new Error("shifted bar missing");
@@ -1577,6 +1600,121 @@ describe("empty absolute heading after decoration", () => {
 		const clearedFallback = clearedSibling.querySelector('h2 > span[aria-hidden="true"]');
 		expect(clearedFallback).not.toBeNull();
 		expect(declaredStyleValue(clearedFallback as Element, "position")).toBe("absolute");
+	});
+
+	it("declines promotion when the heading has non-zero relative offsets or over-constrained RTL bar geometry", async () => {
+		const bloomH2 = cases[3];
+		const inBoxH2 = inBoxCases[0];
+		if (!bloomH2 || !inBoxH2) throw new Error("heading fixtures missing");
+
+		// Zero / auto relative offsets still promote cleanly.
+		for (const zeroOffset of [
+			{ top: "auto", bottom: "auto", left: "auto", right: "auto" },
+			{ top: "0px", bottom: "0px", left: "0px", right: "0px" },
+		]) {
+			const ok = await copyHeading(bloomH2, "none", "clipboard", {}, {}, zeroOffset);
+			expect(ok.holder.querySelector("h2")?.nextElementSibling?.tagName).toBe("SECTION");
+		}
+
+		// Non-zero or non-pixel relative offsets decline promotion cleanly so the promoted sibling
+		// cannot drop the heading's relative offset.
+		for (const nonZeroOffset of [
+			{ top: "10px" },
+			{ bottom: "6px" },
+			{ left: "8px" },
+			{ right: "-4px" },
+			{ top: "5%" },
+		]) {
+			const declined = await copyHeading(bloomH2, "none", "clipboard", {}, {}, nonZeroOffset);
+			const fallback = declined.holder.querySelector('h2 > span[aria-hidden="true"]');
+			expect(fallback).not.toBeNull();
+			expect(declaredStyleValue(fallback as Element, "position")).toBe("absolute");
+		}
+
+		// RTL parent with wide over-constrained bar (parent 200px, bar 250px): decline promotion
+		// rather than letting CSS 2.1 §10.3.3 override margin-left to -50px.
+		const wideRtlFixture: HeadingCase = {
+			...bloomH2,
+			left: 0,
+			paintWidth: 250,
+		};
+		const wideRtlDeclined = await copyHeading(
+			wideRtlFixture,
+			"none",
+			"clipboard",
+			{},
+			{},
+			{ direction: "rtl" },
+			{ direction: "rtl" },
+			false,
+			false,
+			{},
+			200,
+			0,
+		);
+		const wideRtlFallback = wideRtlDeclined.holder.querySelector('h2 > span[aria-hidden="true"]');
+		expect(wideRtlFallback).not.toBeNull();
+		expect(declaredStyleValue(wideRtlFallback as Element, "position")).toBe("absolute");
+
+		// RTL parent where marginLeft + barWidth exceeds containing block width (150 + 80 > 200): decline promotion.
+		const shiftedRtlOverflow = await copyHeading(
+			{ ...bloomH2, left: 0, paintWidth: 80 },
+			"none",
+			"clipboard",
+			{},
+			{},
+			{ "margin-left": "150px", direction: "rtl" },
+			{ direction: "rtl" },
+			false,
+			false,
+			{},
+			200,
+			150,
+		);
+		expect(
+			declaredStyleValue(
+				shiftedRtlOverflow.holder.querySelector('h2 > span[aria-hidden="true"]') as Element,
+				"position",
+			),
+		).toBe("absolute");
+
+		// Unmeasurable RTL parent (width = 0) fails closed.
+		const unmeasurableRtl = await copyHeading(
+			bloomH2,
+			"none",
+			"clipboard",
+			{},
+			{},
+			{ direction: "rtl" },
+			{ direction: "rtl" },
+			false,
+			false,
+			{},
+			0,
+			0,
+		);
+		expect(
+			declaredStyleValue(
+				unmeasurableRtl.holder.querySelector('h2 > span[aria-hidden="true"]') as Element,
+				"position",
+			),
+		).toBe("absolute");
+
+		// RTL in-box bar overflowing the heading content width (width 450 > headingWidth 419.5): decline conversion.
+		const rtlInBoxOverflow = await copyHeading(
+			{ ...inBoxH2, left: 0, paintWidth: 450 },
+			"none",
+			"clipboard",
+			{},
+			{},
+			{ direction: "rtl" },
+		);
+		expect(
+			declaredStyleValue(
+				rtlInBoxOverflow.holder.querySelector('h2 > span[aria-hidden="true"]') as Element,
+				"position",
+			),
+		).toBe("absolute");
 	});
 
 	it("does not convert a rotated decoration into the supported flow model", async () => {

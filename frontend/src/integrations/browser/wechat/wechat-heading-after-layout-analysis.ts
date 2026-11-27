@@ -53,6 +53,10 @@ const MARGIN_STOP_CONTAIN_TOKENS = new Set(['layout', 'paint', 'size', 'strict',
 const HEADING_NATURAL_BOX_CSS_PROPERTIES = [
   'writing-mode',
   'direction',
+  'top',
+  'bottom',
+  'left',
+  'right',
   'contain',
   'container-type',
   'content-visibility',
@@ -517,6 +521,66 @@ export function resolveAdjoiningAfterMargin(
     current = firstChild.element;
   }
   return maxPositive;
+}
+
+export function hasZeroRelativeOffset(computed: CSSStyleDeclaration, epsilon = 1 / 64): boolean {
+  for (const side of ['top', 'bottom', 'left', 'right'] as const) {
+    const raw = computed.getPropertyValue(side).trim().toLowerCase();
+    if ('' === raw || 'auto' === raw) continue;
+    const pixels = finiteCssPixelValue(raw);
+    if (null === pixels || Math.abs(pixels) > epsilon) return false;
+  }
+  return true;
+}
+
+export function resolveContainingBlockContentWidth(
+  element: Element,
+  computed: CSSStyleDeclaration
+): number | null {
+  const rect = element.getBoundingClientRect();
+  if (!Number.isFinite(rect.width) || rect.width <= 0) return null;
+  const borderLeft = optionalFinitePixel(computed, 'border-left-width');
+  const borderRight = optionalFinitePixel(computed, 'border-right-width');
+  const paddingLeft = optionalFinitePixel(computed, 'padding-left');
+  const paddingRight = optionalFinitePixel(computed, 'padding-right');
+  if (null === borderLeft || null === borderRight || null === paddingLeft || null === paddingRight) {
+    return null;
+  }
+  const rectPaddingWidth = rect.width - borderLeft - borderRight;
+  const clientWidth = (element as Element & { clientWidth?: number }).clientWidth;
+  const effectivePaddingWidth =
+    'number' === typeof clientWidth && clientWidth > 0 && rectPaddingWidth - clientWidth > 1
+      ? clientWidth
+      : rectPaddingWidth;
+  const contentWidth = effectivePaddingWidth - paddingLeft - paddingRight;
+  return Number.isFinite(contentWidth) && contentWidth >= 0 ? contentWidth : null;
+}
+
+/**
+ * Under CSS 2.1 §10.3.3, a static block with explicit `width`, explicit
+ * `margin-left`, and `margin-right: auto` preserves its physical `margin-left`
+ * unconditionally in an LTR containing block, whereas in an RTL containing
+ * block an over-constrained width (`margin-left + width > containingWidth` or
+ * `width > containingWidth`) forces `margin-right` to `0` and overrides
+ * `margin-left` negatively. Require proven non-over-constrained geometry for
+ * RTL containing blocks so promotion never shifts the bar horizontally.
+ */
+export function horizontalBarFitsContainingBlock(
+  direction: string,
+  contentWidth: number | null,
+  marginLeft: number,
+  barWidth: number,
+  epsilon: number
+): boolean {
+  if ('rtl' !== direction) return true;
+  if (null === contentWidth || !Number.isFinite(contentWidth) || contentWidth < 0) {
+    return false;
+  }
+  return (
+    marginLeft >= -epsilon &&
+    barWidth <= contentWidth + epsilon &&
+    marginLeft + barWidth <= contentWidth + epsilon
+  );
 }
 
 export function resolveHeadingLeftInFormattingParent(

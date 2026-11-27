@@ -414,6 +414,27 @@ describe('collectWechatTableNativeGridEvidence', () => {
     expect(() => collect(table, { rules: [pseudoParent, cssRule('width:100cqi;')] })).toThrow(
       'wechat-table-native-grid-nested-rule-unreadable'
     );
+
+    // 4. Escaped nested pseudo-elements fail closed while attribute strings and escaped classes stay benign.
+    for (const escapedSelector of ['& ::\\62 efore', '& :\\62 efore']) {
+      const escapedParent = cssSheet('table{}').cssRules.item(0) as CSSStyleRule;
+      const escapedNested = cssRule('width:335px;', '.placeholder');
+      Object.defineProperty(escapedNested, 'selectorText', { configurable: true, value: escapedSelector });
+      Object.defineProperty(escapedParent, 'cssRules', { configurable: true, value: [escapedNested] });
+      expect(() => collect(table, { rules: [escapedParent, cssRule('width:100cqi;')] })).toThrow(
+        'wechat-table-native-grid-nested-rule-unreadable'
+      );
+    }
+
+    const attrAndClassParent = cssSheet('table{}').cssRules.item(0) as CSSStyleRule;
+    const attrMentioningBefore = cssRule('width:100px;', '& [data-x="::before"]');
+    const escapedClassRule = cssRule('width:100px;', '.placeholder');
+    Object.defineProperty(escapedClassRule, 'selectorText', { configurable: true, value: '& .foo\\:before' });
+    Object.defineProperty(attrAndClassParent, 'cssRules', {
+      configurable: true,
+      value: [attrMentioningBefore, escapedClassRule]
+    });
+    expect(collect(table, { rules: [attrAndClassParent, cssRule('width:100cqi;')] })).not.toBeNull();
   });
 
   it('rejects fixed 335px even when the used width is identical', () => {

@@ -113,7 +113,10 @@ export function createSourceContextMenuSurface(
       imageUpload.enabled
       && 'off' !== imageUpload.remoteImageUploadMode
       && /^https?:\/\//iu.test(image.destination),
-    boundaryElement: contextMenuWorkspace ?? boundaryElement,
+    boundaryElement:
+      contextMenuWorkspace
+      ?? element?.closest<HTMLElement>('.easymde-workspace')
+      ?? boundaryElement,
     element,
     getActionContext: (_target, snapshot, blockIndex) => {
       const linkBinding: EditorSourceLinkQueryBinding = {

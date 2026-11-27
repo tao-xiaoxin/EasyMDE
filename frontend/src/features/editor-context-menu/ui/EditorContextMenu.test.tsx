@@ -1984,4 +1984,129 @@ describe('EditorContextMenu', () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it('hides the submenu pointer and marks the frame overlapped on narrow viewports', async () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 600 });
+    render(
+      <EditorContextMenu
+        anchor={{ x: 20, y: 18 }}
+        direction="ltr"
+        model={model}
+        onAction={vi.fn()}
+        onDismiss={vi.fn()}
+        open
+      />
+    );
+
+    const insert = screen.getByRole('menuitem', { name: 'Insert' });
+    Object.defineProperty(insert, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        bottom: 130,
+        height: 30,
+        left: 26,
+        right: 234,
+        top: 100,
+        width: 208,
+        x: 26,
+        y: 100,
+        toJSON: () => ({})
+      })
+    });
+
+    fireEvent.mouseEnter(insert);
+    const table = await screen.findByRole('menuitem', { name: 'Table' });
+    const submenu = table.closest<HTMLElement>('[data-easymde-context-menu-layer]');
+    if (!submenu) throw new Error('context-menu-submenu-missing');
+    Object.defineProperty(submenu, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        bottom: 220,
+        height: 120,
+        left: 0,
+        right: 220,
+        top: 100,
+        width: 220,
+        x: 0,
+        y: 100,
+        toJSON: () => ({})
+      })
+    });
+    fireEvent(window, new Event('resize'));
+
+    await waitFor(() => {
+      const frame = submenu.parentElement;
+      expect(frame?.className).toBe('easymde-editor-context-menu__submenu-frame');
+      expect(frame?.dataset.easymdeContextMenuOverlapped).toBe('true');
+      expect(frame?.dataset.easymdeContextMenuPlacement).toBe('right');
+      expect(submenu.style.left).toBe('162px');
+      expect(
+        document.body.querySelector('[data-easymde-context-menu-pointer="true"]')
+      ).toBeNull();
+    });
+  });
+
+  it('keeps a root menu inside the viewport without horizontal clip-path when the boundary is narrower than the menu', () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 640 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 600 });
+    const resizeCallbacks: Array<() => void> = [];
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) {
+        resizeCallbacks.push(callback);
+      }
+
+      disconnect(): void {}
+
+      observe(): void {}
+    });
+    const boundary = document.createElement('div');
+    Object.defineProperty(boundary, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        bottom: 400,
+        height: 340,
+        left: 20,
+        right: 180,
+        top: 60,
+        width: 160,
+        x: 20,
+        y: 60,
+        toJSON: () => ({})
+      })
+    });
+    document.body.append(boundary);
+
+    try {
+      render(
+        <EditorContextMenu
+          anchor={{ x: 100, y: 100 }}
+          boundaryElement={boundary}
+          direction="ltr"
+          model={model}
+          onAction={vi.fn()}
+          onDismiss={vi.fn()}
+          open
+        />
+      );
+      const menu = document.body.querySelector<HTMLElement>('[data-easymde-context-menu="true"]');
+      if (!menu) throw new Error('context-menu-missing');
+      Object.defineProperty(menu, 'offsetWidth', { configurable: true, value: 220 });
+      Object.defineProperty(menu, 'offsetHeight', { configurable: true, value: 120 });
+
+      act(() => {
+        for (const callback of resizeCallbacks) callback();
+      });
+
+      const left = Number.parseFloat(menu.style.left);
+      expect(left).toBe(100);
+      expect(left).toBeGreaterThanOrEqual(8);
+      expect(left + 220).toBeLessThanOrEqual(632);
+      expect(menu.style.clipPath).toBe('');
+      expect(menu.style.maxBlockSize).toBe('300px');
+    } finally {
+      boundary.remove();
+      vi.unstubAllGlobals();
+    }
+  });
 });

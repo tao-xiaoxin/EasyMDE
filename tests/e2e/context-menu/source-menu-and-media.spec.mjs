@@ -839,4 +839,110 @@ test.describe('Editor context menu production surfaces', () => {
       }
     }
   });
+
+  test('keeps Source context menu and submenus unclipped across narrow side-by-side split viewports', async ({ page }) => {
+    await login(page);
+    await openNewPost(page);
+    const { markdown, source } = await loadCanonicalFixture(page);
+
+    const assertNoHorizontalClip = (clipPath, label) => {
+      if (!clipPath || clipPath === 'none') return;
+      const match = clipPath.match(/^inset\(([^)]+)\)$/u);
+      if (!match) {
+        throw new Error(`unexpected-context-menu-clip-path:${label}:${clipPath}`);
+      }
+      const tokens = match[1].trim().split(/\s+/u).map((token) => Number.parseFloat(token));
+      const right = tokens.length === 1 ? tokens[0] : tokens[1];
+      const left = tokens.length <= 2 ? right : tokens.length === 3 ? tokens[1] : tokens[3];
+      expect(right, `${label} horizontal right clip`).toBe(0);
+      expect(left, `${label} horizontal left clip`).toBe(0);
+    };
+
+    const assertNarrowViewportContextMenu = async (viewport, modeLabel) => {
+      await page.setViewportSize(viewport);
+      const activeSourceEditor = page.locator('.easymde-source-react .cm-content');
+      await expect(activeSourceEditor).toBeVisible();
+      await selectSourceText(page, activeSourceEditor, markdown, '普通文本');
+      await openSourceMenu(page, activeSourceEditor);
+      await openRootSubmenu(page, 'insert');
+
+      const submenuFrame = page.locator('.easymde-editor-context-menu__submenu-frame').first();
+      const submenu = page.locator('.easymde-editor-context-menu__submenu').first();
+      await expect(submenuFrame).toBeVisible();
+      await expect(submenu).toBeVisible();
+
+      const geometry = await page.evaluate((rootSelector) => {
+        const root = document.querySelector(rootSelector);
+        const frame = document.querySelector('.easymde-editor-context-menu__submenu-frame');
+        const sub = document.querySelector('.easymde-editor-context-menu__submenu');
+        const pointers = document.querySelectorAll('.easymde-editor-context-menu__pointer');
+        const shortcuts = Array.from(
+          document.querySelectorAll('.easymde-editor-context-menu__shortcut')
+        );
+        if (!root || !frame || !sub) {
+          throw new Error('narrow-context-menu-elements-missing');
+        }
+        const rootRect = root.getBoundingClientRect();
+        const subRect = sub.getBoundingClientRect();
+        return {
+          frameClipPath: getComputedStyle(frame).clipPath,
+          frameOverlapped: frame.getAttribute('data-easymde-context-menu-overlapped'),
+          pointerCount: pointers.length,
+          rootClipPath: getComputedStyle(root).clipPath,
+          rootLeft: rootRect.left,
+          rootRight: rootRect.right,
+          shortcutCount: shortcuts.length,
+          shortcutDisplays: shortcuts.map((el) => getComputedStyle(el).display),
+          subClipPath: getComputedStyle(sub).clipPath,
+          subLeft: subRect.left,
+          subRight: subRect.right,
+          viewportWidth: window.innerWidth
+        };
+      }, menuSelector);
+
+      const phase = `${modeLabel}-${viewport.width}x${viewport.height}`;
+      expect(geometry.rootLeft, `${phase} root left`).toBeGreaterThanOrEqual(7.5);
+      expect(geometry.rootRight, `${phase} root right`).toBeLessThanOrEqual(
+        geometry.viewportWidth - 7.5
+      );
+      expect(geometry.subLeft, `${phase} submenu left`).toBeGreaterThanOrEqual(7.5);
+      expect(geometry.subRight, `${phase} submenu right`).toBeLessThanOrEqual(
+        geometry.viewportWidth - 7.5
+      );
+      assertNoHorizontalClip(geometry.rootClipPath, `${phase}-root`);
+      assertNoHorizontalClip(geometry.frameClipPath, `${phase}-frame`);
+      assertNoHorizontalClip(geometry.subClipPath, `${phase}-submenu`);
+
+      if (viewport.width <= 480) {
+        expect(geometry.frameOverlapped, `${phase} overlapped attr`).toBe('true');
+        expect(geometry.pointerCount, `${phase} pointer hidden`).toBe(0);
+        expect(geometry.shortcutCount, `${phase} shortcuts present`).toBeGreaterThan(0);
+        for (const display of geometry.shortcutDisplays) {
+          expect(display, `${phase} shortcut display`).toBe('none');
+        }
+      }
+
+      await closeMenu(page, phase, { expectedSource: markdown });
+      await assertSourceExactValue(source, markdown, phase);
+    };
+
+    const viewports = [
+      { height: 800, width: 900 },
+      { height: 800, width: 640 },
+      { height: 800, width: 390 }
+    ];
+
+    for (const viewport of viewports) {
+      await assertNarrowViewportContextMenu(viewport, 'ordinary-split');
+    }
+
+    await page.setViewportSize({ height: 800, width: 1280 });
+    const strings = await enterImmersive(page);
+    await page.getByRole('button', { name: strings.split, exact: true }).last().click();
+    await expect(page.locator('.easymde-editor.is-immersive.is-immersive-split')).toBeVisible();
+
+    for (const viewport of viewports) {
+      await assertNarrowViewportContextMenu(viewport, 'immersive-split');
+    }
+  });
 });

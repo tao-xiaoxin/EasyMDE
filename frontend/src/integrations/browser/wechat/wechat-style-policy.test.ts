@@ -1258,6 +1258,98 @@ describe("responsive portable padding semantics", () => {
 		}
 	});
 
+	it("decodes CSS-escaped and quoted @keyframes names (including escaped commas and hex escapes) and fails closed on malformed animation-name lists", () => {
+		const fixture = portableQuoteFixture();
+		const animSheet = document.createElement("style");
+		animSheet.textContent = `
+			@keyframes pad-comma-placeholder {
+				to { padding-left: 10px; }
+			}
+			@keyframes quoted-none-placeholder {
+				to { padding-left: 10px; }
+			}
+		`;
+		document.head.append(animSheet);
+		const rules = animSheet.sheet?.cssRules;
+		if (rules?.[0]) {
+			Object.defineProperty(rules[0], "name", {
+				configurable: true,
+				value: "pad,override",
+			});
+		}
+		if (rules?.[1]) {
+			Object.defineProperty(rules[1], "name", {
+				configurable: true,
+				value: "none",
+			});
+		}
+		try {
+			fixture.source.style.setProperty("animation-name", "none");
+			const measured = style({
+				padding: "18px 20px 18px 10px",
+				"padding-left": "10px",
+				position: "static",
+			});
+
+			// Escaped comma (`pad\,override`), hex escape (`\70 ad\,override`), quoted `"pad,override"`,
+			// multi-animation list, quoted/escaped `"none"`/`\6e one`, and malformed lists all preserve effective pixels.
+			for (const animationName of [
+				"pad\\,override",
+				"\\70 ad\\,override",
+				'"pad,override"',
+				"unrelated-spin, pad\\,override",
+				'"none"',
+				"\\6e one",
+				"pad\\,override\\",
+				'"unterminated',
+				"unrelated-spin,",
+			]) {
+				const semantics = paddingSemantics("10%", "5%", {
+					"animation-name": animationName,
+					"padding-left": "10px",
+				});
+				expect(
+					semanticPaddingValue(
+						"padding-left",
+						fixture.source,
+						measured,
+						semantics,
+						semantics.getComputedStyle(fixture.source),
+					),
+					`expected effective padding fallback for animation-name=${animationName}`,
+				).toBeNull();
+				// Unaffected axis remains portable for valid lists (malformed lists fail closed on the affected axis only).
+				expect(
+					semanticPaddingValue(
+						"padding-right",
+						fixture.source,
+						measured,
+						semantics,
+						semantics.getComputedStyle(fixture.source),
+					),
+				).toBe("5%");
+			}
+
+			// Unquoted `none` keyword still stays portable even when `@keyframes "none"` exists.
+			const noneKeywordSemantics = paddingSemantics("10%", "5%", {
+				"animation-name": "none",
+			});
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					noneKeywordSemantics,
+					noneKeywordSemantics.getComputedStyle(fixture.source),
+				),
+			).toBe("10%");
+		} finally {
+			fixture.source.style.removeProperty("animation-name");
+			animSheet.remove();
+			fixture.cleanup();
+		}
+	});
+
 	it("changes dimension freshness when token and effective semantics differ at equal used pixels", () => {
 		const fixture = portableQuoteFixture();
 		try {

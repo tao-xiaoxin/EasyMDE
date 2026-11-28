@@ -313,19 +313,23 @@ test('Semantic E2E shard planner covers discovered specs without unintended dupl
   assert.ok(modesInvocations[0].args.includes('--project=chromium-performance'));
   assert.ok(modesInvocations[1].args.includes('--grep-invert'));
 
-  // Mathematically verify complementary WeChat copy test partition (6 + 17 = 23).
+  // Verify the complementary WeChat copy test partition (6 + 18 = 24).
   const wechatCopySource = readFileSync(join(repoRoot, WECHAT_COPY_SPEC), 'utf8');
   const testTitles = [...wechatCopySource.matchAll(/\btest\(\s*(['"`])([^'"`]+)\1\s*,/g)].map((m) => m[2]);
-  assert.equal(testTitles.length, 23, `Expected 23 tests in wechat-copy.spec.mjs, found ${testTitles.length}.`);
+  assert.equal(testTitles.length, 24, `Expected 24 tests in wechat-copy.spec.mjs, found ${testTitles.length}.`);
   const fidelityRegex = new RegExp(WECHAT_COPY_THEME_FIDELITY_GREP);
   const matchedTitles = testTitles.filter((title) => fidelityRegex.test(title));
   const invertedTitles = testTitles.filter((title) => !fidelityRegex.test(title));
   assert.equal(matchedTitles.length, 6, 'Theme fidelity grep must match exactly 6 tests.');
-  assert.equal(invertedTitles.length, 17, 'Complementary grep-invert must match the exact remaining 17 tests.');
+  assert.equal(invertedTitles.length, 18, 'Complementary grep-invert must match the exact remaining 18 tests.');
   assert.deepEqual(matchedTitles, [...WECHAT_COPY_THEME_FIDELITY_TITLES]);
   assert.ok(
     invertedTitles.includes('rejects private pixel evidence symlink escapes before outside creation'),
     'Top-level private pixel evidence test must run in the complementary modes/mermaid/tasks shard.'
+  );
+  assert.ok(
+    invertedTitles.includes('separates Long Tasks in the Copy stop frame from later tasks'),
+    'Copy stop-frame Long Task test must run in the complementary modes/mermaid/tasks shard.'
   );
 
   const matrix = buildMatrixEntries(shards);

@@ -764,7 +764,9 @@ terminal Copy status. It requires ordered timestamps and zero overlapping Long
 Tasks. The full-window assertion remains active for setup and teardown tasks.
 The Node control cases call the matrix assertion directly. They require
 distinct failures for a task inside the Copy operation and for a task after
-terminal status but still inside the full observation.
+terminal status but still inside the full observation. The stop frame fixes
+the time boundary. The observer drains in a subsequent browser task so that
+frame work crossing the boundary is included.
 On Copy or timing failure, the matrix also attaches
 relative phase intervals from the existing Clipboard probe and any observed
 Long Task overlaps. Phase overlap indicates timing only. The attachment

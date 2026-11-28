@@ -662,7 +662,9 @@ clipping or scrolling is active (`auto`/`scroll`/`hidden`/`clip`), replacement
 keeps a single non-positioned `display:inline-block` overflow wrapper owning the
 viewport dimensions, overflow axes, folded outer horizontal margins, and the
 same measured margin-box alignment. The wrapper uses the viewport offset and
-height to preserve the remaining vertical allocation and contains one static-flow
+height to preserve the remaining vertical allocation. The
+viewport uses layout containment to keep the child line baseline out of the
+parent line calculation while preserving overflow on both axes. It contains one static-flow
 `display:inline-block` `<img>` positioned via static `margin-left`/`margin-top`
 offsets and `vertical-align:top` rather than `position:relative`/`absolute`.
 Paint placement still uses only root-local union and viewport offsets; no fixed

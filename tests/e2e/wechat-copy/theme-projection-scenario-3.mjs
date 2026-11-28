@@ -18,6 +18,7 @@ import { readNativeCodeSurfaceEvidence } from "./payload-evidence.mjs";
 import { waitForPreviewVisualReadiness } from "./editor-session.mjs";
 import { assertNativeCodePayloadMatches } from "./payload-geometry-oracle.mjs";
 import { copyNativePayload } from "./copy-driver.mjs";
+import { beginCopyLongTaskProbe, stopCopyLongTaskProbe } from './copy-long-task-probe.mjs';
 import { assertCopyLongTaskWindows, summarizeCopyLongTaskWindow } from "./copy-long-task-evidence.mjs";
 
 export async function runThemeProjectionScenario3({ baseURL, context, login, page, test, testInfo }) {
@@ -107,46 +108,6 @@ export async function runThemeProjectionScenario3({ baseURL, context, login, pag
         owner: ownerName
       });
     };
-    const beginCopyLongTaskProbe = () => page.evaluate(() => {
-      globalThis.__easymdeCodeModeLongTaskObserver?.disconnect();
-      const probe = { startedAt: performance.now(), tasks: [] };
-      globalThis.__easymdeCodeModeLongTaskProbe = probe;
-      if (!('PerformanceObserver' in globalThis)) {
-        throw new Error('wechat-code-mode-matrix-longtask-observer-unavailable');
-      }
-      const observer = new PerformanceObserver((list) => {
-        list.getEntries().forEach((entry) => {
-          probe.tasks.push([entry.startTime, entry.duration]);
-        });
-      });
-      observer.observe({ type: 'longtask', buffered: false });
-      globalThis.__easymdeCodeModeLongTaskObserver = observer;
-    });
-    const stopCopyLongTaskProbe = () => page.evaluate(async () => {
-      await new Promise((resolve) => requestAnimationFrame(() => resolve()));
-      const observer = globalThis.__easymdeCodeModeLongTaskObserver;
-      const probe = globalThis.__easymdeCodeModeLongTaskProbe;
-      observer?.takeRecords().forEach((entry) => {
-        probe.tasks.push([entry.startTime, entry.duration]);
-      });
-      observer?.disconnect();
-      delete globalThis.__easymdeCodeModeLongTaskObserver;
-      delete globalThis.__easymdeCodeModeLongTaskProbe;
-      const stoppedAt = performance.now();
-      const trace = globalThis.__easymdeWechatCopyTrace;
-      const current = trace?.startedAt >= probe.startedAt ? trace : null;
-      return {
-        ...probe,
-        stoppedAt,
-        armedAt: current?.startedAt,
-        clickAt: current?.clicks[0]?.at,
-        trustedClick: current?.clicks[0]?.trusted,
-        writeAt: current?.writes[current.startedWriteCount]?.at,
-        nativeSettledAt: current?.writes[current.startedWriteCount]?.nativeSettledAt,
-        terminalAt: current?.terminalAt,
-        pendingAt: current?.pendingFrameAt
-      };
-    });
     const copyMode = async ({
       article,
       codeTheme,
@@ -159,7 +120,7 @@ export async function runThemeProjectionScenario3({ baseURL, context, login, pag
       const state = await readAppearanceCatalog(page);
       expect(state.state.markdownTheme, label + ' article state').toBe(article.id);
       expect(state.state.codeTheme, label + ' code state').toBe(codeTheme.id);
-      await beginCopyLongTaskProbe();
+      await beginCopyLongTaskProbe(page);
       let payload;
       let observation;
       let longTasks;
@@ -168,7 +129,7 @@ export async function runThemeProjectionScenario3({ baseURL, context, login, pag
         try {
           payload = await copyNativePayload(page, button);
         } finally {
-          observation = await stopCopyLongTaskProbe();
+          observation = await stopCopyLongTaskProbe(page);
         }
         if (!payload) throw new Error('wechat-code-mode-matrix-payload-unavailable');
         expect(payload.metrics.clickToWriteMs, label + ' click-to-write').toBeLessThanOrEqual(50);

@@ -221,7 +221,12 @@ describe('replaceCompletedVisuals', () => {
     },
   );
 
-  it('uses static flow margins without positioning for clipped inline math viewports', () => {
+  it.each([
+    { overflowX: 'auto', overflowY: 'hidden' },
+    { overflowX: 'clip', overflowY: 'clip' },
+    { overflowX: 'clip', overflowY: 'visible' },
+    { overflowX: 'visible', overflowY: 'clip' },
+  ] as const)('preserves the viewport baseline with $overflowX / $overflowY', ({ overflowX, overflowY }) => {
     const root = document.createElement('article');
     root.setAttribute('data-easymde-preview-html-sink', 'true');
     root.innerHTML =
@@ -242,8 +247,8 @@ describe('replaceCompletedVisuals', () => {
         inlineLayout: {
           baseline: 20,
           height: 24,
-          overflowX: 'auto',
-          overflowY: 'hidden',
+          overflowX,
+          overflowY,
           paintOffsetX: 1,
           paintOffsetY: 1,
           viewport: { height: 18, offsetX: 2, offsetY: 3, width: 12 },
@@ -265,8 +270,9 @@ describe('replaceCompletedVisuals', () => {
     const wrapperStyle = candidate.getAttribute('style') ?? '';
     const imageStyle = image.getAttribute('style') ?? '';
     expect(wrapperStyle).toContain('display:inline-block!important');
-    expect(wrapperStyle).toContain('overflow-x:auto!important');
-    expect(wrapperStyle).toContain('overflow-y:hidden!important');
+    expect(wrapperStyle).toContain(`overflow-x:${overflowX}!important`);
+    expect(wrapperStyle).toContain(`overflow-y:${overflowY}!important`);
+    expect(wrapperStyle).toContain('contain:layout!important');
     expect(wrapperStyle).toContain('width:12px!important');
     expect(wrapperStyle).toContain('height:18px!important');
     expect(wrapperStyle).toContain('vertical-align:-4px!important');

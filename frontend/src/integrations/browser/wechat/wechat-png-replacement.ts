@@ -266,6 +266,9 @@ function replaceInlineMathVisual(
     'display:inline-block!important',
     `overflow-x:${overflowX}!important`,
     `overflow-y:${overflowY}!important`,
+    // Layout containment suppresses the child baseline. This keeps the
+    // measured margin edge as the reference for every overflow combination.
+    'contain:layout!important',
     `width:${wrapperWidth}px!important`,
     `height:${wrapperHeight}px!important`,
     'max-width:none!important',

@@ -1,4 +1,4 @@
-import { createElement } from '@wordpress/element';
+import { createElement, useState } from '@wordpress/element';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -476,34 +476,47 @@ describe('EditorContextMenu', () => {
   it('keeps Escape available after pointer selection restore with no enabled submenu items', async () => {
     await withManualRafAndExternalFocus(({ external }) => {
       const onDismiss = vi.fn();
-      render(
-        <EditorContextMenu
-          anchor={{ x: 12, y: 18 }}
-          direction="ltr"
-          model={{ items: [{
-            children: [{ disabled: true, id: 'image', kind: 'item', label: 'Image' }],
-            id: 'insert',
-            kind: 'submenu',
-            label: 'Insert'
-          }] }}
-          onAction={vi.fn()}
-          onDismiss={onDismiss}
-          onMenuPointerDown={() => external.focus()}
-          open
-        />
-      );
+      function Harness() {
+        const [open, setOpen] = useState(true);
+        return (
+          <EditorContextMenu
+            anchor={{ x: 12, y: 18 }}
+            direction="ltr"
+            model={{ items: [{
+              children: [{ disabled: true, id: 'image', kind: 'item', label: 'Image' }],
+              id: 'insert',
+              kind: 'submenu',
+              label: 'Insert'
+            }] }}
+            onAction={vi.fn()}
+            onDismiss={(options) => {
+              onDismiss(options);
+              setOpen(false);
+            }}
+            onMenuPointerDown={() => external.focus()}
+            open={open}
+          />
+        );
+      }
+      render(<Harness />);
 
+      const menuOwner = screen.getByRole('menu').closest('[data-easymde-context-menu]');
       const insert = screen.getByRole('menuitem', { name: 'Insert' });
       fireEvent.mouseEnter(insert);
       fireEvent.pointerDown(insert, { button: 0 });
       fireEvent.click(insert);
 
-      expect(document.activeElement).not.toBe(external);
-      fireEvent.keyDown(document, { key: 'Escape' });
+      expect(screen.getByRole('menu', { name: 'Insert' })).toBeTruthy();
+      const activeElement = document.activeElement;
+      if (!(activeElement instanceof HTMLElement)) throw new Error('context-menu-focus-missing');
+      expect(menuOwner?.contains(activeElement)).toBe(true);
+      fireEvent.keyDown(activeElement, { key: 'Escape' });
       expect(screen.queryByRole('menu', { name: 'Insert' })).toBeNull();
       expect(document.activeElement).toBe(insert);
-      fireEvent.keyDown(document, { key: 'Escape' });
-      expect(onDismiss).toHaveBeenCalledWith({ restoreFocus: true });
+      expect(onDismiss).not.toHaveBeenCalled();
+      fireEvent.keyDown(insert, { key: 'Escape' });
+      expect(onDismiss).toHaveBeenCalledExactlyOnceWith({ restoreFocus: true });
+      expect(screen.queryByRole('menu')).toBeNull();
     });
   });
 

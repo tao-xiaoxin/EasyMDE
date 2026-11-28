@@ -47,7 +47,7 @@ test('native Playwright and sharding discover the same runnable files and local 
   const cwd = mkdtempSync(join(scratch, 'shard-execution-'));
   t.after(() => rmSync(cwd, { recursive: true, force: true }));
   mkdirSync(join(cwd, 'scripts'));
-  for (const file of ['e2e-shards.mjs', 'e2e-shard-summary.mjs', 'e2e-test-match.mjs', 'e2e-shard-case-reporter.mjs']) {
+  for (const file of ['e2e-shards.mjs', 'e2e-shard-summary.mjs', 'e2e-test-match.mjs', 'e2e-shard-case-reporter.mjs', 'e2e-privacy-reporter.mjs']) {
     cpSync(join(repoRoot, 'scripts', file), join(cwd, 'scripts', file));
   }
   symlinkSync(join(repoRoot, 'node_modules'), join(cwd, 'node_modules'), 'junction');

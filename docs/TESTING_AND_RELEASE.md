@@ -1144,9 +1144,19 @@ viewport cases, two-contact resize, split-plus-outline, 800px outline clamp,
 and writing-viewport and 560px Source menu cases opt into
 `tests/e2e/helpers/privacy-safe-failure-test.mjs`. It disables automatic
 Playwright trace, video, screenshots, and failure page snapshots only for those
-cases. Failure attachments and reporters retain the failed result and static
-assertion locations, not raw browser or matcher data, including errors from
-`beforeEach` and `afterEach`.
+cases. That fixture strips runtime error details before Playwright writes
+failure context attachments. The privacy annotation identifies those cases to
+`scripts/e2e-privacy-reporter.mjs`, which redacts step errors and replaces
+assertion, browser-operation, and custom step titles throughout nested title
+paths before other reporters receive them. List, JUnit, and
+HTML retain failure status, error counts, and static source locations, including
+for nested steps and `beforeEach`/`afterEach` failures. The fixture refuses to
+run a protected case when a reporter override drops or reorders the privacy
+reporter. To add a local HTML report from the repository root, run:
+
+```bash
+PLAYWRIGHT_HTML_OPEN=never npm run test:e2e -- --reporter=./scripts/e2e-privacy-reporter.mjs,list,html
+```
 
 With the cutover to the unified ProseMirror immersive visual editor
 ([ADR-002](decisions/ADR-002-visual-editor-and-esm-architecture.md)) and the

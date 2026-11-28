@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { privacySafeFailureTest } from '../helpers/privacy-safe-failure-test.mjs';
+import { privacySafeFailureDetails, privacySafeFailureTest } from '../helpers/privacy-safe-failure-test.mjs';
 import {
   assertOpenContextMenuGeometry,
   closeMenu,
@@ -201,7 +201,7 @@ test.describe('EasyMDE routine editor writing scenarios', () => {
         viewport: scenario.viewport
       });
 
-      privacySafeFailureTest('supports ordinary split, context menu, and immersive writing workflows', async ({ page }, testInfo) => {
+      privacySafeFailureTest('supports ordinary split, context menu, and immersive writing workflows', privacySafeFailureDetails, async ({ page }, testInfo) => {
         const browserMonitor = attachPrivacySafeBrowserMonitor(page, {
           baseURL: testInfo.project.use.baseURL
         });
@@ -410,7 +410,7 @@ test.describe('EasyMDE routine editor writing scenarios', () => {
   test.describe('iPad mini landscape touch probe (1133x744)', () => {
     test.use({ hasTouch: true, isMobile: true, viewport: miniLandscape });
 
-    privacySafeFailureTest('keeps the first of two simultaneous resize contacts in control', async ({ page }, testInfo) => {
+    privacySafeFailureTest('keeps the first of two simultaneous resize contacts in control', privacySafeFailureDetails, async ({ page }, testInfo) => {
       const browserMonitor = attachPrivacySafeBrowserMonitor(page, {
         baseURL: testInfo.project.use.baseURL
       });

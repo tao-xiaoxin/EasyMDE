@@ -1,5 +1,7 @@
-import { basename } from 'node:path';
 import { test } from '@playwright/test';
+import { privacyReporterPath, privacySafeFailureDetails, redactFailure } from '../../../scripts/e2e-privacy-reporter.mjs';
+
+export { privacySafeFailureDetails };
 
 export const privacySafeFailureTest = test.extend({
   trace: 'off',
@@ -18,20 +20,19 @@ export const privacySafeFailureTest = test.extend({
   }, { scope: 'worker', auto: true }],
   // Keep redaction runnable after another fixture exhausts the shared teardown budget.
   redactFailureDetails: [async ({}, use, testInfo) => {
+    const { config, annotations } = testInfo;
+    if (config.reporter[0]?.[0] !== privacyReporterPath) {
+      throw new Error('Protected tests require the EasyMDE privacy reporter first');
+    }
+    if (!annotations.some(({ type }) => type === privacySafeFailureDetails.annotation.type)) {
+      throw new Error('Protected tests require the EasyMDE privacy annotation');
+    }
     try {
       await use();
     } finally {
-      // Run after each-test hooks and page fixtures, but before Playwright builds the
-      // failure attachment and reports the result. Keep the original status and error count.
-      const file = basename(testInfo.file);
+      // Strip matcher context before Playwright can use it in an attachment.
       for (const [index, error] of testInfo.errors.entries()) {
-        const match = error.stack?.split('\n').find((line) => /^\s+at /u.test(line)
-          && line.includes(`${testInfo.file}:`));
-        const position = match?.match(/:(\d+:\d+)\)?$/u)?.[1];
-        testInfo.errors[index] = {
-          message: 'Authenticated workflow failed; browser and assertion data omitted'
-            + (position ? ` at ${file}:${position}` : '') + '.'
-        };
+        testInfo.errors[index] = redactFailure(error, testInfo.file);
       }
     }
   }, { auto: true, timeout: 5_000 }]

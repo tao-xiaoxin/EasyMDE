@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { createHash, randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
-import { privacySafeFailureTest } from '../helpers/privacy-safe-failure-test.mjs';
+import { privacySafeFailureDetails, privacySafeFailureTest } from '../helpers/privacy-safe-failure-test.mjs';
 import {
   articleThemesForE2ESuite,
   canonicalMarkdownForPage,
@@ -788,7 +788,7 @@ test.describe('EasyMDE editor workflows', () => {
     }, { auto: true }]
   });
 
-  monitoredAppearanceTest('applies registered appearance options while keeping Custom CSS editing immersive-only', async ({ page }, testInfo) => {
+  monitoredAppearanceTest('applies registered appearance options while keeping Custom CSS editing immersive-only', privacySafeFailureDetails, async ({ page }, testInfo) => {
     test.setTimeout(8 * 60_000);
     const user = testInfo.easymdeUser;
     const customThemeSuffix = randomUUID().slice(0, 8);

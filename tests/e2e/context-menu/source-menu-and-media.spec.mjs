@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { privacySafeFailureTest } from '../helpers/privacy-safe-failure-test.mjs';
+import { privacySafeFailureDetails, privacySafeFailureTest } from '../helpers/privacy-safe-failure-test.mjs';
 import {
   anyMenuItem,
   assertOpenContextMenuGeometry,
@@ -843,7 +843,7 @@ test.describe('Editor context menu production surfaces', () => {
     }
   });
 
-  privacySafeFailureTest('keeps Source context menu and submenus unclipped across editor writing viewports', async ({ page }, testInfo) => {
+  privacySafeFailureTest('keeps Source context menu and submenus unclipped across editor writing viewports', privacySafeFailureDetails, async ({ page }, testInfo) => {
     const browserMonitor = attachPrivacySafeBrowserMonitor(page, {
       baseURL: testInfo.project.use.baseURL
     });
@@ -891,7 +891,7 @@ test.describe('Editor context menu production surfaces', () => {
     }
   });
 
-  privacySafeFailureTest('positions an overlapped submenu in a constrained desktop window', async ({ page }, testInfo) => {
+  privacySafeFailureTest('positions an overlapped submenu in a constrained desktop window', privacySafeFailureDetails, async ({ page }, testInfo) => {
     const browserMonitor = attachPrivacySafeBrowserMonitor(page, { baseURL: testInfo.project.use.baseURL });
     try {
       await loginAndOpenNewPost(page);

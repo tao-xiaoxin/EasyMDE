@@ -758,7 +758,11 @@ Each activation requires a finite pending measurement, the existing activation
 and pending budgets, one native write, no Copy-window Long Task, stable Source
 and Preview, exact token/frame/text projection at 335 and 677 CSS pixels, and
 an ordinary live long line that reaches both horizontal ends through wheel input
-without moving the page. On Copy or timing failure, the matrix also attaches
+without moving the page. The independent operation window starts at the trusted
+Copy click and includes native Clipboard promise settlement and the observed
+terminal Copy status. It requires ordered timestamps and zero overlapping Long
+Tasks. The full-window assertion remains active for setup and teardown tasks.
+On Copy or timing failure, the matrix also attaches
 relative phase intervals from the existing Clipboard probe and any observed
 Long Task overlaps. Phase overlap indicates timing only. The attachment
 contains no Clipboard payload or browser trace.

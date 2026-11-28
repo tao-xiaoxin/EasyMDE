@@ -361,6 +361,9 @@ portable-HTML path.
 When PNG conversion is enabled, background preparation skips portable
 serialization, PNG rasterization, and image upload. It may still prewarm a
 hidden Preview geometry-only lease through the existing resize/layout schedule.
+During Copy, coalesce resize/layout requests for the Preview surface. After
+settlement, schedule at most one geometry preparation for the latest connected,
+current surface. Discard deferred requests on owner disposal and invalidation.
 That lease is keyed by the current source markup and measured width; source,
 theme, width, Preview disposal, abort, and owner teardown invalidate it. An
 explicit Copy may transfer one matching pending lease to its transaction, and
@@ -651,7 +654,9 @@ splitting during async image transfer): horizontal allocation deltas
 (`paintOffsetX` and `width - (paintOffsetX + imageWidth)`) are folded into the
 image's static `margin-left`/`margin-right` along with source `float`/`clear`,
 while source `vertical-align:top` and `bottom` retain their original neighboring
-line-box keywords and other modes use the measured
+line-box keywords. For these keywords, vertical margins preserve the measured
+allocation height and place the painted image at `paintOffsetY`. Other modes use
+the measured
 `baseline - (paintOffsetY + imageHeight)` relation. When inline overflow
 clipping or scrolling is active (`auto`/`scroll`/`hidden`/`clip`), replacement
 keeps a single non-positioned `display:inline-block` overflow wrapper owning the
@@ -719,12 +724,12 @@ alone preserves its computed source value with
 `!important` to outrank WeChat's global `word-wrap:break-word!important`
 alias; there is no blanket `!important`, platform-value hardcoding, extra
 computed read, or native PNG capture change.
-For non-SVG, non-pseudo inline `<sub>` and `<sup>` elements (alongside task
+For non-SVG, non-pseudo `<sub>` and `<sup>` elements with computed `display:inline` (alongside task
 checkbox owners and empty decoration pseudos), portable style serialization
 strips any zero line-height segment from the `font` shorthand and omits zero
 `line-height` declarations so Normalize-style `line-height: 0` rules do not
 trigger WeChat's `#1.3 line-height` structure warning; non-zero line heights,
-ordinary elements, task checkbox text pseudos, SVG nodes, and native PNG
+block script elements, ordinary elements, task checkbox text pseudos, SVG nodes, and native PNG
 capture remain unchanged.
 
 For ordinary flow elements and generated pseudo-elements, map computed logical
@@ -866,7 +871,9 @@ container-relative only while the authored portable rule still wins the CSS
 cascade. It records the qualification and effective padding in freshness; an
 inline, logical, shorthand, higher-specificity, or `!important` override
 falls back to the effective source padding instead of silently replacing the
-Preview semantics. Viewport functions such as `clamp()` and `calc()` are not
+Preview semantics. Uncertain padding-affecting selectors still trigger this
+fallback. A rule with only color declarations and no padding-affecting children
+does not affect qualification. Viewport functions such as `clamp()` and `calc()` are not
 portable through the WeChat editor because its Save path removes them. Wrap
 text leaves and encode code-line breaks while keeping each source line
 non-wrapping.

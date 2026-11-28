@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { summarizeCopyLongTaskWindow } from '../e2e/wechat-copy/copy-long-task-evidence.mjs';
+import { readCopyOperationWindow, summarizeCopyLongTaskWindow } from '../e2e/wechat-copy/copy-long-task-evidence.mjs';
 
 const window = { startedAt: 100, stoppedAt: 200, armedAt: 110, clickAt: 120, writeAt: 140, pendingAt: 160 };
 
@@ -52,4 +52,26 @@ test('pending and write landmarks are ordered by time and ties omit empty phases
     overlap('after-native-write-call', 40, 100)
   ]);
   assert.deepEqual(longTasks, []);
+});
+
+const operation = { ...window, trustedClick: true, nativeSettledAt: 170, terminalAt: 180 };
+
+test('operation rejects work overlapping the click through terminal boundary', () => {
+  assert.deepEqual(readCopyOperationWindow({ ...operation, tasks: [[95, 50], [165, 50]] }), {
+    clickToNativeSettlementMs: 50,
+    clickToTerminalMs: 60,
+    longTasks: [50, 50]
+  });
+});
+
+test('outside and adjacent tasks still exist but do not enter the operation window', () => {
+  const observation = { ...operation, tasks: [[70, 50], [180, 50]] };
+  assert.deepEqual(readCopyOperationWindow(observation)?.longTasks, []);
+  assert.equal(summarizeCopyLongTaskWindow(observation).longTasks.length, 2);
+});
+
+test('operation requires trusted click, observed native settlement and ordered terminal status', () => {
+  for (const override of [{ trustedClick: false }, { nativeSettledAt: undefined }, { terminalAt: 169 }]) {
+    assert.equal(readCopyOperationWindow({ ...operation, tasks: [], ...override }), null);
+  }
 });

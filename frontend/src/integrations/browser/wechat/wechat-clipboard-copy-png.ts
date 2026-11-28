@@ -22,10 +22,7 @@ import {
 	type WechatReadinessTiming,
 } from "./wechat-copy-timing";
 import { createDimensionSemanticsContext } from "./wechat-dimension-semantics";
-import {
-	preparedDimensionGeometrySignatureWithYield,
-	preparedLayoutSignature,
-} from "./wechat-fidelity-signature";
+import { collectPreparedSignatures, preparedDimensionGeometrySignatureWithYield } from "./wechat-fidelity-signature";
 import type { WechatInlinePseudoPaintReadiness } from "./wechat-inline-pseudo-paint";
 import {
 	createMermaidContentBoxLease,
@@ -182,14 +179,12 @@ export function createPngCopyTransaction(
 			throw new Error("wechat-copy-stale");
 		}
 		if (
-			preparedLayoutSignature(
-				payloadPreview,
+			collectPreparedSignatures({
+				preview: tableNativeGridMeasurement?.root ?? payloadPreview,
 				runtime,
-				tableNativeGridMeasurement?.root ?? payloadPreview,
-				null,
-				undefined,
-				true,
-			) !== conversionFidelitySignature
+				conversionActive: true,
+				includeDimension: false,
+			}).layout !== conversionFidelitySignature
 		) {
 			throw new Error("wechat-copy-stale");
 		}
@@ -425,14 +420,12 @@ export function createPngCopyTransaction(
 								runtime,
 								true,
 							);
-							const nextFidelitySignature = preparedLayoutSignature(
-								resolvedPreview,
+							const nextFidelitySignature = collectPreparedSignatures({
+								preview: serializationPreview,
 								runtime,
-								serializationPreview,
-								null,
-								undefined,
-								true,
-							);
+								conversionActive: true,
+								includeDimension: false,
+							}).layout;
 							assertTransactionOpen();
 							tableNativeGridMeasurement = nativeGridMeasurement;
 							tableNativeGridGuard = nextTableNativeGridGuard;

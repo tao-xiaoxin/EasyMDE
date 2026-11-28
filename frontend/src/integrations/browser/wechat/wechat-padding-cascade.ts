@@ -664,36 +664,31 @@ export function buildPaddingCascadeIndex(
 				continue;
 			}
 
+			const affectsPadding = styleAffectsPadding(rule.style, property);
+			const children = rule.cssRules;
+			if (!affectsPadding && !children?.length) continue;
 			const selectors = splitSelectorList(rule.selectorText);
-			if (
-				!selectors ||
-				selectors.some((selector) =>
+			const unsafe =
+				!selectors || selectors.some((selector) =>
 					selectorHasScopeOrTopLevelNesting(selector, true),
-				)
+				);
+			if (
+				(affectsPadding && unsafe) ||
+				(children?.length > 0 && compileNestedPaddingGuards(
+					children,
+					property,
+					defaultView,
+					rule.selectorText,
+					[rule.selectorText],
+					unsafe,
+					nestedGuards,
+					paddingKeyframeNames,
+				))
 			) {
 				unreadableStyleSheet = true;
 				return;
 			}
-			if (rule.cssRules && rule.cssRules.length > 0) {
-				if (
-					compileNestedPaddingGuards(
-						rule.cssRules,
-						property,
-						defaultView,
-						rule.selectorText,
-						[rule.selectorText],
-						false,
-						nestedGuards,
-						paddingKeyframeNames,
-					)
-				) {
-					unreadableStyleSheet = true;
-					return;
-				}
-			}
-			if (!styleAffectsPadding(rule.style, property)) {
-				continue;
-			}
+			if (!affectsPadding || !selectors) continue;
 			const compiledSelectors: CompiledPaddingSelector[] = selectors.map(
 				(selector) => ({
 					selector,

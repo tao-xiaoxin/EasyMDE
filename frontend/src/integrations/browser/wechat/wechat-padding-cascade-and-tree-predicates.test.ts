@@ -16,7 +16,7 @@ import {
 	createDimensionSemanticsContext,
 	type WechatDimensionSemanticsContext,
 } from "./wechat-dimension-semantics";
-import { preparedLayoutSignature } from "./wechat-fidelity-signature";
+import { collectPreparedSignatures } from "./wechat-fidelity-signature";
 import {
 	styleDeclarations,
 	styleDeclarationsSynchronously,
@@ -132,6 +132,21 @@ describe("compiled and cached padding cascade index", () => {
 			expect(leftIndex.entries[0]?.layeredPortable).toBe(false);
 			expect(leftIndex.entries[0]?.important).toBe(false);
 		} finally {
+			fixture.cleanup();
+		}
+	});
+
+	it("ignores color-only :scope rules but fails closed for uncertain padding", () => {
+		const fixture = createNestedQuoteFixture();
+		const style = document.createElement("style");
+		document.head.append(style);
+		try {
+			style.textContent = ":scope .unrelated { color: red; }";
+			expect(buildPaddingCascadeIndex(document, "padding-left").unreadableStyleSheet).toBe(false);
+			style.textContent = ":scope .unrelated { padding-inline-start: 10px; }";
+			expect(buildPaddingCascadeIndex(document, "padding-left").unreadableStyleSheet).toBe(true);
+		} finally {
+			style.remove();
 			fixture.cleanup();
 		}
 	});
@@ -568,13 +583,23 @@ describe("tree predicate cache and isSvgElement fast path", () => {
 		const emptyStyle = mockStyle({ content: "none", display: "block" });
 		const rt = mockRuntime(() => emptyStyle);
 		try {
-			const before = preparedLayoutSignature(root, rt, root, null, undefined, true);
+			const before = collectPreparedSignatures({
+				preview: root,
+				runtime: rt,
+				conversionActive: true,
+				includeDimension: false,
+			}).layout;
 			// Mutate box into a visual rasterization root containing KaTeX
 			box.className = "easymde-math-block";
 			const katex = document.createElement("span");
 			katex.className = "katex";
 			box.append(katex);
-			const after = preparedLayoutSignature(root, rt, root, null, undefined, true);
+			const after = collectPreparedSignatures({
+				preview: root,
+				runtime: rt,
+				conversionActive: true,
+				includeDimension: false,
+			}).layout;
 			expect(after).not.toBe(before);
 
 			const freshCache = createWechatTreePredicateCache();

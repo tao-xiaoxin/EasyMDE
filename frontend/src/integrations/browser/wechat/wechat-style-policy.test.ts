@@ -1760,6 +1760,17 @@ describe("zero line-height normalization for inline script elements and task che
 		},
 	);
 
+	it.each(["sup", "sub"] as const)("preserves zero line-height on block <%s>", async (tag) => {
+		const font = '700 12px / 0px "Optima", sans-serif';
+		const { modern, legacy } = await serializeBothPaths(
+			document.createElement(tag),
+			style({ display: "block", font, "line-height": "0px" }),
+		);
+		expect(legacy).toEqual(modern);
+		expect(modern).toContain(`font:${font}`);
+		expect(modern).toContain("line-height:0px");
+	});
+
 	it.each(["0", "0px", "0.0px", "0.00", ".0px", "0em", "0rem", "0%", "0PX"])(
 		"normalizes zero line-height token %s on inline script elements",
 		async (zeroToken) => {
@@ -1782,7 +1793,7 @@ describe("zero line-height normalization for inline script elements and task che
 
 	it("respects quoted font names containing slashes when stripping zero line-height", () => {
 		const sup = document.createElement("sup");
-		const computed = style({});
+		const computed = style({ display: "inline" });
 
 		expect(
 			portableStyleValue(
@@ -1938,10 +1949,10 @@ describe("zero line-height normalization for inline script elements and task che
 	it("does not omit zero line-height on <sup> when omitDefaultValues is false", () => {
 		const sup = document.createElement("sup");
 		expect(
-			keepStyle("line-height", "0px", sup, { omitDefaultValues: true }),
+			keepStyle("line-height", "0px", sup, { computed: style({ display: "inline" }), omitDefaultValues: true }),
 		).toBe(false);
 		expect(
-			keepStyle("line-height", "0px", sup, { omitDefaultValues: false }),
+			keepStyle("line-height", "0px", sup, { computed: style({ display: "inline" }), omitDefaultValues: false }),
 		).toBe(true);
 	});
 });

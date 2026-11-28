@@ -15,14 +15,7 @@ import {
   WECHAT_STRUCTURE_REPLACEMENTS
 } from './wechat-clone-metadata';
 import { createDimensionSemanticsContext, type WechatDimensionSemanticsContext } from './wechat-dimension-semantics';
-import {
-  ordinaryDimensionSemanticsSignature,
-  preparedDimensionGeometrySignature,
-  preparedDimensionGeometrySignatureWithYield,
-  preparedDimensionSemanticsSignature,
-  preparedLayoutSignature,
-  preparedLayoutSignatureWithYield
-} from './wechat-fidelity-signature';
+import { collectPreparedSignatures, collectPreparedSignaturesWithYield, ordinaryDimensionSemanticsSignature, preparedDimensionGeometrySignature, preparedDimensionGeometrySignatureWithYield } from './wechat-fidelity-signature';
 
 import {
   blobText,
@@ -204,22 +197,28 @@ describe('createBrowserWechatClipboard', () => {
       ['outline-style', 'solid'],
       ['border-image-source', 'url(#paint)']
     ] as const) {
-      const ordinaryBefore = preparedLayoutSignature(preview, runtime);
-      const yieldedBefore = await preparedLayoutSignatureWithYield(
+      const ordinaryBefore = collectPreparedSignatures({ preview, runtime, includeDimension: false }).layout;
+      const yieldedBefore = (await collectPreparedSignaturesWithYield({
         preview,
         runtime,
-        yieldToBrowser
-      );
+        yieldToBrowser,
+        includeDimension: false,
+      })).layout;
       const previous = sourceStyle[property] ?? '';
       sourceStyle[property] = value;
-      expect(preparedLayoutSignature(preview, runtime), `ordinary ${property}`).not.toBe(ordinaryBefore);
-      expect(await preparedLayoutSignatureWithYield(preview, runtime, yieldToBrowser), `yielded ${property}`).not.toBe(
+      expect(collectPreparedSignatures({ preview, runtime, includeDimension: false }).layout, `ordinary ${property}`).not.toBe(ordinaryBefore);
+      expect((await collectPreparedSignaturesWithYield({
+        preview,
+        runtime,
+        yieldToBrowser,
+        includeDimension: false,
+      })).layout, `yielded ${property}`).not.toBe(
         yieldedBefore
       );
       sourceStyle[property] = previous;
     }
 
-    const capBefore = preparedLayoutSignature(preview, runtime);
+    const capBefore = collectPreparedSignatures({ preview, runtime, includeDimension: false }).layout;
     setMermaidComputedStyleMap(svg, {
       height: 'auto',
       'margin-left': 'auto',
@@ -229,11 +228,11 @@ describe('createBrowserWechatClipboard', () => {
       width: '100%'
     });
     svgStyle['max-width'] = '1200px';
-    expect(preparedLayoutSignature(preview, runtime)).not.toBe(capBefore);
+    expect(collectPreparedSignatures({ preview, runtime, includeDimension: false }).layout).not.toBe(capBefore);
 
-    const roleBefore = preparedLayoutSignature(preview, runtime);
+    const roleBefore = collectPreparedSignatures({ preview, runtime, includeDimension: false }).layout;
     svg.setAttribute('aria-roledescription', 'gantt');
-    expect(preparedLayoutSignature(preview, runtime)).not.toBe(roleBefore);
+    expect(collectPreparedSignatures({ preview, runtime, includeDimension: false }).layout).not.toBe(roleBefore);
   });
 
   it('skips Mermaid live-SVG reads in all PNG dimension freshness sinks', async () => {
@@ -289,7 +288,7 @@ describe('createBrowserWechatClipboard', () => {
       expect(svgReads, 'yielded geometry').toBe(0);
       preparedDimensionGeometrySignature(preview, runtime, dimensionSemantics);
       expect(svgReads, 'sync geometry').toBe(0);
-      preparedDimensionSemanticsSignature(preview, runtime, dimensionSemantics);
+      collectPreparedSignatures({ preview, runtime, dimensionSemantics, conversionActive: true });
       expect(svgReads, 'semantics').toBe(0);
     } finally {
       dimensionSemantics.cleanup();
@@ -371,7 +370,7 @@ describe('createBrowserWechatClipboard', () => {
       ['yielded geometry', async () =>
         preparedDimensionGeometrySignatureWithYield(preview, runtime, yieldToBrowser, undefined, dimensionSemantics)],
       ['sync geometry', async () => preparedDimensionGeometrySignature(preview, runtime, dimensionSemantics)],
-      ['semantics', async () => preparedDimensionSemanticsSignature(preview, runtime, dimensionSemantics)]
+      ['semantics', async () => collectPreparedSignatures({ preview, runtime, dimensionSemantics }).dimension]
     ] as const;
     for (const [property, value] of [
       ['outline-style', 'solid'],

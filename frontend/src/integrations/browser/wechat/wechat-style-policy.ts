@@ -156,6 +156,7 @@ export function portableStyleValue(
 			value,
 			pseudoElement,
 			taskCheckboxPseudoHasTextContent(pseudoElement, computedContent),
+			{ computed },
 		);
 	if (
 		"box-sizing" === property &&
@@ -218,6 +219,7 @@ export function keepStyle(
 			pseudoElement,
 			taskCheckboxPseudoHasTextContent(pseudoElement, pseudoElementContent),
 			{
+				computed,
 				isSvg: svgElement,
 				isTaskListCheckbox: pruningCache?.taskListCheckbox,
 			},

@@ -468,8 +468,8 @@ function auxiliaryFidelitySignature(
 	predicates?: WechatTreePredicateCache,
 	beforeRawContent?: string,
 	getTableNativeGridRulesScan?: () => AuthorPseudoWidthRulesScan,
-	contentBoxInputAuxiliaryOut?: { value: string },
-): string {
+	includeContentBoxInput = false,
+): string | { layout: string; contentBoxInput: string } {
 	const activeConversion =
 		conversionActive || Boolean(dimensionSemantics?.rasterizesVisualRoots);
 	if (
@@ -549,7 +549,7 @@ function auxiliaryFidelitySignature(
 				)
 			: "";
 	const result = `${markerSignature}:${inlineMarkerSignature}:${quotePseudoSignature}:${headingAfterPseudoSignature}:${taskCheckboxSignature}:${tableHeaderSignature}:${tableScrollSignature}:${tableNativeGridSignature}:${mermaidAdmission}:${markerDecisions}:${inlinePseudoPaint}:${nestedListProjectionSignature}`;
-	if (contentBoxInputAuxiliaryOut) {
+	if (includeContentBoxInput) {
 		const mermaidInputsOnly =
 			!contentBoxInputsOnly &&
 			!dimensionSemantics?.rasterizesVisualRoots &&
@@ -557,10 +557,12 @@ function auxiliaryFidelitySignature(
 				element.hasAttribute("data-easymde-mermaid-layout"))
 				? mermaidAdmissionFreshnessSignature(element, runtime, true)
 				: mermaidAdmission;
-		contentBoxInputAuxiliaryOut.value =
-			mermaidInputsOnly === mermaidAdmission
-				? result
-				: `${markerSignature}:${inlineMarkerSignature}:${quotePseudoSignature}:${headingAfterPseudoSignature}:${taskCheckboxSignature}:${tableHeaderSignature}:${tableScrollSignature}:${tableNativeGridSignature}:${mermaidInputsOnly}:${markerDecisions}:${inlinePseudoPaint}:${nestedListProjectionSignature}`;
+		if (mermaidInputsOnly !== mermaidAdmission) {
+			return {
+				layout: result,
+				contentBoxInput: `${markerSignature}:${inlineMarkerSignature}:${quotePseudoSignature}:${headingAfterPseudoSignature}:${taskCheckboxSignature}:${tableHeaderSignature}:${tableScrollSignature}:${tableNativeGridSignature}:${mermaidInputsOnly}:${markerDecisions}:${inlinePseudoPaint}:${nestedListProjectionSignature}`,
+			};
+		}
 	}
 	return result;
 }
@@ -661,10 +663,7 @@ function collectLayoutElementSignatures(
 		predicates,
 	);
 	const beforeRawContent = root ? undefined : pseudoEntries[0]?.rawContent;
-	const contentBoxInputAuxiliaryOut = ctx.includeContentBoxInputLayout
-		? { value: "" }
-		: undefined;
-	const auxiliary = auxiliaryFidelitySignature(
+	const auxiliaryResult = auxiliaryFidelitySignature(
 		element,
 		runtime,
 		dimensionSemantics,
@@ -674,8 +673,9 @@ function collectLayoutElementSignatures(
 		predicates,
 		beforeRawContent,
 		ctx.getTableNativeGridRulesScan,
-		contentBoxInputAuxiliaryOut,
+		ctx.includeContentBoxInputLayout,
 	);
+	const auxiliary = typeof auxiliaryResult === "string" ? auxiliaryResult : auxiliaryResult.layout;
 	const childPseudoMargin =
 		root || !dimensionSemantics
 			? ""
@@ -724,10 +724,10 @@ function collectLayoutElementSignatures(
 	// Only retain dimensions here; they can affect wrapping and image/text
 	// geometry without invalidating a prepared payload on ordinary scroll.
 	const layoutEntry = `${index}:${width},${height}:${styles}:${pseudoStyles}:${dimensions}:${rootExportStyle}:${auxiliary}`;
-	const contentBoxInputEntry = contentBoxInputAuxiliaryOut
-		? contentBoxInputAuxiliaryOut.value === auxiliary
+	const contentBoxInputEntry = ctx.includeContentBoxInputLayout
+		? typeof auxiliaryResult === "string"
 			? layoutEntry
-			: `${index}:${width},${height}:${styles}:${pseudoStyles}:${dimensions}:${rootExportStyle}:${contentBoxInputAuxiliaryOut.value}`
+			: `${index}:${width},${height}:${styles}:${pseudoStyles}:${dimensions}:${rootExportStyle}:${auxiliaryResult.contentBoxInput}`
 		: null;
 	return {
 		contentBoxInputEntry,
@@ -744,12 +744,11 @@ function collectDimensionGeometryElementSignature(
 	dimensionSemantics: WechatDimensionSemanticsContext | null,
 	conversionActive: boolean,
 	predicates: WechatTreePredicateCache,
-	includeGeometry = true,
 ): string | null {
 	if (conversionActive && predicates.hasVisualRasterizationAncestor(element)) {
 		return null;
 	}
-	const rect = includeGeometry ? element.getBoundingClientRect?.() : undefined;
+	const rect = element.getBoundingClientRect?.();
 	const dimensions = ordinaryDimensionSemanticsSignature(
 		element,
 		dimensionSemantics,
@@ -782,15 +781,6 @@ function collectDimensionGeometryElementSignature(
 					predicates,
 				)
 			: "";
-	if (!includeGeometry) {
-		return dimensionEntrySignature(
-			index,
-			dimensions,
-			childPseudoMargin,
-			rootExportStyle,
-			auxiliary,
-		);
-	}
 	return `${index}:${rect?.width ?? 0},${rect?.height ?? 0}:${dimensions}:${childPseudoMargin}:${rootExportStyle}:${auxiliary}`;
 }
 
@@ -884,72 +874,6 @@ export async function collectPreparedSignaturesWithYield(
 	return collector.finish();
 }
 
-function applyLegacySignatureSinks(
-	result: PreparedSignatureBundle,
-	dimensionSink?: { value: string },
-	dimensionGeometrySink?: { value: string },
-): string {
-	if (dimensionSink) dimensionSink.value = result.dimension;
-	if (dimensionGeometrySink) {
-		dimensionGeometrySink.value = result.dimensionGeometry;
-	}
-	return result.layout;
-}
-
-export function preparedLayoutSignature(
-	preview: HTMLElement,
-	runtime: BrowserWechatClipboardRuntime,
-	layoutPreview: HTMLElement = preview,
-	dimensionSemantics: WechatDimensionSemanticsContext | null = null,
-	dimensionSignatureSink?: { value: string },
-	conversionActive = false,
-	contentBoxInputsOnly = false,
-	dimensionGeometrySignatureSink?: { value: string },
-): string {
-	return applyLegacySignatureSinks(
-		collectPreparedSignatures({
-			preview: layoutPreview,
-			runtime,
-			dimensionSemantics,
-			conversionActive,
-			contentBoxInputsOnly,
-			includeDimension: Boolean(dimensionSignatureSink),
-			includeDimensionGeometry: Boolean(dimensionGeometrySignatureSink),
-		}),
-		dimensionSignatureSink,
-		dimensionGeometrySignatureSink,
-	);
-}
-
-export async function preparedLayoutSignatureWithYield(
-	preview: HTMLElement,
-	runtime: BrowserWechatClipboardRuntime,
-	yieldToBrowser: SerializationYield,
-	signal?: AbortSignal,
-	layoutPreview: HTMLElement = preview,
-	dimensionSemantics: WechatDimensionSemanticsContext | null = null,
-	dimensionSignatureSink?: { value: string },
-	conversionActive = false,
-	contentBoxInputsOnly = false,
-	dimensionGeometrySignatureSink?: { value: string },
-): Promise<string> {
-	return applyLegacySignatureSinks(
-		await collectPreparedSignaturesWithYield({
-			preview: layoutPreview,
-			runtime,
-			yieldToBrowser,
-			signal,
-			dimensionSemantics,
-			conversionActive,
-			contentBoxInputsOnly,
-			includeDimension: Boolean(dimensionSignatureSink),
-			includeDimensionGeometry: Boolean(dimensionGeometrySignatureSink),
-		}),
-		dimensionSignatureSink,
-		dimensionGeometrySignatureSink,
-	);
-}
-
 export async function preparedDimensionGeometrySignatureWithYield(
 	layoutPreview: HTMLElement,
 	runtime: BrowserWechatClipboardRuntime,
@@ -1001,26 +925,4 @@ export function preparedDimensionGeometrySignature(
 		if (null !== entry) entries.push(entry);
 	}
 	return [viewportSignature, ...entries].join("\u0001");
-}
-
-export function preparedDimensionSemanticsSignature(
-	layoutPreview: HTMLElement,
-	runtime: BrowserWechatClipboardRuntime,
-	dimensionSemantics: WechatDimensionSemanticsContext | null,
-): string {
-	const predicates = createWechatTreePredicateCache();
-	return previewElements(layoutPreview)
-		.map(
-			(element, index) =>
-				collectDimensionGeometryElementSignature(
-					element,
-					index,
-					runtime,
-					dimensionSemantics,
-					false,
-					predicates,
-					false,
-				) ?? "",
-		)
-		.join("\u0001");
 }

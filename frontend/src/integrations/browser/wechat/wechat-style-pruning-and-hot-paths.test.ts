@@ -10,10 +10,7 @@ import {
 	RAW_DIMENSION_CONTEXT_IDENTITY_ATTRIBUTES,
 	syncRawContextAttributes,
 } from "./wechat-dimension-semantics";
-import {
-	preparedLayoutSignature,
-	preparedLayoutSignatureWithYield,
-} from "./wechat-fidelity-signature";
+import { collectPreparedSignatures, collectPreparedSignaturesWithYield } from "./wechat-fidelity-signature";
 import {
 	createNativeVisualCaptureClone,
 	nativeVisualStyleDeclarations,
@@ -955,12 +952,13 @@ describe("WeChat hot-path micro-allocation and yield optimizations", () => {
 			vi.fn(async () => undefined),
 			{ shouldYield: sigShouldYield },
 		) as SerializationYield;
-		const syncSignature = preparedLayoutSignature(preview, runtime);
-		const asyncSignature = await preparedLayoutSignatureWithYield(
+		const syncSignature = collectPreparedSignatures({ preview, runtime, includeDimension: false }).layout;
+		const asyncSignature = (await collectPreparedSignaturesWithYield({
 			preview,
 			runtime,
-			sigYield,
-		);
+			yieldToBrowser: sigYield,
+			includeDimension: false,
+		})).layout;
 		expect(asyncSignature).toBe(syncSignature);
 		// 3 elements in `preview` (`article`, `p`, `p`) -> 1 shouldYield check per element.
 		expect(sigShouldYield).toHaveBeenCalledTimes(3);

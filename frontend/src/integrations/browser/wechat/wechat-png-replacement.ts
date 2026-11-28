@@ -213,6 +213,14 @@ function replaceInlineMathVisual(
       inlineLayout.paintOffsetX,
       inlineLayout.width - (inlineLayout.paintOffsetX + imageWidth),
     );
+    // Top and bottom align the image margin box to the line. Keep that box
+    // at the measured allocation height while the image paints beyond it.
+    const edgeAlignedMargins = ('top' === verticalAlign || 'bottom' === verticalAlign)
+      ? [
+          ['margin-top', normalizeCssPixel(inlineLayout.paintOffsetY)],
+          ['margin-bottom', normalizeCssPixel(inlineLayout.height - inlineLayout.paintOffsetY - imageHeight)],
+        ].filter(([, value]) => value !== 0).map(([property, value]) => `${property}:${value}px`)
+      : [];
     if (flowDeclarations.length) {
       replaceDeclarations(image, flowDeclarations);
     }
@@ -224,6 +232,7 @@ function replaceInlineMathVisual(
         `height:${imageHeight}px`,
         'max-width:none',
         `vertical-align:${verticalAlign}`,
+        ...edgeAlignedMargins,
       ],
       true,
     );

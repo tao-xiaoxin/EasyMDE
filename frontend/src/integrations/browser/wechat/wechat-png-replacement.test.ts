@@ -132,13 +132,21 @@ describe('replaceCompletedVisuals', () => {
       paintOffsetY: -2,
       rasterHeight: 30,
     },
+    ...(['top', 'bottom'] as const).map((alignment) => ({
+      baseline: 18,
+      expectedVerticalAlign: alignment,
+      height: 24,
+      label: `${alignment} with ascender overhang`,
+      paintOffsetY: -3,
+      rasterHeight: 27,
+    })),
   ])(
     'replaces unclipped inline math with a static inline-block image for $label',
     ({ baseline, expectedVerticalAlign, height, paintOffsetY, rasterHeight }) => {
       const root = document.createElement('article');
       root.setAttribute('data-easymde-preview-html-sink', 'true');
       root.innerHTML =
-        '<p>Before <span class="easymde-math-inline" style="display:inline;margin-left:7px;margin-right:11px;margin-top:5px">' +
+        `<p>Before <span class="easymde-math-inline" style="display:inline;${['top', 'bottom'].includes(expectedVerticalAlign) ? `vertical-align:${expectedVerticalAlign};` : ''}margin-left:7px;margin-right:11px;margin-top:5px">` +
         '<span class="katex"><span class="katex-html">x</span></span></span> after</p>';
       const candidate = root.querySelector<HTMLElement>('.easymde-math-inline');
       if (!candidate) throw new Error('wechat-png-replacement-test-inline-root-missing');
@@ -201,7 +209,11 @@ describe('replaceCompletedVisuals', () => {
       expect(style).not.toContain('position:relative');
       expect(style).not.toContain('position:absolute');
       expect(style).not.toContain('display:block');
-      expect(style).not.toContain('margin-top');
+      if (['top', 'bottom'].includes(expectedVerticalAlign)) {
+        expect(style).toContain('margin-top:-3px!important');
+      } else {
+        expect(style).not.toContain('margin-top');
+      }
     },
   );
 

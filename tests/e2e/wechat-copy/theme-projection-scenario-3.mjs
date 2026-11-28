@@ -18,7 +18,7 @@ import { readNativeCodeSurfaceEvidence } from "./payload-evidence.mjs";
 import { waitForPreviewVisualReadiness } from "./editor-session.mjs";
 import { assertNativeCodePayloadMatches } from "./payload-geometry-oracle.mjs";
 import { copyNativePayload } from "./copy-driver.mjs";
-import { summarizeCopyLongTaskWindow } from "./copy-long-task-evidence.mjs";
+import { readCopyOperationWindow, summarizeCopyLongTaskWindow } from "./copy-long-task-evidence.mjs";
 
 export async function runThemeProjectionScenario3({ baseURL, context, login, page, test, testInfo }) {
 
@@ -140,7 +140,10 @@ export async function runThemeProjectionScenario3({ baseURL, context, login, pag
         stoppedAt,
         armedAt: current?.startedAt,
         clickAt: current?.clicks[0]?.at,
+        trustedClick: current?.clicks[0]?.trusted,
         writeAt: current?.writes[current.startedWriteCount]?.at,
+        nativeSettledAt: current?.writes[current.startedWriteCount]?.nativeSettledAt,
+        terminalAt: current?.terminalAt,
         pendingAt: current?.pendingFrameAt
       };
     });
@@ -160,6 +163,7 @@ export async function runThemeProjectionScenario3({ baseURL, context, login, pag
       let payload;
       let observation;
       let longTasks;
+      let operationWindow;
       try {
         try {
           payload = await copyNativePayload(page, button);
@@ -175,6 +179,9 @@ export async function runThemeProjectionScenario3({ baseURL, context, login, pag
           .toBeLessThanOrEqual(100);
         expect(payload.metrics.writeCount, label + ' write count').toBe(1);
         expect(payload.metrics.writeActivation, label + ' activation').toBe(true);
+        operationWindow = readCopyOperationWindow(observation);
+        expect(operationWindow, label + ' trusted copy operation window').not.toBeNull();
+        expect(operationWindow.longTasks, label + ' operation-window long tasks').toEqual([]);
         expect(longTasks, label + ' long tasks').toEqual([]);
       } catch (error) {
         if (observation) {
@@ -215,6 +222,9 @@ export async function runThemeProjectionScenario3({ baseURL, context, login, pag
           clickToPendingFrameMs: payload.metrics.clickToPendingFrameMs,
           clickToWriteMs: payload.metrics.clickToWriteMs,
           longTasks,
+          clickToNativeSettlementMs: operationWindow.clickToNativeSettlementMs,
+          clickToTerminalMs: operationWindow.clickToTerminalMs,
+          operationLongTasks: operationWindow.longTasks,
           writeActivation: payload.metrics.writeActivation,
           writeCount: payload.metrics.writeCount
         },

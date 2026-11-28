@@ -819,6 +819,56 @@ describe('EditorRoot WeChat copy & preview presentation', () => {
     view.unmount();
   });
 
+  it.each(['settled', 'unmounted', 'replaced', 'theme-cancelled'] as const)('coalesces PNG preparation while Copy is pending (%s)', async (finish) => {
+    const props = fixture();
+    const pending = deferred<Awaited<ReturnType<typeof props.wechatClipboard.copy>>>();
+    const widths: number[] = [];
+    const prepare = vi.fn((surface: HTMLElement) => {
+      widths.push(surface.getBoundingClientRect().width);
+      return Promise.resolve();
+    });
+    const wechatClipboard = { ...props.wechatClipboard, prepare };
+    const pngProps = { ...props, wechatClipboard, wechatExport: { ...props.wechatExport, pngConversionEnabled: true } };
+    let copySignal: AbortSignal | undefined;
+    vi.mocked(wechatClipboard.copy).mockImplementationOnce((_surface, options) => {
+      copySignal = options?.signal;
+      return pending.promise;
+    });
+    const view = render(<EditorRoot {...pngProps} />);
+    await waitFor(() => expect(prepare).toHaveBeenCalled());
+    const surface = prepare.mock.calls.at(-1)?.[0];
+    if (!surface) throw new Error('preview unavailable');
+    let width = 400;
+    vi.spyOn(surface, 'getBoundingClientRect').mockImplementation(() => ({ width }) as DOMRect);
+    await act(async () => {
+      fireEvent.click(view.getByRole('button', { name: 'Copy to WeChat' }));
+    });
+    expect(wechatClipboard.copy).toHaveBeenCalledOnce();
+    widths.length = 0;
+    act(() => {
+      props.triggerResize();
+      width = 675;
+      props.triggerPreviewLayout();
+    });
+    expect(widths).toEqual([]);
+    if (finish === 'unmounted') view.unmount();
+    if (finish === 'replaced') {
+      view.rerender(<EditorRoot {...pngProps} wechatClipboard={{ ...wechatClipboard, prepare: vi.fn() }} />);
+    }
+    if (finish === 'theme-cancelled') {
+      fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+      fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+      fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+      await waitFor(() => expect(copySignal?.aborted).toBe(true));
+      await waitFor(() => expect(widths).toHaveLength(1));
+      widths.length = 0;
+    }
+    await act(async () => pending.resolve({ method: 'clipboard', status: 'copied' }));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 200)); });
+    expect(widths).toEqual(finish === 'settled' ? [675] : []);
+    expect(props.imageUploadPort?.upload).not.toHaveBeenCalled();
+  });
+
   it('cancels queued portable preparation and starts geometry preparation when PNG conversion becomes enabled', async () => {
     const props = fixture();
     const prepare = props.wechatClipboard.prepare;

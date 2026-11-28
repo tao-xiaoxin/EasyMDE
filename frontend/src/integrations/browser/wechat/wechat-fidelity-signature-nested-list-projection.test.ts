@@ -7,13 +7,7 @@ import {
 	type BrowserWechatClipboardRuntime,
 } from "./wechat-clipboard-runtime";
 import { createDimensionSemanticsContext } from "./wechat-dimension-semantics";
-import {
-	preparedDimensionGeometrySignature,
-	preparedDimensionGeometrySignatureWithYield,
-	preparedDimensionSemanticsSignature,
-	preparedLayoutSignature,
-	preparedLayoutSignatureWithYield,
-} from "./wechat-fidelity-signature";
+import { collectPreparedSignatures, collectPreparedSignaturesWithYield, preparedDimensionGeometrySignature, preparedDimensionGeometrySignatureWithYield } from "./wechat-fidelity-signature";
 import { nestedOrdinaryListProjectionSignature } from "./wechat-nested-list-projection";
 
 type Fixture = Readonly<{
@@ -184,20 +178,19 @@ async function signatures(
 	try {
 		dimensionSemantics.refresh();
 		return [
-			preparedLayoutSignature(
-				fixture.preview,
+			collectPreparedSignatures({
+				preview: fixture.preview,
 				runtime,
-				fixture.preview,
 				dimensionSemantics,
-			),
-			await preparedLayoutSignatureWithYield(
-				fixture.preview,
+				includeDimension: false,
+			}).layout,
+			(await collectPreparedSignaturesWithYield({
+				preview: fixture.preview,
 				runtime,
-				layoutYield,
-				undefined,
-				fixture.preview,
+				yieldToBrowser: layoutYield,
 				dimensionSemantics,
-			),
+				includeDimension: false,
+			})).layout,
 			preparedDimensionGeometrySignature(
 				fixture.preview,
 				runtime,
@@ -210,11 +203,7 @@ async function signatures(
 				undefined,
 				dimensionSemantics,
 			),
-			preparedDimensionSemanticsSignature(
-				fixture.preview,
-				runtime,
-				dimensionSemantics,
-			),
+			collectPreparedSignatures({ preview: fixture.preview, runtime, dimensionSemantics }).dimension,
 		];
 	} finally {
 		dimensionSemantics.cleanup();

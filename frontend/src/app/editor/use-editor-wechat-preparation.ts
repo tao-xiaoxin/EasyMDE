@@ -48,6 +48,7 @@ export function useEditorWechatPreparation({
   wechatExportEnabled,
   wechatPngConversionEnabled
 }: UseEditorWechatPreparationOptions) {
+  const deferredWechatSurfaceRef = useRef<HTMLElement | null>(null);
   const scheduledWechatPreparationRef = useRef<(() => void) | null>(null);
   const wechatBackgroundPreparationRef = useRef<{
     controller: AbortController;
@@ -86,6 +87,7 @@ export function useEditorWechatPreparation({
 
   const cancelWechatBackgroundPreparation = useCallback(() => {
     clearScheduledWechatPreparation();
+    deferredWechatSurfaceRef.current = null;
     const preparation = wechatBackgroundPreparationRef.current;
     wechatBackgroundPreparationRef.current = null;
     preparation?.controller.abort();
@@ -112,7 +114,8 @@ export function useEditorWechatPreparation({
         || visualPreviewLockingRef.current
         || 'ready' !== previewSurfaceStatusRef.current
         || !wechatExportEnabled
-        || !surface
+        || !surface?.isConnected
+        || surface !== previewRuntimeRef.current?.surface
         || !prepare
       )
         return;
@@ -169,6 +172,7 @@ export function useEditorWechatPreparation({
         });
     },
     [
+      previewRuntimeRef,
       previewSurfaceStatusRef,
       rootActiveRef,
       visualPreviewEditingRef,
@@ -185,14 +189,15 @@ export function useEditorWechatPreparation({
     (surface: HTMLElement | null) => {
       const prepare = wechatClipboard.prepare;
       if (!wechatExportEnabled || !surface || !prepare) return;
+      clearScheduledWechatPreparation();
       if (wechatCopyPendingRef.current) {
-        clearScheduledWechatPreparation();
+        if (wechatPngConversionEnabled) deferredWechatSurfaceRef.current = surface;
         return;
       }
       if (wechatPngConversionEnabled) {
         rememberWechatPreviewWidth(surface);
       }
-      clearScheduledWechatPreparation();
+      deferredWechatSurfaceRef.current = null;
       const cancel = immersiveEnvironment.schedule(() => {
         scheduledWechatPreparationRef.current = null;
         prepareWechatPreview(surface);
@@ -221,6 +226,19 @@ export function useEditorWechatPreparation({
     scheduleWechatPreviewPreparation,
     visualPreviewEditingRef
   ]);
+
+  const resumeWechatPreparationAfterCopy = useCallback(() => {
+    const deferredSurface = deferredWechatSurfaceRef.current;
+    deferredWechatSurfaceRef.current = null;
+    if (!wechatPngConversionEnabled) {
+      scheduleCurrentWechatPreviewPreparation();
+    } else if (
+      deferredSurface?.isConnected
+      && deferredSurface === previewRuntimeRef.current?.surface
+    ) {
+      scheduleCurrentWechatPreviewPreparation();
+    }
+  }, [previewRuntimeRef, scheduleCurrentWechatPreviewPreparation, wechatPngConversionEnabled]);
 
   useEffect(() => {
     if (!wechatExportEnabled || !wechatClipboard.prepare) {
@@ -290,6 +308,7 @@ export function useEditorWechatPreparation({
     cancelWechatBackgroundPreparation,
     clearScheduledWechatPreparation,
     rememberWechatPreviewWidth,
+    resumeWechatPreparationAfterCopy,
     scheduleCurrentWechatPreviewPreparation,
     scheduleWechatPreviewPreparation
   };

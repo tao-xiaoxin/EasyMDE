@@ -97,5 +97,5 @@ export async function runCopyModeScenario3({ baseURL, context, login, page, test
       await page.getByRole('button', { name: labels.exit, exact: true }).click();
       await expect(page.locator('.easymde-wechat-preview-measurement')).toHaveCount(0);
     }
-    await page.unroute(upload.matcher);
+    await upload.dispose();
 }

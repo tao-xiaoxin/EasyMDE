@@ -62,7 +62,7 @@ export type UseEditorMediaUploadBridgeOptions = Readonly<{
   remoteImageImportPort: RemoteImageImportPort;
   reportFailure: (code: string, level?: 'error' | 'info') => void;
   rootActiveRef: SharedRef<boolean>;
-  scheduleCurrentWechatPreviewPreparation: () => void;
+  resumeWechatPreparationAfterCopy: () => void;
   toolbar: EditorRootProps['toolbar'];
   visualEditorRuntimeRef: SharedRef<ImmersiveVisualEditorRuntime | null>;
   visualEditorSurface: HTMLElement | null;
@@ -98,7 +98,7 @@ export function useEditorMediaUploadBridge({
   remoteImageImportPort: rawRemoteImageImportPort,
   reportFailure,
   rootActiveRef,
-  scheduleCurrentWechatPreviewPreparation,
+  resumeWechatPreparationAfterCopy,
   toolbar,
   visualEditorRuntimeRef,
   visualEditorSurface,
@@ -117,7 +117,7 @@ export function useEditorMediaUploadBridge({
     null
   );
   scheduleWechatPreparationAfterCopyRef.current =
-    scheduleCurrentWechatPreviewPreparation;
+    resumeWechatPreparationAfterCopy;
   const mediaOperationRef = useRef<Promise<unknown> | null>(null);
   const featuredImageOperationRef =
     useRef<Promise<NativeFeaturedImage | null> | null>(null);
@@ -343,9 +343,7 @@ export function useEditorMediaUploadBridge({
         ) {
           wechatCopyPendingRef.current = false;
           wechatCopyStatus.setPending(false);
-          if (!wechatExport.pngConversionEnabled) {
-            scheduleWechatPreparationAfterCopyRef.current?.();
-          }
+          scheduleWechatPreparationAfterCopyRef.current?.();
         }
       });
   }, [
@@ -355,7 +353,6 @@ export function useEditorMediaUploadBridge({
     wechatCopyPendingRef,
     wechatCopySequenceRef,
     wechatCopyStatus,
-    wechatExport.pngConversionEnabled,
     wechatSession
   ]);
 

@@ -9,16 +9,7 @@ import {
 	installClipboardTestEnvironment,
 } from "./wechat-clipboard-test-fixtures";
 import { createDimensionSemanticsContext } from "./wechat-dimension-semantics";
-import {
-	normalizeSignatureStyleValue,
-	preparedDimensionGeometrySignature,
-	preparedDimensionGeometrySignatureWithYield,
-	preparedDimensionSemanticsSignature,
-	preparedLayoutSignature,
-	preparedLayoutSignatureWithYield,
-	preparedPseudoStyleSignature,
-	preparedRootExportStyleSignature,
-} from "./wechat-fidelity-signature";
+import { collectPreparedSignatures, collectPreparedSignaturesWithYield, normalizeSignatureStyleValue, preparedDimensionGeometrySignature, preparedDimensionGeometrySignatureWithYield, preparedPseudoStyleSignature, preparedRootExportStyleSignature } from "./wechat-fidelity-signature";
 import { headingAfterPseudoFlowFreshnessSignature } from "./wechat-heading-pseudo-flow";
 import { captureWechatInlinePseudoPaintInput } from "./wechat-inline-pseudo-paint";
 
@@ -110,36 +101,34 @@ describe("wechat-fidelity-signature", () => {
 				runtimeZeroPx,
 			);
 
-			const syncZero = preparedLayoutSignature(
+			const syncZero = collectPreparedSignatures({
 				preview,
-				runtimeZero,
+				runtime: runtimeZero,
+				dimensionSemantics: dimZero,
+				includeDimension: false,
+			}).layout;
+			const syncZeroPx = collectPreparedSignatures({
 				preview,
-				dimZero,
-			);
-			const syncZeroPx = preparedLayoutSignature(
-				preview,
-				runtimeZeroPx,
-				preview,
-				dimZeroPx,
-			);
+				runtime: runtimeZeroPx,
+				dimensionSemantics: dimZeroPx,
+				includeDimension: false,
+			}).layout;
 			expect(syncZero).toBe(syncZeroPx);
 
-			const asyncZero = await preparedLayoutSignatureWithYield(
+			const asyncZero = (await collectPreparedSignaturesWithYield({
 				preview,
-				runtimeZero,
-				yieldZero,
-				undefined,
+				runtime: runtimeZero,
+				yieldToBrowser: yieldZero,
+				dimensionSemantics: dimZero,
+				includeDimension: false,
+			})).layout;
+			const asyncZeroPx = (await collectPreparedSignaturesWithYield({
 				preview,
-				dimZero,
-			);
-			const asyncZeroPx = await preparedLayoutSignatureWithYield(
-				preview,
-				runtimeZeroPx,
-				yieldZeroPx,
-				undefined,
-				preview,
-				dimZeroPx,
-			);
+				runtime: runtimeZeroPx,
+				yieldToBrowser: yieldZeroPx,
+				dimensionSemantics: dimZeroPx,
+				includeDimension: false,
+			})).layout;
 			expect(asyncZero).toBe(asyncZeroPx);
 			expect(syncZero).toBe(asyncZero);
 		});
@@ -168,36 +157,34 @@ describe("wechat-fidelity-signature", () => {
 				runtimeFour,
 			);
 
-			const syncZero = preparedLayoutSignature(
+			const syncZero = collectPreparedSignatures({
 				preview,
-				runtimeZero,
+				runtime: runtimeZero,
+				dimensionSemantics: dimZero,
+				includeDimension: false,
+			}).layout;
+			const syncFour = collectPreparedSignatures({
 				preview,
-				dimZero,
-			);
-			const syncFour = preparedLayoutSignature(
-				preview,
-				runtimeFour,
-				preview,
-				dimFour,
-			);
+				runtime: runtimeFour,
+				dimensionSemantics: dimFour,
+				includeDimension: false,
+			}).layout;
 			expect(syncZero).not.toBe(syncFour);
 
-			const asyncZero = await preparedLayoutSignatureWithYield(
+			const asyncZero = (await collectPreparedSignaturesWithYield({
 				preview,
-				runtimeZero,
-				yieldZero,
-				undefined,
+				runtime: runtimeZero,
+				yieldToBrowser: yieldZero,
+				dimensionSemantics: dimZero,
+				includeDimension: false,
+			})).layout;
+			const asyncFour = (await collectPreparedSignaturesWithYield({
 				preview,
-				dimZero,
-			);
-			const asyncFour = await preparedLayoutSignatureWithYield(
-				preview,
-				runtimeFour,
-				yieldFour,
-				undefined,
-				preview,
-				dimFour,
-			);
+				runtime: runtimeFour,
+				yieldToBrowser: yieldFour,
+				dimensionSemantics: dimFour,
+				includeDimension: false,
+			})).layout;
 			expect(asyncZero).not.toBe(asyncFour);
 		});
 
@@ -562,34 +549,24 @@ describe("wechat-fidelity-signature", () => {
 				true,
 			);
 			if (!layoutYield || !geometryYield) throw new Error("yield unavailable");
-			const layoutDimension = { value: "" };
-			const layoutYieldDimension = { value: "" };
-			const layout = preparedLayoutSignature(
-				fixtureValue.preview,
-				fixtureValue.runtime,
-				fixtureValue.preview,
-				null,
-				layoutDimension,
-			);
+			const { layout: layout, dimension: layoutDimension } = collectPreparedSignatures({
+				preview: fixtureValue.preview,
+				runtime: fixtureValue.runtime,
+			});
 			const geometry = preparedDimensionGeometrySignature(
 				fixtureValue.preview,
 				fixtureValue.runtime,
 				null,
 			);
-			const semantics = preparedDimensionSemanticsSignature(
-				fixtureValue.preview,
-				fixtureValue.runtime,
-				null,
-			);
-			const layoutYielded = await preparedLayoutSignatureWithYield(
-				fixtureValue.preview,
-				fixtureValue.runtime,
-				layoutYield,
-				undefined,
-				fixtureValue.preview,
-				null,
-				layoutYieldDimension,
-			);
+			const semantics = collectPreparedSignatures({
+				preview: fixtureValue.preview,
+				runtime: fixtureValue.runtime,
+			}).dimension;
+			const { layout: layoutYielded, dimension: layoutYieldDimension } = await collectPreparedSignaturesWithYield({
+				preview: fixtureValue.preview,
+				runtime: fixtureValue.runtime,
+				yieldToBrowser: layoutYield,
+			});
 			const geometryYielded = await preparedDimensionGeometrySignatureWithYield(
 				fixtureValue.preview,
 				fixtureValue.runtime,
@@ -601,9 +578,9 @@ describe("wechat-fidelity-signature", () => {
 				geometry,
 				geometryYield: geometryYielded,
 				layout,
-				layoutDimension: layoutDimension.value,
+				layoutDimension: layoutDimension,
 				layoutYield: layoutYielded,
-				layoutYieldDimension: layoutYieldDimension.value,
+				layoutYieldDimension: layoutYieldDimension,
 				semantics,
 			};
 		};
@@ -793,13 +770,17 @@ describe("wechat-fidelity-signature", () => {
 		it("fails an empty pseudo content value instead of inventing content:none", () => {
 			const value = fixture("circle", { pseudo: { content: "" } });
 			expect(() =>
-				preparedLayoutSignature(value.preview, value.runtime),
+				collectPreparedSignatures({
+					preview: value.preview,
+					runtime: value.runtime,
+					includeDimension: false,
+				}).layout,
 			).toThrow(/wechat-inline-pseudo-paint-style/u);
 			expect(() =>
 				preparedDimensionGeometrySignature(value.preview, value.runtime, null),
 			).toThrow(/wechat-inline-pseudo-paint-style/u);
 			expect(() =>
-				preparedDimensionSemanticsSignature(value.preview, value.runtime, null),
+				collectPreparedSignatures({ preview: value.preview, runtime: value.runtime }).dimension,
 			).toThrow(/wechat-inline-pseudo-paint-style/u);
 		});
 
@@ -811,20 +792,25 @@ describe("wechat-fidelity-signature", () => {
 			const geometryYield = createSerializationYield(value.runtime, true);
 			if (!layoutYield || !geometryYield) throw new Error("yield unavailable");
 			expect(() =>
-				preparedLayoutSignature(value.preview, value.runtime),
+				collectPreparedSignatures({
+					preview: value.preview,
+					runtime: value.runtime,
+					includeDimension: false,
+				}).layout,
 			).toThrow(/wechat-inline-pseudo-paint-style/u);
 			expect(() =>
 				preparedDimensionGeometrySignature(value.preview, value.runtime, null),
 			).toThrow(/wechat-inline-pseudo-paint-style/u);
 			expect(() =>
-				preparedDimensionSemanticsSignature(value.preview, value.runtime, null),
+				collectPreparedSignatures({ preview: value.preview, runtime: value.runtime }).dimension,
 			).toThrow(/wechat-inline-pseudo-paint-style/u);
 			await expect(
-				preparedLayoutSignatureWithYield(
-					value.preview,
-					value.runtime,
-					layoutYield,
-				),
+				collectPreparedSignaturesWithYield({
+					preview: value.preview,
+					runtime: value.runtime,
+					yieldToBrowser: layoutYield,
+					includeDimension: false,
+				}),
 			).rejects.toThrow(/wechat-inline-pseudo-paint-style/u);
 			await expect(
 				preparedDimensionGeometrySignatureWithYield(
@@ -986,24 +972,15 @@ describe("wechat-fidelity-signature", () => {
 				true,
 			);
 			if (!layoutYield || !geometryYield) throw new Error("yield unavailable");
-			const layoutDimension = { value: "" };
-			const layoutYieldDimension = { value: "" };
-			const layout = preparedLayoutSignature(
-				fixtureValue.preview,
-				fixtureValue.runtime,
-				fixtureValue.preview,
-				null,
-				layoutDimension,
-			);
-			const layoutYielded = await preparedLayoutSignatureWithYield(
-				fixtureValue.preview,
-				fixtureValue.runtime,
-				layoutYield,
-				undefined,
-				fixtureValue.preview,
-				null,
-				layoutYieldDimension,
-			);
+			const { layout: layout, dimension: layoutDimension } = collectPreparedSignatures({
+				preview: fixtureValue.preview,
+				runtime: fixtureValue.runtime,
+			});
+			const { layout: layoutYielded, dimension: layoutYieldDimension } = await collectPreparedSignaturesWithYield({
+				preview: fixtureValue.preview,
+				runtime: fixtureValue.runtime,
+				yieldToBrowser: layoutYield,
+			});
 			const geometry = preparedDimensionGeometrySignature(
 				fixtureValue.preview,
 				fixtureValue.runtime,
@@ -1016,18 +993,17 @@ describe("wechat-fidelity-signature", () => {
 				undefined,
 				null,
 			);
-			const semantics = preparedDimensionSemanticsSignature(
-				fixtureValue.preview,
-				fixtureValue.runtime,
-				null,
-			);
+			const semantics = collectPreparedSignatures({
+				preview: fixtureValue.preview,
+				runtime: fixtureValue.runtime,
+			}).dimension;
 			return {
 				geometry,
 				geometryYield: geometryYielded,
 				layout,
-				layoutDimension: layoutDimension.value,
+				layoutDimension: layoutDimension,
 				layoutYield: layoutYielded,
-				layoutYieldDimension: layoutYieldDimension.value,
+				layoutYieldDimension: layoutYieldDimension,
 				semantics,
 			};
 		};
@@ -1203,18 +1179,13 @@ describe("wechat-fidelity-signature", () => {
 							dimensionSemantics,
 							conversionActive,
 						);
-						const syncDimensionSink = { value: "" };
-						const syncGeometrySink = { value: "" };
-						const syncLayout = preparedLayoutSignature(
+						const { layout: syncLayout, dimension: syncDimensionSink, dimensionGeometry: syncGeometrySink } = collectPreparedSignatures({
 							preview,
 							runtime,
-							preview,
 							dimensionSemantics,
-							syncDimensionSink,
 							conversionActive,
-							false,
-							syncGeometrySink,
-						);
+							includeDimensionGeometry: true,
+						});
 
 						const layoutYield = createSerializationYield(runtime, true);
 						const geometryYield = createSerializationYield(runtime, true);
@@ -1229,33 +1200,23 @@ describe("wechat-fidelity-signature", () => {
 								dimensionSemantics,
 								conversionActive,
 							);
-						const asyncDimensionSink = { value: "" };
-						const asyncGeometrySink = { value: "" };
-						const asyncLayout = await preparedLayoutSignatureWithYield(
+						const { layout: asyncLayout, dimension: asyncDimensionSink, dimensionGeometry: asyncGeometrySink } = await collectPreparedSignaturesWithYield({
 							preview,
 							runtime,
-							layoutYield,
-							undefined,
-							preview,
+							yieldToBrowser: layoutYield,
 							dimensionSemantics,
-							asyncDimensionSink,
 							conversionActive,
-							false,
-							asyncGeometrySink,
-						);
+							includeDimensionGeometry: true,
+						});
 
-						expect(syncGeometrySink.value).toBe(expectedSync);
-						expect(asyncGeometrySink.value).toBe(expectedAsync);
-						expect(syncGeometrySink.value).toBe(asyncGeometrySink.value);
+						expect(syncGeometrySink).toBe(expectedSync);
+						expect(asyncGeometrySink).toBe(expectedAsync);
+						expect(syncGeometrySink).toBe(asyncGeometrySink);
 						expect(syncLayout).toBe(asyncLayout);
-						expect(syncDimensionSink.value).toBe(asyncDimensionSink.value);
+						expect(syncDimensionSink).toBe(asyncDimensionSink);
 						if (!conversionActive) {
-							expect(syncDimensionSink.value).toBe(
-								preparedDimensionSemanticsSignature(
-									preview,
-									runtime,
-									dimensionSemantics,
-								),
+							expect(syncDimensionSink).toBe(
+								collectPreparedSignatures({ preview, runtime, dimensionSemantics }).dimension,
 							);
 						}
 					} finally {
@@ -1325,7 +1286,7 @@ describe("wechat-fidelity-signature", () => {
 					write: async () => undefined,
 				};
 
-				preparedLayoutSignature(preview, runtime, preview, null);
+				collectPreparedSignatures({ preview, runtime, includeDimension: false }).layout;
 				const baselineBefore = livePseudoCounts.get("::before") ?? 0;
 				const baselineAfter = livePseudoCounts.get("::after") ?? 0;
 
@@ -1337,7 +1298,12 @@ describe("wechat-fidelity-signature", () => {
 				try {
 					livePseudoCounts.clear();
 					mirrorPseudoCounts.clear();
-					preparedLayoutSignature(preview, runtime, preview, dimensionSemantics);
+					collectPreparedSignatures({
+						preview,
+						runtime,
+						dimensionSemantics,
+						includeDimension: false,
+					}).layout;
 					expect(livePseudoCounts.get("::before")).toBe(baselineBefore);
 					expect(livePseudoCounts.get("::after")).toBe(baselineAfter);
 					expect(mirrorPseudoCounts.get("::before")).toBe(1);
@@ -1347,14 +1313,13 @@ describe("wechat-fidelity-signature", () => {
 					mirrorPseudoCounts.clear();
 					const yieldToBrowser = createSerializationYield(runtime, true);
 					if (!yieldToBrowser) throw new Error("yield unavailable");
-					await preparedLayoutSignatureWithYield(
+					(await collectPreparedSignaturesWithYield({
 						preview,
 						runtime,
 						yieldToBrowser,
-						undefined,
-						preview,
 						dimensionSemantics,
-					);
+						includeDimension: false,
+					})).layout;
 					expect(livePseudoCounts.get("::before")).toBe(baselineBefore);
 					expect(livePseudoCounts.get("::after")).toBe(baselineAfter);
 					expect(mirrorPseudoCounts.get("::before")).toBe(1);

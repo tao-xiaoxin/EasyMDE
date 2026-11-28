@@ -5,10 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { installClipboardTestEnvironment } from './wechat-clipboard-test-fixtures';
 import type { BrowserWechatClipboardRuntime } from './wechat-clipboard-runtime';
 import { WECHAT_STRUCTURE_REPLACEMENTS } from './wechat-clone-metadata';
-import {
-  preparedDimensionGeometrySignature,
-  preparedLayoutSignature
-} from './wechat-fidelity-signature';
+import { collectPreparedSignatures, preparedDimensionGeometrySignature } from './wechat-fidelity-signature';
 import {
   createMarkup,
   createMarkupSynchronously,
@@ -517,7 +514,7 @@ describe('wechat quote pseudo flow', () => {
     if (!(source instanceof Element)) throw new Error('quote source missing');
     const runtime = runtimeFor();
     try {
-      const layoutBefore = preparedLayoutSignature(preview, runtime);
+      const layoutBefore = collectPreparedSignatures({ preview, runtime, includeDimension: false }).layout;
       const geometryBefore = preparedDimensionGeometrySignature(preview, runtime, null);
       const clone = source.cloneNode(true) as Element;
       const marker = document.createElement('span');
@@ -531,7 +528,7 @@ describe('wechat quote pseudo flow', () => {
         source
       });
       expect(snapshot.plan(marker)).not.toBeNull();
-      expect(preparedLayoutSignature(preview, runtime)).toBe(layoutBefore);
+      expect(collectPreparedSignatures({ preview, runtime, includeDimension: false }).layout).toBe(layoutBefore);
       expect(preparedDimensionGeometrySignature(preview, runtime, null)).toBe(geometryBefore);
     } finally {
       preview.remove();

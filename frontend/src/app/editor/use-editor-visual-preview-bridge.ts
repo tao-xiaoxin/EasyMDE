@@ -220,6 +220,7 @@ export function useEditorVisualPreviewBridge({
     cancelWechatBackgroundPreparation,
     clearScheduledWechatPreparation,
     rememberWechatPreviewWidth,
+    resumeWechatPreparationAfterCopy,
     scheduleCurrentWechatPreviewPreparation,
     scheduleWechatPreviewPreparation
   } = useEditorWechatPreparation({
@@ -717,6 +718,7 @@ export function useEditorVisualPreviewBridge({
     rememberWechatPreviewWidth,
     requestVisualPreviewUnlock,
     revealVisualHeading: visualHandlers.revealVisualHeading,
+    resumeWechatPreparationAfterCopy,
     scheduleCurrentWechatPreviewPreparation,
     schedulePreview,
     scheduleWechatPreviewPreparation,

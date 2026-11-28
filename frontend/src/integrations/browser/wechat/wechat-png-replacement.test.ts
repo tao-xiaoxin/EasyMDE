@@ -118,7 +118,7 @@ describe('replaceCompletedVisuals', () => {
     },
     {
       baseline: 18,
-      expectedVerticalAlign: '2px',
+      expectedVerticalAlign: '-6px',
       height: 24,
       label: 'positive paintOffsetY superscript above baseline',
       paintOffsetY: 2,
@@ -126,19 +126,27 @@ describe('replaceCompletedVisuals', () => {
     },
     {
       baseline: 18,
-      expectedVerticalAlign: '-10px',
+      expectedVerticalAlign: '-6px',
       height: 24,
       label: 'combined ascender and descender overhang',
       paintOffsetY: -2,
       rasterHeight: 30,
     },
+    ...(['top', 'bottom'] as const).map((alignment) => ({
+      baseline: 18,
+      expectedVerticalAlign: alignment,
+      height: 24,
+      label: `${alignment} with ascender overhang`,
+      paintOffsetY: -3,
+      rasterHeight: 27,
+    })),
   ])(
     'replaces unclipped inline math with a static inline-block image for $label',
     ({ baseline, expectedVerticalAlign, height, paintOffsetY, rasterHeight }) => {
       const root = document.createElement('article');
       root.setAttribute('data-easymde-preview-html-sink', 'true');
       root.innerHTML =
-        '<p>Before <span class="easymde-math-inline" style="display:inline;margin-left:7px;margin-right:11px;margin-top:5px">' +
+        `<p>Before <span class="easymde-math-inline" style="display:inline;${['top', 'bottom'].includes(expectedVerticalAlign) ? `vertical-align:${expectedVerticalAlign};` : ''}margin-left:7px;margin-right:11px;margin-top:5px">` +
         '<span class="katex"><span class="katex-html">x</span></span></span> after</p>';
       const candidate = root.querySelector<HTMLElement>('.easymde-math-inline');
       if (!candidate) throw new Error('wechat-png-replacement-test-inline-root-missing');
@@ -201,11 +209,24 @@ describe('replaceCompletedVisuals', () => {
       expect(style).not.toContain('position:relative');
       expect(style).not.toContain('position:absolute');
       expect(style).not.toContain('display:block');
-      expect(style).not.toContain('margin-top');
+      const verticalMargins = [
+        ['margin-top', paintOffsetY],
+        ['margin-bottom', height - paintOffsetY - rasterHeight],
+      ] as const;
+      for (const [property, pixels] of verticalMargins) {
+        expect(declaredStyleDeclarations(image, property)).toEqual(pixels === 0 ? [] : [
+          { important: true, property, value: `${pixels}px` },
+        ]);
+      }
     },
   );
 
-  it('uses static flow margins without positioning for clipped inline math viewports', () => {
+  it.each([
+    { overflowX: 'auto', overflowY: 'hidden' },
+    { overflowX: 'clip', overflowY: 'clip' },
+    { overflowX: 'clip', overflowY: 'visible' },
+    { overflowX: 'visible', overflowY: 'clip' },
+  ] as const)('preserves the viewport baseline with $overflowX / $overflowY', ({ overflowX, overflowY }) => {
     const root = document.createElement('article');
     root.setAttribute('data-easymde-preview-html-sink', 'true');
     root.innerHTML =
@@ -226,8 +247,8 @@ describe('replaceCompletedVisuals', () => {
         inlineLayout: {
           baseline: 20,
           height: 24,
-          overflowX: 'auto',
-          overflowY: 'hidden',
+          overflowX,
+          overflowY,
           paintOffsetX: 1,
           paintOffsetY: 1,
           viewport: { height: 18, offsetX: 2, offsetY: 3, width: 12 },
@@ -249,11 +270,14 @@ describe('replaceCompletedVisuals', () => {
     const wrapperStyle = candidate.getAttribute('style') ?? '';
     const imageStyle = image.getAttribute('style') ?? '';
     expect(wrapperStyle).toContain('display:inline-block!important');
-    expect(wrapperStyle).toContain('overflow-x:auto!important');
-    expect(wrapperStyle).toContain('overflow-y:hidden!important');
+    expect(wrapperStyle).toContain(`overflow-x:${overflowX}!important`);
+    expect(wrapperStyle).toContain(`overflow-y:${overflowY}!important`);
+    expect(wrapperStyle).toContain('contain:layout!important');
     expect(wrapperStyle).toContain('width:12px!important');
     expect(wrapperStyle).toContain('height:18px!important');
-    expect(wrapperStyle).toContain('vertical-align:-1px!important');
+    expect(wrapperStyle).toContain('vertical-align:-4px!important');
+    expect(wrapperStyle).toContain('margin-top:3px!important');
+    expect(wrapperStyle).toContain('margin-bottom:3px!important');
     expect(wrapperStyle).toContain('margin-left:2px');
     expect(wrapperStyle).toContain('margin-right:2px');
     expect(wrapperStyle).not.toContain('position:relative');

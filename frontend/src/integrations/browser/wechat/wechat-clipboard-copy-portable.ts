@@ -5,7 +5,7 @@ import type {
 	WechatClipboardCopySharedState,
 } from "./wechat-clipboard-copy-transaction";
 import type { WechatDimensionSemanticsContext } from "./wechat-dimension-semantics";
-import { preparedLayoutSignature } from "./wechat-fidelity-signature";
+import { collectPreparedSignatures } from "./wechat-fidelity-signature";
 import type { MermaidContentBoxLease } from "./wechat-mermaid-content-box";
 import { WECHAT_CLIPBOARD_TRANSACTION_TIMEOUT_MS } from "./wechat-png-conversion-policy";
 import {
@@ -278,12 +278,12 @@ export function createPortableCopyTransaction(
 		}
 		portableDimensionSemantics.refresh();
 		if (
-			preparedLayoutSignature(
-				payloadPreview,
-				portableRuntime,
-				portableMeasurement?.root ?? payloadPreview,
-				portableDimensionSemantics,
-			) !== portableFidelitySignature
+			collectPreparedSignatures({
+				preview: portableMeasurement?.root ?? payloadPreview,
+				runtime: portableRuntime,
+				dimensionSemantics: portableDimensionSemantics,
+				includeDimension: false,
+			}).layout !== portableFidelitySignature
 		) {
 			throw new Error("wechat-copy-stale");
 		}

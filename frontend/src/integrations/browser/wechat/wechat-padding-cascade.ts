@@ -3,6 +3,7 @@ import {
 	isCssKeyframesRule,
 	isCssLayerBlockRule,
 	isCssMediaRule,
+	isCssRuleKind,
 	isCssNestedDeclarationsRule,
 	isCssStyleRule,
 	isCssSupportsRule,
@@ -406,6 +407,44 @@ function elementUsesAnimatedPaddingKeyframes(
 	return false;
 }
 
+function isContextDependentPaddingGroup(
+	rule: CSSRule,
+	view: (Window & typeof globalThis) | null | undefined,
+): rule is CSSGroupingRule {
+	return (
+		isCssRuleKind(rule, view, "CSSScopeRule", "[object CSSScopeRule]") ||
+		isCssRuleKind(rule, view, "CSSContainerRule", "[object CSSContainerRule]")
+	);
+}
+
+// We cannot resolve an element's scoped cascade or query container here.
+// Skip a readable subtree only when every rule is understood and independent
+// of padding. Never turn a conditional declaration into a cascade entry.
+function opaqueGroupMayAffectPadding(
+	rules: CSSRuleList,
+	property: SemanticPaddingProperty,
+	view: (Window & typeof globalThis) | null | undefined,
+	keyframes: Set<string>,
+): boolean {
+	for (const rule of Array.from(rules)) {
+		if (isCssStyleRule(rule, view) || isCssNestedDeclarationsRule(rule, view)) {
+			const style = rule.style;
+			if (!style || styleAffectsPadding(style, property) || style.getPropertyValue("all").trim()) {
+				return true;
+			}
+			if (isCssStyleRule(rule, view) && rule.cssRules?.length &&
+				opaqueGroupMayAffectPadding(rule.cssRules, property, view, keyframes)) return true;
+		} else if (isContextDependentPaddingGroup(rule, view) || isTransparentNestedGroupingRule(rule, view)) {
+			if (opaqueGroupMayAffectPadding(rule.cssRules, property, view, keyframes)) return true;
+		} else if (isCssKeyframesRule(rule, view)) {
+			if (recordPaddingKeyframesRule(rule, property, keyframes)) return true;
+		} else if (!isSkippableNonSelectorRule(rule, view)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 function compileNestedPaddingGuards(
 	rules: CSSRuleList,
 	property: SemanticPaddingProperty,
@@ -489,6 +528,10 @@ function compileNestedPaddingGuards(
 				}
 				continue;
 			}
+			if (isContextDependentPaddingGroup(rule, defaultView)) {
+				if (opaqueGroupMayAffectPadding(rule.cssRules, property, defaultView, outKeyframeNames)) return true;
+				continue;
+			}
 			if (isCssKeyframesRule(rule, defaultView)) {
 				if (recordPaddingKeyframesRule(rule, property, outKeyframeNames)) {
 					return true;
@@ -498,8 +541,7 @@ function compileNestedPaddingGuards(
 			if (isSkippableNonSelectorRule(rule, defaultView)) {
 				continue;
 			}
-			// Fail closed on scope-rebinding or unrecognized nested rules
-			// (e.g. CSSScopeRule `@scope`, CSSContainerRule, CSSStartingStyleRule).
+			// Fail closed on unrecognized nested rules.
 			return true;
 		}
 	} catch {
@@ -589,6 +631,13 @@ export function buildPaddingCascadeIndex(
 				walk(rule.cssRules, true);
 				continue;
 			}
+			if (isContextDependentPaddingGroup(rule, defaultView)) {
+				if (opaqueGroupMayAffectPadding(rule.cssRules, property, defaultView, paddingKeyframeNames)) {
+					unreadableStyleSheet = true;
+					return;
+				}
+				continue;
+			}
 			const isConditionalGroupRule =
 				(defaultView?.CSSConditionRule &&
 					rule instanceof defaultView.CSSConditionRule) ||
@@ -664,36 +713,31 @@ export function buildPaddingCascadeIndex(
 				continue;
 			}
 
+			const affectsPadding = styleAffectsPadding(rule.style, property);
+			const children = rule.cssRules;
+			if (!affectsPadding && !children?.length) continue;
 			const selectors = splitSelectorList(rule.selectorText);
-			if (
-				!selectors ||
-				selectors.some((selector) =>
+			const unsafe =
+				!selectors || selectors.some((selector) =>
 					selectorHasScopeOrTopLevelNesting(selector, true),
-				)
+				);
+			if (
+				(affectsPadding && unsafe) ||
+				(children?.length > 0 && compileNestedPaddingGuards(
+					children,
+					property,
+					defaultView,
+					rule.selectorText,
+					[rule.selectorText],
+					unsafe,
+					nestedGuards,
+					paddingKeyframeNames,
+				))
 			) {
 				unreadableStyleSheet = true;
 				return;
 			}
-			if (rule.cssRules && rule.cssRules.length > 0) {
-				if (
-					compileNestedPaddingGuards(
-						rule.cssRules,
-						property,
-						defaultView,
-						rule.selectorText,
-						[rule.selectorText],
-						false,
-						nestedGuards,
-						paddingKeyframeNames,
-					)
-				) {
-					unreadableStyleSheet = true;
-					return;
-				}
-			}
-			if (!styleAffectsPadding(rule.style, property)) {
-				continue;
-			}
+			if (!affectsPadding || !selectors) continue;
 			const compiledSelectors: CompiledPaddingSelector[] = selectors.map(
 				(selector) => ({
 					selector,

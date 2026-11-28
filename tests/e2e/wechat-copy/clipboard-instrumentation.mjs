@@ -153,6 +153,7 @@ export async function installClipboardInstrumentation(page) {
       trace.lastItems = null;
       trace.mode = mode;
       trace.pendingFrameAt = null;
+      trace.terminalAt = null;
       trace.release = null;
       trace.reject = null;
       trace.statusEventCountAtStart = trace.statusEvents.length;
@@ -263,6 +264,9 @@ export async function installClipboardInstrumentation(page) {
       if (eventCode === lastStatusCode) return;
       lastStatusCode = eventCode;
       trace.statusEvents.push(code);
+      if ((code === 'wechat-success' || code === 'wechat-failed') && trace.terminalAt === null) {
+        trace.terminalAt = performance.now();
+      }
     };
     const installStatusObserver = () => {
       if (trace.statusObserverInstalled) return true;
@@ -293,6 +297,7 @@ export async function installClipboardInstrumentation(page) {
       trace.clicks.push({
         active: navigator.userActivation?.isActive === true,
         at: clickAt,
+        trusted: event.isTrusted,
         copyAvailabilityAtClick: {
           ariaBusy: target.getAttribute('aria-busy'),
           ariaDisabled: target.getAttribute('aria-disabled'),
@@ -360,8 +365,14 @@ export async function installClipboardInstrumentation(page) {
           }
         }
         nativeResult.then(
-          () => { record.nativeState = 'fulfilled'; },
-          () => { record.nativeState = 'rejected'; }
+          () => {
+            record.nativeSettledAt = performance.now();
+            record.nativeState = 'fulfilled';
+          },
+          () => {
+            record.nativeSettledAt = performance.now();
+            record.nativeState = 'rejected';
+          }
         );
         if (trace.mode !== 'deferred') return nativeResult;
 

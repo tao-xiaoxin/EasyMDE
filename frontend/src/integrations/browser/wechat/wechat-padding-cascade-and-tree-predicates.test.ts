@@ -16,7 +16,7 @@ import {
 	createDimensionSemanticsContext,
 	type WechatDimensionSemanticsContext,
 } from "./wechat-dimension-semantics";
-import { preparedLayoutSignature } from "./wechat-fidelity-signature";
+import { collectPreparedSignatures } from "./wechat-fidelity-signature";
 import {
 	styleDeclarations,
 	styleDeclarationsSynchronously,
@@ -135,6 +135,65 @@ describe("compiled and cached padding cascade index", () => {
 			fixture.cleanup();
 		}
 	});
+
+	it("ignores color-only :scope rules but fails closed for uncertain padding", () => {
+		const fixture = createNestedQuoteFixture();
+		const style = document.createElement("style");
+		document.head.append(style);
+		try {
+			style.textContent = ":scope .unrelated { color: red; }";
+			expect(buildPaddingCascadeIndex(document, "padding-left").unreadableStyleSheet).toBe(false);
+			style.textContent = ":scope .unrelated { padding-inline-start: 10px; }";
+			expect(buildPaddingCascadeIndex(document, "padding-left").unreadableStyleSheet).toBe(true);
+		} finally {
+			style.remove();
+			fixture.cleanup();
+		}
+	});
+
+	it.each(["CSSScopeRule", "CSSContainerRule"])(
+		"inspects readable %s subtrees without trusting their cascade",
+		(kind) => {
+			const fixture = createNestedQuoteFixture();
+			const sheet = fixture.stylesheet.sheet;
+			if (!sheet) throw new Error("stylesheet unavailable");
+			const original = [...Array.from(sheet.cssRules)];
+			const declarationRule = (style: Record<string, string>, cssRules: unknown[] = []) => ({
+				[Symbol.toStringTag]: "CSSStyleRule",
+				selectorText: ".inner",
+				style: mockStyle(style),
+				cssRules,
+			});
+			const group = (cssRules: unknown[]) => ({ [Symbol.toStringTag]: kind, cssRules });
+			const setRule = (rule: unknown) => Object.defineProperty(sheet, "cssRules", {
+				configurable: true,
+				value: [...original, rule],
+			});
+			try {
+				setRule(group([declarationRule({ color: "red" }, [group([declarationRule({ color: "blue" })])])]));
+				expect(buildPaddingCascadeIndex(document, "padding-left").entries).toHaveLength(1);
+				expect(buildPaddingCascadeIndex(document, "padding-left").unreadableStyleSheet).toBe(false);
+				setRule(declarationRule({ color: "red" }, [group([declarationRule({ color: "blue" })])]));
+				expect(buildPaddingCascadeIndex(document, "padding-left").unreadableStyleSheet).toBe(false);
+				setRule(declarationRule({ color: "red" }, [group([declarationRule({ padding: "29px" })])]));
+				expect(buildPaddingCascadeIndex(document, "padding-left").unreadableStyleSheet).toBe(true);
+				for (const rule of [
+					declarationRule({ "padding-inline-start": "31px" }),
+					declarationRule({ all: "unset" }),
+					declarationRule({ color: "red" }, [group([declarationRule({ padding: "29px" })])]),
+					{ cssRules: [] },
+				]) {
+					setRule(group([rule]));
+					expect(buildPaddingCascadeIndex(document, "padding-left").unreadableStyleSheet).toBe(true);
+				}
+				setRule({ [Symbol.toStringTag]: kind, get cssRules() { throw new Error("unreadable"); } });
+				expect(buildPaddingCascadeIndex(document, "padding-left").unreadableStyleSheet).toBe(true);
+			} finally {
+				delete (sheet as { cssRules?: CSSRuleList }).cssRules;
+				fixture.cleanup();
+			}
+		},
+	);
 
 	it("respects @media and @supports conditions when building the cascade index", () => {
 		const fixture = createNestedQuoteFixture();
@@ -568,13 +627,23 @@ describe("tree predicate cache and isSvgElement fast path", () => {
 		const emptyStyle = mockStyle({ content: "none", display: "block" });
 		const rt = mockRuntime(() => emptyStyle);
 		try {
-			const before = preparedLayoutSignature(root, rt, root, null, undefined, true);
+			const before = collectPreparedSignatures({
+				preview: root,
+				runtime: rt,
+				conversionActive: true,
+				includeDimension: false,
+			}).layout;
 			// Mutate box into a visual rasterization root containing KaTeX
 			box.className = "easymde-math-block";
 			const katex = document.createElement("span");
 			katex.className = "katex";
 			box.append(katex);
-			const after = preparedLayoutSignature(root, rt, root, null, undefined, true);
+			const after = collectPreparedSignatures({
+				preview: root,
+				runtime: rt,
+				conversionActive: true,
+				includeDimension: false,
+			}).layout;
 			expect(after).not.toBe(before);
 
 			const freshCache = createWechatTreePredicateCache();

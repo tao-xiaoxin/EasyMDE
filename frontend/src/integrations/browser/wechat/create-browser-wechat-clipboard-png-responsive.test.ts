@@ -4,12 +4,7 @@ import type {
 } from '../../../contracts/ports/wechat-visual-rasterization-port';
 
 import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard';
-import {
-  preparedDimensionGeometrySignature,
-  preparedDimensionSemanticsSignature,
-  preparedLayoutSignature,
-  preparedLayoutSignatureWithYield
-} from './wechat-fidelity-signature';
+import { collectPreparedSignatures, collectPreparedSignaturesWithYield, preparedDimensionGeometrySignature } from './wechat-fidelity-signature';
 
 import {
   blobText,
@@ -984,14 +979,14 @@ describe('createBrowserWechatClipboard', () => {
       try {
         const signatureParts = async () => ({
           geometry: preparedDimensionGeometrySignature(preview, runtime, null),
-          layout: preparedLayoutSignature(preview, runtime),
-          layoutWithYield: await preparedLayoutSignatureWithYield(
+          layout: collectPreparedSignatures({ preview, runtime, includeDimension: false }).layout,
+          layoutWithYield: (await collectPreparedSignaturesWithYield({
             preview,
             runtime,
-            Object.assign(vi.fn(async () => undefined), { shouldYield: () => false }),
-            undefined
-          ),
-          semantics: preparedDimensionSemanticsSignature(preview, runtime, null)
+            yieldToBrowser: Object.assign(vi.fn(async () => undefined), { shouldYield: () => false }),
+            includeDimension: false,
+          })).layout,
+          semantics: collectPreparedSignatures({ preview, runtime }).dimension
         });
         const initial = await signatureParts();
         if ('outline-style' === property || 'border-image-source' === property) {

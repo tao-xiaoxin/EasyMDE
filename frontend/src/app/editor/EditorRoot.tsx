@@ -301,8 +301,7 @@ export function EditorRoot(props: EditorRootProps) {
     remoteImageImportPort: props.remoteImageImportPort,
     reportFailure,
     rootActiveRef,
-    scheduleCurrentWechatPreviewPreparation:
-      visual.scheduleCurrentWechatPreviewPreparation,
+    resumeWechatPreparationAfterCopy: visual.resumeWechatPreparationAfterCopy,
     toolbar: props.toolbar,
     visualEditorRuntimeRef,
     visualEditorSurface: visual.visualEditorSurface,

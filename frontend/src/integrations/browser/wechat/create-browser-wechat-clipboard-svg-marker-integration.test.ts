@@ -6,11 +6,7 @@ import {
   installClipboardTestEnvironment
 } from './wechat-clipboard-test-fixtures';
 import type { BrowserWechatClipboardRuntime } from './wechat-clipboard-runtime';
-import {
-  preparedDimensionGeometrySignature,
-  preparedDimensionSemanticsSignature,
-  preparedLayoutSignature
-} from './wechat-fidelity-signature';
+import { collectPreparedSignatures, preparedDimensionGeometrySignature } from './wechat-fidelity-signature';
 import {
   createMarkup,
   createMarkupSynchronously
@@ -349,17 +345,17 @@ describe('createBrowserWechatClipboard SVG marker production integration', () =>
           [property]: changed ? values.changed : values.initial
         });
       });
-      const initialLayout = preparedLayoutSignature(preview, runtime);
+      const initialLayout = collectPreparedSignatures({ preview, runtime, includeDimension: false }).layout;
       const initialGeometry = preparedDimensionGeometrySignature(preview, runtime, null);
-      const initialSemantics = preparedDimensionSemanticsSignature(preview, runtime, null);
+      const initialSemantics = collectPreparedSignatures({ preview, runtime }).dimension;
       changed = true;
-      expect.soft(preparedLayoutSignature(preview, runtime), `${property}:layout`).not.toBe(initialLayout);
+      expect.soft(collectPreparedSignatures({ preview, runtime, includeDimension: false }).layout, `${property}:layout`).not.toBe(initialLayout);
       expect.soft(
         preparedDimensionGeometrySignature(preview, runtime, null),
         `${property}:geometry`
       ).not.toBe(initialGeometry);
       expect.soft(
-        preparedDimensionSemanticsSignature(preview, runtime, null),
+        collectPreparedSignatures({ preview, runtime }).dimension,
         `${property}:semantics`
       ).not.toBe(initialSemantics);
     }

@@ -6,6 +6,7 @@ const FONT_SHORTHAND_ZERO_LINE_HEIGHT = new RegExp(`^\\s*${ZERO_LINE_HEIGHT_TOKE
 const ZERO_LINE_HEIGHT_VALUE = new RegExp(`^${ZERO_LINE_HEIGHT_TOKEN}$`, 'iu');
 
 export type ZeroLineHeightPrecomputed = Readonly<{
+  computed?: CSSStyleDeclaration | undefined;
   isSvg?: boolean | undefined;
   isTaskListCheckbox?: boolean | undefined;
 }>;
@@ -16,7 +17,8 @@ function isInlineScriptElement(
   precomputed?: ZeroLineHeightPrecomputed
 ): boolean {
   if (pseudoElement || ('SUB' !== source.tagName && 'SUP' !== source.tagName)) return false;
-  return !(precomputed?.isSvg ?? isSvgElement(source));
+  return precomputed?.computed?.getPropertyValue('display') === 'inline'
+    && !(precomputed?.isSvg ?? isSvgElement(source));
 }
 
 /**

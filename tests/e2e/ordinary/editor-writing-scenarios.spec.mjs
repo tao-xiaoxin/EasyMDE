@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { privacySafeFailureTest } from '../helpers/privacy-safe-failure-test.mjs';
 import {
   assertOpenContextMenuGeometry,
   closeMenu,
@@ -49,7 +50,11 @@ async function assertSourceContextMenuAndSubmenu(page, { expectedSource, phase, 
     phase
   });
   if (hasTouch) {
-    await page.locator('.easymde-pane-preview').tap({ position: { x: 12, y: 12 } });
+    // WeChat preparation can temporarily clone the workspace for measurement.
+    const livePreviewPane = page.locator(
+      '[data-easymde-editor-owner="react"] > [data-easymde-layout-owner="react"] > .easymde-pane-preview'
+    );
+    await livePreviewPane.tap({ position: { x: 12, y: 12 } });
     await expect(rootItem(page, 'insert')).toHaveCount(0);
   } else {
     await closeMenu(page, phase, { expectedSource });
@@ -196,7 +201,7 @@ test.describe('EasyMDE routine editor writing scenarios', () => {
         viewport: scenario.viewport
       });
 
-      test('supports ordinary split, context menu, and immersive writing workflows', async ({ page }, testInfo) => {
+      privacySafeFailureTest('supports ordinary split, context menu, and immersive writing workflows', async ({ page }, testInfo) => {
         const browserMonitor = attachPrivacySafeBrowserMonitor(page, {
           baseURL: testInfo.project.use.baseURL
         });
@@ -405,7 +410,7 @@ test.describe('EasyMDE routine editor writing scenarios', () => {
   test.describe('iPad mini landscape touch probe (1133x744)', () => {
     test.use({ hasTouch: true, isMobile: true, viewport: miniLandscape });
 
-    test('keeps the first of two simultaneous resize contacts in control', async ({ page }, testInfo) => {
+    privacySafeFailureTest('keeps the first of two simultaneous resize contacts in control', async ({ page }, testInfo) => {
       const browserMonitor = attachPrivacySafeBrowserMonitor(page, {
         baseURL: testInfo.project.use.baseURL
       });

@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { expect, test } from '@playwright/test';
+import { privacySafeFailureTest } from '../helpers/privacy-safe-failure-test.mjs';
 import {
   assertOrdinarySideBySideSplit,
   canonicalMarkdownForPage,
@@ -2464,7 +2465,7 @@ test.describe('EasyMDE editor workflows', () => {
     }
   });
 
-  test('keeps split panes usable beside an outline across writing viewports', async ({ page }, testInfo) => {
+  privacySafeFailureTest('keeps split panes usable beside an outline across writing viewports', async ({ page }, testInfo) => {
     const browserMonitor = attachPrivacySafeBrowserMonitor(page, {
       baseURL: testInfo.project.use.baseURL
     });
@@ -2745,7 +2746,7 @@ test.describe('EasyMDE editor workflows', () => {
     }
   });
 
-  test('clamps docked outline keyboard resizing to its CSS bounds', async ({ page }, testInfo) => {
+  privacySafeFailureTest('clamps docked outline keyboard resizing to its CSS bounds', async ({ page }, testInfo) => {
     const browserMonitor = attachPrivacySafeBrowserMonitor(page, { baseURL: testInfo.project.use.baseURL });
     try {
       await login(page, testInfo.easymdeUser);

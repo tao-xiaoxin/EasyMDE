@@ -1094,7 +1094,14 @@ focused standalone specs under `tests/e2e/`:
     three-viewport split-plus-outline layout regressions;
   - `tests/e2e/ordinary/themes-and-appearance.spec.mjs`: registered article
     and code themes, Custom CSS scoping, ordinary settings popover, and the
-    integrated Crimson Focus native task-marker layout regressions;
+    integrated Crimson Focus native task-marker layout regressions. The
+    appearance workflow requires the latest Custom CSS preview to affect the
+    rendered sample, the protected Custom CSS library POST to succeed, and
+    native draft Save to persist the same library ID. The browser monitor
+    counts cancelled same-site JSON Custom CSS preview fetches separately from
+    Markdown preview cancellations; library and native Save failures, and HTTP
+    errors on the preview itself, still fail the gate. The appearance workflow
+    attaches only sanitized browser-monitor evidence when that monitor fails;
   - `tests/e2e/ordinary/publishing-revisions-and-export.spec.mjs`: immersive
     publishing, excerpts, autosaves, native revisions, local preview
     enhancements/WeChat export, and the integrated published full-capability
@@ -1131,6 +1138,15 @@ focused standalone specs under `tests/e2e/`:
   `tests/e2e/phycat-task-layout.spec.mjs`,
   `tests/e2e/theme-layout-audit.spec.mjs`, and
   `tests/e2e/immersive-unlock-latency.spec.mjs`.
+
+The authenticated appearance workflow, three ordinary/immersive writing
+viewport cases, two-contact resize, split-plus-outline, 800px outline clamp,
+and writing-viewport and 560px Source menu cases opt into
+`tests/e2e/helpers/privacy-safe-failure-test.mjs`. It disables automatic
+Playwright trace, video, screenshots, and failure page snapshots only for those
+cases. Failure attachments and reporters retain the failed result and static
+assertion locations, not raw browser or matcher data, including errors from
+`beforeEach` and `afterEach`.
 
 With the cutover to the unified ProseMirror immersive visual editor
 ([ADR-002](decisions/ADR-002-visual-editor-and-esm-architecture.md)) and the

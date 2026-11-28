@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { createHash, randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
+import { privacySafeFailureTest } from '../helpers/privacy-safe-failure-test.mjs';
 import {
   articleThemesForE2ESuite,
   canonicalMarkdownForPage,
@@ -765,7 +766,29 @@ test.describe('EasyMDE editor workflows', () => {
     ).toEqual([]);
   });
 
-  test('applies registered appearance options while keeping Custom CSS editing immersive-only', async ({ page }, testInfo) => {
+  const monitoredAppearanceTest = privacySafeFailureTest.extend({
+    appearanceMonitor: [async ({ page, baseURL }, use, testInfo) => {
+      const monitor = attachPrivacySafeBrowserMonitor(page, { baseURL });
+      try {
+        await use();
+      } finally {
+        try {
+          const evidence = monitor.snapshot();
+          if (evidence.failures.length > 0) {
+            await testInfo.attach('appearance-browser-events.json', {
+              body: JSON.stringify(evidence),
+              contentType: 'application/json'
+            });
+          }
+          monitor.assertClean();
+        } finally {
+          monitor.dispose();
+        }
+      }
+    }, { auto: true }]
+  });
+
+  monitoredAppearanceTest('applies registered appearance options while keeping Custom CSS editing immersive-only', async ({ page }, testInfo) => {
     test.setTimeout(8 * 60_000);
     const user = testInfo.easymdeUser;
     const customThemeSuffix = randomUUID().slice(0, 8);
@@ -1095,9 +1118,14 @@ test.describe('EasyMDE editor workflows', () => {
     await customCssDialog
       .getByLabel(labels.customCssDialog.customCssCodeTitle)
       .fill(customCss);
-    const customCssResponse = page.waitForResponse(
-      (response) => new URL(response.url()).pathname.endsWith('/wp-json/easymde/v1/custom-css')
-    );
+    await expect(customCssDialog.locator('.easymde-immersive-custom-css-preview p').first())
+      .toHaveCSS('color', 'rgb(1, 2, 3)');
+    const customCssResponse = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return response.request().method() === 'POST'
+        && url.origin === new URL(page.url()).origin
+        && url.pathname === '/wp-json/easymde/v1/custom-css';
+    });
     await customCssDialog
       .getByRole('button', {
         name: labels.customCssDialog.applyCustomTheme,
@@ -1108,6 +1136,7 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(customCssDialog).toHaveCount(0);
     await expect(page.locator('#easymde-markdown-theme-field')).toHaveValue('custom');
     await expect(page.locator('#easymde-custom-css-id-field')).not.toHaveValue('');
+    const savedCustomCssId = await page.locator('#easymde-custom-css-id-field').inputValue();
     await expect.poll(() => page.locator('#easymde-custom-css-preview').textContent())
       .toContain('.easymde-rendered-content.easymde-custom-css-active p');
     await expect(immersiveAppearanceDialog).toHaveCount(0);
@@ -1180,7 +1209,7 @@ test.describe('EasyMDE editor workflows', () => {
     await savedNavigation;
     expect(postMetaValue(postId, '_easymde_markdown_theme')).toBe('custom');
     expect(postMetaValue(postId, '_easymde_code_theme')).toBe(terminalNoir.id);
-    expect(postMetaValue(postId, '_easymde_custom_css_id')).not.toBe('');
+    expect(postMetaValue(postId, '_easymde_custom_css_id')).toBe(savedCustomCssId);
     await expect(page.locator('#easymde-markdown-theme-field')).toHaveValue('custom');
     await expect(page.locator('#easymde-code-theme-field')).toHaveValue(terminalNoir.id);
 

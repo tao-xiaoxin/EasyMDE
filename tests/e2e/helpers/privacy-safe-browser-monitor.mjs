@@ -45,6 +45,7 @@ const SAFE_DIALOG_TYPES = new Set([
 const VALID_URL_CATEGORIES = new Set([
   'about-blank',
   'admin-ajax',
+  'custom-css-preview-rest',
   'easymde-api',
   'external',
   'invalid',
@@ -219,14 +220,14 @@ function isPluginAssetPathname(pathname, basePath = '') {
     && pathname.startsWith(`${basePath}/wp-content/plugins/`);
 }
 
-function isPreviewRestEndpoint(pathname, searchParams, basePath = '') {
-  const expectedPretty = `${basePath}/wp-json/easymde/v1/preview`;
+function isExactEasyMdeRestEndpoint(pathname, searchParams, basePath, route) {
+  const expectedPretty = `${basePath}/wp-json/easymde/v1/${route}`;
   if (pathname === expectedPretty || pathname === `${expectedPretty}/`) {
     return !hasControlCharacterKey(searchParams)
       && !hasAnyParamKeyMatching(searchParams, 'rest_route');
   }
   return isWordPressRestRootPathname(pathname, basePath)
-    && 'easymde/v1/preview' === normalizeRestRouteParam(searchParams);
+    && `easymde/v1/${route}` === normalizeRestRouteParam(searchParams);
 }
 
 function isEasyMdeRestEndpoint(pathname, searchParams, basePath = '') {
@@ -264,7 +265,8 @@ export function classifyBrowserUrlCategory(rawUrl, baseOriginOrUrl = null) {
   if (invalidBase) return 'external';
   if (baseOrigin && url.origin !== baseOrigin) return 'external';
 
-  if (isPreviewRestEndpoint(url.pathname, url.searchParams, basePath)) return 'preview-rest';
+  if (isExactEasyMdeRestEndpoint(url.pathname, url.searchParams, basePath, 'preview')) return 'preview-rest';
+  if (isExactEasyMdeRestEndpoint(url.pathname, url.searchParams, basePath, 'custom-css/preview')) return 'custom-css-preview-rest';
   if (isEasyMdeRestEndpoint(url.pathname, url.searchParams, basePath)) return 'easymde-api';
   if (isPluginAssetPathname(url.pathname, basePath)) return 'plugin-asset';
   if (isAdminAjaxPathname(url.pathname, basePath)) return 'admin-ajax';
@@ -461,7 +463,9 @@ export function classifyReadonlyPostRequest(requestOrInput, options = {}) {
   const isRecord = (value) => (
     !!value && 'object' === typeof value && !Array.isArray(value)
   );
-  if (isPreviewRestEndpoint(pathname, queryParams, basePath)) {
+  const isMarkdownPreview = isExactEasyMdeRestEndpoint(pathname, queryParams, basePath, 'preview');
+  const isCustomCssPreview = isExactEasyMdeRestEndpoint(pathname, queryParams, basePath, 'custom-css/preview');
+  if (isMarkdownPreview || isCustomCssPreview) {
     if (normalized.unreadableBody || 'application/json' !== mediaType || '' === postData) {
       return {
         category: 'other-rest',
@@ -477,10 +481,12 @@ export function classifyReadonlyPostRequest(requestOrInput, options = {}) {
         classification: 'unexpected-write'
       };
     }
+    const inputKey = isCustomCssPreview ? 'css' : 'markdown';
     if (
       !isRecord(parsedBody)
-      || !Object.prototype.hasOwnProperty.call(parsedBody, 'markdown')
-      || 'string' !== typeof parsedBody.markdown
+      || !Object.prototype.hasOwnProperty.call(parsedBody, inputKey)
+      || 'string' !== typeof parsedBody[inputKey]
+      || (isCustomCssPreview && 1 !== Object.keys(parsedBody).length)
     ) {
       return {
         category: 'other-rest',
@@ -488,8 +494,8 @@ export function classifyReadonlyPostRequest(requestOrInput, options = {}) {
       };
     }
     return {
-      category: 'preview-rest',
-      classification: 'preview-readonly'
+      category: isCustomCssPreview ? 'custom-css-preview-rest' : 'preview-rest',
+      classification: isCustomCssPreview ? 'custom-css-preview-readonly' : 'preview-readonly'
     };
   }
   if (!isAdminAjaxPathname(pathname, basePath)) {
@@ -741,6 +747,7 @@ export function attachPrivacySafeBrowserMonitor(
   const httpErrorSummaries = [];
   const counts = {
     abortedAdminAjax: 0,
+    cancelledCustomCssPreview: 0,
     cancelledPreview: 0,
     consoleErrors: 0,
     consoleWarnings: 0,
@@ -867,6 +874,17 @@ export function attachPrivacySafeBrowserMonitor(
     const method = 'function' === typeof request?.method
       ? String(request.method()).toUpperCase()
       : '';
+    if (
+      'aborted' === failureClass
+      && 'custom-css-preview-rest' === category
+      && baseContext.baseOrigin
+      && 'POST' === method
+      && 'fetch' === resourceType
+      && 'custom-css-preview-readonly' === classifyReadonlyPostRequest(request, baseContext).classification
+    ) {
+      counts.cancelledCustomCssPreview += 1;
+      return;
+    }
     if ('aborted' === failureClass && 'preview-rest' === category && 'POST' === method) {
       const classified = classifyReadonlyPostRequest(request, baseContext);
       if ('preview-readonly' === classified.classification) {

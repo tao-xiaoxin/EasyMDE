@@ -115,6 +115,18 @@ export const SETTINGS_CENTER_FIRST_PAINT_CASES = selectSettingsCenterFirstPaintC
 	SETTINGS_CENTER_FIRST_PAINT_ALL_CASES,
 	SETTINGS_CENTER_FIRST_PAINT_CASE_NAME,
 );
+export function collectSettingsCenterFirstPaintViewports(
+	cases = SETTINGS_CENTER_FIRST_PAINT_CASES,
+) {
+	const viewports = [];
+	const seenViewportNames = new Set();
+	for (const scenario of cases) {
+		if (seenViewportNames.has(scenario.viewport.name)) continue;
+		seenViewportNames.add(scenario.viewport.name);
+		viewports.push(scenario.viewport);
+	}
+	return viewports;
+}
 export const SETTINGS_CENTER_FIRST_PAINT_EXPECTED_CASE_COUNT =
 	SETTINGS_CENTER_FIRST_PAINT_CASE_NAME === undefined
 		? SETTINGS_CENTER_FIRST_PAINT_ALL_CASES.length

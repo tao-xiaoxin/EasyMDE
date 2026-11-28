@@ -1,0 +1,431 @@
+import { describe, expect, it } from 'vitest';
+
+import type { CompletedUpload } from './wechat-capture-plan';
+import type { WechatPngConversionContext } from './wechat-png-conversion-policy';
+import { replaceCompletedVisuals } from './wechat-png-replacement';
+import { declaredStyleDeclarations } from './wechat-clipboard-test-fixtures';
+
+function singleDeclarationValue(element: Element, property: string): string {
+  const [declaration] = declaredStyleDeclarations(element, property);
+  if (!declaration) throw new Error(`wechat-png-replacement-test-missing-${property}`);
+  return declaration.value;
+}
+
+function mermaidFixture(): Readonly<{ candidate: HTMLElement; root: HTMLElement; svg: Element }> {
+  const root = document.createElement('article');
+  root.setAttribute('data-easymde-preview-html-sink', 'true');
+  root.innerHTML =
+    '<div class="easymde-mermaid"><svg viewBox="0 0 586 1200">' +
+    '<rect width="586" height="1200"></rect></svg></div>';
+  const candidate = root.querySelector<HTMLElement>('.easymde-mermaid');
+  const svg = candidate?.querySelector('svg') ?? null;
+  if (!candidate || !svg) throw new Error('wechat-png-replacement-test-fixture-missing');
+  return { candidate, root, svg };
+}
+
+function conversionContext(root: HTMLElement): WechatPngConversionContext {
+  return {
+    captureBoundary: root,
+    imageUploadPort: {} as never,
+    maxBytes: 1024,
+    mermaidSnapshots: new Map(),
+    postId: 17,
+    rasterizationPort: {} as never,
+    scale: 1,
+    signal: new AbortController().signal,
+    state: { uploadsMayRemain: false }
+  };
+}
+
+describe('replaceCompletedVisuals', () => {
+  it('keeps one decorated block owner and replaces only its formula content', () => {
+    const root = document.createElement('article');
+    root.setAttribute('data-easymde-preview-html-sink', 'true');
+    root.innerHTML = '<div class="easymde-math-block" style="display:block;width:547px;height:106px;'
+      + 'margin:12px auto;padding-top:12px;padding-right:12px;padding-bottom:12px;padding-left:12px;'
+      + 'border-top-width:1px;border-right-width:1px;border-bottom-width:1px;border-left-width:1px;'
+      + 'border-top-style:solid;border-right-style:solid;border-bottom-style:solid;border-left-style:solid;'
+      + 'border-top-color:#dcdcde;border-right-color:#dcdcde;border-bottom-color:#dcdcde;border-left-color:#dcdcde;'
+      + 'border-radius:8px;background:#fbfbfc;text-align:center;overflow-x:auto;overflow-y:hidden;opacity:.5">'
+      + '<span class="katex"><span class="katex-html"><span class="base">old</span></span></span></div>';
+    const candidate = root.querySelector<HTMLElement>('.easymde-math-block');
+    if (!candidate) throw new Error('wechat-png-replacement-test-math-root-missing');
+    const completed: CompletedUpload = {
+      candidate: { element: candidate, kind: 'math', source: candidate },
+      captureSize: { height: 106, width: 547 },
+      kind: 'math',
+      mathCapture: 'content',
+      mode: 'math-block',
+      rasterized: {
+        file: new File(['png'], 'math.png', { type: 'image/png' }),
+        height: 32,
+        pixelCount: 134 * 32,
+        width: 134,
+      },
+      url: 'https://example.test/math.png',
+    };
+
+    replaceCompletedVisuals(root, conversionContext(root), [completed]);
+
+    const image = candidate.querySelector('img');
+    if (!image) throw new Error('wechat-png-replacement-test-math-image-missing');
+    expect(candidate).toBe(root.querySelector('.easymde-math-block'));
+    expect(candidate.children).toHaveLength(1);
+    expect(candidate.querySelector('.katex')).toBeNull();
+    expect(candidate.getAttribute('style')).toContain('padding-top:12px');
+    expect(candidate.getAttribute('style')).toContain('border-top-width:1px');
+    expect(candidate.getAttribute('style')).toContain('border-radius:8px');
+    expect(candidate.getAttribute('style')).toContain('background:rgb(251, 251, 252)');
+    expect(candidate.getAttribute('style')).toContain('opacity:0.5');
+    expect(candidate.getAttribute('style')).toContain('width:100%!important');
+    expect(candidate.getAttribute('style')).toContain('height:auto!important');
+    expect(candidate.getAttribute('style')?.match(/padding-top:/g)).toHaveLength(1);
+    expect(candidate.getAttribute('style')?.match(/background:/g)).toHaveLength(1);
+    expect(candidate.getAttribute('style')?.match(/opacity:/g)).toHaveLength(1);
+    expect(candidate.getAttribute('style')?.match(/overflow-x:auto/g)).toHaveLength(1);
+    expect(candidate.getAttribute('data-ignore-width')).toBe('');
+    expect(image.getAttribute('style')).toContain('width:134px!important');
+    expect(image.getAttribute('style')).toContain('height:32px!important');
+    expect(declaredStyleDeclarations(image, 'margin-left')).toEqual([
+      { important: true, property: 'margin-left', value: 'auto' },
+    ]);
+    expect(declaredStyleDeclarations(image, 'margin-right')).toEqual([
+      { important: true, property: 'margin-right', value: 'auto' },
+    ]);
+    expect(image.getAttribute('style')).not.toMatch(/(?:^|;)padding/);
+    expect(image.getAttribute('style')).not.toMatch(/(?:^|;)border/);
+    expect(image.getAttribute('style')).not.toContain('background');
+    expect(image.getAttribute('style')).not.toContain('opacity');
+    expect(image.getAttribute('style')).not.toContain('left:-');
+  });
+
+  it.each([
+    {
+      baseline: 18,
+      expectedVerticalAlign: '-4px',
+      height: 22,
+      label: 'zero paintOffsetY matching allocation height',
+      paintOffsetY: 0,
+      rasterHeight: 22,
+    },
+    {
+      baseline: 18,
+      expectedVerticalAlign: '-6px',
+      height: 24,
+      label: 'negative paintOffsetY ascender overhang',
+      paintOffsetY: -3,
+      rasterHeight: 27,
+    },
+    {
+      baseline: 18,
+      expectedVerticalAlign: '2px',
+      height: 24,
+      label: 'positive paintOffsetY superscript above baseline',
+      paintOffsetY: 2,
+      rasterHeight: 14,
+    },
+    {
+      baseline: 18,
+      expectedVerticalAlign: '-10px',
+      height: 24,
+      label: 'combined ascender and descender overhang',
+      paintOffsetY: -2,
+      rasterHeight: 30,
+    },
+  ])(
+    'replaces unclipped inline math with a static inline-block image for $label',
+    ({ baseline, expectedVerticalAlign, height, paintOffsetY, rasterHeight }) => {
+      const root = document.createElement('article');
+      root.setAttribute('data-easymde-preview-html-sink', 'true');
+      root.innerHTML =
+        '<p>Before <span class="easymde-math-inline" style="display:inline;margin-left:7px;margin-right:11px;margin-top:5px">' +
+        '<span class="katex"><span class="katex-html">x</span></span></span> after</p>';
+      const candidate = root.querySelector<HTMLElement>('.easymde-math-inline');
+      if (!candidate) throw new Error('wechat-png-replacement-test-inline-root-missing');
+      const completed: CompletedUpload = {
+        candidate: { element: candidate, kind: 'math', source: candidate },
+        captureSize: { height, width: 40 },
+        inlineParent: candidate.parentElement,
+        kind: 'math',
+        mathCapture: 'full-root',
+        mode: 'math-inline',
+        rasterized: {
+          file: new File(['png'], 'inline.png', { type: 'image/png' }),
+          height: rasterHeight,
+          inlineLayout: {
+            baseline,
+            height,
+            overflowX: 'visible',
+            overflowY: 'visible',
+            paintOffsetX: -2,
+            paintOffsetY,
+            width: 40,
+          },
+          pixelCount: 44 * rasterHeight,
+          width: 44,
+        },
+        sourceRect: { height, width: 40 },
+        url: 'https://example.test/inline.png',
+      };
+
+      replaceCompletedVisuals(root, conversionContext(root), [completed]);
+
+      const paragraph = root.querySelector('p');
+      const image = paragraph?.querySelector('img');
+      if (!paragraph || !image) throw new Error('wechat-png-replacement-test-inline-image-missing');
+      expect(paragraph.querySelector('.easymde-math-inline')).toBeNull();
+      expect(paragraph.querySelector('span')).toBeNull();
+      expect(image.parentElement).toBe(paragraph);
+      const style = image.getAttribute('style') ?? '';
+      expect(declaredStyleDeclarations(image, 'display')).toEqual([
+        { important: true, property: 'display', value: 'inline-block' },
+      ]);
+      expect(declaredStyleDeclarations(image, 'width')).toEqual([
+        { important: true, property: 'width', value: '44px' },
+      ]);
+      expect(declaredStyleDeclarations(image, 'height')).toEqual([
+        { important: true, property: 'height', value: `${rasterHeight}px` },
+      ]);
+      expect(declaredStyleDeclarations(image, 'max-width')).toEqual([
+        { important: true, property: 'max-width', value: 'none' },
+      ]);
+      expect(declaredStyleDeclarations(image, 'vertical-align')).toEqual([
+        { important: true, property: 'vertical-align', value: expectedVerticalAlign },
+      ]);
+      expect(declaredStyleDeclarations(image, 'margin-left')).toEqual([
+        { important: false, property: 'margin-left', value: '5px' },
+      ]);
+      expect(declaredStyleDeclarations(image, 'margin-right')).toEqual([
+        { important: false, property: 'margin-right', value: '9px' },
+      ]);
+      expect(style).not.toContain('position:relative');
+      expect(style).not.toContain('position:absolute');
+      expect(style).not.toContain('display:block');
+      expect(style).not.toContain('margin-top');
+    },
+  );
+
+  it('uses static flow margins without positioning for clipped inline math viewports', () => {
+    const root = document.createElement('article');
+    root.setAttribute('data-easymde-preview-html-sink', 'true');
+    root.innerHTML =
+      '<p><span class="easymde-math-inline" style="display:inline-block;overflow-x:auto;overflow-y:hidden;width:12px;height:18px">' +
+      '<span class="katex"><span class="katex-html">wide</span></span></span></p>';
+    const candidate = root.querySelector<HTMLElement>('.easymde-math-inline');
+    if (!candidate) throw new Error('wechat-png-replacement-test-clipped-inline-missing');
+    const completed: CompletedUpload = {
+      candidate: { element: candidate, kind: 'math', source: candidate },
+      captureSize: { height: 18, width: 12 },
+      inlineParent: candidate.parentElement,
+      kind: 'math',
+      mathCapture: 'full-root',
+      mode: 'math-inline',
+      rasterized: {
+        file: new File(['png'], 'clipped.png', { type: 'image/png' }),
+        height: 22,
+        inlineLayout: {
+          baseline: 20,
+          height: 24,
+          overflowX: 'auto',
+          overflowY: 'hidden',
+          paintOffsetX: 1,
+          paintOffsetY: 1,
+          viewport: { height: 18, offsetX: 2, offsetY: 3, width: 12 },
+          width: 16,
+        },
+        pixelCount: 35 * 22,
+        width: 35,
+      },
+      sourceRect: { height: 18, width: 12 },
+      url: 'https://example.test/clipped.png',
+    };
+
+    replaceCompletedVisuals(root, conversionContext(root), [completed]);
+
+    const image = candidate.querySelector('img');
+    if (!image) throw new Error('wechat-png-replacement-test-clipped-image-missing');
+    expect(candidate.children).toHaveLength(1);
+    expect(candidate.firstElementChild).toBe(image);
+    const wrapperStyle = candidate.getAttribute('style') ?? '';
+    const imageStyle = image.getAttribute('style') ?? '';
+    expect(wrapperStyle).toContain('display:inline-block!important');
+    expect(wrapperStyle).toContain('overflow-x:auto!important');
+    expect(wrapperStyle).toContain('overflow-y:hidden!important');
+    expect(wrapperStyle).toContain('width:12px!important');
+    expect(wrapperStyle).toContain('height:18px!important');
+    expect(wrapperStyle).toContain('vertical-align:-1px!important');
+    expect(wrapperStyle).toContain('margin-left:2px');
+    expect(wrapperStyle).toContain('margin-right:2px');
+    expect(wrapperStyle).not.toContain('position:relative');
+    expect(wrapperStyle).not.toContain('position:absolute');
+    expect(wrapperStyle).not.toContain('display:block');
+    expect(imageStyle).toContain('display:inline-block!important');
+    expect(imageStyle).toContain('margin-left:-1px!important');
+    expect(imageStyle).toContain('margin-top:-2px!important');
+    expect(imageStyle).toContain('vertical-align:top!important');
+    expect(imageStyle).toContain('width:35px!important');
+    expect(imageStyle).toContain('height:22px!important');
+    expect(imageStyle).toContain('max-width:none!important');
+    expect(imageStyle).not.toContain('position:relative');
+    expect(imageStyle).not.toContain('position:absolute');
+    expect(imageStyle).not.toContain('display:block');
+  });
+  it('serializes one decisive source-cap width, responsive bound, and height for a responsive Mermaid frame', () => {
+    const { candidate, root, svg } = mermaidFixture();
+    const completed: CompletedUpload = {
+      autoMargins: false,
+      candidate: { element: candidate, kind: 'mermaid', source: svg },
+      captureSize: { height: 1200, width: 586 },
+      kind: 'mermaid',
+      layoutMagnification: 1,
+      maxWidth: 586,
+      mode: 'mermaid-responsive',
+      rasterized: {
+        file: new File(['png'], 'mermaid.png', { type: 'image/png' }),
+        height: 1200,
+        pixelCount: 586 * 1200,
+        width: 586
+      },
+      url: 'https://example.test/mermaid.png'
+    };
+
+    replaceCompletedVisuals(root, conversionContext(root), [completed]);
+
+    const image = root.querySelector('img');
+    if (!image) throw new Error('wechat-png-replacement-test-image-missing');
+    expect(image.getAttribute('style')).toBe(
+      'display:block!important;width:586px!important;max-width:100%!important;height:auto!important'
+    );
+    expect(declaredStyleDeclarations(image, 'width')).toEqual([{ important: true, property: 'width', value: '586px' }]);
+    expect(declaredStyleDeclarations(image, 'max-width')).toEqual([
+      { important: true, property: 'max-width', value: '100%' }
+    ]);
+    expect(declaredStyleDeclarations(image, 'height')).toEqual([{ important: true, property: 'height', value: 'auto' }]);
+  });
+
+  it.each([
+    { destinationWidth: 280, expectedRenderedWidth: 280 },
+    { destinationWidth: 335, expectedRenderedWidth: 335 },
+    { destinationWidth: 390, expectedRenderedWidth: 350.3125 },
+    { destinationWidth: 677, expectedRenderedWidth: 350.3125 }
+  ])('keeps the validated SVG cap at a $destinationWidth pixel destination', ({ destinationWidth, expectedRenderedWidth }) => {
+    const { candidate, root, svg } = mermaidFixture();
+    const completed: CompletedUpload = {
+      autoMargins: false,
+      candidate: { element: candidate, kind: 'mermaid', source: svg },
+      captureSize: { height: 725.734375, width: 350.3125 },
+      kind: 'mermaid',
+      layoutMagnification: 1,
+      maxWidth: 350.3125,
+      mode: 'mermaid-responsive',
+      rasterized: {
+        file: new File(['png'], 'mermaid.png', { type: 'image/png' }),
+        height: 1452,
+        pixelCount: 701 * 1452,
+        width: 701
+      },
+      url: 'https://example.test/mermaid.png'
+    };
+
+    replaceCompletedVisuals(root, conversionContext(root), [completed]);
+
+    const image = root.querySelector('img');
+    if (!image) throw new Error('wechat-png-replacement-test-image-missing');
+    // The validated source SVG cap is the desktop width, while max-width:100%
+    // keeps narrower destination columns from clipping.
+    expect(singleDeclarationValue(image, 'width')).toBe('350.3125px');
+    expect(singleDeclarationValue(image, 'max-width')).toBe('100%');
+    expect(singleDeclarationValue(image, 'height')).toBe('auto');
+    expect(Math.min(destinationWidth, Number.parseFloat(singleDeclarationValue(image, 'width')))).toBe(
+      expectedRenderedWidth
+    );
+    // Raster DPR only changes the uploaded pixels, never the destination CSS size.
+    expect(image.getAttribute('width')).toBe('701');
+    expect(image.getAttribute('height')).toBe('1452');
+  });
+
+  it('keeps a compensated Mermaid root responsive inside its bounded scroll wrapper', () => {
+    const { candidate, root, svg } = mermaidFixture();
+    const completed: CompletedUpload = {
+      autoMargins: false,
+      candidate: { element: candidate, kind: 'mermaid', source: svg },
+      captureSize: { height: 1200, width: 586 },
+      kind: 'mermaid',
+      layoutMagnification: 2,
+      mode: 'mermaid-root',
+      rasterized: {
+        file: new File(['png'], 'mermaid-compensated.png', { type: 'image/png' }),
+        height: 2400,
+        pixelCount: 1172 * 2400,
+        width: 1172
+      },
+      url: 'https://example.test/mermaid-compensated.png'
+    };
+
+    replaceCompletedVisuals(root, conversionContext(root), [completed]);
+
+    const image = root.querySelector('img');
+    if (!image) throw new Error('wechat-png-replacement-test-compensated-image-missing');
+    expect(image.getAttribute('style')).toBe(
+      'display:block!important;width:100%!important;max-width:100%!important;height:auto!important'
+    );
+    expect(declaredStyleDeclarations(candidate, 'width')).toEqual([
+      { important: true, property: 'width', value: '100%' }
+    ]);
+    expect(declaredStyleDeclarations(candidate, 'max-width')).toEqual([
+      { important: true, property: 'max-width', value: '100%' }
+    ]);
+    expect(declaredStyleDeclarations(candidate, 'height')).toEqual([
+      { important: true, property: 'height', value: 'auto' }
+    ]);
+    expect(candidate.getAttribute('style')).toContain('overflow-x:auto!important');
+    expect(candidate.hasAttribute('data-ignore-width')).toBe(true);
+  });
+
+  it.each([
+    { captureWidth: 200, rasterWidth: 240, expectedWidth: 200 },
+    { captureWidth: 850, rasterWidth: 800, expectedWidth: 800 },
+    { captureWidth: 1220, rasterWidth: 1220, expectedWidth: 1220 }
+  ])('keeps an intrinsic Mermaid capture at its measured width without an upper cap', ({ captureWidth, rasterWidth, expectedWidth }) => {
+    const { candidate, root, svg } = mermaidFixture();
+    const completed: CompletedUpload = {
+      autoMargins: false,
+      candidate: { element: candidate, kind: 'mermaid', source: svg },
+      captureSize: { height: 100, width: captureWidth },
+      kind: 'mermaid',
+      layoutMagnification: 1,
+      mode: 'mermaid-intrinsic',
+      rasterized: {
+        file: new File(['png'], 'mermaid-intrinsic.png', { type: 'image/png' }),
+        height: 100,
+        pixelCount: rasterWidth * 100,
+        width: rasterWidth
+      },
+      url: 'https://example.test/mermaid-intrinsic.png'
+    };
+
+    replaceCompletedVisuals(root, conversionContext(root), [completed]);
+
+    const image = root.querySelector('img');
+    if (!image) throw new Error('wechat-png-replacement-test-image-missing');
+    expect(singleDeclarationValue(image, 'width')).toBe(`${expectedWidth}px`);
+    expect(declaredStyleDeclarations(image, 'width')).toHaveLength(1);
+    expect(declaredStyleDeclarations(image, 'max-width')).toEqual([
+      { important: true, property: 'max-width', value: 'none' }
+    ]);
+    expect(declaredStyleDeclarations(image, 'max-width')).toHaveLength(1);
+    expect(declaredStyleDeclarations(image, 'height')).toEqual([{ important: true, property: 'height', value: 'auto' }]);
+    expect(declaredStyleDeclarations(image, 'height')).toHaveLength(1);
+    expect(image.getAttribute('style')).toContain(`width:${expectedWidth}px!important`);
+    expect(image.getAttribute('style')).not.toContain('max-width:100%');
+    expect(declaredStyleDeclarations(candidate, 'width')).toEqual([
+      { important: true, property: 'width', value: '100%' }
+    ]);
+    expect(declaredStyleDeclarations(candidate, 'max-width')).toEqual([
+      { important: true, property: 'max-width', value: '100%' }
+    ]);
+    expect(declaredStyleDeclarations(candidate, 'height')).toEqual([{ important: true, property: 'height', value: 'auto' }]);
+    expect(candidate.getAttribute('style')).toContain('overflow-x:auto!important');
+    expect(candidate.hasAttribute('data-ignore-width')).toBe(true);
+  });
+});

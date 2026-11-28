@@ -1,5 +1,5 @@
 import { act, render } from "@testing-library/react";
-import { createElement } from "@wordpress/element";
+import { createElement, StrictMode } from "@wordpress/element";
 import { describe, expect, it, vi } from "vitest";
 
 import type {
@@ -154,6 +154,7 @@ function setup(options?: {
 	className?: string;
 	emptyMode?: "message" | "paper";
 	enhance?: PreviewEnhancementPort["enhance"];
+	scopeRenderedStyles?: PreviewEnhancementPort["scopeRenderedStyles"];
 	initialHtml?: string;
 	initialEditMap?: PreviewEditMap;
 	initialSignature?: string;
@@ -169,6 +170,7 @@ function setup(options?: {
 	onImageReadinessChange?: () => void;
 	onStatusChange?: (status: PreviewSurfaceStatus) => void;
 	scrollPort?: PreviewScrollPort;
+	strictMode?: boolean;
 	stagingScheduler?: Readonly<{
 		now?: () => number;
 		yield: () => Promise<void>;
@@ -190,10 +192,12 @@ function setup(options?: {
 			cancel: vi.fn(),
 			commit: vi.fn(),
 		}),
+		scopeRenderedStyles:
+			options?.scopeRenderedStyles ?? vi.fn(() => ({ dispose: vi.fn() })),
 		syncCodeFrameBackgrounds: vi.fn(),
 		enhance: options?.enhance ?? vi.fn().mockResolvedValue(undefined),
 	};
-	const onDiagnostic = options?.onDiagnostic ?? vi.fn();
+	let onDiagnostic = options?.onDiagnostic ?? vi.fn();
 	const defaultScrollPort: PreviewScrollPort = {
 		capture: (surface) => ({
 			left: surface.scrollLeft,
@@ -205,8 +209,8 @@ function setup(options?: {
 			surface.scrollTop = snapshot.top;
 		},
 	};
-	const owner = (emptyMode = options?.emptyMode) => (
-		<div className="easymde-immersive-preview-canvas">
+	const owner = (emptyMode = options?.emptyMode) => {
+		const preview = (
 			<PreviewSurfaceOwner
 				{...(undefined !== className ? { className } : {})}
 				enhancementPort={enhancementPort}
@@ -247,8 +251,13 @@ function setup(options?: {
 				port={{ render: renderPreview }}
 				scrollPort={options?.scrollPort ?? defaultScrollPort}
 			/>
-		</div>
-	);
+		);
+		return (
+			<div className="easymde-immersive-preview-canvas">
+				{options?.strictMode ? <StrictMode>{preview}</StrictMode> : preview}
+			</div>
+		);
+	};
 	const result = render(owner());
 	const surface = result.container.querySelector("article");
 	if (!(surface instanceof HTMLElement)) throw new Error("surface missing");
@@ -269,6 +278,10 @@ function setup(options?: {
 		surface,
 		...result,
 		rerender: () => result.rerender(owner()),
+		setDiagnostic: (next: (code: string) => void) => {
+			onDiagnostic = next;
+			result.rerender(owner());
+		},
 		setCurrentSourceSnapshot: (
 			next: (() => PreviewSourceSnapshot | null) | undefined,
 		) => {
@@ -287,6 +300,222 @@ function setup(options?: {
 }
 
 describe("PreviewSurfaceOwner", () => {
+	it("reacquires and balances rendered style leases across StrictMode DOM reuse", () => {
+		const events: string[] = [];
+		let nextLease = 0;
+		const scopeRenderedStyles = vi.fn(() => {
+			const id = ++nextLease;
+			events.push(`acquire-${id}`);
+			return {
+				dispose: () => events.push(`dispose-${id}`),
+			};
+		});
+		const current = setup({ strictMode: true, scopeRenderedStyles });
+
+		current.unmount();
+		const acquires = events.filter((event) => event.startsWith("acquire-"));
+		const disposes = events.filter((event) => event.startsWith("dispose-"));
+		expect(acquires.length).toBeGreaterThan(0);
+		expect(disposes).toHaveLength(acquires.length);
+		expect(
+			events.some(
+				(event, index) =>
+					event.startsWith("acquire-") &&
+					events
+						.slice(0, index)
+						.some((previous) => previous.startsWith("dispose-")),
+			),
+		).toBe(true);
+	});
+
+	it("reacquires rendered style leases before disposing the prior lease", async () => {
+		const events: string[] = [];
+		let nextLease = 0;
+		const scopeRenderedStyles = vi.fn(() => {
+			const id = ++nextLease;
+			events.push(`acquire-${id}`);
+			return {
+				dispose: () => events.push(`dispose-${id}`),
+			};
+		});
+		const current = setup({ scopeRenderedStyles });
+
+		act(() => current.session.schedule(request("# Updated"), true));
+		await act(async () => {
+			current.responses[0]?.resolve({
+				html: safeHtml("<p>Updated</p>"),
+				features: {},
+			});
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+
+		current.unmount();
+		const acquired = new Set<number>();
+		for (const event of events) {
+			const match = event.match(/^(acquire|dispose)-(\d+)$/);
+			if (!match) continue;
+			const id = Number(match[2]);
+			if ("acquire" === match[1]) acquired.add(id);
+			else expect(acquired).toContain(id);
+		}
+		expect(scopeRenderedStyles).toHaveBeenCalled();
+		expect(events[events.length - 1]).toMatch(/^dispose-/);
+	});
+
+	it("clears unverified content and withholds ready state when rendered style scoping fails", async () => {
+		const onDiagnostic = vi.fn();
+		const scopeRenderedStyles = vi.fn(() => {
+			throw new Error("preview-enhancement-rendered-style-rollback-failed");
+		});
+		const current = setup({ onDiagnostic, scopeRenderedStyles });
+
+		await act(async () => {
+			await Promise.resolve();
+		});
+
+		expect(current.surface.textContent).toBe("");
+		expect(
+			current.surface.getAttribute("data-easymde-preview-accepted"),
+		).toBeNull();
+		expect(onDiagnostic.mock.calls.length).toBeGreaterThanOrEqual(2);
+		expect(onDiagnostic).toHaveBeenNthCalledWith(
+			1,
+			"preview-enhancement-rendered-style-rollback-failed",
+		);
+		expect(onDiagnostic).toHaveBeenNthCalledWith(
+			2,
+			"preview-enhancement-rendered-style-rollback-failed",
+		);
+		current.unmount();
+	});
+
+	it("retains the prior verified ordinary Preview after scoped replacement fails", async () => {
+		const onDiagnostic = vi.fn();
+		const scopeRenderedStyles = vi.fn((surface: HTMLElement) => {
+			if ("New" === surface.textContent) {
+				throw new Error("preview-enhancement-rendered-style-scope-failed");
+			}
+			return { dispose: vi.fn() };
+		});
+		const current = setup({
+			initialHtml: "<p>Old</p>",
+			onDiagnostic,
+			scopeRenderedStyles,
+		});
+
+		act(() => current.session.schedule(request("new-preview"), true));
+		await act(async () => {
+			current.responses[0]?.resolve({
+				html: safeHtml("<p>New</p>"),
+				features: {},
+			});
+			for (let index = 0; index < 8; index += 1) await Promise.resolve();
+		});
+
+		expect(current.surface.textContent).toBe("Old");
+		expect(
+			current.surface.getAttribute("data-easymde-preview-accepted"),
+		).toBeNull();
+		expect(current.surface.getAttribute("data-easymde-preview-error")).toBe(
+			"1",
+		);
+		expect(
+			current.canvas.querySelectorAll("[data-easymde-preview-staging]"),
+		).toHaveLength(0);
+		expect(onDiagnostic).toHaveBeenCalledTimes(1);
+		expect(onDiagnostic).toHaveBeenCalledWith(
+			"preview-enhancement-rendered-style-scope-failed",
+		);
+		current.unmount();
+	});
+
+	it("reports a normalized rollback diagnostic when style restoration is unverified", async () => {
+		const onDiagnostic = vi.fn();
+		let activeSurface: HTMLElement | null = null;
+		let replacementFailed = false;
+		const scopeRenderedStyles = vi.fn((surface: HTMLElement) => {
+			if (surface === activeSurface && surface.textContent?.includes("New")) {
+				replacementFailed = true;
+				throw new Error("preview-enhancement-rendered-style-scope-failed");
+			}
+			if (
+				replacementFailed &&
+				surface === activeSurface &&
+				surface.textContent?.includes("Old")
+			) {
+				throw new Error("preview-enhancement-rendered-style-rollback-failed");
+			}
+			return { dispose: vi.fn() };
+		});
+		const current = setup({
+			initialHtml: "<p>Old</p>",
+			onDiagnostic,
+			scopeRenderedStyles,
+		});
+		activeSurface = current.surface;
+
+		act(() =>
+			current.session.schedule(request("new-preview", "unverified"), true),
+		);
+		await act(async () => {
+			current.responses[0]?.resolve({
+				html: safeHtml("<p>New</p>"),
+				features: {},
+			});
+			for (let index = 0; index < 8; index += 1) await Promise.resolve();
+		});
+
+		expect(current.surface.textContent).toBe("");
+		expect(current.surface.getAttribute("data-easymde-preview-error")).toBe(
+			"1",
+		);
+		expect(onDiagnostic.mock.calls.map(([code]) => code)).toEqual([
+			"preview-enhancement-rendered-style-scope-failed",
+			"preview-enhancement-rendered-style-rollback-failed",
+		]);
+		current.unmount();
+	});
+
+	it("reports current response validation failures and suppresses stale ones", async () => {
+		const initialDiagnostic = vi.fn();
+		const onDiagnostic = vi.fn();
+		const current = setup({
+			initialHtml: "",
+			onDiagnostic: initialDiagnostic,
+		});
+		current.setDiagnostic(onDiagnostic);
+
+		act(() => current.session.schedule(request("# Invalid response"), true));
+		await act(async () => {
+			current.responses[0]?.reject(new Error("preview-response-invalid"));
+			await Promise.resolve();
+		});
+
+		expect(onDiagnostic).toHaveBeenCalledWith("preview-response-invalid");
+		expect(initialDiagnostic).not.toHaveBeenCalled();
+		expect(current.surface.textContent).toBe(messages.error);
+		expect(
+			current.surface.getAttribute("data-easymde-preview-error"),
+		).toBeNull();
+		current.unmount();
+
+		const staleDiagnostic = vi.fn();
+		const staleOwner = setup({
+			initialHtml: "",
+			onDiagnostic: staleDiagnostic,
+		});
+		act(() => staleOwner.session.schedule(request("# First", "first"), true));
+		const staleResponse = staleOwner.responses[0];
+		act(() => staleOwner.session.schedule(request("# Second", "second"), true));
+		await act(async () => {
+			staleResponse?.reject(new Error("preview-response-invalid"));
+			await Promise.resolve();
+		});
+
+		expect(staleDiagnostic).not.toHaveBeenCalled();
+		staleOwner.unmount();
+	});
 	it("reports verified Preview image load and error readiness", async () => {
 		const onImageReadinessChange = vi.fn();
 		const current = setup({
@@ -1170,6 +1399,7 @@ describe("PreviewSurfaceOwner", () => {
 			initialHtml: fixture.html.replace("b1", "wrong"),
 			initialSignature: "invalid-map",
 			onDiagnostic: (code) => diagnostics.push(code),
+			stagingScheduler: { now: () => 0, yield: () => Promise.resolve() },
 		});
 
 		await act(async () => {

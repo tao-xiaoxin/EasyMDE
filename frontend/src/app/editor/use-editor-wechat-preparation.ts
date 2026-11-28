@@ -8,7 +8,10 @@ import type {
   PreviewSurfaceStatus
 } from '../../features/live-preview/ui/PreviewSurfaceOwner';
 import { WECHAT_PREPARATION_DEBOUNCE_MS } from './editor-root-helpers';
-import type { SharedRef } from './editor-root-types';
+import type {
+  ImmersiveVisualEditorRuntime,
+  SharedRef
+} from './editor-root-types';
 
 export type UseEditorWechatPreparationOptions = Readonly<{
   immersive: boolean;
@@ -18,11 +21,14 @@ export type UseEditorWechatPreparationOptions = Readonly<{
   previewRuntimeRef: SharedRef<PreviewSurfaceRuntime | null>;
   previewSurfaceStatusRef: SharedRef<PreviewSurfaceStatus>;
   rootActiveRef: SharedRef<boolean>;
+  visualEditorRuntimeRef: SharedRef<ImmersiveVisualEditorRuntime | null>;
   visualPreviewEditingRef: SharedRef<boolean>;
   visualPreviewLockingRef: SharedRef<boolean>;
   visualPreviewUnlockingRef: SharedRef<boolean>;
   wechatClipboard: WechatClipboardPort;
+  wechatCopyPendingRef: SharedRef<boolean>;
   wechatExportEnabled: boolean;
+  wechatPngConversionEnabled: boolean;
 }>;
 
 export function useEditorWechatPreparation({
@@ -33,17 +39,45 @@ export function useEditorWechatPreparation({
   previewRuntimeRef,
   previewSurfaceStatusRef,
   rootActiveRef,
+  visualEditorRuntimeRef,
   visualPreviewEditingRef,
   visualPreviewLockingRef,
   visualPreviewUnlockingRef,
   wechatClipboard,
-  wechatExportEnabled
+  wechatCopyPendingRef,
+  wechatExportEnabled,
+  wechatPngConversionEnabled
 }: UseEditorWechatPreparationOptions) {
   const scheduledWechatPreparationRef = useRef<(() => void) | null>(null);
   const wechatBackgroundPreparationRef = useRef<{
     controller: AbortController;
+    inFlight: number;
   } | null>(null);
   const previousWechatLayoutRef = useRef({ immersive, mode: immersiveMode });
+
+  const rememberWechatPreviewWidth = useCallback(
+    (surface?: HTMLElement | null) => {
+      if (!wechatExportEnabled) return;
+      const remember = wechatClipboard.rememberPreviewWidth;
+      if (!remember) return;
+      const visualSurface = visualPreviewEditingRef.current
+        ? visualEditorRuntimeRef.current?.surface
+        : null;
+      const activePreview =
+        surface
+        ?? (visualSurface?.isConnected ? visualSurface : null)
+        ?? previewRuntimeRef.current?.surface
+        ?? null;
+      if (activePreview) remember(activePreview);
+    },
+    [
+      previewRuntimeRef,
+      visualEditorRuntimeRef,
+      visualPreviewEditingRef,
+      wechatClipboard,
+      wechatExportEnabled
+    ]
+  );
 
   const clearScheduledWechatPreparation = useCallback(() => {
     scheduledWechatPreparationRef.current?.();
@@ -55,13 +89,24 @@ export function useEditorWechatPreparation({
     const preparation = wechatBackgroundPreparationRef.current;
     wechatBackgroundPreparationRef.current = null;
     preparation?.controller.abort();
-  }, [clearScheduledWechatPreparation]);
+    const releasePrepared = wechatClipboard.releasePrepared;
+    const preview = previewRuntimeRef.current?.surface;
+    const visual = visualEditorRuntimeRef.current?.surface;
+    if (preview) releasePrepared?.(preview);
+    if (visual && visual !== preview) releasePrepared?.(visual);
+  }, [
+    clearScheduledWechatPreparation,
+    previewRuntimeRef,
+    visualEditorRuntimeRef,
+    wechatClipboard
+  ]);
 
   const prepareWechatPreview = useCallback(
     (surface: HTMLElement | null) => {
       const prepare = wechatClipboard.prepare;
       if (
         !rootActiveRef.current
+        || wechatCopyPendingRef.current
         || visualPreviewEditingRef.current
         || visualPreviewUnlockingRef.current
         || visualPreviewLockingRef.current
@@ -73,7 +118,7 @@ export function useEditorWechatPreparation({
         return;
       let preparation = wechatBackgroundPreparationRef.current;
       if (!preparation) {
-        preparation = { controller: new AbortController() };
+        preparation = { controller: new AbortController(), inFlight: 0 };
         wechatBackgroundPreparationRef.current = preparation;
       }
       if (preparation.controller.signal.aborted) return;
@@ -81,13 +126,44 @@ export function useEditorWechatPreparation({
       // ready when requested. Its result is reported by the actual copy
       // operation; opening or editing a Preview is not a copy failure.
       const currentPreparation = preparation;
-      void prepare(surface, {
-        background: true,
-        signal: currentPreparation.controller.signal
-      })
+      const geometryOnly = wechatPngConversionEnabled;
+      currentPreparation.inFlight += 1;
+      let task: Promise<void>;
+      try {
+        task = Promise.resolve(
+          prepare(surface, {
+            background: true,
+            ...(geometryOnly ? { geometryOnly: true } : {}),
+            signal: currentPreparation.controller.signal
+          })
+        );
+      } catch {
+        currentPreparation.inFlight = Math.max(
+          0,
+          currentPreparation.inFlight - 1
+        );
+        if (
+          !geometryOnly
+          && wechatBackgroundPreparationRef.current === currentPreparation
+          && 0 === currentPreparation.inFlight
+        ) {
+          wechatBackgroundPreparationRef.current = null;
+        }
+        return;
+      }
+      void task
         .catch(() => undefined)
         .finally(() => {
-          if (wechatBackgroundPreparationRef.current === currentPreparation) {
+          currentPreparation.inFlight = Math.max(
+            0,
+            currentPreparation.inFlight - 1
+          );
+          // Geometry-only preparation retains its owner controller so a later
+          // theme or Preview disposal can abort and clean the cached lease.
+          if (wechatBackgroundPreparationRef.current !== currentPreparation) {
+            return;
+          }
+          if (!geometryOnly && 0 === currentPreparation.inFlight) {
             wechatBackgroundPreparationRef.current = null;
           }
         });
@@ -99,7 +175,9 @@ export function useEditorWechatPreparation({
       visualPreviewLockingRef,
       visualPreviewUnlockingRef,
       wechatClipboard,
-      wechatExportEnabled
+      wechatCopyPendingRef,
+      wechatExportEnabled,
+      wechatPngConversionEnabled
     ]
   );
 
@@ -107,6 +185,13 @@ export function useEditorWechatPreparation({
     (surface: HTMLElement | null) => {
       const prepare = wechatClipboard.prepare;
       if (!wechatExportEnabled || !surface || !prepare) return;
+      if (wechatCopyPendingRef.current) {
+        clearScheduledWechatPreparation();
+        return;
+      }
+      if (wechatPngConversionEnabled) {
+        rememberWechatPreviewWidth(surface);
+      }
       clearScheduledWechatPreparation();
       const cancel = immersiveEnvironment.schedule(() => {
         scheduledWechatPreparationRef.current = null;
@@ -118,8 +203,11 @@ export function useEditorWechatPreparation({
       clearScheduledWechatPreparation,
       immersiveEnvironment,
       prepareWechatPreview,
+      rememberWechatPreviewWidth,
       wechatClipboard,
-      wechatExportEnabled
+      wechatCopyPendingRef,
+      wechatExportEnabled,
+      wechatPngConversionEnabled
     ]
   );
 
@@ -146,7 +234,8 @@ export function useEditorWechatPreparation({
     immersiveEnvironment,
     scheduleCurrentWechatPreviewPreparation,
     wechatClipboard,
-    wechatExportEnabled
+    wechatExportEnabled,
+    wechatPngConversionEnabled
   ]);
 
   useEffect(() => {
@@ -165,7 +254,8 @@ export function useEditorWechatPreparation({
     previewRuntimeRef,
     scheduleCurrentWechatPreviewPreparation,
     wechatClipboard,
-    wechatExportEnabled
+    wechatExportEnabled,
+    wechatPngConversionEnabled
   ]);
 
   useEffect(() => {
@@ -177,13 +267,29 @@ export function useEditorWechatPreparation({
     scheduleCurrentWechatPreviewPreparation();
   }, [immersive, immersiveMode, scheduleCurrentWechatPreviewPreparation]);
 
+  useEffect(() => {
+    scheduleCurrentWechatPreviewPreparation();
+  }, [
+    scheduleCurrentWechatPreviewPreparation,
+    wechatClipboard,
+    wechatExportEnabled,
+    wechatPngConversionEnabled
+  ]);
+
   useEffect(
     () => () => cancelWechatBackgroundPreparation(),
-    [cancelWechatBackgroundPreparation, wechatClipboard, wechatExportEnabled]
+    [
+      cancelWechatBackgroundPreparation,
+      wechatClipboard,
+      wechatExportEnabled,
+      wechatPngConversionEnabled
+    ]
   );
 
   return {
     cancelWechatBackgroundPreparation,
+    clearScheduledWechatPreparation,
+    rememberWechatPreviewWidth,
     scheduleCurrentWechatPreviewPreparation,
     scheduleWechatPreviewPreparation
   };

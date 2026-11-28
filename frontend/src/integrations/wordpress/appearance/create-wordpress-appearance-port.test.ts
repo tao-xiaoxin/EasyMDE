@@ -9,8 +9,20 @@ import { createWordPressAppearancePort } from './create-wordpress-appearance-por
 
 const assetBaseUrl = 'https://example.test/wp-content/plugins/easymde/';
 
+function attachStylesheet(link: HTMLLinkElement | null | undefined): void {
+  if (!link) return;
+  const style = document.createElement('style');
+  style.textContent = '.easymde-rendered-content { color: black; }';
+  document.head.append(style);
+  Object.defineProperty(link, 'sheet', {
+    configurable: true,
+    value: style.sheet
+  });
+}
+
 function fixture() {
-  document.head.innerHTML = '<link id="easymde-article-theme-css" rel="stylesheet">';
+  document.head.innerHTML = `<link id="easymde-article-theme-css" rel="stylesheet" href="${assetBaseUrl}assets/themes/article/default.css">`;
+  attachStylesheet(document.querySelector<HTMLLinkElement>('#easymde-article-theme-css'));
   const field = () => document.createElement('input');
   const bootstrap: AppearanceBootstrap = {
     articleThemes: [{
@@ -64,6 +76,33 @@ function fixture() {
     nonce: 'synthetic-nonce',
     siteUrl: 'https://example.test/wp-admin/post.php'
   };
+}
+
+function fixtureWithInitialCustomCss() {
+  const options = fixture();
+  const customCss = options.bootstrap.customCss[0];
+  if (!customCss) throw new Error('test-custom-css-missing');
+  const customStyle = document.createElement('style');
+  customStyle.id = 'easymde-custom-css-preview';
+  customStyle.textContent = customCss.scopedCss;
+  document.head.append(customStyle);
+  options.bootstrap = {
+    ...options.bootstrap,
+    state: {
+      codeTheme: 'atom-one-dark',
+      customCssId: customCss.id,
+      markdownTheme: 'custom'
+    }
+  };
+  return options;
+}
+
+function editorAliasCount(style: HTMLStyleElement): number {
+  const sheet = style.sheet;
+  if (!sheet) throw new Error('test-custom-style-sheet-missing');
+  return Array.from(sheet.cssRules).filter(({ cssText }) =>
+    cssText.includes('#easymde-editor-root')
+  ).length;
 }
 
 describe('createWordPressAppearancePort', () => {
@@ -142,9 +181,40 @@ describe('createWordPressAppearancePort', () => {
       .toBe('.easymde-rendered-content .note { color: navy; }');
   });
 
+  it('reuses a valid scoped custom style for code-only changes', async () => {
+    const options = fixtureWithInitialCustomCss();
+    const port = createWordPressAppearancePort(options);
+    const customStyle = document.querySelector<HTMLStyleElement>(
+      '#easymde-custom-css-preview'
+    );
+    const customSheet = customStyle?.sheet;
+    if (!customStyle || !customSheet) throw new Error('test-custom-style-missing');
+    const originalText = customStyle.textContent;
+    const originalAliasCount = editorAliasCount(customStyle);
+    if (0 === originalAliasCount) throw new Error('test-custom-style-alias-missing');
+
+    await expect(port.applyState({
+      codeTheme: 'atom-one-dark',
+      customCssId: 'writer-css',
+      markdownTheme: 'custom'
+    }, true)).resolves.toBe(true);
+
+    expect(document.querySelector('#easymde-custom-css-preview')).toBe(customStyle);
+    expect(customStyle.textContent).toBe(originalText);
+    expect(customStyle.sheet).toBe(customSheet);
+    expect(editorAliasCount(customStyle)).toBe(originalAliasCount);
+    expect(options.fields.codeThemeExplicit.value).toBe('1');
+    port.dispose();
+  });
+
   it('commits a changed article theme only after its stylesheet loads', async () => {
     const options = fixture();
     const port = createWordPressAppearancePort(options);
+    const activeLink = document.querySelector<HTMLLinkElement>(
+      '#easymde-article-theme-css'
+    );
+    if (!activeLink) throw new Error('test-active-article-link-missing');
+    const activeParent = activeLink.parentElement;
     const applied = port.applyState(
       { codeTheme: 'atom-one-dark', customCssId: '', markdownTheme: 'newsprint' },
       false
@@ -155,12 +225,202 @@ describe('createWordPressAppearancePort', () => {
     expect(candidate?.href).toBe(`${assetBaseUrl}assets/themes/article/newsprint.css`);
     expect(options.fields.markdownTheme.value).toBe('default');
 
+    attachStylesheet(candidate);
+    attachStylesheet(candidate);
     candidate?.dispatchEvent(new Event('load'));
 
     await expect(applied).resolves.toBe(true);
     expect(options.fields.markdownTheme.value).toBe('newsprint');
-    expect(document.querySelector<HTMLLinkElement>('#easymde-article-theme-css')?.href)
+    expect(document.querySelector<HTMLLinkElement>('#easymde-article-theme-css'))
+      .toBe(candidate);
+    expect(activeLink.isConnected).toBe(false);
+    expect(candidate?.parentElement).toBe(activeParent);
+    expect(candidate?.href)
       .toBe(`${assetBaseUrl}assets/themes/article/newsprint.css`);
+  });
+
+  it('rejects a commit failure even when candidate lease cleanup fails', async () => {
+    const options = fixture();
+    const port = createWordPressAppearancePort(options);
+    const activeLink = document.querySelector<HTMLLinkElement>(
+      '#easymde-article-theme-css'
+    );
+    const activeSheet = activeLink?.sheet;
+    const customStyle = document.querySelector<HTMLStyleElement>(
+      '#easymde-custom-css-preview'
+    );
+    if (!activeLink || !activeSheet || !customStyle) {
+      throw new Error('test-active-article-link-missing');
+    }
+    const originalCustomText = customStyle.textContent;
+    const removeArticleLink = vi.spyOn(activeLink, 'remove').mockImplementation(() => {
+      throw new Error('appearance-article-theme-dom-handoff-failed');
+    });
+    const candidateStyle = document.createElement('style');
+    candidateStyle.textContent = '.easymde-rendered-content { color: green; }';
+    document.head.append(candidateStyle);
+    const candidateSheet = candidateStyle.sheet;
+    if (!candidateSheet) throw new Error('test-candidate-style-missing');
+    const candidateDispose = vi.fn(() => {
+      throw new Error('appearance-candidate-dispose-failed');
+    });
+    Object.defineProperty(candidateSheet, 'deleteRule', {
+      configurable: true,
+      value: candidateDispose
+    });
+
+    try {
+      const applied = port.applyState(
+        { codeTheme: 'atom-one-dark', customCssId: '', markdownTheme: 'newsprint' },
+        false
+      );
+      const candidate = Array.from(document.head.querySelectorAll('link'))
+        .find((link) => link !== activeLink);
+      if (!candidate) throw new Error('test-article-candidate-missing');
+      Object.defineProperty(candidate, 'sheet', {
+        configurable: true,
+        value: candidateSheet
+      });
+      candidate.dispatchEvent(new Event('load'));
+
+      const error = await applied.catch((value: unknown) => value);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message)
+        .toBe('appearance-article-theme-dom-handoff-failed');
+      expect((error as Error & { cause?: Error }).cause?.message)
+        .toBe('editor-stylesheet-rollback-failed');
+      expect(candidateDispose).toHaveBeenCalledOnce();
+      expect(candidate.isConnected).toBe(false);
+      expect(document.querySelector('#easymde-article-theme-css')).toBe(activeLink);
+      expect(customStyle.isConnected).toBe(true);
+      expect(customStyle.textContent).toBe(originalCustomText);
+      expect(options.fields.codeTheme.value).toBe('atom-one-dark');
+      expect(options.fields.codeThemeExplicit.value).toBe('0');
+      expect(options.fields.customCssId.value).toBe('');
+      expect(options.fields.markdownTheme.value).toBe('default');
+    } finally {
+      removeArticleLink.mockRestore();
+      try {
+        port.dispose();
+      } catch {
+        // The injected lease intentionally fails on disposal.
+      }
+    }
+  });
+
+  it('preserves a scoped custom style when article preparation fails', async () => {
+    const options = fixtureWithInitialCustomCss();
+    const port = createWordPressAppearancePort(options);
+    const customStyle = document.querySelector<HTMLStyleElement>(
+      '#easymde-custom-css-preview'
+    );
+    const customSheet = customStyle?.sheet;
+    if (!customStyle || !customSheet) throw new Error('test-custom-style-missing');
+    const originalText = customStyle.textContent;
+    const originalAliasCount = editorAliasCount(customStyle);
+    if (0 === originalAliasCount) throw new Error('test-custom-style-alias-missing');
+
+    const applied = port.applyState(
+      { codeTheme: 'atom-one-dark', customCssId: '', markdownTheme: 'newsprint' },
+      false
+    );
+    const candidate = Array.from(document.head.querySelectorAll('link'))
+      .find((link) => 'easymde-article-theme-css' !== link.id);
+    if (!candidate) throw new Error('test-article-candidate-missing');
+    Object.defineProperty(candidate, 'sheet', {
+      configurable: true,
+      value: {
+        get cssRules(): CSSRuleList {
+          throw new Error('synthetic-article-sheet-read-failed');
+        }
+      }
+    });
+    candidate.dispatchEvent(new Event('load'));
+
+    await expect(applied).rejects.toThrowError('editor-stylesheet-read-failed');
+    expect(customStyle).toBe(document.querySelector('#easymde-custom-css-preview'));
+    expect(customStyle.isConnected).toBe(true);
+    expect(customStyle.textContent).toBe(originalText);
+    expect(customStyle.sheet).toBe(customSheet);
+    expect(editorAliasCount(customStyle)).toBe(originalAliasCount);
+    expect(candidate.isConnected).toBe(false);
+    port.dispose();
+  });
+
+  it('keeps the old canonical link when its lease disposal fails', async () => {
+    const options = fixtureWithInitialCustomCss();
+    const port = createWordPressAppearancePort(options);
+    const activeLink = document.querySelector<HTMLLinkElement>(
+      '#easymde-article-theme-css'
+    );
+    const activeSheet = activeLink?.sheet;
+    if (!activeLink || !activeSheet) throw new Error('test-active-article-link-missing');
+    const originalMedia = activeLink.media;
+    const customStyle = document.querySelector<HTMLStyleElement>(
+      '#easymde-custom-css-preview'
+    );
+    if (!customStyle) throw new Error('test-custom-style-missing');
+    const originalCustomText = customStyle.textContent;
+    const activeDispose = vi.fn(() => {
+      throw new Error('appearance-old-lease-dispose-failed');
+    });
+    Object.defineProperty(activeSheet, 'deleteRule', {
+      configurable: true,
+      value: activeDispose
+    });
+
+    try {
+      const applied = port.applyState(
+        { codeTheme: 'github', customCssId: '', markdownTheme: 'newsprint' },
+        true
+      );
+      const candidate = Array.from(document.head.querySelectorAll('link'))
+        .find((link) => link !== activeLink);
+      if (!candidate) throw new Error('test-article-candidate-missing');
+      attachStylesheet(candidate);
+      candidate.dispatchEvent(new Event('load'));
+
+      await expect(applied).rejects.toThrowError(
+        'editor-stylesheet-rollback-failed'
+      );
+      expect(activeDispose).toHaveBeenCalledOnce();
+      expect(candidate.isConnected).toBe(false);
+      expect(document.querySelector('#easymde-article-theme-css')).toBe(activeLink);
+      expect(activeLink.isConnected).toBe(true);
+      expect(activeLink.media).toBe(originalMedia);
+      expect(document.querySelector('#easymde-custom-css-preview')).toBe(customStyle);
+      expect(customStyle.isConnected).toBe(true);
+      expect(customStyle.textContent).toBe(originalCustomText);
+      expect(options.fields.codeTheme.value).toBe('atom-one-dark');
+      expect(options.fields.codeThemeExplicit.value).toBe('0');
+      expect(options.fields.customCssId.value).toBe('writer-css');
+      expect(options.fields.markdownTheme.value).toBe('custom');
+      options.apiFetch.mockResolvedValueOnce({
+        customCss: options.bootstrap.customCss,
+        item: { id: 'writer-css' }
+      });
+      await expect(port.saveCustomCss({
+        articleThemeName: 'Writer Article',
+        codeThemeName: 'Writer Code',
+        css: '.note { color: navy; }',
+        id: 'writer-css'
+      })).resolves.toMatchObject({
+        snapshot: { state: { codeTheme: 'atom-one-dark', markdownTheme: 'custom' } },
+        status: 'saved'
+      });
+      await expect(
+        port.applyState(
+          { codeTheme: 'atom-one-dark', customCssId: '', markdownTheme: 'default' },
+          false
+        )
+      ).rejects.toThrowError('appearance-state-unverified');
+    } finally {
+      try {
+        port.dispose();
+      } catch {
+        // The injected lease intentionally fails on disposal.
+      }
+    }
   });
 
   it('rejects stylesheet load failure without replacing the active theme', async () => {
@@ -176,6 +436,7 @@ describe('createWordPressAppearancePort', () => {
     const candidate = Array.from(document.head.querySelectorAll('link'))
       .find((link) => link !== activeLink);
 
+    attachStylesheet(candidate);
     candidate?.dispatchEvent(new Event('error'));
 
     await expect(applied).rejects.toThrowError(
@@ -226,7 +487,7 @@ describe('createWordPressAppearancePort', () => {
         const candidate = Array.from(document.head.querySelectorAll('link'))
           .find((link) => link.id !== 'easymde-article-theme-css');
 
-        if ('load' === exit) candidate?.dispatchEvent(new Event('load'));
+        if ('load' === exit) { attachStylesheet(candidate); candidate?.dispatchEvent(new Event('load')); }
         if ('error' === exit) candidate?.dispatchEvent(new Event('error'));
         if ('cancel' === exit) {
           await port.applyState(
@@ -264,6 +525,7 @@ describe('createWordPressAppearancePort', () => {
       true
     );
 
+    attachStylesheet(firstCandidate);
     firstCandidate?.dispatchEvent(new Event('load'));
 
     await expect(first).resolves.toBe(false);
@@ -410,6 +672,147 @@ describe('createWordPressAppearancePort', () => {
     await expect(
       port.previewCustomCss('h2 {}', new AbortController().signal)
     ).rejects.toEqual({ code: 'rest_cookie_invalid_nonce' });
+  });
+
+  it('aborts atomically before mutating fields or active leases when onBeforePublish throws', async () => {
+    const options = fixture();
+    const port = createWordPressAppearancePort(options);
+    const activeLink = document.querySelector<HTMLLinkElement>(
+      '#easymde-article-theme-css'
+    );
+    const activeSheet = activeLink?.sheet;
+    if (!activeLink || !activeSheet) {
+      throw new Error('test-active-article-link-missing');
+    }
+    const activeDeleteRuleSpy = vi.spyOn(activeSheet, 'deleteRule');
+    const observedFieldWrites: Array<Record<string, string>> = [];
+    const observeField = (
+      input: HTMLInputElement,
+      name: string
+    ): (() => void) => {
+      const descriptor = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        'value'
+      );
+      if (!descriptor?.get || !descriptor.set) {
+        throw new Error('input-value-descriptor-missing');
+      }
+      Object.defineProperty(input, 'value', {
+        configurable: true,
+        get() {
+          return descriptor.get?.call(this);
+        },
+        set(nextValue: string) {
+          observedFieldWrites.push({ [name]: nextValue });
+          descriptor.set?.call(this, nextValue);
+        }
+      });
+      return () => {
+        delete (input as unknown as Record<string, unknown>).value;
+      };
+    };
+    const restoreObservers = [
+      observeField(options.fields.markdownTheme, 'markdownTheme'),
+      observeField(options.fields.codeTheme, 'codeTheme'),
+      observeField(options.fields.codeThemeExplicit, 'codeThemeExplicit'),
+      observeField(options.fields.customCssId, 'customCssId')
+    ];
+
+    try {
+      // 1. Async article-theme + code-theme switch: onBeforePublish runs after candidate
+      //    load/scope and before disposing previousArticleLease or writing fields.
+      let sawScopedCandidate = false;
+      const asyncApplied = port.applyState(
+        { codeTheme: 'github', customCssId: '', markdownTheme: 'newsprint' },
+        false,
+        () => {
+          expect(activeDeleteRuleSpy).not.toHaveBeenCalled();
+          expect(activeLink.isConnected).toBe(true);
+          expect(activeLink.id).toBe('easymde-article-theme-css');
+          expect(observedFieldWrites).toEqual([]);
+          expect(options.fields.markdownTheme.value).toBe('default');
+          expect(options.fields.codeTheme.value).toBe('atom-one-dark');
+          expect(options.fields.codeThemeExplicit.value).toBe('0');
+          expect(options.fields.customCssId.value).toBe('');
+          sawScopedCandidate = Boolean(
+            candidate?.sheet
+            && Array.from(candidate.sheet.cssRules).some(({ cssText }) =>
+              cssText.includes('#easymde-editor-root')
+            )
+          );
+          throw new Error('editor-stylesheet-rollback-failed');
+        }
+      );
+      const candidate = Array.from(document.head.querySelectorAll('link'))
+        .find((link) => link !== activeLink);
+      if (!candidate) throw new Error('test-article-candidate-missing');
+      attachStylesheet(candidate);
+      const candidateSheet = candidate.sheet;
+      if (!candidateSheet) throw new Error('test-candidate-sheet-missing');
+      candidate.dispatchEvent(new Event('load'));
+
+      await expect(asyncApplied).rejects.toThrowError(
+        'editor-stylesheet-rollback-failed'
+      );
+      expect(sawScopedCandidate).toBe(true);
+      expect(activeDeleteRuleSpy).not.toHaveBeenCalled();
+      expect(candidate.isConnected).toBe(false);
+      expect(
+        Array.from(candidateSheet.cssRules).some(({ cssText }) =>
+          cssText.includes('#easymde-editor-root')
+        )
+      ).toBe(false);
+      expect(document.querySelector('#easymde-article-theme-css')).toBe(activeLink);
+      expect(activeLink.isConnected).toBe(true);
+      // Fields were NEVER written with the rejected values ('newsprint' / 'github').
+      expect(
+        observedFieldWrites.some((entry) =>
+          Object.values(entry).some((value) => 'newsprint' === value || 'github' === value)
+        )
+      ).toBe(false);
+      expect(options.fields.markdownTheme.value).toBe('default');
+      expect(options.fields.codeTheme.value).toBe('atom-one-dark');
+      expect(options.fields.codeThemeExplicit.value).toBe('0');
+      expect(options.fields.customCssId.value).toBe('');
+
+      // 2. Synchronous same-article-theme code-theme switch also aborts atomically.
+      observedFieldWrites.length = 0;
+      await expect(
+        port.applyState(
+          { codeTheme: 'github', customCssId: '', markdownTheme: 'default' },
+          true,
+          () => {
+            expect(observedFieldWrites).toEqual([]);
+            throw new Error('preview-enhancement-resource-stale');
+          }
+        )
+      ).rejects.toThrowError('preview-enhancement-resource-stale');
+      expect(
+        observedFieldWrites.some((entry) =>
+          Object.values(entry).some((value) => 'github' === value || '1' === value)
+        )
+      ).toBe(false);
+      expect(options.fields.codeTheme.value).toBe('atom-one-dark');
+      expect(options.fields.codeThemeExplicit.value).toBe('0');
+
+      // 3. Port remains verified and usable for a subsequent valid switch.
+      const recovery = port.applyState(
+        { codeTheme: 'github', customCssId: '', markdownTheme: 'newsprint' },
+        true
+      );
+      const nextCandidate = Array.from(document.head.querySelectorAll('link'))
+        .find((link) => link !== activeLink);
+      if (!nextCandidate) throw new Error('test-recovery-candidate-missing');
+      attachStylesheet(nextCandidate);
+      nextCandidate.dispatchEvent(new Event('load'));
+      await expect(recovery).resolves.toBe(true);
+      expect(options.fields.markdownTheme.value).toBe('newsprint');
+      expect(options.fields.codeTheme.value).toBe('github');
+      expect(options.fields.codeThemeExplicit.value).toBe('1');
+    } finally {
+      for (const restore of restoreObservers) restore();
+      port.dispose();
+    }
   });
 
   it.each([

@@ -1,8 +1,11 @@
+import { Blob as NodeBlob } from "node:buffer";
+import { webcrypto } from "node:crypto";
 import katex from "katex";
 import { describe, expect, it, vi } from "vitest";
 
 import type { EditorClipboardPort } from "../../contracts/ports/editor-clipboard-port";
 import type { WechatVisualRasterizationPort } from "../../contracts/ports/wechat-visual-rasterization-port";
+import { createBrowserWechatVisualRasterizer } from "../../integrations/browser/wechat/create-browser-wechat-visual-rasterizer";
 import {
 	createGeneratedContentExportSession,
 	type GeneratedContentExportIdentity,
@@ -576,6 +579,225 @@ describe("generated content export session", () => {
 			"generated-content-export-lease-stale",
 		);
 		expect(clipboardPort.write).not.toHaveBeenCalled();
+	});
+
+	it("rejects shrunken or oversized rasterizer dimensions while accepting bounded expansion", async () => {
+		const target = mathTarget();
+		const source = document.createElement("div");
+		const lease = validatedLease(target, source);
+
+		const shrunken = createGeneratedContentExportSession({
+			clipboard: clipboard(),
+			rasterizer: rasterizer({
+				rasterize: vi.fn(async () => ({
+					file: new File(["png"], "generated.png", { type: "image/png" }),
+					height: 19,
+					pixelCount: 190,
+					width: 10,
+				})),
+			}),
+		});
+		expectFailed(
+			await shrunken.copyAsImage({
+				dimensions: { height: 20, width: 10 },
+				identity: () => identity(target),
+				mode: "ordinary",
+				...lease,
+			}),
+			"generated-content-export-rasterization-invalid",
+		);
+
+		const oversized = createGeneratedContentExportSession({
+			clipboard: clipboard(),
+			rasterizer: rasterizer({
+				rasterize: vi.fn(async () => ({
+					file: new File(["png"], "generated.png", { type: "image/png" }),
+					height: 20,
+					pixelCount: 4097 * 20,
+					width: 4097,
+				})),
+			}),
+		});
+		expectFailed(
+			await oversized.copyAsImage({
+				dimensions: { height: 20, width: 10 },
+				identity: () => identity(target),
+				mode: "ordinary",
+				...lease,
+			}),
+			"generated-content-export-rasterization-invalid",
+		);
+
+		const expanded = createGeneratedContentExportSession({
+			clipboard: clipboard(),
+			rasterScale: 1.5,
+			rasterizer: rasterizer({
+				rasterize: vi.fn(async () => ({
+					file: new File(["png"], "generated.png", { type: "image/png" }),
+					height: 42,
+					pixelCount: Math.ceil(83 * 1.5) * Math.ceil(42 * 1.5),
+					width: 83,
+				})),
+			}),
+		});
+		expect(
+			await expanded.copyAsImage({
+				dimensions: { height: 41.39, width: 82.4 },
+				identity: () => identity(target),
+				mode: "ordinary",
+				...lease,
+			}),
+		).toEqual({ status: "copied" });
+		source.remove();
+	});
+
+	it("copies fractional-dimension KaTeX formulas and downscaled Mermaid diagrams through the real browser rasterizer", async () => {
+		class RealRasterizerImageStub {
+			crossOrigin = "";
+			decode = vi.fn(async () => undefined);
+			onerror: (() => void) | null = null;
+			onload: (() => void) | null = null;
+
+			set src(_value: string) {
+				this.onload?.();
+			}
+		}
+
+		const cryptoDescriptor = Object.getOwnPropertyDescriptor(window, "crypto");
+		Object.defineProperty(window, "crypto", {
+			configurable: true,
+			value: webcrypto,
+		});
+		vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+			drawImage: vi.fn(),
+		} as unknown as CanvasRenderingContext2D);
+		vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(
+			(callback) => {
+				callback(new NodeBlob(["png"], { type: "image/png" }) as unknown as Blob);
+			},
+		);
+
+		const realRasterizer = createBrowserWechatVisualRasterizer({
+			approvedAssetBaseUrl: `${document.location.origin}/wp-content/plugins/easymde/`,
+			approvedKaTeXCssUrl: `${document.location.origin}/wp-content/plugins/easymde/assets/vendor/katex/katex.min.css`,
+			blob: Blob,
+			document,
+			file: File,
+			image: RealRasterizerImageStub as unknown as typeof Image,
+			xmlSerializer: XMLSerializer,
+		});
+		const rasterizeSpy = vi.spyOn(realRasterizer, "rasterize");
+
+		const mathSource = document.createElement("div");
+		mathSource.className = "easymde-math easymde-math-block";
+		mathSource.innerHTML = katex.renderToString("\\frac{a}{b}", {
+			displayMode: true,
+		});
+		document.body.append(mathSource);
+
+		const mermaidSource = document.createElement("div");
+		mermaidSource.className = "easymde-mermaid";
+		mermaidSource.innerHTML =
+			'<svg width="200" height="100" viewBox="0 0 400 200"><rect width="400" height="200"></rect></svg>';
+		document.body.append(mermaidSource);
+		const mermaidSvg = mermaidSource.querySelector("svg");
+		if (!mermaidSvg) throw new Error("mermaid-svg-missing");
+
+		const rectSpy = vi
+			.spyOn(Element.prototype, "getBoundingClientRect")
+			.mockImplementation(function (this: Element): DOMRect {
+				if (this.classList.contains("easymde-math-block")) {
+					return {
+						bottom: 41.39,
+						height: 41.39,
+						left: 0,
+						right: 82.4,
+						toJSON: () => ({}),
+						top: 0,
+						width: 82.4,
+						x: 0,
+						y: 0,
+					} as DOMRect;
+				}
+				if (this === mermaidSource || this === mermaidSvg) {
+					return {
+						bottom: 100,
+						height: 100,
+						left: 0,
+						right: 200,
+						toJSON: () => ({}),
+						top: 0,
+						width: 200,
+						x: 0,
+						y: 0,
+					} as DOMRect;
+				}
+				return {
+					bottom: 0,
+					height: 0,
+					left: 0,
+					right: 0,
+					toJSON: () => ({}),
+					top: 0,
+					width: 0,
+					x: 0,
+					y: 0,
+				} as DOMRect;
+			});
+		Object.defineProperty(mermaidSvg, "getScreenCTM", {
+			configurable: true,
+			value: () => ({ a: 0.5, b: 0, c: 0, d: 0.5, e: 0, f: 0 }),
+		});
+
+		try {
+			const writtenBlobs: Blob[] = [];
+			const clipboardPort = clipboard({
+				writeImageDeferred: vi.fn(async (image: Promise<Blob>) => {
+					writtenBlobs.push(await image);
+					return { status: "written" as const };
+				}),
+			});
+			const session = createGeneratedContentExportSession({
+				clipboard: clipboardPort,
+				rasterScale: 1.5,
+				rasterizer: realRasterizer,
+			});
+
+			const formulaTarget = mathTarget("$$\\frac{a}{b}$$");
+			const formulaResult = await session.copyAsImage({
+				identity: () => identity(formulaTarget),
+				mode: "ordinary",
+				...validatedLease(formulaTarget, mathSource),
+			});
+			expect(formulaResult).toEqual({ status: "copied" });
+
+			const diagramTarget = mermaidTarget();
+			const diagramResult = await session.copyAsImage({
+				identity: () => identity(diagramTarget),
+				mode: "ordinary",
+				...validatedLease(diagramTarget, mermaidSource),
+			});
+			expect(diagramResult).toEqual({ status: "copied" });
+
+			expect(rasterizeSpy).toHaveBeenCalledTimes(2);
+			expect(rasterizeSpy.mock.calls[1]?.[0]).toMatchObject({
+				kind: "mermaid",
+				layoutMagnification: 1,
+			});
+			expect(writtenBlobs).toHaveLength(2);
+			for (const blob of writtenBlobs) {
+				expect(blob.type).toBe("image/png");
+				expect(blob.size).toBeGreaterThan(0);
+			}
+		} finally {
+			rectSpy.mockRestore();
+			vi.restoreAllMocks();
+			mathSource.remove();
+			mermaidSource.remove();
+			if (cryptoDescriptor) {
+				Object.defineProperty(window, "crypto", cryptoDescriptor);
+			}
+		}
 	});
 
 });

@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { createHash } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 import {
   attachmentIdsForPost,
@@ -9,6 +10,8 @@ import {
   expectRenderedFixture,
   expectRuntimeAssetRequests,
   fillMarkdownAndWaitForPreview,
+  fullCapabilityImage,
+  fullCapabilityMarkdown,
   imageSizeSettingMb,
   login,
   markdownPresentationSettings,
@@ -31,6 +34,16 @@ import {
   triggerNativeAutosave
 } from '../helpers/editor-e2e-helpers.mjs';
 import { selectOrdinaryOption } from '../helpers/ordinary-select.mjs';
+import { attachPrivacySafeBrowserMonitor, createPublishAssetHandoff } from '../helpers/privacy-safe-browser-monitor.mjs';
+
+const fullCapabilityFixtureEvidence = {
+  sha256: createHash('sha256').update(fullCapabilityMarkdown, 'utf8').digest('hex'),
+  characters: fullCapabilityMarkdown.length,
+  bytes: Buffer.byteLength(fullCapabilityMarkdown, 'utf8'),
+  endsWithSingleLf: fullCapabilityMarkdown.endsWith('\n')
+    && !fullCapabilityMarkdown.endsWith('\r\n')
+    && !fullCapabilityMarkdown.endsWith('\n\n')
+};
 
 test.describe('EasyMDE editor workflows', () => {
   registerEditorWorkflowHooks();
@@ -101,7 +114,7 @@ test.describe('EasyMDE editor workflows', () => {
       labels.publishFailed
     );
     await expect(
-      page.locator('.easymde-editor > .easymde-editor-message-alert-host')
+      page.locator('[data-easymde-editor-owner="react"] > .easymde-editor-message-alert-host')
     ).toHaveCount(0);
     await expect(page.locator('#excerpt')).toHaveValue('');
     await expect(page.locator('#tax-input-post_tag')).toHaveValue('');
@@ -978,7 +991,7 @@ JSON text: {"path":"C:\\Temp\\file","quote":"\"value\""}
     await expect.poll(() => page.evaluate(() => window.__easymdeClipboardWrites.length)).toBe(1);
     expect(await page.evaluate(() => window.__easymdeClipboardActivation)).toEqual([true]);
     const editorMessageHost = page.locator(
-      '.easymde-editor > .easymde-editor-message-alert-host'
+      '[data-easymde-editor-owner="react"] > .easymde-editor-message-alert-host'
     );
     await expect(editorMessageHost.getByRole('status')).toContainText(
       await page.evaluate(() => window.EasyMDEEditorRootBootstrap.wechatExport.strings.success)
@@ -1027,5 +1040,754 @@ JSON text: {"path":"C:\\Temp\\file","quote":"\"value\""}
     );
     await expect(page.locator('script[src*="/assets/js/admin/bootstrap.js"]')).toHaveCount(0);
     await expect(page.locator('script[src*="immersive"], link[href*="immersive"]')).toHaveCount(0);
+  });
+
+  test('renders the published full-capability Gantt at its intrinsic local-scroll width', async ({ page }, testInfo) => {
+    test.setTimeout(120_000);
+    const publishAssetHandoff = createPublishAssetHandoff(page, testInfo.project.use.baseURL);
+    const browserMonitor = attachPrivacySafeBrowserMonitor(page, {
+      baseURL: testInfo.project.use.baseURL,
+      allowedNavigationCategories: ['wp-login', 'wp-admin', 'same-origin'],
+      publishAssetHandoff
+    });
+    const originalImageUrl = 'https://raw.githubusercontent.com/tao-xiaoxin/EasyMDE/main/docs/assets/easymde-logo-rounded.png';
+    const imageRequestUrls = [];
+    const expectedImageOccurrences = (fullCapabilityMarkdown.match(
+      new RegExp(originalImageUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')
+    ) || []).length;
+    expect(expectedImageOccurrences).toBeGreaterThan(0);
+    try {
+    await page.route(originalImageUrl, async (route) => {
+      imageRequestUrls.push(route.request().url());
+      await route.fulfill({
+        status: 200,
+        contentType: 'image/png',
+        body: fullCapabilityImage
+      });
+    });
+
+    const viewportEvidence = [];
+    try {
+      expect(fullCapabilityFixtureEvidence).toEqual({
+        sha256: 'ee40a02e3bc8d10f1ad0f6452ad1f97a2eedb0fc7c3ca507e9334bab44ec7dfb',
+        characters: 9254,
+        bytes: 11959,
+        endsWithSingleLf: true
+      });
+
+      await login(page, testInfo.easymdeUser);
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await openEasyMdeNewPost(page);
+      const title = `Published Gantt ${testSlug(testInfo)}`;
+      await page.locator('#title').fill(title);
+      await fillMarkdownAndWaitForPreview(
+        page,
+        fullCapabilityMarkdown,
+        'Markdown 全量能力测试文档'
+      );
+      await expect(page.locator('#easymde-source')).toHaveValue(fullCapabilityMarkdown);
+      const postId = await currentPostId(page);
+      const labels = await page.evaluate(
+        () => window.EasyMDEEditorRootBootstrap.strings.immersive
+      );
+      await page.locator('.easymde-toolbar-immersive-toggle').click();
+      await page.getByRole('button', { name: labels.publish, exact: true }).click();
+      const publishDialog = page.getByRole('dialog', { name: labels.publish, exact: true });
+      const openAfterPublish = publishDialog.getByRole('switch', {
+        name: labels.openAfterPublish
+      });
+      if (!await openAfterPublish.isChecked()) await openAfterPublish.click();
+      const atlasUrl = await page.evaluate(
+        () => window.EasyMDEEditorRootBootstrap.wechatExport.wechatMathAtlasUrl
+      );
+      // The exact image route was installed above and stays installed until teardown.
+      publishAssetHandoff.arm(atlasUrl, originalImageUrl);
+      const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
+      await publishDialog.getByRole('button', { name: labels.publish, exact: true }).click();
+      await navigation;
+      await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
+      const permalink = postPermalink(postId);
+      expect(page.url()).toBe(permalink);
+      publishAssetHandoff.confirm(permalink);
+
+      // Inspect the published post in a fresh tab within the same authenticated
+      // context: in Chromium headless_shell, WordPress 7.1+'s aborted admin
+      // cross-document ViewTransition leaves the originating tab's compositor
+      // frame loop stalled even after subsequent navigations.
+      const publicPage = await page.context().newPage();
+      const publicMonitor = attachPrivacySafeBrowserMonitor(publicPage, {
+        baseURL: testInfo.project.use.baseURL,
+        allowedNavigationCategories: ['about-blank', 'same-origin']
+      });
+      try {
+      await publicPage.route(originalImageUrl, async (route) => {
+        imageRequestUrls.push(route.request().url());
+        await route.fulfill({
+          status: 200,
+          contentType: 'image/png',
+          body: fullCapabilityImage
+        });
+      });
+      try {
+      for (const viewport of [
+        { width: 1440, height: 900 },
+        { width: 375, height: 812 },
+        { width: 320, height: 720 }
+      ]) {
+        await publicPage.setViewportSize(viewport);
+        await publicPage.goto(permalink, { waitUntil: 'load' });
+        await publicPage.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
+        const article = publicPage.locator('.easymde-rendered-content').first();
+        await expect(article).toBeVisible();
+        await expect.poll(() => article.evaluate((root) => {
+          const mermaids = [...root.querySelectorAll('.easymde-mermaid')];
+          const math = [...root.querySelectorAll('.easymde-math[data-easymde-rendered]')];
+          const code = [...root.querySelectorAll('pre > code:not(.language-mermaid)')];
+          const tables = [...root.querySelectorAll('table')];
+          return {
+            codeCount: code.length,
+            mathCount: math.length,
+            mathReady: 14 === math.length && math.every((element) => {
+              const box = element.getBoundingClientRect();
+              return !!element.querySelector('.katex') && box.width > 0 && box.height > 0;
+            }),
+            mermaidCount: mermaids.length,
+            mermaidReady: 10 === mermaids.length && mermaids.every((element) => {
+              const box = element.getBoundingClientRect();
+              const svg = element.querySelector(':scope > svg');
+              return !!svg && box.width > 0 && box.height > 0;
+            }),
+            tableCount: tables.length
+          };
+        }), { timeout: 30_000 }).toEqual({
+          codeCount: 8,
+          mathCount: 14,
+          mathReady: true,
+          mermaidCount: 10,
+          mermaidReady: true,
+          tableCount: 4
+        });
+
+        const gantt = article.locator('.easymde-mermaid[data-easymde-mermaid-layout="gantt"]');
+        await expect(gantt).toHaveCount(1);
+        await expect.poll(() => gantt.evaluate((owner) => {
+          const svg = owner.querySelector(':scope > svg');
+          if (!(svg instanceof SVGSVGElement)) return null;
+          const viewBox = svg.getAttribute('viewBox');
+          const rect = svg.getBoundingClientRect();
+          const ctm = svg.getScreenCTM();
+          const ownerRect = owner.getBoundingClientRect();
+          const root = owner.closest('.easymde-rendered-content');
+          const rootRect = root?.getBoundingClientRect();
+          owner.scrollLeft = 0;
+          const leftScroll = owner.scrollLeft;
+          owner.scrollLeft = Number.MAX_SAFE_INTEGER;
+          const rightScroll = owner.scrollLeft;
+          owner.scrollLeft = 0;
+          return {
+            ctmA: ctm?.a ?? null,
+            ctmD: ctm?.d ?? null,
+            height: rect.height,
+            leftScroll,
+            localOverflow: owner.scrollWidth - owner.clientWidth,
+            ownerWithinArticle: !!rootRect
+              && ownerRect.left >= rootRect.left - 1
+              && ownerRect.right <= rootRect.right + 1,
+            pageOverflow: document.documentElement.scrollWidth
+              - document.documentElement.clientWidth,
+            rightScroll,
+            viewBox,
+            width: rect.width
+          };
+        }), { timeout: 30_000 }).not.toBeNull();
+        const geometry = await gantt.evaluate((owner) => {
+          const svg = owner.querySelector(':scope > svg');
+          if (!(svg instanceof SVGSVGElement)) throw new Error('public-gantt-svg-missing');
+          const rect = svg.getBoundingClientRect();
+          const ctm = svg.getScreenCTM();
+          const root = owner.closest('.easymde-rendered-content');
+          const rootRect = root?.getBoundingClientRect();
+          owner.scrollLeft = 0;
+          const leftScroll = owner.scrollLeft;
+          owner.scrollLeft = Number.MAX_SAFE_INTEGER;
+          const rightScroll = owner.scrollLeft;
+          owner.scrollLeft = 0;
+          return {
+            ctmA: ctm?.a ?? null,
+            ctmD: ctm?.d ?? null,
+            height: rect.height,
+            leftScroll,
+            localOverflow: owner.scrollWidth - owner.clientWidth,
+            ownerWithinArticle: !!rootRect
+              && owner.getBoundingClientRect().left >= rootRect.left - 1
+              && owner.getBoundingClientRect().right <= rootRect.right + 1,
+            pageOverflow: document.documentElement.scrollWidth
+              - document.documentElement.clientWidth,
+            rightScroll,
+            viewBox: svg.getAttribute('viewBox'),
+            width: rect.width
+          };
+        });
+        const ownerSummary = await article.evaluate((root) => {
+          const read = (element, index = null) => {
+            const rect = element.getBoundingClientRect();
+            return {
+              bottom: rect.bottom,
+              clientHeight: element.clientHeight,
+              clientWidth: element.clientWidth,
+              height: rect.height,
+              index,
+              left: rect.left,
+              overflowX: element.scrollWidth - element.clientWidth,
+              overflowY: element.scrollHeight - element.clientHeight,
+              right: rect.right,
+              scrollHeight: element.scrollHeight,
+              scrollWidth: element.scrollWidth,
+              top: rect.top,
+              width: rect.width
+            };
+          };
+          const readAll = (selector) => [...root.querySelectorAll(selector)].map(read);
+          const pageWidth = window.innerWidth;
+          const svgElements = [...root.querySelectorAll('svg')];
+          const divergent = (element) => {
+            const rect = element.getBoundingClientRect();
+            return rect.left < -1 || rect.right > pageWidth + 1;
+          };
+          const candidates = [...root.querySelectorAll('*')]
+            .filter(divergent)
+            .sort((left, right) => {
+              const leftRect = left.getBoundingClientRect();
+              const rightRect = right.getBoundingClientRect();
+              return Math.max(
+                rightRect.right - pageWidth,
+                -rightRect.left
+              ) - Math.max(
+                leftRect.right - pageWidth,
+                -leftRect.left
+              );
+            });
+          const offending = candidates[0] ?? null;
+          const ownerContext = (element) => {
+            let depth = 0;
+            for (let current = element; current && current !== root; current = current.parentElement) {
+              if (current.matches('.easymde-mermaid[data-easymde-mermaid-layout="gantt"]')) {
+                return {
+                  index: [...root.querySelectorAll('.easymde-mermaid[data-easymde-mermaid-layout="gantt"]')]
+                    .indexOf(current),
+                  owner: 'gantt',
+                  depth
+                };
+              }
+              if (current.matches('.easymde-mermaid')) {
+                return {
+                  index: [...root.querySelectorAll('.easymde-mermaid:not([data-easymde-mermaid-layout="gantt"])')]
+                    .indexOf(current),
+                  owner: 'otherDiagram',
+                  depth
+                };
+              }
+              if (current.matches('svg')) {
+                return { index: svgElements.indexOf(current), owner: 'svg', depth };
+              }
+              if (current.matches('table')) return { depth, index: null, owner: 'table' };
+              if (current.matches('pre > code:not(.language-mermaid)')) {
+                return { depth, index: null, owner: 'code' };
+              }
+              if (current.matches('pre')) return { depth, index: null, owner: 'pre' };
+              if (current.matches('img')) return { depth, index: null, owner: 'image' };
+              depth += 1;
+            }
+            return { depth, index: null, owner: 'other' };
+          };
+          const contextFor = (element) => {
+            const mermaidRoot = element?.closest('.easymde-mermaid');
+            const mermaids = [...root.querySelectorAll('.easymde-mermaid')];
+            const svg = element?.closest('svg');
+            const svgRect = svg?.getBoundingClientRect();
+            const viewBox = svg?.getAttribute('viewBox')?.trim().split(/[\s,]+/u).map(Number);
+            const ancestors = [];
+            let current = element;
+            let depth = 0;
+            while (current && current !== root && depth < 8) {
+              const style = getComputedStyle(current);
+              const rect = current.getBoundingClientRect();
+              ancestors.push({
+                depth,
+                overflowX: style.overflowX,
+                overflowY: style.overflowY,
+                rect: {
+                  bottom: rect.bottom,
+                  left: rect.left,
+                  right: rect.right,
+                  top: rect.top,
+                  width: rect.width,
+                  height: rect.height
+                }
+              });
+              current = current.parentElement;
+              depth += 1;
+            }
+            return {
+              closestKaTeX: !!element?.closest('.katex, .katex-display'),
+              closestMermaid: !!mermaidRoot,
+              mermaidOrdinal: mermaidRoot ? mermaids.indexOf(mermaidRoot) : null,
+              mermaidRole: svg?.getAttribute('aria-roledescription')?.trim().toLowerCase() || null,
+              svg: svg && svgRect ? {
+                height: svgRect.height,
+                width: svgRect.width,
+                viewBox: Array.isArray(viewBox) && viewBox.every(Number.isFinite)
+                  ? viewBox
+                  : null,
+                authoredWidth: Number.parseFloat(svg.getAttribute('width') || ''),
+                authoredHeight: Number.parseFloat(svg.getAttribute('height') || '')
+              } : null,
+              ancestors
+            };
+          };
+          const clipBoundary = (element) => {
+            for (let current = element.parentElement; current && current !== root; current = current.parentElement) {
+              const style = getComputedStyle(current);
+              if (!['hidden', 'clip', 'auto', 'scroll'].includes(style.overflowX)
+                && !['hidden', 'clip', 'auto', 'scroll'].includes(style.overflowY)) {
+                continue;
+              }
+              const rect = current.getBoundingClientRect();
+              const target = element.getBoundingClientRect();
+              const clipsX = ['hidden', 'clip', 'auto', 'scroll'].includes(style.overflowX)
+                && (target.left < rect.left - 1 || target.right > rect.right + 1);
+              const clipsY = ['hidden', 'clip', 'auto', 'scroll'].includes(style.overflowY)
+                && (target.top < rect.top - 1 || target.bottom > rect.bottom + 1);
+              if (clipsX || clipsY) return true;
+            }
+            return false;
+          };
+          const visibleCandidates = [
+            ...root.querySelectorAll('img, table, pre, pre > code:not(.language-mermaid), .easymde-mermaid')
+          ];
+          const realOverflowCandidates = visibleCandidates
+            .map((element, index) => {
+              const rect = element.getBoundingClientRect();
+              const outsideRoot = rect.left < root.getBoundingClientRect().left - 1
+                || rect.right > root.getBoundingClientRect().right + 1;
+              return {
+                index,
+                outsideRoot,
+                rect: {
+                  bottom: rect.bottom,
+                  left: rect.left,
+                  right: rect.right,
+                  top: rect.top,
+                  width: rect.width,
+                  height: rect.height
+                },
+                clipped: clipBoundary(element)
+              };
+            })
+            .filter(({ outsideRoot, clipped }) => outsideRoot && !clipped);
+          const ancestorChain = [];
+          for (let current = offending; current; current = current.parentElement) {
+            if (divergent(current)) ancestorChain.push(read(current));
+          }
+          return {
+            document: read(document.documentElement),
+            body: read(document.body),
+            publicEasyMdeRoot: read(root),
+            gantt: readAll('.easymde-mermaid[data-easymde-mermaid-layout="gantt"]'),
+            table: readAll('table'),
+            pre: readAll('pre'),
+            code: readAll('pre > code:not(.language-mermaid)'),
+            image: readAll('img'),
+            otherDiagram: readAll('.easymde-mermaid:not([data-easymde-mermaid-layout="gantt"])'),
+            firstDivergentAncestor: ancestorChain.length
+              ? ancestorChain[ancestorChain.length - 1]
+              : null,
+            offending: offending ? read(offending) : null,
+            offendingOwner: offending ? ownerContext(offending) : null,
+            offendingContext: offending ? contextFor(offending) : null,
+            realOverflowCandidates
+          };
+        });
+        const overflowHandle = await article.evaluateHandle((root) => {
+          const pageWidth = window.innerWidth;
+          const clipBoundary = (element) => {
+            for (let current = element.parentElement; current && current !== root; current = current.parentElement) {
+              const style = getComputedStyle(current);
+              const rect = current.getBoundingClientRect();
+              const target = element.getBoundingClientRect();
+              const clipsX = ['hidden', 'clip', 'auto', 'scroll'].includes(style.overflowX)
+                && (target.left < rect.left - 1 || target.right > rect.right + 1);
+              const clipsY = ['hidden', 'clip', 'auto', 'scroll'].includes(style.overflowY)
+                && (target.top < rect.top - 1 || target.bottom > rect.bottom + 1);
+              if (clipsX || clipsY) return true;
+            }
+            return false;
+          };
+          const rootRect = root.getBoundingClientRect();
+          return [...root.querySelectorAll('img, table, pre, pre > code:not(.language-mermaid), .easymde-mermaid')]
+            .find((element) => {
+              const rect = element.getBoundingClientRect();
+              return !clipBoundary(element)
+                && (rect.left < rootRect.left - 1 || rect.right > rootRect.right + 1)
+                && (rect.left < -1 || rect.right > pageWidth + 1);
+            }) ?? null;
+        });
+        const overflowElement = overflowHandle.asElement();
+        if (overflowElement && ownerSummary.offending) {
+          await overflowElement.screenshot({
+            path: testInfo.outputPath(`public-gantt-overflow-${viewport.width}.png`)
+          });
+        }
+        await overflowHandle.dispose();
+        console.log(`public-gantt-owner-summary ${JSON.stringify({
+          offendingContext: ownerSummary.offendingContext,
+          offendingOwner: ownerSummary.offendingOwner,
+          realOverflowCandidates: ownerSummary.realOverflowCandidates,
+          viewport
+        })}`);
+        expect(geometry.viewBox).toBe('0 0 1200 268');
+        expect(Math.abs(geometry.width - 1200)).toBeLessThanOrEqual(1);
+        expect(Math.abs(geometry.height - 268)).toBeLessThanOrEqual(1);
+        expect(geometry.ctmA).not.toBeNull();
+        expect(geometry.ctmD).not.toBeNull();
+        expect(Math.abs(geometry.ctmA - 1)).toBeLessThanOrEqual(0.02);
+        expect(Math.abs(geometry.ctmD - 1)).toBeLessThanOrEqual(0.02);
+        expect(geometry.leftScroll).toBe(0);
+        expect(geometry.ownerWithinArticle).toBe(true);
+        if (viewport.width <= 375) {
+          expect(geometry.localOverflow).toBeGreaterThan(1);
+          expect(geometry.rightScroll).toBeGreaterThan(1);
+        }
+
+        await expect.poll(() => article.evaluate((root, source) => (
+          [...root.querySelectorAll('img')]
+            .filter((image) => image.getAttribute('src') === source)
+            .map((image) => image.complete && image.naturalWidth > 0)
+        ), originalImageUrl), { timeout: 30_000 }).toEqual(
+          Array.from({ length: expectedImageOccurrences }, () => true)
+        );
+        const imageEvidence = await article.evaluate((root, source) => {
+          const rootWidth = root.getBoundingClientRect().width;
+          const fixtureImages = [...root.querySelectorAll('img')]
+            .filter((image) => image.getAttribute('src') === source);
+          const smallImages = [...root.querySelectorAll('img')]
+            .filter((image) => image.complete && image.naturalWidth > 0)
+            .filter((image) => image.naturalWidth < rootWidth)
+            .map((image) => {
+              const rect = image.getBoundingClientRect();
+              return {
+                height: rect.height,
+                naturalHeight: image.naturalHeight,
+                naturalWidth: image.naturalWidth,
+                width: rect.width
+              };
+            });
+          return {
+            fixture: fixtureImages.map((image) => {
+              const rect = image.getBoundingClientRect();
+              return {
+                height: rect.height,
+                naturalHeight: image.naturalHeight,
+                naturalWidth: image.naturalWidth,
+                width: rect.width
+              };
+            }),
+            rootWidth,
+            small: smallImages
+          };
+        }, originalImageUrl);
+        expect(imageEvidence.fixture).toHaveLength(expectedImageOccurrences);
+        for (const image of imageEvidence.fixture) {
+          expect(image.naturalWidth).toBe(1414);
+          expect(image.naturalHeight).toBe(475);
+          expect(image.width).toBeLessThanOrEqual(imageEvidence.rootWidth + 1);
+          expect(Math.abs(image.width / image.height - image.naturalWidth / image.naturalHeight))
+            .toBeLessThanOrEqual(0.02);
+        }
+        expect(imageEvidence.small.every((image) => (
+          image.width <= image.naturalWidth + 1
+          && image.height <= image.naturalHeight + 1
+        ))).toBe(true);
+
+        const screenshotPrefix = testInfo.outputPath(`public-gantt-${viewport.width}`);
+        await gantt.scrollIntoViewIfNeeded();
+        await gantt.screenshot({
+          animations: 'disabled',
+          path: `${screenshotPrefix}-left.png`,
+          timeout: 15_000
+        });
+        await gantt.evaluate((owner) => {
+          owner.scrollLeft = Number.MAX_SAFE_INTEGER;
+        });
+        if (viewport.width <= 375) {
+          await expect.poll(() => gantt.evaluate((owner) => owner.scrollLeft)).toBeGreaterThan(1);
+        }
+        await gantt.screenshot({
+          animations: 'disabled',
+          path: `${screenshotPrefix}-right.png`,
+          timeout: 15_000
+        });
+        viewportEvidence.push({ geometry, imageEvidence, ownerSummary, viewport });
+      }
+
+      const rtlMechanismEvidence = await publicPage.locator(
+        '.easymde-rendered-content .easymde-mermaid[data-easymde-mermaid-layout="gantt"]'
+      ).evaluate((owner) => {
+        const svg = owner.querySelector(':scope > svg');
+        if (!(svg instanceof SVGSVGElement)) throw new Error('public-gantt-rtl-svg-missing');
+        const originalDirection = owner.style.direction;
+        const originalScrollLeft = owner.scrollLeft;
+        const readState = (label) => {
+          const ownerRect = owner.getBoundingClientRect();
+          const svgRect = svg.getBoundingClientRect();
+          const ctm = svg.getScreenCTM();
+          return {
+            ctm: {
+              a: ctm?.a ?? null,
+              b: ctm?.b ?? null,
+              c: ctm?.c ?? null,
+              d: ctm?.d ?? null
+            },
+            label,
+            ownerRect: {
+              height: ownerRect.height,
+              left: ownerRect.left,
+              top: ownerRect.top,
+              width: ownerRect.width
+            },
+            scrollLeft: owner.scrollLeft,
+            scrollWidth: owner.scrollWidth,
+            clientWidth: owner.clientWidth,
+            svgRect: {
+              height: svgRect.height,
+              left: svgRect.left,
+              top: svgRect.top,
+              width: svgRect.width
+            }
+          };
+        };
+        let states;
+        try {
+          owner.style.direction = 'rtl';
+          states = [
+            readState('initial'),
+            (owner.scrollLeft = -400, readState('scrollLeft=-400')),
+            (owner.scrollLeft = 400, readState('scrollLeft=400')),
+            (owner.scrollLeft = -Number.MAX_SAFE_INTEGER, readState('left-end'))
+          ];
+        } finally {
+          owner.style.direction = originalDirection;
+          owner.scrollLeft = originalScrollLeft;
+        }
+        return {
+          originalDirection,
+          originalScrollLeft,
+          restoredDirection: owner.style.direction,
+          restoredScrollLeft: owner.scrollLeft,
+          states
+        };
+      });
+      expect(rtlMechanismEvidence.restoredDirection).toBe(
+        rtlMechanismEvidence.originalDirection
+      );
+      expect(rtlMechanismEvidence.restoredScrollLeft).toBe(
+        rtlMechanismEvidence.originalScrollLeft
+      );
+      expect(rtlMechanismEvidence.states).toHaveLength(4);
+      console.log(`published-gantt-rtl-mechanism ${JSON.stringify(rtlMechanismEvidence)}`);
+      for (const state of rtlMechanismEvidence.states) {
+        expect(Number.isFinite(state.scrollLeft)).toBe(true);
+        expect(Number.isFinite(state.clientWidth)).toBe(true);
+        expect(Number.isFinite(state.scrollWidth)).toBe(true);
+        expect(state.ownerRect).toEqual({
+          height: expect.any(Number),
+          left: expect.any(Number),
+          top: expect.any(Number),
+          width: expect.any(Number)
+        });
+        expect(state.svgRect).toEqual({
+          height: expect.any(Number),
+          left: expect.any(Number),
+          top: expect.any(Number),
+          width: expect.any(Number)
+        });
+        expect(state.ctm).toEqual({
+          a: expect.any(Number),
+          b: expect.any(Number),
+          c: expect.any(Number),
+          d: expect.any(Number)
+        });
+      }
+
+      const typedOmProbe = await publicPage.locator(
+        '.easymde-rendered-content .easymde-mermaid[data-easymde-mermaid-layout="gantt"]'
+      ).evaluate((owner) => {
+        const svg = owner.querySelector(':scope > svg');
+        if (!(svg instanceof SVGSVGElement)) throw new Error('public-gantt-typed-om-svg-missing');
+        const ownerStyle = owner.style;
+        const svgStyle = svg.style;
+        const properties = [
+          [ownerStyle, 'width'],
+          [ownerStyle, 'max-width'],
+          [svgStyle, 'margin-left'],
+          [svgStyle, 'margin-right']
+        ];
+        const original = properties.map(([style, property]) => ({
+          property,
+          priority: style.getPropertyPriority(property),
+          value: style.getPropertyValue(property)
+        }));
+        const originalScrollLeft = owner.scrollLeft;
+        const safeTypedValue = (value) => {
+          if (!value) return null;
+          const primitive = value.value;
+          return {
+            typeName: value.constructor?.name ?? null,
+            value: 'number' === typeof primitive || 'string' === typeof primitive
+              ? primitive
+              : null,
+            toString: 'function' === typeof value.toString ? value.toString() : null
+          };
+        };
+        const usedValue = (value) => {
+          const normalized = value.trim().toLowerCase();
+          if ('auto' === normalized) return { keyword: 'auto', px: null };
+          const px = Number.parseFloat(normalized);
+          return { keyword: null, px: Number.isFinite(px) ? px : null };
+        };
+        const readState = (label, map) => {
+          const ownerRect = owner.getBoundingClientRect();
+          const svgRect = svg.getBoundingClientRect();
+          const computed = getComputedStyle(svg);
+          return {
+            label,
+            ownerRect: {
+              left: ownerRect.left,
+              width: ownerRect.width,
+              right: ownerRect.right
+            },
+            svgRect: {
+              left: svgRect.left,
+              width: svgRect.width,
+              right: svgRect.right
+            },
+            used: {
+              left: usedValue(computed.marginLeft),
+              right: usedValue(computed.marginRight)
+            },
+            typed: map ? {
+              left: safeTypedValue(map.get('margin-left')),
+              right: safeTypedValue(map.get('margin-right'))
+            } : null
+          };
+        };
+        let result;
+        try {
+          ownerStyle.setProperty('width', '1600px');
+          ownerStyle.setProperty('max-width', 'none');
+          svgStyle.setProperty('margin-left', 'auto');
+          svgStyle.setProperty('margin-right', 'auto');
+          const computedStyleMap = svg.computedStyleMap;
+          if ('function' !== typeof computedStyleMap) {
+            result = {
+              available: false,
+              reason: 'computedStyleMap-unavailable'
+            };
+          } else {
+            const autoMap = computedStyleMap.call(svg);
+            const auto = readState('auto-derived', autoMap);
+            svgStyle.setProperty('margin-left', '200px');
+            svgStyle.setProperty('margin-right', '200px');
+            const fixedMap = computedStyleMap.call(svg);
+            const fixed = readState('author-fixed-200px', fixedMap);
+            result = {
+              available: true,
+              auto,
+              fixed
+            };
+          }
+        } finally {
+          for (const { property, priority, value } of original) {
+            if (value) {
+              const style = property.startsWith('margin-') ? svgStyle : ownerStyle;
+              style.setProperty(property, value, priority);
+            } else {
+              const style = property.startsWith('margin-') ? svgStyle : ownerStyle;
+              style.removeProperty(property);
+            }
+          }
+          owner.scrollLeft = originalScrollLeft;
+        }
+        const restored = original.every(({ property, priority, value }) => {
+          const style = property.startsWith('margin-') ? svgStyle : ownerStyle;
+          return style.getPropertyValue(property) === value
+            && style.getPropertyPriority(property) === priority;
+        });
+        return {
+          ...result,
+          originalScrollLeft,
+          restored,
+          restoredScrollLeft: owner.scrollLeft
+        };
+      });
+      console.log(`public-gantt-typed-om ${JSON.stringify(typedOmProbe)}`);
+      expect(typedOmProbe.available).toBe(true);
+      expect(typedOmProbe.restored).toBe(true);
+      expect(typedOmProbe.restoredScrollLeft).toBe(typedOmProbe.originalScrollLeft);
+      expect(typedOmProbe.auto.ownerRect.width).toBeCloseTo(1600, 5);
+      expect(typedOmProbe.auto.svgRect.width).toBeCloseTo(1200, 5);
+      expect(typedOmProbe.auto.used).toEqual({
+        left: { keyword: null, px: 200 },
+        right: { keyword: null, px: 200 }
+      });
+      expect(typedOmProbe.auto.typed).toEqual({
+        left: { typeName: 'CSSKeywordValue', value: 'auto', toString: 'auto' },
+        right: { typeName: 'CSSKeywordValue', value: 'auto', toString: 'auto' }
+      });
+      expect(typedOmProbe.fixed.used).toEqual({
+        left: { keyword: null, px: 200 },
+        right: { keyword: null, px: 200 }
+      });
+      expect(typedOmProbe.fixed.typed).toEqual({
+        left: { typeName: 'CSSUnitValue', value: 200, toString: '200px' },
+        right: { typeName: 'CSSUnitValue', value: 200, toString: '200px' }
+      });
+
+      expect(imageRequestUrls.length).toBeGreaterThanOrEqual(expectedImageOccurrences);
+      await testInfo.attach('published-gantt-evidence.json', {
+        body: JSON.stringify({
+          expectedImageOccurrences,
+          imageRequestCount: imageRequestUrls.length,
+          rtlMechanismEvidence,
+          typedOmProbe,
+          viewportEvidence
+        }, null, 2),
+        contentType: 'application/json'
+      });
+      for (const { geometry, viewport } of viewportEvidence) {
+        expect(
+          geometry.pageOverflow,
+          JSON.stringify({ geometry, viewport })
+        ).toBeLessThanOrEqual(1);
+      }
+      publicMonitor.assertClean();
+      } finally {
+        await publicPage.unroute(originalImageUrl).catch(() => undefined);
+      }
+      } finally {
+        publicMonitor.dispose();
+        await publicPage.close().catch(() => undefined);
+      }
+    } finally {
+      await page.unroute(originalImageUrl);
+    }
+    await testInfo.attach('published-gantt-editor-browser-events.json', {
+      body: JSON.stringify(browserMonitor.snapshot().counts),
+      contentType: 'application/json'
+    });
+    browserMonitor.assertClean();
+    } finally {
+      browserMonitor.dispose();
+    }
   });
 });

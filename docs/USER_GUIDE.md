@@ -14,7 +14,7 @@ Those entries open the WordPress post editor screen with EasyMDE for supported p
 
 ## Split Editor And Preview
 
-The EasyMDE editor shows Markdown source on the left and a live preview on the right. The source and preview panes synchronize their scroll position so long articles remain easier to review while writing.
+The ordinary EasyMDE editor stays in a fixed side-by-side split layout with Markdown source on the left and a live preview on the right across all viewport widths (mirrored in RTL). The source and preview panes synchronize their scroll position so long articles remain easier to review while writing.
 
 The preview uses the EasyMDE REST preview endpoint, which renders through the same server-side Markdown renderer used for saves. Loading, empty, and failure states remain visible; EasyMDE does not replace a failed formal Preview with a browser Markdown renderer.
 
@@ -26,9 +26,11 @@ authority.
 
 ## Immersive Writing View
 
-The Settings Center **Default Editing Mode** controls the immersive view used
-when the editor page loads: Live Preview opens split mode, Source opens the
-Markdown source, and Preview opens the rendered article. The immersive
+The Settings Center **Default Editing Mode** applies only to Immersive Editing
+and controls the immersive view used when the editor page loads: Live Preview
+opens split mode, Source opens the Markdown source, and Preview opens the
+rendered article (ordinary editing always stays in fixed side-by-side split
+mode). The immersive
 **Split preview** checkbox is a temporary control for the current page session.
 It does not save a browser preference or update WordPress settings. Its choice
 survives leaving and re-entering immersive writing in the same page, while a
@@ -63,10 +65,13 @@ read-only, switching to Source/Split, or invoking Copy to WeChat synchronizes
 and refreshes the authoritative server-rendered PHP Preview. Leaving Preview
 cancels any in-flight unlock cleanly without adding an edit or history step.
 
-On narrow screens, the Outline opens over the writing area. It closes when
-Preview becomes editable or an editable Preview is resized into a narrow
-screen. Its show control can reopen it without changing the saved Outline
-preference.
+In immersive Split mode, Source and Preview remain side-by-side with their
+resizable divider across all viewport widths unless you explicitly switch to
+Source-only or Preview-only. On tablet-portrait screens (`<= 782px`, such as
+iPad mini portrait `744 × 1133`), the Outline opens as a floating overlay over
+the writing area. It closes when Preview becomes editable or an editable Preview
+is resized into `<= 782px`. Its show control can reopen it without changing the
+saved Outline preference.
 
 ## Toolbar And Shortcuts
 
@@ -434,6 +439,23 @@ The table of contents is generated from rendered headings and is inserted where 
 ## Copy To WeChat
 
 Choose **Copy to WeChat** when the rendered Preview is ready. EasyMDE copies the current Preview as rich text, and the ordinary editor and immersive editor use that same current Preview.
+Copied blockquotes retain their borders, backgrounds, spacing, nested text, and
+plain-text order while the editor's Preview remains unchanged.
+
+While a copy is in progress, the ordinary and immersive controls remain
+focusable and share one pending state. They announce busy and temporary
+unavailability with `aria-busy` and `aria-disabled`; repeated click, Enter, or
+Space activation is ignored. The static WeChat glyph preserves control
+geometry while Copy is pending. Settled success or failure clears the pending
+state after the browser Clipboard operation returns, and replacing or leaving
+the editor clears stale pending feedback without reporting a late success.
+
+Changing the article theme, code theme, or Custom CSS intentionally cancels an
+in-flight Copy. That cancellation has no success or failure toast, while a real
+Clipboard or upload failure remains an explicit diagnostic. The change refreshes
+Preview only and never copies automatically; choose Copy again after the new
+style is ready. During style loading, both Copy controls remain focusable and
+use `aria-disabled="true"` without `aria-busy`.
 
 **Convert and upload images for WeChat copy** is disabled by default under
 **EasyMDE > Image Hosting > Upload Behavior**. When enabled, an explicit Copy
@@ -441,6 +463,27 @@ converts the outermost rendered Mermaid diagrams and inline or block formulas
 to PNG. Normal tables remain editable HTML; existing images, ordinary SVG,
 code, other media, and unknown content keep their existing rich-text form.
 EasyMDE does not upload during Preview or background preparation.
+Wide formulas retain their full captured extent inside the copied visual's
+horizontal overflow owner, while outer spacing owned by the selected article
+theme remains part of the copied HTML layout. Editor paper padding, radius, and
+shadow are editor presentation and are not copied. Inline formulas use a measured fractional
+allocation, optional source viewport, and root-local paint offset, including
+superscript, subscript, and middle alignment. Top and bottom alignment retain
+their relationship to the surrounding line box; other modes use the measured
+formula allocation. The outer inline box keeps the line-box allocation while
+clipped content keeps its source viewport and scrollable content scrolls locally.
+The horizontal and vertical axes remain independent, so a formula can scroll on
+one axis while clipping on the other.
+Block formulas remain centered and
+horizontally scrollable when their PNG is wider than the pasted column; their
+visual padding and border appear once.
+The same copied payload keeps authored width semantics when it is displayed at
+another destination width. Child content follows its containing box, text
+grows vertically as it wraps, and code, tables, and wide formulas keep overflow
+local without overlapping neighboring content in ordinary or immersive Copy.
+For PNG visuals, natural pixel dimensions use the captured CSS dimensions times
+the device pixel ratio, while the pasted image displays at the captured CSS
+width and height.
 
 Generated PNGs use the same upload owner already selected for editor images:
 Image Hosting when enabled, or the WordPress Media Library when disabled. A
@@ -449,6 +492,14 @@ success. PNGs uploaded before a later conversion, upload, or Clipboard failure
 may remain in the selected storage. Copy never changes Markdown, saved content,
 or the live Preview. PNG conversion requires the modern browser Clipboard API;
 unsupported or legacy-only paths fail explicitly without uploading.
+Copy uses the current stable Preview: refresh bookkeeping alone does not
+invalidate it, while an actual content or layout change requires a fresh
+payload.
+WeChat also rewrites pasted HTML during insertion and saving. Native validation
+still observes removed links and task-checkbox display, and differences in some
+theme fonts and heading geometry. A successful Copy confirms the Clipboard
+write, not the saved WeChat rendering; inspect the saved desktop and phone
+Reader before publishing.
 
 - **Ready:** The action copies the current rendered Preview and reports success only after the browser confirms the copy.
 - **Empty, loading, or error:** The action does not copy and shows that the Preview is unavailable; wait until the Preview is ready and try again.

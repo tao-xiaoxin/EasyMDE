@@ -355,7 +355,13 @@
 
 .easymde-rendered-content.easymde-markdown-theme-bloom-stone .easymde-mermaid text {
     fill: var(--text) !important;
-    font-family: var(--font-sans) !important;
+}
+
+.easymde-rendered-content.easymde-markdown-theme-bloom-stone .easymde-mermaid .mindmap-node.section-root rect,
+.easymde-rendered-content.easymde-markdown-theme-bloom-stone .easymde-mermaid .mindmap-node.section-root path,
+.easymde-rendered-content.easymde-markdown-theme-bloom-stone .easymde-mermaid .mindmap-node.section-root circle,
+.easymde-rendered-content.easymde-markdown-theme-bloom-stone .easymde-mermaid .mindmap-node.section-root polygon {
+    fill: var(--bg) !important;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-bloom-stone .easymde-mermaid .node rect,

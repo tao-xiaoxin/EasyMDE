@@ -1,4 +1,5 @@
 import type {
+  WechatClipboardCancellationCode,
   WechatClipboardCopyOptions,
   WechatClipboardPort,
   WechatClipboardResult
@@ -10,11 +11,15 @@ export type WechatExportStatus = Readonly<{
   type: 'error' | 'success';
 }>;
 
+export type WechatExportCancellationReason = 'theme-change';
+export type WechatExportDiagnosticLevel = 'error' | 'info';
+
 export type WechatExportSession = Readonly<{
   copy: () => Promise<WechatClipboardResult | Readonly<{
     code: 'wechat-export-disabled' | 'wechat-export-inactive';
     status: 'failed';
   }>>;
+  cancelPending: (reason: WechatExportCancellationReason) => void;
   dispose: () => void;
 }>;
 
@@ -22,11 +27,21 @@ type CreateWechatExportSessionOptions = Readonly<{
   clipboard: WechatClipboardPort;
   enabled: boolean;
   getPreview: () => HTMLElement | null;
-  onDiagnostic: (code: string) => void;
+  onDiagnostic: (code: string, level?: WechatExportDiagnosticLevel) => void;
   onStatus: (status: WechatExportStatus) => void;
   strings: WechatExportStrings;
   copyOptions?: Omit<WechatClipboardCopyOptions, 'isCurrent' | 'signal'>;
 }>;
+
+function cancellationDiagnosticLevel(code: string): WechatExportDiagnosticLevel {
+  return [
+    'wechat-copy-cancelled',
+    'wechat-copy-failed',
+    'wechat-png-rasterization-cancelled'
+  ].includes(code)
+    ? 'info'
+    : 'error';
+}
 
 export function createWechatExportSession({
   clipboard,
@@ -39,6 +54,11 @@ export function createWechatExportSession({
 }: CreateWechatExportSessionOptions): WechatExportSession {
   let active = true;
   let pending: ReturnType<WechatExportSession['copy']> | null = null;
+  let pendingToken: object | null = null;
+  let pendingState: {
+    disposed: boolean;
+    cancellation: WechatExportCancellationReason | null;
+  } | null = null;
   let operationSequence = 0;
   let operationController: AbortController | null = null;
 
@@ -48,7 +68,9 @@ export function createWechatExportSession({
         return Promise.resolve({ code: 'wechat-export-inactive', status: 'failed' });
       }
       if (!enabled) {
-        return Promise.resolve({ code: 'wechat-export-disabled', status: 'failed' });
+        const result = { code: 'wechat-export-disabled' as const, status: 'failed' as const };
+        onStatus({ message: strings.failed, type: 'error' });
+        return Promise.resolve(result);
       }
       const preview = getPreview();
       if (!preview) {
@@ -61,6 +83,12 @@ export function createWechatExportSession({
       }
 
       const sequence = ++operationSequence;
+      const operationToken = {};
+      const operationState = {
+        cancellation: null as WechatExportCancellationReason | null,
+        disposed: false,
+        unexpectedError: false
+      };
       const controller = new AbortController();
       operationController = controller;
       const operationOptions: WechatClipboardCopyOptions = {
@@ -72,24 +100,63 @@ export function createWechatExportSession({
       try {
         operation = clipboard.copy(preview, operationOptions);
       } catch {
+        operationState.unexpectedError = true;
+        onDiagnostic('wechat-copy-unexpected-error');
         operation = Promise.resolve({
-          code: 'wechat-copy-failed',
+          code: 'wechat-copy-unexpected-error',
           status: 'failed'
         });
       }
-      operation = operation.catch((): WechatClipboardResult => ({
-        code: 'wechat-copy-failed',
-        status: 'failed'
-      }));
-      pending = operation.then((result) => {
-        if (!active || operationSequence !== sequence) {
+      operation = operation.catch((): WechatClipboardResult => {
+        operationState.unexpectedError = true;
+        onDiagnostic('wechat-copy-unexpected-error');
+        return {
+          code: 'wechat-copy-unexpected-error',
+          status: 'failed'
+        };
+      });
+      const tracked = operation.then((result) => {
+        if (operationState.disposed || !active) {
           onDiagnostic('wechat-export-completed-after-teardown');
           return result;
         }
+        if (operationState.cancellation) {
+          if (
+            !operationState.unexpectedError
+            && ('failed' === result.status || 'cancelled' === result.status)
+          ) {
+            onDiagnostic(result.code, cancellationDiagnosticLevel(result.code));
+          }
+          const sideEffects = 'failed' === result.status || 'cancelled' === result.status
+            ? result.sideEffects
+            : undefined;
+          const cancellation: Readonly<{
+            code: WechatClipboardCancellationCode;
+            sideEffects?: 'none' | 'uploads-may-remain';
+            status: 'cancelled';
+          }> = {
+            code: 'wechat-copy-cancelled',
+            ...(sideEffects ? { sideEffects } : {}),
+            status: 'cancelled'
+          };
+          return cancellation;
+        }
+        if (operationSequence !== sequence) {
+          onDiagnostic('wechat-export-completed-after-teardown');
+          return result;
+        }
+        if ('cancelled' === result.status) {
+          onDiagnostic(result.code, 'info');
+          return result;
+        }
         if ('failed' === result.status) {
-          onDiagnostic(result.code);
+          if (!operationState.unexpectedError) onDiagnostic(result.code);
           onStatus({
-            message: 'wechat-clipboard-unsupported' === result.code ? strings.unsupported : strings.failed,
+            message: 'uploads-may-remain' === result.sideEffects
+              ? strings.failedWithUploads
+              : 'wechat-clipboard-unsupported' === result.code
+                ? strings.unsupported
+                : strings.failed,
             type: 'error'
           });
           return result;
@@ -98,15 +165,37 @@ export function createWechatExportSession({
         return result;
       }).finally(() => {
         if (operationController === controller) operationController = null;
-        pending = null;
+        if (pendingToken === operationToken) {
+          pending = null;
+          pendingToken = null;
+          pendingState = null;
+        }
       });
-      return pending;
+      pending = tracked;
+      pendingToken = operationToken;
+      pendingState = operationState;
+      return tracked;
     },
-    dispose() {
-      active = false;
+    cancelPending(reason) {
+      if (!active || !pendingState) return;
+      pendingState.cancellation = reason;
+      onDiagnostic(`wechat-export-cancelled-${reason}`, 'info');
       operationSequence += 1;
       operationController?.abort();
       operationController = null;
+      pending = null;
+      pendingToken = null;
+      pendingState = null;
+    },
+    dispose() {
+      active = false;
+      if (pendingState) pendingState.disposed = true;
+      operationSequence += 1;
+      operationController?.abort();
+      operationController = null;
+      pending = null;
+      pendingToken = null;
+      pendingState = null;
     }
   };
 }

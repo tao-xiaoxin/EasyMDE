@@ -37,22 +37,20 @@
     min-height: 1.4em;
     color: #222;
     position: relative;
-    padding-bottom: 12px;
+    padding-bottom: 0;
     transition: color .3s ease, transform .3s ease;
     border-bottom: none
 }
 
 .easymde-rendered-content.easymde-markdown-theme-phycat-mauve h1::after {
     content: '';
-    position: absolute;
-    bottom: 0;
-    left: 50%;
+    display: block;
     width: 40px;
     height: 4px;
+    margin: 8px auto 0;
     border-radius: 4px;
     background: var(--head-title-h2-background);
     background-size: 100% auto;
-    transform: translateX(-50%);
     transition: width .4s cubic-bezier(.25, .8, .25, 1)
 }
 
@@ -273,6 +271,10 @@
     font-weight: 500
 }
 
+.easymde-rendered-content.easymde-markdown-theme-phycat-mauve li {
+    position: relative
+}
+
 .easymde-rendered-content.easymde-markdown-theme-phycat-mauve li:before {
     content: "";
     height: calc(100% - 45px);
@@ -282,9 +284,29 @@
     left: -12.5px
 }
 
+.easymde-rendered-content.easymde-markdown-theme-phycat-mauve .task-list-item {
+    position: relative;
+    list-style-type: none;
+    padding-left: 0
+}
+
+.easymde-rendered-content.easymde-markdown-theme-phycat-mauve .task-list-item > p:has(> input[type="checkbox"]) {
+    position: relative;
+    line-height: inherit
+}
+
 .easymde-rendered-content.easymde-markdown-theme-phycat-mauve .task-list-item input {
     appearance: none;
     -webkit-appearance: none;
+    font: inherit;
+    line-height: normal;
+    box-sizing: border-box;
+    padding: 0;
+    margin: calc(1em - 10px) 0 0 -1.2em;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+    opacity: 1;
     width: 1.3rem;
     height: 1.3rem;
     position: absolute;
@@ -306,6 +328,7 @@
     border-radius: 50%;
     border: 1px solid var(--element-color-deep, #ffa531);
     background: #fff;
+    opacity: 1;
     transition: all .4s cubic-bezier(.5, 1.6, .4, .7);
     box-sizing: border-box
 }

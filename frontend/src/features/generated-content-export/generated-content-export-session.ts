@@ -337,17 +337,21 @@ export function createGeneratedContentExportSession({
 		let timer: ReturnType<typeof setTimeout> | null = null;
 		let timeoutTriggered = false;
 		let removeAbortListener = (): void => undefined;
-		const rasterization = Promise.resolve().then(() =>
-			rasterizer.rasterize({
+		const rasterization = Promise.resolve().then(() => {
+			const baseRequest = {
 				height: dimensions.height,
-				kind: request.lease.target.kind,
 				maxPixels,
 				scale: rasterScale,
 				signal: operation.controller.signal,
 				source: request.lease.root,
 				width: dimensions.width,
-			}),
-		);
+			};
+			return rasterizer.rasterize(
+				"math" === request.lease.target.kind
+					? { ...baseRequest, kind: "math", mathCapture: "full-root" }
+					: { ...baseRequest, kind: "mermaid", layoutMagnification: 1 },
+			);
+		});
 		void rasterization.catch(() => undefined);
 		const cancellation = new Promise<WechatVisualRasterizationResult>(
 			(_resolve, reject) => {
@@ -397,6 +401,14 @@ export function createGeneratedContentExportSession({
 				request,
 			);
 			if (afterFailure) throw new ExportError(afterFailure);
+			const resultOutputWidth =
+				result && Number.isFinite(result.width)
+					? Math.ceil(result.width * rasterScale)
+					: Number.NaN;
+			const resultOutputHeight =
+				result && Number.isFinite(result.height)
+					? Math.ceil(result.height * rasterScale)
+					: Number.NaN;
 			if (
 				!result?.file ||
 				!(result.file instanceof Blob) ||
@@ -405,12 +417,18 @@ export function createGeneratedContentExportSession({
 				result.file.size > maxBytes ||
 				!Number.isFinite(result.width) ||
 				!Number.isFinite(result.height) ||
-				result.width !== dimensions.width ||
-				result.height !== dimensions.height ||
+				result.width < dimensions.width ||
+				result.height < dimensions.height ||
+				result.width > MAX_DIMENSION ||
+				result.height > MAX_DIMENSION ||
+				!Number.isSafeInteger(resultOutputWidth) ||
+				!Number.isSafeInteger(resultOutputHeight) ||
+				resultOutputWidth < 1 ||
+				resultOutputHeight < 1 ||
 				!Number.isSafeInteger(result.pixelCount) ||
 				result.pixelCount < 1 ||
 				result.pixelCount > maxPixels ||
-				result.pixelCount !== outputWidth * outputHeight
+				result.pixelCount !== resultOutputWidth * resultOutputHeight
 			) {
 				throw new ExportError("generated-content-export-rasterization-invalid");
 			}

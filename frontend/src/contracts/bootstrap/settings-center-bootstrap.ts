@@ -1,4 +1,5 @@
 import { canonicalizeKeyboardShortcut } from "../../shared/keyboard/keyboard-shortcut";
+import { utf8ByteLength } from "../../shared/utf8-byte-length";
 import type {
 	SettingsCenterApi,
 	SettingsCenterSettings,
@@ -79,10 +80,6 @@ function parseSettingsStringFields(
 			throw new Error(`settings-center-${section}-${key}-invalid`);
 	}
 	return value;
-}
-
-function utf8ByteLength(value: string): number {
-	return new TextEncoder().encode(value).length;
 }
 
 function assertExactKeys(

@@ -1,0 +1,60 @@
+/**
+ * Bounded Source→paint-plan→explicit clone-binding→detached-apply helper.
+ */
+
+export { applyWechatInlinePseudoPaintBatch } from "./wechat-inline-pseudo-paint-apply";
+export { bindWechatInlinePseudoPaint } from "./wechat-inline-pseudo-paint-bind";
+export { planWechatInlinePseudoPaint } from "./wechat-inline-pseudo-paint-plan";
+export {
+	admitWechatInlinePseudoPaintInput,
+	assembleWechatInlinePseudoPaintSource,
+	captureWechatInlinePseudoPaintInput,
+	readWechatInlinePseudoPaint,
+	readWechatInlinePseudoPaintElement,
+} from "./wechat-inline-pseudo-paint-source";
+export type {
+	WechatInlinePseudoLinkBinding,
+	WechatInlinePseudoLinkFinalInvariant,
+	WechatInlinePseudoLinkPlan,
+	WechatInlinePseudoPaintAnimationCapabilities,
+	WechatInlinePseudoPaintAnimationInspection,
+	WechatInlinePseudoPaintAnimationKind,
+	WechatInlinePseudoPaintApi,
+	WechatInlinePseudoPaintApplyTimeSnapshot,
+	WechatInlinePseudoPaintAttributeSnapshot,
+	WechatInlinePseudoPaintBorderBox,
+	WechatInlinePseudoPaintCanonicalScalar,
+	WechatInlinePseudoPaintCapabilities,
+	WechatInlinePseudoPaintCircleSource,
+	WechatInlinePseudoPaintCloneBinding,
+	WechatInlinePseudoPaintCssCapabilities,
+	WechatInlinePseudoPaintDetachedAttribute,
+	WechatInlinePseudoPaintDetachedBatch,
+	WechatInlinePseudoPaintDetachedNode,
+	WechatInlinePseudoPaintEvidenceKeyParts,
+	WechatInlinePseudoPaintExistingReadiness,
+	WechatInlinePseudoPaintFailureReason,
+	WechatInlinePseudoPaintLinkSource,
+	WechatInlinePseudoPaintMarkerBinding,
+	WechatInlinePseudoPaintMarkerFinalInvariant,
+	WechatInlinePseudoPaintMaskPropertyValues,
+	WechatInlinePseudoPaintMaskSource,
+	WechatInlinePseudoPaintOwnerFinalInvariant,
+	WechatInlinePseudoPaintPlan,
+	WechatInlinePseudoPaintPlanItem,
+	WechatInlinePseudoPaintProperty,
+	WechatInlinePseudoPaintRawCapture,
+	WechatInlinePseudoPaintRawKeyParts,
+	WechatInlinePseudoPaintRawPayload,
+	WechatInlinePseudoPaintReaderInput,
+	WechatInlinePseudoPaintReadiness,
+	WechatInlinePseudoPaintSource,
+	WechatInlinePseudoPaintSourceEvidence,
+	WechatInlinePseudoPaintSourceKeyParts,
+	WechatInlinePseudoPaintSourceKeyValue,
+	WechatInlinePseudoPaintSourcePaint,
+	WechatInlinePseudoPaintStyleSnapshot,
+	WechatInlinePseudoPaintSupportedProperty,
+	WechatInlinePseudoPaintTransactionFreshnessChecks,
+	WechatInlinePseudoPaintUnsupportedProperty,
+} from "./wechat-inline-pseudo-paint-types";

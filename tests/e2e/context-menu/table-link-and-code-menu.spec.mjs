@@ -6,10 +6,9 @@ import {
   expectMenuItemState,
   expectSourceSelection,
   loadCanonicalFixture,
-  login,
+  loginAndOpenNewPost,
   menuSelector,
   occurrenceOffset,
-  openNewPost,
   openRootSubmenu,
   openSourceNativeMenu,
   readContextMenuDiagnostics,
@@ -53,8 +52,7 @@ test.use({
 
 test.describe('Editor context menu production surfaces', () => {
   test('copies canonical Bash code content without fences in Source and Full Visual', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, source, sourceEditor } = await loadCanonicalFixture(page);
     const codeBody = `${fencedBlockSource(markdown, 'bash')}\n`;
     const selectedText = 'echo "Hello, Markdown!"';
@@ -162,8 +160,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('copies explicit and reference Link addresses from partial Source captions in ordinary and immersive split modes', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, source, sourceEditor } = await loadCanonicalFixture(page);
     const explicitLink = '[OpenAI 官网](https://openai.com)';
     const referenceLink = '[GitHub][github-link]';
@@ -236,7 +233,7 @@ test.describe('Editor context menu production surfaces', () => {
 
       const strings = await enterImmersive(page);
       await page.getByRole('button', { name: strings.split, exact: true }).last().click();
-      await expect(page.locator('.easymde-editor.is-immersive.is-immersive-split')).toBeVisible();
+      await expect(page.locator('[data-easymde-editor-owner="react"].easymde-editor.is-immersive.is-immersive-split')).toBeVisible();
       const splitSourceEditor = page.locator('.easymde-source-react .cm-content');
       for (const linkCase of linkCases) {
         await runSourceLinkCase('immersive-split-source', splitSourceEditor, linkCase);
@@ -247,8 +244,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('repairs TS code indentation in Source and Full Visual while preserving code bytes and Undo', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, source, sourceEditor } = await loadCanonicalFixture(page);
     const originalTsBody = fencedBlockSource(markdown, 'ts');
     const misformattedTsBody = originalTsBody.replace(/^[ \t]+/gmu, '');
@@ -461,8 +457,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('applies Source table row, column, and whole-table alignment with last-action and one-Undo semantics', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, source, sourceEditor } = await loadCanonicalFixture(page);
     const tableSource = [
       '| 左对齐    |  居中 |    右对齐 |',
@@ -556,8 +551,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('formats one selected Source table cell through the native menu without changing surrounding Markdown', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, source, sourceEditor } = await loadCanonicalFixture(page);
     const tableSource = [
       '| 服务           | 地址                        |   状态  |  响应时间 |',
@@ -716,8 +710,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('windowed code deletion recovery', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const leading = Array.from(
       { length: 220 },
       (_, index) => `windowed paragraph ${index}`
@@ -737,7 +730,7 @@ test.describe('Editor context menu production surfaces', () => {
     const full = await enterFullVisual(page);
     // ADR-002: the synthetic long source stays one unified, fully live surface.
     await expectUnifiedVisualSurface(full.visualEditor, 160);
-    const canvas = page.locator('.easymde-immersive-preview-canvas');
+    const canvas = page.locator('[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas');
     await canvas.evaluate((element) => {
       element.scrollTop = element.scrollHeight;
       element.dispatchEvent(new Event('scroll', { bubbles: true }));

@@ -19,6 +19,19 @@
     height: auto;
 }
 
+.easymde-mermaid > svg {
+    letter-spacing: normal;
+    word-spacing: normal;
+}
+
+/* These Mermaid viewBoxes are logical diagram widths. Keep them intrinsic so
+ * the existing Mermaid owner can provide local scrolling. */
+.easymde-mermaid[data-easymde-mermaid-layout="gantt"] > svg,
+.easymde-mermaid[data-easymde-mermaid-layout="sequence"] > svg,
+.easymde-mermaid[data-easymde-mermaid-layout="timeline"] > svg {
+    max-width: none;
+}
+
 /* This geometry must match the Mermaid themeCSS used while foreignObject
  * labels are measured. It prevents article themes from changing fixed SVG
  * label boxes after the diagram is inserted. */
@@ -33,8 +46,6 @@
     font-size: 16px !important;
     font-weight: 400 !important;
     line-height: 20px !important;
-    letter-spacing: normal !important;
-    word-spacing: normal !important;
     white-space: nowrap !important;
     margin: 0 !important;
     padding: 0 !important;
@@ -97,6 +108,32 @@
   --easymde-code-font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, Courier, monospace;
   word-break: break-word;
   overflow-wrap: break-word;
+}
+
+.easymde-rendered-content :where(img) {
+  max-width: 100%;
+  height: auto;
+}
+
+/* WordPress admin resets every UL to no marker. Restore the native Markdown
+ * marker depth inside the shared article root with minimum-specificity rules;
+ * explicit theme, task, and Custom CSS list rules remain authoritative. */
+.easymde-rendered-content :where(ul) {
+  list-style-type: disc;
+}
+
+.easymde-rendered-content :where(:is(ul, ol) ul) {
+  list-style-type: circle;
+}
+
+.easymde-rendered-content :where(:is(ul, ol) :is(ul, ol) ul) {
+  list-style-type: square;
+}
+
+/* A task item owns its checkbox; suppress only the inherited marker so
+ * higher-specificity theme and Custom CSS task paint remains authoritative. */
+.easymde-rendered-content :where(li.task-list-item) {
+  list-style-type: none;
 }
 
 /* Only formally validated image-scale markers may override theme image rules. */
@@ -184,6 +221,32 @@
   border-collapse: collapse;
 }
 
+/* The generated table section is the bounded horizontal overflow owner. A
+ * direct content-sized table fills short rows while allowing wide rows to
+ * scroll locally. Only the generated owner is affected; nested/custom tables
+ * keep their existing contract. */
+.easymde-rendered-content :is(.table-container.easymde-table-container) {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Keep this lower-specificity baseline so an authored/theme/inline table
+ * minimum remains authoritative when it is explicitly larger or different. */
+.easymde-rendered-content :where(.table-container.easymde-table-container) > table {
+  min-width: 100%;
+}
+
+.easymde-rendered-content :is(.table-container.easymde-table-container) > table {
+  width: max-content;
+  max-width: none;
+}
+
 .easymde-rendered-content th,
 .easymde-rendered-content td {
   padding: 8px 10px;
@@ -198,4 +261,27 @@
 
 .easymde-rendered-content.easymde-table-align-center :is(th, td) {
   text-align: center !important;
+}
+
+/*
+ * Nested Phycat quotes need a portable, container-relative inset. WeChat
+ * strips viewport functions such as clamp()/calc() from saved article HTML,
+ * while percentage padding is retained and adapts to its containing quote.
+ * The custom properties are authored transport hints only; the serializer
+ * validates and emits their percentage values as ordinary padding declarations.
+ */
+.easymde-rendered-content,
+.easymde-rendered-content :where(*) {
+  --easymde-portable-padding-left: initial;
+  --easymde-portable-padding-right: initial;
+}
+
+.easymde-rendered-content[class*="easymde-markdown-theme-phycat-"]:not(.easymde-custom-css-active) blockquote blockquote {
+  --easymde-portable-padding-left: 9%;
+  --easymde-portable-padding-right: 5%;
+  box-sizing: border-box;
+  max-width: 100%;
+  margin-inline: 0;
+  padding-left: var(--easymde-portable-padding-left);
+  padding-right: var(--easymde-portable-padding-right);
 }

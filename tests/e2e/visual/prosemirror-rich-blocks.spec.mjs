@@ -11,6 +11,11 @@ import {
   selectVisualText,
   waitForBrowserPaint
 } from '../helpers/editor-e2e-helpers.mjs';
+import {
+  finishVisualBrowserMonitor,
+  installVisualBrowserMonitor,
+  monitorError
+} from '../helpers/visual-browser-monitor.mjs';
 
 function attachRuntimeErrorTracker(page) {
   const errors = [];
@@ -227,7 +232,7 @@ test.describe('Unified ProseMirror visual editor rich blocks and long documents'
       await mathTextarea.fill('$$\nunsaved = 0\n$$');
       await page.keyboard.press('Escape');
       await expect(mathTextarea).toHaveCount(0);
-      await expect(page.locator('.easymde-editor.is-immersive')).toBeVisible();
+      await expect(page.locator('[data-easymde-editor-owner="react"].easymde-editor.is-immersive')).toBeVisible();
       await expect(visualEditor).toHaveAttribute('contenteditable', 'true');
       await expect(source).toHaveValue(afterNeighborEdit);
 
@@ -551,4 +556,216 @@ test.describe('Unified ProseMirror visual editor rich blocks and long documents'
       tracker.dispose();
     }
   });
+
+  for (const fence of ['```', '~~~']) {
+    test(`commits insertCompositionText inside native-pasted ${fence} code`, async ({ page }, testInfo) => {
+      const monitor = await installVisualBrowserMonitor(page, {
+        baseURL: testInfo.project.use.baseURL
+      });
+      let testFailed = false;
+      try {
+        monitor.expectNavigation('/wp-login.php', 'open-login');
+        monitor.expectNavigation('/wp-admin/', 'login-submit');
+        await login(page, testInfo.easymdeUser);
+        await page.waitForLoadState('load', { timeout: 8_000 });
+        await monitor.drain({ timeoutMs: 8_000, quietMs: 250 });
+        await monitor.flushHistory();
+
+        const origin = new URL(page.url()).origin;
+        await page.context().grantPermissions(
+          ['clipboard-read', 'clipboard-write'],
+          { origin }
+        );
+
+        monitor.expectNavigation('/wp-admin/post-new.php', 'open-new-post');
+        await openEasyMdeNewPost(page);
+
+        const labels = await page.evaluate(
+          () => window.EasyMDEEditorRootBootstrap.strings.immersive
+        );
+        await page.getByRole('button', { name: labels.enter }).click();
+        await page.getByRole('button', { name: labels.preview, exact: true }).click();
+        const unlockButton = page.getByRole('button', { name: labels.previewUnlockEdit });
+        await expect(unlockButton).toBeEnabled({ timeout: 30_000 });
+        await unlockButton.click();
+
+        const source = page.locator('#easymde-source');
+        const visualEditor = page.getByRole('textbox', {
+          name: labels.previewEditorLabel
+        });
+        await expect(visualEditor).toHaveAttribute('contenteditable', 'true', {
+          timeout: 30_000
+        });
+        await expectUnlockedVisualArticle(visualEditor);
+        await expect(visualEditor).toHaveAttribute('data-easymde-prosemirror-host', '1');
+        await expect(visualEditor).toBeFocused();
+
+        const initialMarkdown = `${fence}\n${fence}`;
+        await visualEditor.click();
+        await page.evaluate(async (value) => {
+          if (!navigator.clipboard || 'function' !== typeof navigator.clipboard.writeText) {
+            throw new Error('native-clipboard-write-unavailable');
+          }
+          await navigator.clipboard.writeText(value);
+        }, initialMarkdown);
+        await page.keyboard.press('ControlOrMeta+V');
+        await expect(source).toHaveValue(initialMarkdown, { timeout: 30_000 });
+
+        const codePre = visualEditor.locator('pre.easymde-code-block[data-easymde-code-block="1"]');
+        const code = codePre.locator(':scope > code');
+        await expect(codePre).toHaveCount(1);
+        await expect(code).toHaveCount(1);
+
+        const readCodeCaretState = async () => visualEditor.evaluate((surface) => {
+          const codeElement = surface.querySelector('pre.easymde-code-block[data-easymde-code-block="1"] > code');
+          if (!(codeElement instanceof HTMLElement)) {
+            return { available: false };
+          }
+          const selection = surface.ownerDocument.defaultView?.getSelection();
+          const anchor = selection?.anchorNode ?? null;
+          const insideCode = Boolean(
+            anchor && (anchor === codeElement || codeElement.contains(anchor))
+          );
+          let caretOffset = null;
+          if (selection && selection.rangeCount > 0 && insideCode) {
+            const prefixRange = surface.ownerDocument.createRange();
+            prefixRange.selectNodeContents(codeElement);
+            prefixRange.setEnd(selection.anchorNode, selection.anchorOffset);
+            caretOffset = prefixRange.toString().length;
+          }
+          return {
+            activeInsideSurface: Boolean(document.activeElement && surface.contains(document.activeElement)),
+            available: true,
+            caretOffset,
+            codeText: codeElement.textContent ?? '',
+            collapsed: Boolean(selection?.isCollapsed),
+            insideCode,
+            rangeCount: selection?.rangeCount ?? 0
+          };
+        });
+
+        const codeBox = await code.boundingBox();
+        if (!codeBox) throw new Error('prosemirror-composition-code-box-unavailable');
+        await page.mouse.click(
+          codeBox.x + Math.min(8, codeBox.width / 2),
+          codeBox.y + Math.min(8, codeBox.height / 2)
+        );
+        await expect.poll(
+          () => readCodeCaretState(),
+          { message: 'clicking the pasted code block should place a collapsed caret inside <code>' }
+        ).toMatchObject({
+          activeInsideSurface: true,
+          available: true,
+          caretOffset: 0,
+          collapsed: true,
+          insideCode: true,
+          rangeCount: 1
+        });
+
+        const compositionEvidence = await visualEditor.evaluate((surface) => {
+          const codeElement = surface.querySelector('pre.easymde-code-block[data-easymde-code-block="1"] > code');
+          if (!(codeElement instanceof HTMLElement)) {
+            throw new Error('prosemirror-composition-code-missing');
+          }
+          const selection = surface.ownerDocument.defaultView?.getSelection();
+          if (!selection || selection.rangeCount === 0) {
+            throw new Error('prosemirror-composition-selection-unavailable');
+          }
+          codeElement.dispatchEvent(new CompositionEvent('compositionstart', {
+            bubbles: true,
+            data: ''
+          }));
+          const activeSelection = surface.ownerDocument.defaultView?.getSelection();
+          if (!activeSelection || activeSelection.rangeCount === 0) {
+            throw new Error('prosemirror-composition-selection-lost');
+          }
+          const range = activeSelection.getRangeAt(0);
+          const compositionBeforeInput = new InputEvent('beforeinput', {
+            bubbles: true,
+            cancelable: true,
+            data: '中',
+            inputType: 'insertCompositionText',
+            isComposing: true
+          });
+          codeElement.dispatchEvent(compositionBeforeInput);
+          if (!compositionBeforeInput.defaultPrevented) {
+            range.deleteContents();
+            const text = surface.ownerDocument.createTextNode('中');
+            range.insertNode(text);
+            range.setStart(text, text.length);
+            range.collapse(true);
+            activeSelection.removeAllRanges();
+            activeSelection.addRange(range);
+            codeElement.dispatchEvent(new InputEvent('input', {
+              bubbles: true,
+              data: '中',
+              inputType: 'insertCompositionText',
+              isComposing: true
+            }));
+          }
+          codeElement.dispatchEvent(new CompositionEvent('compositionend', {
+            bubbles: true,
+            data: '中'
+          }));
+          return { compositionBeforeInputPrevented: compositionBeforeInput.defaultPrevented };
+        });
+        expect(compositionEvidence.compositionBeforeInputPrevented).toBe(false);
+
+        const composedMarkdown = `${fence}\n中\n${fence}`;
+        await expect(source).toHaveValue(composedMarkdown, { timeout: 30_000 });
+        await expect(code).toHaveText('中');
+        await expect.poll(
+          () => readCodeCaretState(),
+          { message: 'committed IME composition text should preserve caret inside pasted code block' }
+        ).toMatchObject({
+          activeInsideSurface: true,
+          available: true,
+          caretOffset: 1,
+          codeText: '中',
+          collapsed: true,
+          insideCode: true,
+          rangeCount: 1
+        });
+
+        await page.keyboard.type('Z', { delay: 0 });
+        const afterNextCharacter = `${fence}\n中Z\n${fence}`;
+        await expect(source).toHaveValue(afterNextCharacter, { timeout: 30_000 });
+        await expect(code).toHaveText('中Z');
+        await expect.poll(
+          () => readCodeCaretState(),
+          { message: 'ordinary typing after IME composition should remain inside pasted code block' }
+        ).toMatchObject({
+          activeInsideSurface: true,
+          available: true,
+          caretOffset: 2,
+          codeText: '中Z',
+          collapsed: true,
+          insideCode: true,
+          rangeCount: 1
+        });
+      } catch (error) {
+        testFailed = true;
+        throw error;
+      } finally {
+        const summary = await finishVisualBrowserMonitor(page);
+        if (summary) {
+          try {
+            await testInfo.attach('visual-browser-monitor', {
+              body: JSON.stringify(summary),
+              contentType: 'application/json'
+            });
+          } catch {
+            if (!testFailed) throw new Error('visual-browser-monitor-attachment-failed');
+          }
+        }
+        if (!testFailed) {
+          expect(summary, 'visual browser monitor summary should be available').not.toBeNull();
+          expect(
+            summary.issues,
+            summary.issues.length > 0 ? monitorError(summary.issues) : undefined
+          ).toEqual([]);
+        }
+      }
+    });
+  }
 });

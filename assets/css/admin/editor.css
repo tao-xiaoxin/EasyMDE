@@ -117,12 +117,19 @@ body:has(.easymde-editor.is-immersive) .wrap {
 }
 
 .easymde-editor.is-immersive {
+    --easymde-immersive-header-height: 60px;
+    --easymde-immersive-toolbar-height: 52.5px;
+    --easymde-immersive-outline-inset-block-start: calc(
+        var(--easymde-immersive-header-height)
+        + var(--easymde-immersive-toolbar-height)
+        + 11.25px
+    );
     position: fixed;
     z-index: 100100;
     inset: 0;
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
-    grid-template-rows: 60px 52.5px minmax(0, 1fr);
+    grid-template-rows: var(--easymde-immersive-header-height) var(--easymde-immersive-toolbar-height) minmax(0, 1fr);
     margin: 0;
     border: 0;
     border-radius: 0;
@@ -181,34 +188,39 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-immersive-header-spacer.is-title-gap { width: 11.25px; flex: 0 0 auto; }
 .easymde-immersive-title-field { display: flex; min-width: 72px; max-width: 320px; align-items: center; gap: 5.625px; }
 .easymde-immersive-title-field > svg { flex: 0 0 auto; color: #94a3b8; }
-.easymde-immersive-title-measure { display: grid; min-width: 72px; max-width: 296px; overflow: hidden; }
+.easymde-immersive-title-measure { display: grid; min-width: 72px; max-width: 296px; height: 19.5px; max-height: 19.5px; overflow: hidden; }
 .easymde-immersive-title-measure > span,
 .easymde-immersive-title-measure > textarea {
     grid-column: 1;
     grid-row: 1;
     min-width: 0;
     max-width: 296px;
+    height: 19.5px;
     color: #1e293b;
     font-size: 13.125px;
     font-weight: 500;
     line-height: 18.75px;
-    max-height: 60px;
-    white-space: pre-wrap;
-    overflow-wrap: break-word;
+    max-height: 19.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
-.easymde-immersive-title-measure > span { visibility: hidden; overflow: hidden; }
+.easymde-immersive-title-measure > span { visibility: hidden; }
 .easymde-immersive-title-measure > textarea {
     box-sizing: border-box;
     width: 100%;
-    height: 100%;
     min-width: 0;
     padding: 0;
     border: 0;
     outline: 0;
     resize: none;
-    overflow-y: auto;
+    overflow-x: auto;
+    overflow-y: hidden;
+    text-overflow: clip;
     background: transparent;
+    scrollbar-width: none;
 }
+.easymde-immersive-title-measure > textarea::-webkit-scrollbar { display: none; }
 .easymde-immersive-save-state { display: flex; height: 26.25px; flex: 0 0 auto; align-items: center; gap: 5.625px; padding: 0 3.75px; color: #64748b; font-size: 11.25px; white-space: nowrap; }
 .easymde-immersive-save-state svg { color: #10b981; }
 .easymde-immersive-save-state.is-dirty svg { color: #f59e0b; }
@@ -394,8 +406,9 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-immersive-secondary-actions { margin-inline-start: auto; flex: 0 0 auto; gap: 9.375px; }
 .easymde-immersive-secondary-actions > button { display: inline-flex; align-items: center; gap: 5.625px; height: 30px; padding: 0 9.375px; border: 1px solid #e2e8f0; border-radius: 5.625px; background: transparent; color: oklch(0.446 0.043 257.281); font-size: 12.5px; font-weight: 500; line-height: 18.75px; cursor: pointer; }
 .easymde-immersive-secondary-actions > button:disabled { opacity: .5; cursor: not-allowed; }
-.easymde-immersive-secondary-actions .easymde-immersive-wechat { gap: 7.5px; height: 36px; padding: 0 11.25px; border-color: rgba(7, 192, 96, 0.36); border-radius: 12px; background: linear-gradient(180deg, #f7fffa 0%, #edf9f1 100%); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .85); color: #0f7d3b; font-size: 13px; font-weight: 600; line-height: 19.5px; }
+.easymde-immersive-secondary-actions .easymde-immersive-wechat { gap: 7.5px; min-inline-size: 168px; height: 36px; justify-content: center; padding: 0 11.25px; border-color: rgba(7, 192, 96, 0.36); border-radius: 12px; background: linear-gradient(180deg, #f7fffa 0%, #edf9f1 100%); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .85); color: #0f7d3b; font-size: 13px; font-weight: 600; line-height: 19.5px; }
 .easymde-immersive-secondary-actions .easymde-immersive-wechat:hover { border-color: #07c060; background: linear-gradient(180deg, #f2fff7 0%, #e5f8eb 100%); box-shadow: 0 8px 18px rgba(7, 192, 96, .16); color: #075f2c; transform: translateY(-1px); }
+.easymde-immersive-secondary-actions .easymde-immersive-wechat[aria-disabled="true"]:not([aria-busy="true"]) { opacity: .72; transform: none; }
 .easymde-immersive-wechat-glyph { display: inline-flex; width: 22px; height: 22px; flex: 0 0 auto; align-items: center; justify-content: center; border-radius: 50%; background: #fff; box-shadow: inset 0 0 0 1px rgba(7, 192, 96, .18); color: #07c060; }
 .easymde-immersive-wechat-glyph svg { width: 18px; height: 18px; }
 .easymde-immersive-secondary-actions .easymde-toolbar-popover-anchor { display: block; }
@@ -1345,6 +1358,13 @@ body:has(.easymde-editor.is-immersive) .wrap {
     to { opacity: 1; transform: translateY(0); }
 }
 @media (prefers-reduced-motion: reduce) {
+    .easymde-editor:not(.is-immersive) .easymde-toolbar-copy-action,
+    .easymde-immersive-secondary-actions .easymde-immersive-wechat {
+        transition: none;
+    }
+    .easymde-immersive-secondary-actions .easymde-immersive-wechat:hover {
+        transform: none;
+    }
     .easymde-immersive-custom-css-notice { animation: none; }
 }
 @media (max-width: 900px) {
@@ -1568,6 +1588,14 @@ body:has(.easymde-editor.is-immersive) .wrap {
     pointer-events: none;
 }
 
+.easymde-editor-context-menu__submenu-frame:where([data-easymde-context-menu-overlapped="true"]) {
+    filter: drop-shadow(0 18px 36px rgba(15, 23, 42, .26));
+}
+
+.easymde-editor-context-menu__submenu-frame:where([data-easymde-context-menu-overlapped="true"])::after {
+    mask-image: none;
+}
+
 .easymde-editor-context-menu__submenu {
     --easymde-context-menu-background: #fff;
     --easymde-context-menu-border: #dfe4ea;
@@ -1740,7 +1768,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-editor.is-immersive > .easymde-workspace.is-split-resizable { display: flex; }
 .easymde-editor.is-immersive > .easymde-workspace.is-split-resizable .easymde-pane-source { flex: var(--easymde-split-start, 50) 1 0%; }
 .easymde-editor.is-immersive > .easymde-workspace.is-split-resizable .easymde-pane-preview { flex: var(--easymde-split-end, 50) 1 0%; }
-.easymde-editor.is-immersive .easymde-immersive-pane-divider { position: relative; z-index: 2; display: flex; width: 14px; min-width: 14px; height: auto; margin: 0 -14px; padding: 0; align-self: stretch; align-items: center; justify-content: center; border: 0; background: linear-gradient(90deg, transparent 6.5px, #e8ebef 6.5px, #e8ebef 7.5px, transparent 7.5px); cursor: col-resize; }
+.easymde-editor.is-immersive .easymde-immersive-pane-divider { position: relative; z-index: 2; display: flex; width: 14px; min-width: 14px; height: auto; margin: 0 -14px; padding: 0; align-self: stretch; align-items: center; justify-content: center; border: 0; background: linear-gradient(90deg, transparent 6.5px, #e8ebef 6.5px, #e8ebef 7.5px, transparent 7.5px); cursor: col-resize; touch-action: none; }
 .easymde-editor.is-immersive .easymde-immersive-pane-divider:hover,
 .easymde-editor.is-immersive .easymde-immersive-pane-divider:focus-visible { outline: 0; background: linear-gradient(90deg, transparent 6.5px, #dde1e8 6.5px, #dde1e8 7.5px, transparent 7.5px); }
 .easymde-editor.is-immersive .easymde-immersive-pane-divider:active { background: linear-gradient(90deg, transparent 6.5px, #c8ced8 6.5px, #c8ced8 7.5px, transparent 7.5px); }
@@ -2192,45 +2220,6 @@ body:has(.easymde-editor.is-immersive) .wrap {
     .easymde-publish-dialog-body { grid-template-columns: 1fr; }
 }
 
-@media (max-width: 640px) {
-    .easymde-immersive-header { overflow: hidden; }
-    .easymde-immersive-brand { width: 71.875px; height: 15px; flex-basis: 71.875px; }
-    .easymde-immersive-brand-mark { width: 15px; flex-basis: 15px; }
-    .easymde-immersive-title-wrap { flex: 0 1 auto; }
-    .easymde-immersive-title-field { min-width: 72px; }
-    .easymde-immersive-title-measure { width: 72px; min-width: 72px; flex: 0 0 72px; }
-    .easymde-immersive-title-measure > span,
-    .easymde-immersive-title-measure > textarea {
-        min-width: 0;
-        max-height: 60px;
-        white-space: pre-wrap;
-        overflow-wrap: break-word;
-    }
-    .easymde-immersive-title-measure > span { max-height: 60px; }
-    .easymde-immersive-title-measure > textarea { height: 100%; overflow-y: auto; }
-    .easymde-immersive-header-divider { display: none; }
-    .easymde-immersive-brand-name,
-    .easymde-immersive-brand-divider { display: none; }
-    .easymde-immersive-header-actions { width: auto; flex: 0 0 auto; }
-    .easymde-immersive-view-switch button { width: auto; min-width: 0; justify-content: center; }
-    .easymde-immersive-save-state span,
-    .easymde-immersive-view-switch button span { display: none; }
-    .easymde-immersive-publish { font-size: 0; }
-    .easymde-immersive-save-state { flex: 0 0 auto; }
-    .easymde-immersive-publish { width: 34px; min-width: 34px; padding: 0; }
-    .easymde-immersive-toolbar-row { box-sizing: border-box; width: 100%; max-width: 100%; justify-content: flex-start; gap: 24px; overflow-x: auto; }
-    .easymde-immersive-formatting,
-    .easymde-immersive-secondary-actions { flex: 0 0 auto; }
-    .easymde-immersive-formatting > .easymde-toolbar { width: max-content; }
-    .easymde-immersive-secondary-actions .easymde-toolbar-popover-anchor { flex: 0 0 auto; }
-    .easymde-immersive-modal-backdrop { padding: 12px; }
-    .easymde-publish-dialog-header { padding-inline: 20px; }
-    .easymde-publish-dialog-body { padding: 18px 20px 8px; }
-    .easymde-publish-dialog-footer { height: auto; grid-template-columns: 1fr; align-items: stretch; padding: 14px 20px; }
-    .easymde-publish-dialog-footer > p,
-    .easymde-publish-dialog-footer > div { width: 100%; }
-}
-
 /* --------------------------------------------------------------------------
    14. Custom CSS Dialog Compact Alert Overrides
    -------------------------------------------------------------------------- */
@@ -2346,21 +2335,6 @@ body:has(.easymde-editor.is-immersive) .wrap {
     grid-area: preview;
 }
 
-.easymde-workspace.is-mode-source {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "source";
-}
-
-.easymde-workspace.is-mode-source .easymde-pane-preview,
-.easymde-workspace.is-mode-preview .easymde-pane-source {
-    display: none;
-}
-
-.easymde-workspace.is-mode-preview {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "preview";
-}
-
 .easymde-source,
 .easymde-preview,
 .easymde-preview-react-root {
@@ -2376,41 +2350,47 @@ body:has(.easymde-editor.is-immersive) .wrap {
 
 .easymde-editor:not(.is-immersive) .easymde-preview {
     overflow-x: hidden;
-    padding-block: 0;
-    padding-inline: calc(max(clamp(14px, 4.5%, 22px), calc((100% - 680px) / 4)) - 5px);
     scroll-padding-block: 0;
     scroll-padding-inline: calc(max(clamp(14px, 4.5%, 22px), calc((100% - 680px) / 4)) - 5px);
 }
 
-.easymde-editor .easymde-rendered-content :is(.table-container, .easymde-table-container) {
-    display: block;
-    box-sizing: border-box;
-    width: 100%;
-    min-width: 0;
-    max-width: 100%;
-    overflow-x: auto;
-    overflow-y: hidden;
+.easymde-editor:not(.is-immersive) .easymde-preview:where(:not([data-easymde-wechat-export-style-context="1"])) {
+    padding-block: 0;
+    padding-inline: calc(max(clamp(14px, 4.5%, 22px), calc((100% - 680px) / 4)) - 5px);
 }
 
-.easymde-editor:not(.is-immersive) .easymde-rendered-content :is(p, li, blockquote, figcaption, h1, h2, h3, h4, h5, h6, a) {
+/*
+ * WordPress admin form CSS gives checked checkboxes a 25px used box and a
+ * 30px static ::before checkmark. Preview task markers are article content,
+ * so their compact dimensions must be owned here rather than by a selected
+ * article theme. Theme rules loaded after this shared rule may still provide
+ * their own marker geometry and paint.
+ */
+.easymde-editor .easymde-rendered-content :where(
+  .task-list-item > input[type="checkbox"],
+  .task-list-item > p > input[type="checkbox"]
+) {
+  width: 1rem;
+  min-width: 1rem;
+  height: 1rem;
+}
+.easymde-editor .easymde-rendered-content :where(
+  .task-list-item > input[type="checkbox"],
+  .task-list-item > p > input[type="checkbox"]
+):is(:checked, :not(:checked)):is(:disabled, :enabled)::before {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  float: none;
+  opacity: 1;
+}
+
+#easymde-editor-root .easymde-editor:not(.is-immersive) .easymde-rendered-content :is(p, li, blockquote, figcaption, h1, h2, h3, h4, h5, h6, a) {
     overflow-wrap: anywhere;
 }
 
-.easymde-editor.is-immersive-split .easymde-rendered-content :is(p, li, blockquote, figcaption, h1, h2, h3, h4, h5, h6, a) {
+#easymde-editor-root .easymde-editor[data-easymde-preview-presentation="split"] .easymde-rendered-content :is(p, li, blockquote, figcaption, h1, h2, h3, h4, h5, h6, a) {
     overflow-wrap: anywhere;
-}
-
-@media (max-width: 760px) {
-    /* Phycat's decorative 48px quote inset is attractive on a paper page but
-     * consumes the entire content box when three quotes are nested in a
-     * narrow split pane. Keep the decoration while making nested levels
-     * shrink with the available article width. */
-    .easymde-editor .easymde-rendered-content[class*="easymde-markdown-theme-phycat-"]:not(.easymde-custom-css-active) blockquote blockquote {
-        box-sizing: border-box;
-        max-width: 100%;
-        margin-inline: 0;
-        padding-inline: 12px;
-    }
 }
 
 .easymde-preview-react-root {
@@ -2494,10 +2474,25 @@ body:has(.easymde-editor.is-immersive) .wrap {
 
 .easymde-preview {
     box-sizing: border-box;
-    padding: 22px 28px 28px;
     color: #111827;
     font-size: 16px;
     line-height: 1.72;
+}
+
+/* Keep Core's broad paragraph and heading resets out of the rendered surface.
+ * :where() keeps this baseline below an explicit article theme or Custom CSS
+ * declaration while the editor root supplies the ownership boundary. */
+#easymde-editor-root :where(.easymde-rendered-content p) {
+    font-size: inherit;
+    line-height: inherit;
+}
+
+#easymde-editor-root :where(.easymde-rendered-content) :is(h1, h2, h3, h4, h5, h6) {
+    padding: 0;
+}
+
+.easymde-preview:where(:not([data-easymde-wechat-export-style-context="1"])) {
+    padding: 22px 28px 28px;
     background-color: #fff;
 }
 
@@ -2525,6 +2520,9 @@ body:has(.easymde-editor.is-immersive) .wrap {
     min-width: 0;
     height: auto !important;
     overflow: visible;
+}
+
+#easymde-editor-root .easymde-editor .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview:where(:not([data-easymde-wechat-export-style-context="1"])) {
     border: 0;
     background-color: #fff;
 }
@@ -2536,10 +2534,13 @@ body:has(.easymde-editor.is-immersive) .wrap {
     background: #fff;
 }
 
-.easymde-editor:not(.is-immersive) .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
+#easymde-editor-root .easymde-editor:not(.is-immersive) .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
     width: 100%;
     max-width: none;
     min-height: 100%;
+}
+
+#easymde-editor-root .easymde-editor:not(.is-immersive) .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview:where(:not([data-easymde-wechat-export-style-context="1"])) {
     margin: 0;
     padding: 22px 28px 28px;
     border-radius: 0;
@@ -2547,17 +2548,20 @@ body:has(.easymde-editor.is-immersive) .wrap {
     box-shadow: none;
 }
 
-.easymde-editor.is-immersive-split .easymde-pane-preview > .easymde-immersive-preview-canvas {
+.easymde-editor[data-easymde-preview-presentation="split"] .easymde-pane-preview > .easymde-immersive-preview-canvas {
     overflow-x: hidden;
     overflow-y: auto;
     padding: 0;
     background: #fff;
 }
 
-.easymde-editor.is-immersive-split .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
+#easymde-editor-root .easymde-editor[data-easymde-preview-presentation="split"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
     width: 100%;
     max-width: none;
     min-height: 100%;
+}
+
+#easymde-editor-root .easymde-editor[data-easymde-preview-presentation="split"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview:where(:not([data-easymde-wechat-export-style-context="1"])) {
     margin: 0;
     padding: 22px 28px 28px;
     border-radius: 0;
@@ -2565,14 +2569,14 @@ body:has(.easymde-editor.is-immersive) .wrap {
     box-shadow: none;
 }
 
-.easymde-editor.is-immersive-preview .easymde-pane-preview > .easymde-immersive-preview-canvas {
+.easymde-editor[data-easymde-preview-presentation="preview"] .easymde-pane-preview > .easymde-immersive-preview-canvas {
     overflow-x: hidden;
     overflow-y: auto;
     padding: 28px 20px;
     background: #f6f6f8;
 }
 
-.easymde-editor.is-immersive-preview .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
+#easymde-editor-root .easymde-editor[data-easymde-preview-presentation="preview"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
     display: block;
     box-sizing: border-box;
     flex: 0 0 auto;
@@ -2580,9 +2584,12 @@ body:has(.easymde-editor.is-immersive) .wrap {
     height: auto !important;
     max-width: 760px;
     min-height: 680px;
+    overflow: visible;
+}
+
+#easymde-editor-root .easymde-editor[data-easymde-preview-presentation="preview"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview:where(:not([data-easymde-wechat-export-style-context="1"])) {
     margin: 0 auto;
     padding: 36px 40px;
-    overflow: visible;
     border-radius: 48px;
     background-color: #fff;
     box-shadow: 0 8px 28px rgba(15, 23, 42, .06);
@@ -2679,52 +2686,8 @@ body:has(.easymde-editor.is-immersive) .wrap {
 /* --------------------------------------------------------------------------
    17. Ordinary Editor & Shared Responsive Breakpoints
    -------------------------------------------------------------------------- */
-@media (max-width: 1080px) {
-    .easymde-workspace {
-        grid-template-columns: 1fr;
-        grid-template-areas:
-            "source"
-            "preview";
-        height: auto;
-        min-height: 0;
-    }
-
-    .easymde-pane-source {
-        border-inline-end: 0;
-        border-bottom: 1px solid #dcdcde;
-    }
-
-    .easymde-source,
-    .easymde-preview {
-        height: 420px;
-        min-height: 360px;
-        max-height: 58vh;
-    }
-
-    .easymde-preview-react-root {
-        flex: 0 1 auto;
-        height: 420px;
-        min-height: 360px;
-        max-height: 58vh;
-    }
-
-    .easymde-editor:not(.is-immersive) .easymde-pane-preview,
-    .easymde-editor:not(.is-immersive) .easymde-pane-preview > .easymde-immersive-preview-canvas {
-        height: 420px;
-        min-height: 360px;
-        max-height: 58vh;
-    }
-
-    .easymde-editor.is-immersive-preview .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
-        height: auto !important;
-        min-height: 680px;
-        max-height: none;
-    }
-
-}
-
 @media (min-width: 640px) {
-    .easymde-editor.is-immersive-preview .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
+    #easymde-editor-root .easymde-editor[data-easymde-preview-presentation="preview"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview:where(:not([data-easymde-wechat-export-style-context="1"])) {
         padding: 45px 52.5px;
     }
 }
@@ -2790,6 +2753,10 @@ body:has(.easymde-editor.is-immersive) .wrap {
         text-align: start;
     }
 
+    #easymde-editor-root .easymde-editor:not(.is-immersive) .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview:where(:not([data-easymde-wechat-export-style-context="1"])),
+    #easymde-editor-root .easymde-editor[data-easymde-preview-presentation="split"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview:where(:not([data-easymde-wechat-export-style-context="1"])) {
+        padding: 18px 18px 24px;
+    }
 }
 
 /* --------------------------------------------------------------------------
@@ -2915,35 +2882,163 @@ body:has(.easymde-editor.is-immersive) .wrap {
    19. Immersive Mode Responsive Breakpoints
    -------------------------------------------------------------------------- */
 @media (max-width: 760px) {
-    .easymde-editor.is-immersive-preview .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
+    #easymde-editor-root .easymde-editor[data-easymde-preview-presentation="preview"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
         min-height: 520px;
+    }
+
+    #easymde-editor-root .easymde-editor[data-easymde-preview-presentation="preview"] .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview:where(:not([data-easymde-wechat-export-style-context="1"])) {
         padding: 28px 24px;
     }
 }
 
-@media (max-width: 1080px) {
-    .easymde-editor.is-immersive:not(.is-immersive-source):not(.is-immersive-preview) .easymde-workspace {
-        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-        grid-template-areas: "source preview";
-        height: auto;
-        min-height: 0;
-    }
-
+@media (max-width: 1232px) {
     .easymde-editor.is-immersive {
-        grid-template-rows: 76px 52.5px minmax(0, 1fr);
+        --easymde-immersive-header-height: 76px;
+        grid-template-rows: var(--easymde-immersive-header-height) var(--easymde-immersive-toolbar-height) minmax(0, 1fr);
     }
 
-    .easymde-editor.is-immersive .easymde-source,
-    .easymde-editor.is-immersive .easymde-preview,
-    .easymde-editor.is-immersive .easymde-preview-react-root {
-        height: auto;
-        min-height: 0;
-        max-height: none;
+    .easymde-immersive-header {
+        display: grid;
+        box-sizing: border-box;
+        grid-template-columns: auto minmax(0, 1fr) auto auto;
+        grid-template-rows: repeat(2, minmax(0, 1fr));
+        gap: 0 12px;
+        padding: 6px 12px;
+    }
+
+    .easymde-immersive-brand {
+        grid-column: 1;
+        grid-row: 1;
+    }
+
+    .easymde-immersive-title-wrap {
+        grid-column: 2;
+        grid-row: 1;
+        min-width: 0;
+    }
+
+    .easymde-immersive-title-field,
+    .easymde-immersive-title-measure {
+        width: 100%;
+        min-width: 0;
+        max-width: none;
+    }
+
+    .easymde-immersive-title-measure {
+        flex: 1 1 auto;
+    }
+
+    .easymde-immersive-save-state {
+        grid-column: 3;
+        grid-row: 1;
+    }
+
+    .easymde-immersive-stats {
+        grid-column: 4;
+        grid-row: 1;
+    }
+
+    .easymde-immersive-header-spacer {
+        display: none;
+    }
+
+    .easymde-immersive-view-switch {
+        grid-column: 2 / -1;
+        grid-row: 2;
+        min-width: 0;
+        max-width: 100%;
+        overflow-x: auto;
+        justify-self: stretch;
+        scrollbar-width: none;
+    }
+
+    .easymde-immersive-view-switch::-webkit-scrollbar {
+        display: none;
+    }
+
+    .easymde-immersive-header-actions {
+        grid-column: 1;
+        grid-row: 2;
+        width: auto;
+        min-width: 0;
+        justify-content: flex-start;
+    }
+}
+
+@media (max-width: 1080px) {
+    .easymde-editor.is-immersive {
+        --easymde-immersive-toolbar-height: 72px;
+        grid-template-rows: var(--easymde-immersive-header-height) var(--easymde-immersive-toolbar-height) minmax(0, 1fr);
+    }
+
+    .easymde-immersive-toolbar-row {
+        display: grid;
+        box-sizing: border-box;
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: repeat(2, minmax(0, 1fr));
+        align-items: stretch;
+        justify-content: initial;
+        gap: 0;
+        padding-inline: 12px;
+        overflow: hidden;
+    }
+
+    .easymde-immersive-formatting,
+    .easymde-immersive-secondary-actions {
+        width: 100%;
+        min-width: 0;
+        flex: 0 1 auto;
+        overflow-x: auto;
+        overflow-y: visible;
+        scrollbar-width: none;
+    }
+
+    .easymde-immersive-formatting::-webkit-scrollbar,
+    .easymde-immersive-secondary-actions::-webkit-scrollbar {
+        display: none;
+    }
+
+    .easymde-immersive-formatting {
+        grid-column: 1;
+        grid-row: 1;
+    }
+
+    .easymde-immersive-formatting > .easymde-toolbar {
+        width: max-content;
+        min-width: max-content;
+        flex: 0 0 auto;
+    }
+
+    .easymde-immersive-secondary-actions {
+        grid-column: 1;
+        grid-row: 2;
+        margin-inline-start: 0;
+        justify-content: flex-start;
+        gap: 9.375px;
+    }
+
+    .easymde-immersive-secondary-actions > * {
+        flex: 0 0 auto;
+    }
+
+    .easymde-editor.is-immersive .easymde-immersive-outline {
+        min-width: 160px;
+        max-width: clamp(160px, 24vw, 220px);
     }
 }
 
 @media (max-width: 782px) {
-    .easymde-immersive-stats { display: none; }
+    .easymde-editor.is-immersive {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .easymde-immersive-header {
+        grid-template-columns: auto minmax(0, 1fr) auto;
+    }
+
+    .easymde-immersive-stats {
+        display: none;
+    }
 
     .easymde-immersive-formatting > .easymde-toolbar {
         align-items: center;
@@ -2955,36 +3050,20 @@ body:has(.easymde-editor.is-immersive) .wrap {
         margin-left: 0;
     }
 
-}
-
-@media (max-width: 640px) {
-    .easymde-editor.is-immersive {
-        grid-template-columns: minmax(0, 1fr);
-    }
-
-    .easymde-editor.is-immersive-preview .easymde-pane-preview > .easymde-immersive-preview-canvas {
-        padding-inline: 18px;
-    }
-
     .easymde-editor.is-immersive > .easymde-workspace {
         grid-column: 1;
         min-width: 0;
         width: auto;
     }
 
-    .easymde-editor.is-immersive.is-immersive-split > .easymde-workspace.is-split-resizable {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr);
-        grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
-        grid-template-areas:
-            "source"
-            "preview";
+    .easymde-editor.is-immersive.is-immersive-split .easymde-pane-header {
+        padding-inline: 12px;
     }
 
     .easymde-editor.is-immersive .easymde-immersive-outline {
         position: absolute;
         z-index: 5;
-        inset-block: calc(76px + 52.5px + 11.25px) 11.25px;
+        inset-block: var(--easymde-immersive-outline-inset-block-start) 11.25px;
         inset-inline-start: 11.25px;
         min-width: 0;
         max-width: min(240px, calc(100% - 22.5px));
@@ -2994,7 +3073,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
     .easymde-editor.is-immersive .easymde-immersive-outline-show {
         position: absolute;
         z-index: 6;
-        inset-block-start: calc(76px + 52.5px + 11.25px);
+        inset-block-start: var(--easymde-immersive-outline-inset-block-start);
         inset-inline-start: 11.25px;
         width: 33.75px;
         height: 33.75px;
@@ -3003,8 +3082,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
         align-self: auto;
     }
 
-    .easymde-editor.is-immersive .easymde-immersive-outline-resizer,
-    .easymde-editor.is-immersive .easymde-immersive-pane-divider {
+    .easymde-editor.is-immersive .easymde-immersive-outline-resizer {
         display: none;
     }
 }

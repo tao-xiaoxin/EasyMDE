@@ -1,8 +1,50 @@
+import type { WechatPngEncodingPort } from '../../../contracts/ports/wechat-png-encoding-port';
 import {
-  WechatVisualRasterizationError,
   type WechatVisualRasterizationRequest,
   type WechatVisualRasterizationResult,
+  type WechatVisualRasterizationYield,
+  WechatVisualRasterizationError,
 } from '../../../contracts/ports/wechat-visual-rasterization-port';
+import type { FontCache } from './wechat-font-assets';
+import {
+  createManagedFontFacesCache,
+  embedFontFaces,
+  type ManagedFontFacesCache,
+  prewarmManagedFontFaces,
+} from './wechat-managed-fonts';
+import {
+  type CaptureGeometry,
+  applyCaptureTypography,
+  captureBounds,
+  createMathBlockContentRoot,
+  inlineOverflowScrolls,
+  normalizeCaptureRoot,
+  removeMathMlFallback,
+  sizeCaptureRoot,
+} from './wechat-math-capture-geometry';
+import {
+  applyMermaidBackground,
+  inlineConnectedMermaidRootPaint,
+} from './wechat-mermaid-background';
+import {
+  buildDirectSvgWithBackdrop,
+  inspectDirectSvgCapture,
+  normalizeDirectSvgForeignObjectClone,
+  resolveAppliedMermaidBackground,
+} from './wechat-mermaid-direct-svg-backdrop';
+import {
+  assertIntrinsicMermaidCaptureRequest,
+  assertResponsiveMermaidCaptureRequest,
+  mermaidLayoutMagnification,
+  normalizeIntrinsicMermaidCaptureRoot,
+  validateMermaidSource,
+} from './wechat-rasterizer-mermaid';
+import {
+  beginWechatTiming,
+  runWechatSyncTiming,
+  type WechatTimingMetadata,
+  type WechatTimingMode,
+} from './wechat-timing';
 
 function w3cNamespace(path: string): string {
   return ['http:', '', 'www.w3.org', path].join('/');
@@ -118,6 +160,10 @@ function inlineComputedStyles(
   document: Document,
   properties: readonly string[] = SVG_VISUAL_STYLE_PROPERTIES,
 ): void {
+  // Detached precomputed capture clones (from WeChat PNG conversion) already
+  // carry serialized computed styles; only connected live Preview elements need
+  // winning computed style values resolved across variables and !important rules.
+  if (!original.isConnected) return;
   const originals = [original, ...Array.from(original.querySelectorAll('*'))];
   const clones = [clone, ...Array.from(clone.querySelectorAll('*'))];
   const count = Math.min(originals.length, clones.length);
@@ -143,66 +189,52 @@ function inlineComputedStyles(
   }
 }
 
-function inlineMermaidBackground(
-  source: Element,
-  svg: SVGSVGElement,
-  document: Document,
-): void {
-  let background: CSSStyleDeclaration | null = null;
-  for (let element: Element | null = source; element; element = element.parentElement) {
-    const style = computedStyle(document, element);
-    // A detached or unstyled node reports an empty string; it is not an
-    // opaque color and must not stop the walk before the themed ancestor.
-    const hasColor =
-      Boolean(style.backgroundColor)
-      && style.backgroundColor !== 'rgba(0, 0, 0, 0)'
-      && style.backgroundColor !== 'transparent';
-    const hasImage = Boolean(style.backgroundImage && style.backgroundImage !== 'none');
-    if (hasColor || hasImage) {
-      background = style;
-      break;
-    }
-  }
-  const svgStyle = computedStyle(document, source.matches('svg') ? source : svg);
-  let backgroundColor = background?.backgroundColor ?? '';
-  if (!backgroundColor
-    && svgStyle.backgroundColor !== 'rgba(0, 0, 0, 0)'
-    && svgStyle.backgroundColor !== 'transparent') {
-    backgroundColor = svgStyle.backgroundColor;
-  }
-  if (backgroundColor && backgroundColor !== 'rgba(0, 0, 0, 0)' && backgroundColor !== 'transparent') {
-    svg.style.setProperty('background-color', backgroundColor);
-  }
-
-  // CSS gradients are self-contained and remain safe to serialize. External
-  // URLs are deliberately excluded so a copied image cannot pull in an
-  // untrusted or cross-origin resource and taint the canvas.
-  const backgroundImage = background?.backgroundImage ?? '';
-  if (backgroundImage && backgroundImage !== 'none' && !/url\(/iu.test(backgroundImage)) {
-    svg.style.setProperty('background-image', backgroundImage);
-    svg.style.setProperty('background-position', background?.backgroundPosition ?? '');
-    svg.style.setProperty('background-size', background?.backgroundSize ?? '');
-    svg.style.setProperty('background-repeat', background?.backgroundRepeat ?? '');
-  }
-}
-
 export type BrowserWechatVisualRasterizerRuntime = Readonly<{
+  approvedAssetBaseUrl: string;
+  approvedKaTeXCssUrl: string;
   blob: typeof Blob;
   document: Document;
+  fetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   file: typeof File;
   image: typeof Image;
+  pngEncodingPort?: WechatPngEncodingPort | null;
   xmlSerializer: typeof XMLSerializer;
 }>;
 
+const WECHAT_RASTERIZER_TIMING_NAMES = {
+  canvasDrawEncode: 'easymde.wechat.rasterizer.canvas-draw-encode',
+  decodeWait: 'easymde.wechat.rasterizer.decode-wait',
+  digestWait: 'easymde.wechat.rasterizer.digest-wait',
+  file: 'easymde.wechat.rasterizer.file',
+  geometryCleanup: 'easymde.wechat.rasterizer.geometry-cleanup',
+  serializeSvg: 'easymde.wechat.rasterizer.serialize-svg',
+  uriGeneration: 'easymde.wechat.rasterizer.uri-generation'
+} as const;
+
 function assertRequest(
   request: WechatVisualRasterizationRequest,
-): Readonly<{ height: number; pixelCount: number; scale: number; width: number }> {
+): Readonly<{
+  displayHeight: number;
+  displayWidth: number;
+  height: number;
+  pixelCount: number;
+  scale: number;
+  width: number;
+}> {
+  const layoutMagnification = request.layoutMagnification ?? 1;
   if (
     request.signal.aborted
     || !['math', 'mermaid'].includes(request.kind)
     || !Number.isFinite(request.scale)
     || request.scale < 1
     || request.scale > 2
+    || !Number.isFinite(layoutMagnification)
+    || layoutMagnification < 1
+    || 'math' === request.kind && 1 !== layoutMagnification
+    || 'math' === request.kind && !['content', 'full-root'].includes(request.mathCapture)
+    || 'mermaid' === request.kind && undefined !== request.mathCapture
+    || 'responsive-viewport' === request.mermaidCapture
+      && ('mermaid' !== request.kind || 1 !== layoutMagnification)
     || !Number.isSafeInteger(request.maxPixels)
     || request.maxPixels < 1
   ) {
@@ -218,56 +250,95 @@ function assertRequest(
   ) {
     throw new WechatVisualRasterizationError('wechat-png-size-invalid');
   }
-  const width = Math.ceil(request.width * request.scale);
-  const height = Math.ceil(request.height * request.scale);
+  const displayWidth = request.width * layoutMagnification;
+  const displayHeight = request.height * layoutMagnification;
+  const width = Math.ceil(displayWidth * request.scale);
+  const height = 'responsive-viewport' === request.mermaidCapture
+    ? Math.round(width * displayHeight / displayWidth)
+    : Math.ceil(displayHeight * request.scale);
   const pixelCount = width * height;
   if (
-    !Number.isSafeInteger(width)
+    !Number.isFinite(displayWidth)
+    || !Number.isFinite(displayHeight)
+    || displayWidth > MAX_DIMENSION
+    || displayHeight > MAX_DIMENSION
+    || !Number.isSafeInteger(width)
     || !Number.isSafeInteger(height)
+    || width < 1
+    || height < 1
+    || 'responsive-viewport' === request.mermaidCapture
+      && (width > Math.ceil(MAX_DIMENSION * request.scale)
+        || height > Math.ceil(MAX_DIMENSION * request.scale))
     || !Number.isSafeInteger(pixelCount)
     || pixelCount > request.maxPixels
   ) {
     throw new WechatVisualRasterizationError('wechat-png-size-invalid');
   }
-  return { height, pixelCount, scale: request.scale, width };
+  return {
+    displayHeight,
+    displayWidth,
+    height,
+    pixelCount,
+    scale: request.scale,
+    width,
+  };
 }
 
-function normalizeMathClone(clone: Element): void {
-  // The WeChat contract keeps only the visual KaTeX tree: WeChat imports the
-  // MathML fallback as a second, duplicated text run. Removing it before style
-  // inlining keeps the fallback's hidden layout out of the rasterized image.
-  // KaTeX positions vlist rows relative to their own containing block, so the
-  // functional geometry inlined below stays correct without coordinate rebasing.
-  clone.querySelectorAll('.katex-mathml').forEach((element) => {
-    element.remove();
-  });
+async function yieldRasterizationBoundary(
+  signal: AbortSignal,
+  yieldToBrowser: WechatVisualRasterizationYield | undefined,
+): Promise<void> {
+  if (signal.aborted) {
+    throw new WechatVisualRasterizationError('wechat-png-rasterization-cancelled');
+  }
+  if (!yieldToBrowser?.shouldYield()) return;
+  await yieldToBrowser();
+  if (signal.aborted) {
+    throw new WechatVisualRasterizationError('wechat-png-rasterization-cancelled');
+  }
 }
 
-function serializedSvg(
+async function serializedSvg(
   request: WechatVisualRasterizationRequest,
-  dimensionsValue: Readonly<{ height: number; width: number }>,
+  geometry: CaptureGeometry,
   document: Document,
   Serializer: typeof XMLSerializer,
-): string {
+  runtime: BrowserWechatVisualRasterizerRuntime,
+  fontCache: FontCache,
+  managedFacesCache: ManagedFontFacesCache,
+): Promise<string> {
+  const layoutMagnification = request.kind === 'mermaid'
+    ? request.layoutMagnification ?? 1
+    : 1;
+  const dimensionsValue = {
+    height: geometry.height * layoutMagnification,
+    width: geometry.width * layoutMagnification,
+  };
+  const readComputedStyle = (element: Element): CSSStyleDeclaration =>
+    computedStyle(document, element);
   const source = request.kind === 'mermaid'
-    ? request.source.matches('svg')
-      ? request.source
-      : request.source.querySelector('svg')
+    ? request.source.matches('svg') ? (request.source as SVGSVGElement) : null
+    : null;
+  const directSvgInspection = source
+    ? inspectDirectSvgCapture(source, readComputedStyle, geometry.width, geometry.height)
     : null;
   let svg: SVGSVGElement;
-  if (source) {
-    svg = source.cloneNode(true) as SVGSVGElement;
-    inlineComputedStyles(source, svg, document);
-    inlineMermaidBackground(request.source, svg, document);
-    if (!svg.getAttribute('xmlns')) svg.setAttribute('xmlns', SVG_NAMESPACE);
-    svg.setAttribute('width', String(dimensionsValue.width));
-    svg.setAttribute('height', String(dimensionsValue.height));
-    if (!svg.getAttribute('viewBox')) {
-      svg.setAttribute(
-        'viewBox',
-        `0 0 ${dimensionsValue.width} ${dimensionsValue.height}`,
-      );
-    }
+  if (source && directSvgInspection && !directSvgInspection.needsForeignObject) {
+    svg = buildDirectSvgWithBackdrop({
+      cssHeight: geometry.height,
+      cssWidth: geometry.width,
+      document,
+      inheritedBackground: 'mermaid' === request.kind ? request.inheritedBackground : undefined,
+      inlineSvgStyles: (originalSvg, clonedSvg) =>
+        inlineComputedStyles(originalSvg, clonedSvg, document),
+      inspection: directSvgInspection,
+      layoutMagnification,
+      mermaidCapture: request.mermaidCapture,
+      outputHeight: dimensionsValue.height,
+      outputWidth: dimensionsValue.width,
+      readComputedStyle,
+      source,
+    });
   } else {
     svg = document.createElementNS(SVG_NAMESPACE, 'svg') as SVGSVGElement;
     svg.setAttribute('xmlns', SVG_NAMESPACE);
@@ -278,16 +349,98 @@ function serializedSvg(
       `0 0 ${dimensionsValue.width} ${dimensionsValue.height}`,
     );
     const foreignObject = document.createElementNS(SVG_NAMESPACE, 'foreignObject');
+    foreignObject.setAttribute('x', '0');
+    foreignObject.setAttribute('y', '0');
     foreignObject.setAttribute('width', '100%');
     foreignObject.setAttribute('height', '100%');
     const container = document.createElementNS(XHTML_NAMESPACE, 'div');
     container.setAttribute('xmlns', XHTML_NAMESPACE);
-    const clone = request.source.cloneNode(true) as Element;
-    // Inline first: styles are paired with the original tree by node index, so
-    // removal of the MathML fallback must happen after that pairing is applied.
-    inlineComputedStyles(request.source, clone, document, MATH_VISUAL_STYLE_PROPERTIES);
-    normalizeMathClone(clone);
-    container.appendChild(clone);
+    container.setAttribute(
+      'style',
+      `width:${dimensionsValue.width}px;height:${dimensionsValue.height}px;`
+        + 'margin:0;position:relative;overflow:visible;box-sizing:border-box;',
+    );
+    const mathBlockContent = request.kind === 'math' && 'content' === request.mathCapture;
+    const rootClone = mathBlockContent
+      ? createMathBlockContentRoot(request.source, document, request.mathCapture)
+      : request.source.cloneNode(true) as Element;
+    if (!mathBlockContent) {
+      // Inline computed styles before removing MathML fallback so original and
+      // cloned subtrees stay paired by node index. Detached precomputed WeChat
+      // clones already carry serialized styles and bypass re-inlining.
+      inlineComputedStyles(
+        request.source,
+        rootClone,
+        document,
+        'math' === request.kind
+          ? MATH_VISUAL_STYLE_PROPERTIES
+          : SVG_VISUAL_STYLE_PROPERTIES,
+      );
+    }
+    if ('mermaid' === request.kind) {
+      inlineConnectedMermaidRootPaint(
+        request.source,
+        rootClone,
+        readComputedStyle,
+      );
+      applyMermaidBackground(
+        svg,
+        resolveAppliedMermaidBackground(
+          request.source,
+          readComputedStyle,
+          request.inheritedBackground,
+        ),
+      );
+    }
+    removeMathMlFallback(rootClone);
+    normalizeCaptureRoot(rootClone);
+    if ('intrinsic-viewport' === request.mermaidCapture) {
+      normalizeIntrinsicMermaidCaptureRoot(rootClone);
+    }
+    if (source) {
+      normalizeDirectSvgForeignObjectClone(request.source, rootClone, request.mermaidCapture);
+    }
+    if ('mermaid' === request.kind && layoutMagnification !== 1) {
+      const rootStyle = (rootClone as Element & { style?: CSSStyleDeclaration }).style;
+      rootStyle?.setProperty('transform', `scale(${layoutMagnification})`, 'important');
+      rootStyle?.setProperty('transform-origin', '0 0', 'important');
+    }
+    if ('math' === request.kind && (geometry.requiresBaseline || mathBlockContent)) {
+      const rootStyle = (rootClone as Element & { style?: CSSStyleDeclaration }).style;
+      if (geometry.requiresBaseline) {
+        if (!geometry.preservesInlineConstraints) {
+          rootStyle?.setProperty('width', 'max-content', 'important');
+          rootStyle?.setProperty('max-width', 'none', 'important');
+          rootStyle?.setProperty('height', 'max-content', 'important');
+          rootStyle?.setProperty('max-height', 'none', 'important');
+          rootStyle?.setProperty('overflow', 'visible', 'important');
+        } else if (
+          geometry.inlineOverflow
+          && (
+            inlineOverflowScrolls(geometry.inlineOverflow.x)
+            || inlineOverflowScrolls(geometry.inlineOverflow.y)
+          )
+        ) {
+          rootStyle?.setProperty('overflow', 'visible', 'important');
+        }
+      } else {
+        sizeCaptureRoot(rootClone, geometry, true);
+      }
+      const layoutHost = document.createElementNS(XHTML_NAMESPACE, 'div');
+      layoutHost.setAttribute('xmlns', XHTML_NAMESPACE);
+      layoutHost.setAttribute(
+        'style',
+        `position:relative;left:${-geometry.originX}px;top:${-geometry.originY}px;`
+          + 'width:max-content;height:max-content;max-width:none;max-height:none;'
+          + 'overflow:visible;white-space:nowrap;',
+      );
+      applyCaptureTypography(layoutHost, geometry.typography);
+      layoutHost.appendChild(rootClone);
+      container.appendChild(layoutHost);
+    } else {
+      sizeCaptureRoot(rootClone, geometry, 'math' === request.kind);
+      container.appendChild(rootClone);
+    }
     foreignObject.appendChild(container);
     svg.appendChild(foreignObject);
   }
@@ -298,6 +451,13 @@ function serializedSvg(
   ).forEach((element) => {
     element.remove();
   });
+  await embedFontFaces(
+    svg,
+    runtime,
+    request.signal,
+    fontCache,
+    managedFacesCache,
+  );
   return new Serializer().serializeToString(svg);
 }
 
@@ -371,6 +531,8 @@ async function encodePng(
   image: HTMLImageElement,
   dimensionsValue: Readonly<{ height: number; width: number }>,
   document: Document,
+  signal: AbortSignal,
+  pngEncodingPort?: WechatPngEncodingPort | null,
 ): Promise<Blob> {
   const canvas = document.createElement('canvas');
   canvas.width = dimensionsValue.width;
@@ -383,6 +545,20 @@ async function encodePng(
     context.drawImage(image, 0, 0, dimensionsValue.width, dimensionsValue.height);
   } catch {
     throw new WechatVisualRasterizationError('wechat-png-image-failed');
+  }
+  if (pngEncodingPort) {
+    try {
+      return await pngEncodingPort.encode({ canvas, signal });
+    } catch (error: unknown) {
+      if (
+        signal.aborted
+        || error instanceof Error
+        && 'wechat-png-rasterization-cancelled' === (error as Error & { code?: unknown }).code
+      ) {
+        throw new WechatVisualRasterizationError('wechat-png-rasterization-cancelled');
+      }
+      throw new WechatVisualRasterizationError('wechat-png-encode-failed');
+    }
   }
   if ('function' !== typeof canvas.toBlob) {
     throw new WechatVisualRasterizationError('wechat-png-encode-failed');
@@ -402,6 +578,39 @@ async function encodePng(
   });
 }
 
+const arrayBufferByteLength = Object.getOwnPropertyDescriptor(
+  ArrayBuffer.prototype,
+  'byteLength',
+)?.get;
+
+function currentRealmBytes(raw: unknown): Uint8Array<ArrayBuffer> {
+  if (raw instanceof ArrayBuffer) {
+    return new Uint8Array(raw);
+  }
+  if ('function' !== typeof arrayBufferByteLength) {
+    throw new TypeError('ArrayBuffer byteLength getter unavailable');
+  }
+  arrayBufferByteLength.call(raw);
+  const source = new Uint8Array(raw as ArrayBuffer);
+  const copy = new Uint8Array(source.byteLength);
+  copy.set(source);
+  return copy;
+}
+
+async function pngContentDigest(png: Blob, document: Document): Promise<string> {
+  const subtle = document.defaultView?.crypto?.subtle ?? globalThis.crypto?.subtle;
+  if (!subtle) {
+    throw new WechatVisualRasterizationError('wechat-png-encode-failed');
+  }
+  try {
+    const bytes = currentRealmBytes(await png.arrayBuffer());
+    const digest = await subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, '0')).join('');
+  } catch {
+    throw new WechatVisualRasterizationError('wechat-png-encode-failed');
+  }
+}
+
 export function createBrowserWechatVisualRasterizer(
   runtime: BrowserWechatVisualRasterizerRuntime,
 ): Readonly<{
@@ -409,10 +618,17 @@ export function createBrowserWechatVisualRasterizer(
     request: WechatVisualRasterizationRequest
   ) => Promise<WechatVisualRasterizationResult>;
 }> {
+  const fontCache: FontCache = new Map();
+  const managedFacesCache = createManagedFontFacesCache();
+  prewarmManagedFontFaces(runtime, managedFacesCache);
   return {
     async rasterize(request): Promise<WechatVisualRasterizationResult> {
       if (
-        'function' !== typeof runtime.blob
+        'string' !== typeof runtime.approvedAssetBaseUrl
+        || 'string' !== typeof runtime.approvedKaTeXCssUrl
+        || !runtime.approvedAssetBaseUrl.trim()
+        || !runtime.approvedKaTeXCssUrl.trim()
+        || 'function' !== typeof runtime.blob
         || 'function' !== typeof runtime.file
         || 'function' !== typeof runtime.image
         || 'function' !== typeof runtime.xmlSerializer
@@ -422,37 +638,178 @@ export function createBrowserWechatVisualRasterizer(
       if (1 !== request.source?.nodeType) {
         throw new WechatVisualRasterizationError('wechat-png-size-invalid');
       }
+      assertRequest(request);
+      const mermaidSource = 'mermaid' === request.kind
+        ? validateMermaidSource(request.source)
+        : null;
+      if ('intrinsic-viewport' === request.mermaidCapture) {
+        if (!mermaidSource) throw new WechatVisualRasterizationError('wechat-png-image-failed');
+        assertIntrinsicMermaidCaptureRequest(request, mermaidSource);
+      }
+      if ('responsive-viewport' === request.mermaidCapture) {
+        if (!mermaidSource) throw new WechatVisualRasterizationError('wechat-png-image-failed');
+        assertResponsiveMermaidCaptureRequest(request, mermaidSource);
+      }
+      const inspectedMermaid = 'mermaid' === request.kind
+        && request.layoutMagnification === undefined
+        ? mermaidLayoutMagnification(request.source, runtime.document)
+        : null;
+      const layoutMagnification = request.layoutMagnification
+        ?? inspectedMermaid?.magnification
+        ?? 1;
+      const normalizedRequest = 'mermaid' === request.kind
+        ? { ...request, layoutMagnification }
+        : request;
       const sourceDimensions = {
-        height: request.height,
-        width: request.width,
+        height: normalizedRequest.height,
+        width: normalizedRequest.width,
       };
-      const output = assertRequest(request);
+      const requestedOutput = assertRequest(normalizedRequest);
       await waitForFonts(runtime.document);
-      if (request.signal.aborted) {
+      if (normalizedRequest.signal.aborted) {
         throw new WechatVisualRasterizationError('wechat-png-rasterization-cancelled');
       }
-      const svg = serializedSvg(
-        request,
-        sourceDimensions,
-        runtime.document,
-        runtime.xmlSerializer,
+      const timingPerformance = runtime.document.defaultView?.performance;
+      const timingMetadata = (mode: WechatTimingMode): WechatTimingMetadata => ({
+        kind: normalizedRequest.kind,
+        mode
+      });
+      const geometryTiming = beginWechatTiming(
+        timingPerformance,
+        WECHAT_RASTERIZER_TIMING_NAMES.geometryCleanup,
+        timingMetadata('sync')
       );
-      const image = await decodeImage(
-        imageDataUrl(svg, runtime.blob),
-        runtime.image,
-        request.signal,
+      let captureDimensions: CaptureGeometry;
+      try {
+        captureDimensions = captureBounds(normalizedRequest, runtime.document);
+        geometryTiming.finish('success');
+      } catch (error: unknown) {
+        geometryTiming.finish('error');
+        throw error;
+      }
+      if (
+        captureDimensions.requiresBaseline
+        && !captureDimensions.inlineLayout
+      ) {
+        throw new WechatVisualRasterizationError('wechat-png-baseline-failed');
+      }
+      await yieldRasterizationBoundary(
+        normalizedRequest.signal,
+        normalizedRequest.yieldToBrowser,
       );
-      const png = await encodePng(image, output, runtime.document);
-      const file = new runtime.file(
-        [png],
-        `easymde-wechat-${request.kind}.png`,
-        { type: 'image/png' },
+      const output = captureDimensions.height === sourceDimensions.height
+        && captureDimensions.width === sourceDimensions.width
+        ? requestedOutput
+        : assertRequest({ ...normalizedRequest, ...captureDimensions });
+      const serializeTiming = beginWechatTiming(
+        timingPerformance,
+        WECHAT_RASTERIZER_TIMING_NAMES.serializeSvg,
+        timingMetadata('async')
+      );
+      let svg: string;
+      try {
+        svg = await serializedSvg(
+          normalizedRequest,
+          captureDimensions,
+          runtime.document,
+          runtime.xmlSerializer,
+          runtime,
+          fontCache,
+          managedFacesCache,
+        );
+        serializeTiming.finish('success');
+      } catch (error: unknown) {
+        serializeTiming.finish('error');
+        throw error;
+      }
+      await yieldRasterizationBoundary(
+        normalizedRequest.signal,
+        normalizedRequest.yieldToBrowser,
+      );
+      const uriSourceTiming = beginWechatTiming(
+        timingPerformance,
+        WECHAT_RASTERIZER_TIMING_NAMES.uriGeneration,
+        timingMetadata('sync')
+      );
+      let imageSource: string;
+      try {
+        imageSource = imageDataUrl(svg, runtime.blob);
+        uriSourceTiming.finish('success');
+      } catch (error: unknown) {
+        uriSourceTiming.finish('error');
+        throw error;
+      }
+      await yieldRasterizationBoundary(
+        normalizedRequest.signal,
+        normalizedRequest.yieldToBrowser,
+      );
+      const decodeTiming = beginWechatTiming(
+        timingPerformance,
+        WECHAT_RASTERIZER_TIMING_NAMES.decodeWait,
+        timingMetadata('async')
+      );
+      let image: HTMLImageElement;
+      try {
+        image = await decodeImage(
+          imageSource,
+          runtime.image,
+          normalizedRequest.signal,
+        );
+        decodeTiming.finish('success');
+      } catch (error: unknown) {
+        decodeTiming.finish('error');
+        throw error;
+      }
+      const encodeTiming = beginWechatTiming(
+        timingPerformance,
+        WECHAT_RASTERIZER_TIMING_NAMES.canvasDrawEncode,
+        timingMetadata('async')
+      );
+      let png: Blob;
+      try {
+        png = await encodePng(
+          image,
+          output,
+          runtime.document,
+          normalizedRequest.signal,
+          runtime.pngEncodingPort,
+        );
+        encodeTiming.finish('success');
+      } catch (error: unknown) {
+        encodeTiming.finish('error');
+        throw error;
+      }
+      const digestTiming = beginWechatTiming(
+        timingPerformance,
+        WECHAT_RASTERIZER_TIMING_NAMES.digestWait,
+        timingMetadata('async')
+      );
+      let digest: string;
+      try {
+        digest = await pngContentDigest(png, runtime.document);
+        digestTiming.finish('success');
+      } catch (error: unknown) {
+        digestTiming.finish('error');
+        throw error;
+      }
+      const file = runWechatSyncTiming(
+        timingPerformance,
+        WECHAT_RASTERIZER_TIMING_NAMES.file,
+        timingMetadata('sync'),
+        () => new runtime.file(
+          [png],
+          `easymde-wechat-${request.kind}-${digest}.png`,
+          { type: 'image/png' },
+        )
       );
       return {
         file,
-        height: sourceDimensions.height,
+        height: output.displayHeight,
+        ...(captureDimensions.inlineLayout
+          ? { inlineLayout: captureDimensions.inlineLayout }
+          : {}),
         pixelCount: output.pixelCount,
-        width: sourceDimensions.width,
+        width: output.displayWidth,
       };
     },
   };

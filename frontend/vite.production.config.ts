@@ -10,6 +10,8 @@ import {
 
 const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const sourceEntry = "frontend/src/entrypoints/admin-editor.tsx";
+const wechatPngEncoderWorkerSource =
+	"frontend/src/integrations/browser/wechat/wechat-png-encoder.worker.ts";
 const committedOutputRoot = resolve(repositoryRoot, "assets/build");
 const checkOutputRoot = resolve(
 	repositoryRoot,
@@ -52,6 +54,12 @@ export default defineConfig(({ mode }) => {
 					"wp-i18n",
 				],
 				manifestResourceField: null,
+				manifestResources: [
+					{
+						sourceEntry: wechatPngEncoderWorkerSource,
+						filePattern: /^assets\/wechat-png-encoder-[A-Za-z0-9_-]+\.js$/,
+					},
+				],
 			}),
 		],
 		build: {
@@ -81,6 +89,16 @@ export default defineConfig(({ mode }) => {
 							},
 						],
 					},
+				},
+			},
+		},
+		worker: {
+			format: "es",
+			rollupOptions: {
+				output: {
+					entryFileNames: "assets/wechat-png-encoder-[hash].js",
+					chunkFileNames: "assets/wechat-png-encoder-chunk-[hash].js",
+					assetFileNames: "assets/wechat-png-encoder-[hash][extname]",
 				},
 			},
 		},

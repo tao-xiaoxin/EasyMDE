@@ -272,14 +272,20 @@ final class AdminAssets {
 	}
 
 	private function get_editor_root_bootstrap( $post_id, $post_type = '', $is_new_post = false ) {
-		$nonce         = wp_create_nonce( 'wp_rest' );
-		$strings       = $this->get_strings();
-		$storage       = $this->get_storage_config( $post_id );
-		$theme_options = $this->theme_state_repository->get_theme_options_for_script( $post_id );
-		$theme_state   = $theme_options['state'];
-		$custom_css    = $theme_options['customCss'];
-		$post_type     = $post_type ? sanitize_key( $post_type ) : get_post_type( $post_id );
-		$can_use_media = $this->can_use_media_picker( $post_id, $post_type, $is_new_post );
+		$nonce                             = wp_create_nonce( 'wp_rest' );
+		$strings                           = $this->get_strings();
+		$storage                           = $this->get_storage_config( $post_id );
+		$theme_options                     = $this->theme_state_repository->get_theme_options_for_script( $post_id );
+		$theme_state                       = $theme_options['state'];
+		$custom_css                        = $theme_options['customCss'];
+		$post_type                         = $post_type ? sanitize_key( $post_type ) : get_post_type( $post_id );
+		$can_use_media                     = $this->can_use_media_picker( $post_id, $post_type, $is_new_post );
+		$wechat_math_atlas_content_version = $this->get_static_asset_version( 'assets/math/easymde-katex-glyph-atlas.json' );
+		$wechat_math_atlas_url             = add_query_arg(
+			'contentversion',
+			$wechat_math_atlas_content_version,
+			Asset::url( 'assets/math/easymde-katex-glyph-atlas.json' )
+		);
 
 		if ( 'custom' === $theme_state['markdownTheme'] && '' !== $theme_state['customCssId'] ) {
 			$has_selected_item = false;
@@ -480,12 +486,15 @@ final class AdminAssets {
 				),
 			),
 			'wechatExport'                  => array(
-				'enabled'              => true,
-				'pngConversionEnabled' => $settings['images']['wechatPngExportEnabled'],
-				'strings'              => array(
-					'failed'      => $strings['copyWechatFailed'],
-					'success'     => $strings['copyWechatSuccess'],
-					'unsupported' => $strings['copyWechatUnsupported'],
+				'enabled'                       => true,
+				'pngConversionEnabled'          => $settings['images']['wechatPngExportEnabled'],
+				'wechatMathAtlasContentVersion' => $wechat_math_atlas_content_version,
+				'wechatMathAtlasUrl'            => esc_url_raw( $wechat_math_atlas_url ),
+				'strings'                       => array(
+					'failed'            => $strings['copyWechatFailed'],
+					'failedWithUploads' => $strings['copyWechatFailedWithUploads'],
+					'success'           => $strings['copyWechatSuccess'],
+					'unsupported'       => $strings['copyWechatUnsupported'],
 				),
 			),
 			'strings'                       => array(
@@ -573,7 +582,8 @@ final class AdminAssets {
 			array( 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ),
 			'admin-editor',
 			true,
-			'react-editor-'
+			'react-editor-',
+			'#^assets/wechat-png-encoder-[A-Za-z0-9_-]+\.js$#'
 		);
 	}
 

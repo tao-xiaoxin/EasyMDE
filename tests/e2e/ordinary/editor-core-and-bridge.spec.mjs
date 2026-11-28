@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { expect, test } from '@playwright/test';
 import {
+  assertOrdinarySideBySideSplit,
   canonicalMarkdownForPage,
   collectRuntimeAssetRequests,
   currentPostId,
@@ -20,8 +21,23 @@ import {
   setImageHostingEnabledSetting,
   testSlug
 } from '../helpers/editor-e2e-helpers.mjs';
+import {
+  desktop,
+  editorWritingViewports,
+  miniLandscape,
+  miniPortrait
+} from '../helpers/editor-viewports.mjs';
 import { selectOrdinaryOption } from '../helpers/ordinary-select.mjs';
 import { collectPreviewRequestOutcomes } from '../helpers/preview-request-evidence.mjs';
+import {
+  attachPrivacySafeBrowserMonitor,
+  classifyReadonlyPostRequest
+} from '../helpers/privacy-safe-browser-monitor.mjs';
+
+test.use({
+  trace: 'off',
+  video: 'off'
+});
 
 test.describe('EasyMDE editor workflows', () => {
   registerEditorWorkflowHooks();
@@ -277,8 +293,8 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(splitDivider).toHaveAttribute('aria-valuenow', '50');
     const dividerBox = await splitDivider.boundingBox();
     if (!dividerBox) throw new Error('immersive-split-divider-unavailable');
-    const splitSourceBox = await page.locator('.easymde-pane-source').boundingBox();
-    const splitPreviewBox = await page.locator('.easymde-pane-preview').boundingBox();
+    const splitSourceBox = await editorOwner.locator('.easymde-pane-source').boundingBox();
+    const splitPreviewBox = await editorOwner.locator('.easymde-pane-preview').boundingBox();
     if (!splitSourceBox || !splitPreviewBox) {
       throw new Error('immersive-split-adjacent-region-unavailable');
     }
@@ -395,14 +411,22 @@ test.describe('EasyMDE editor workflows', () => {
     await page.keyboard.press('Escape');
     await expect(page.getByRole('dialog', { name: immersiveLabels.table })).toHaveCount(0);
     const initialViewport = page.viewportSize();
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize(miniPortrait);
     await expect.poll(() => editorOwner.evaluate((owner) => ({
       clientWidth: owner.clientWidth,
       scrollWidth: owner.scrollWidth
-    }))).toEqual({ clientWidth: 390, scrollWidth: 390 });
+    }))).toEqual({ clientWidth: miniPortrait.width, scrollWidth: miniPortrait.width });
     await expect(page.locator('.easymde-immersive-header')).toBeInViewport();
     await expect(page.locator('.easymde-immersive-publish')).toBeInViewport();
     await expect(page.locator('.easymde-immersive-toolbar-row')).toHaveCSS(
+      'overflow-x',
+      'hidden'
+    );
+    await expect(page.locator('.easymde-immersive-formatting')).toHaveCSS(
+      'overflow-x',
+      'auto'
+    );
+    await expect(page.locator('.easymde-immersive-secondary-actions')).toHaveCSS(
       'overflow-x',
       'auto'
     );
@@ -514,6 +538,9 @@ test.describe('EasyMDE editor workflows', () => {
       '#easymde-editor-root [data-easymde-editor-owner="react"]'
     );
 
+    await assertOrdinarySideBySideSplit(page, 'ordinary-before-immersive', {
+      checkPageOverflow: false
+    });
     await page.getByRole('button', { name: labels.immersive.immersive }).click();
     await expect(editorOwner).toHaveClass(new RegExp(expectedModeClass));
     const settingsTrigger = page.getByRole('button', {
@@ -540,6 +567,9 @@ test.describe('EasyMDE editor workflows', () => {
     await page.getByRole('button', { name: labels.immersive.exit }).click();
     await expect(page.getByRole('region', { name: labels.immersive.immersive }))
       .toHaveCount(0);
+    await assertOrdinarySideBySideSplit(page, 'ordinary-after-immersive', {
+      checkPageOverflow: false
+    });
 
     await page.getByRole('button', { name: labels.immersive.immersive }).click();
     await expect(editorOwner).toHaveClass(new RegExp(temporaryModeClass));
@@ -664,8 +694,8 @@ test.describe('EasyMDE editor workflows', () => {
 
     const cdp = await context.newCDPSession(page);
     await cdp.send('Emulation.setDeviceMetricsOverride', {
-      width: 390,
-      height: 844,
+      width: miniPortrait.width,
+      height: miniPortrait.height,
       deviceScaleFactor: 1,
       mobile: true
     });
@@ -673,7 +703,7 @@ test.describe('EasyMDE editor workflows', () => {
     expect(await page.evaluate(
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth
     )).toBeLessThanOrEqual(1);
-    await testInfo.attach('compact-status-mobile', {
+    await testInfo.attach('compact-status-tablet', {
       body: await page.screenshot({ fullPage: true }),
       contentType: 'image/png'
     });
@@ -840,69 +870,58 @@ test.describe('EasyMDE editor workflows', () => {
     const user = testInfo.easymdeUser;
     const imageUploadRequests = [];
     const imageHostingUploadPath = '/wp-json/easymde/v1/image-hosting/upload';
-    const browserErrors = [];
-    const failedRequests = [];
-    const cancelledPreviewRequests = [];
+    const syntheticUploadedImageUrl = 'https://images.example.test/e2e/synthetic-pixel.png';
+    const syntheticPixelBase64 =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+    const syntheticPixelBuffer = Buffer.from(syntheticPixelBase64, 'base64');
+    const isImageHostingUpload = (url) =>
+      new URL(url).pathname.endsWith(imageHostingUploadPath);
 
     testInfo.easymdeOriginalImageHostingEnabled = imageHostingEnabledSetting();
     setImageHostingEnabledSetting(true);
 
-    page.on('console', (message) => {
-      if (['error', 'warning'].includes(message.type())) browserErrors.push(message.text());
+    const browserMonitor = attachPrivacySafeBrowserMonitor(page, {
+      baseURL: testInfo.project.use.baseURL
     });
-    page.on('pageerror', (error) => browserErrors.push(error.message));
-    page.on('requestfailed', (request) => {
-      const pathname = new URL(request.url()).pathname;
-      const isManagedRequest =
-        pathname.includes('/wp-content/plugins/easymde/')
-        || pathname.includes('/wp-json/easymde/');
-      if (!isManagedRequest) {
+    const onImageUploadRequest = (request) => {
+      let pathname = '';
+      try {
+        pathname = new URL(request.url()).pathname;
+      } catch {
         return;
       }
-
-      const errorText = request.failure()?.errorText ?? 'unknown-request-failure';
-      const isPreviewCancellation =
-        'net::ERR_ABORTED' === errorText
-        && 'POST' === request.method()
-        && pathname.endsWith('/wp-json/easymde/v1/preview');
-      if (isPreviewCancellation) {
-        cancelledPreviewRequests.push({ method: request.method(), pathname });
-        return;
-      }
-
-      failedRequests.push({ errorText, method: request.method(), pathname });
-    });
-
-    page.on('request', (request) => {
-      if (new URL(request.url()).pathname.endsWith(imageHostingUploadPath)) {
+      if (pathname.endsWith(imageHostingUploadPath)) {
         imageUploadRequests.push(request);
       }
-    });
+    };
+    page.on('request', onImageUploadRequest);
 
+    try {
     await login(page, user);
     await openEasyMdeNewPost(page);
 
-    const sourcePane = page.locator('.easymde-pane-source');
-    const reactSource = page.locator('.easymde-source-react');
+    const editorOwner = page.locator('[data-easymde-editor-owner="react"]');
+    const sourcePane = editorOwner.locator('.easymde-pane-source');
+    const reactSource = editorOwner.locator('.easymde-source-react');
     const nativeSource = page.locator('#easymde-source');
     const sourceEditor = reactSource.locator('.cm-content');
-    const activePreview = page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]');
-    const activePreviewCanvas = page.locator(
+    const activePreview = editorOwner.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]');
+    const activePreviewCanvas = editorOwner.locator(
       '.easymde-pane-preview .easymde-immersive-preview-canvas'
     );
 
     await expect(sourcePane).toHaveAttribute('data-easymde-document-owner', 'react');
-    await expect(page.locator('[data-easymde-editor-owner="react"]')).toHaveCount(1);
+    await expect(editorOwner).toHaveCount(1);
     await expect(reactSource).toBeVisible();
     await expect(sourceEditor).toHaveAttribute('contenteditable', 'true');
     await expect(page.locator('#wp-emoji-settings')).toHaveCount(0);
     await expect(nativeSource).toBeHidden();
-    await expect(page.locator('.easymde-pane-source .easymde-source:visible')).toHaveCount(1);
+    await expect(editorOwner.locator('.easymde-pane-source .easymde-source:visible')).toHaveCount(1);
     await expect(activePreview).toBeVisible();
     await expect(activePreviewCanvas).toBeVisible();
     await expect(activePreviewCanvas).toHaveCount(1);
     await expect(
-      page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]')
+      editorOwner.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]')
     ).toHaveCount(1);
 
     await sourceEditor.fill('# React source\n\nBridge value 中文');
@@ -963,8 +982,7 @@ test.describe('EasyMDE editor workflows', () => {
       canvas.dispatchEvent(new Event('scroll'));
       return sourceScroller.scrollTop;
     })).toBe(0);
-    expect(browserErrors).toEqual([]);
-    expect(failedRequests).toEqual([]);
+    browserMonitor.assertClean();
 
     const beforeRejectedDrop = 'Before rejected image drop.';
     await sourceEditor.fill(beforeRejectedDrop);
@@ -1015,7 +1033,7 @@ test.describe('EasyMDE editor workflows', () => {
       }));
     });
     const editorMessageHost = page.locator(
-      '.easymde-editor > .easymde-editor-message-alert-host'
+      '[data-easymde-editor-owner="react"] > .easymde-editor-message-alert-host'
     );
     await expect(editorMessageHost.getByRole('alert')).toContainText(
       await page.evaluate(() => window.EasyMDEEditorRootBootstrap.imageUpload.strings.dropFailed)
@@ -1034,15 +1052,20 @@ test.describe('EasyMDE editor workflows', () => {
     const beforeAcceptedDrop = 'Before accepted image drop.';
     await sourceEditor.fill(beforeAcceptedDrop);
     await sourceEditor.press('End');
-    const isImageHostingUpload = (url) =>
-      new URL(url).pathname.endsWith(imageHostingUploadPath);
+    await page.route(syntheticUploadedImageUrl, async (route) => {
+      await route.fulfill({
+        body: syntheticPixelBuffer,
+        contentType: 'image/png',
+        status: 200
+      });
+    });
     await page.route(isImageHostingUpload, async (route) => {
       await route.fulfill({
         body: JSON.stringify({
           alt: 'synthetic pixel',
           backup: { status: 'disabled' },
           title: '',
-          url: 'https://images.example.test/e2e/synthetic-pixel.png'
+          url: syntheticUploadedImageUrl
         }),
         contentType: 'application/json',
         status: 200
@@ -1051,10 +1074,8 @@ test.describe('EasyMDE editor workflows', () => {
     const acceptedUploadResponse = page.waitForResponse(
       (response) => new URL(response.url()).pathname.endsWith(imageHostingUploadPath)
     );
-    await sourceEditor.evaluate((source) => {
-      const binary = atob(
-        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
-      );
+    await sourceEditor.evaluate((source, base64Pixel) => {
+      const binary = atob(base64Pixel);
       const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
       const transfer = new DataTransfer();
       transfer.items.add(new File([bytes], 'synthetic-pixel.png', { type: 'image/png' }));
@@ -1063,7 +1084,7 @@ test.describe('EasyMDE editor workflows', () => {
         cancelable: true,
         dataTransfer: transfer
       }));
-    });
+    }, syntheticPixelBase64);
     expect((await acceptedUploadResponse).ok()).toBe(true);
     await expect(editorMessageHost.getByRole('status')).toContainText(
       await page.evaluate(() => window.EasyMDEEditorRootBootstrap.imageUpload.strings.dropUploaded)
@@ -1077,14 +1098,26 @@ test.describe('EasyMDE editor workflows', () => {
     expect(await imageUploadRequests[0].headerValue('X-WP-Nonce')).toBeTruthy();
     await page.unroute(isImageHostingUpload);
     expect(await page.evaluate(() => typeof window.EasyMDEImagePaste)).toBe('undefined');
-    if (cancelledPreviewRequests.length) {
+    if (browserMonitor.counts.cancelledPreview > 0) {
       await testInfo.attach('cancelled-preview-requests', {
-        body: JSON.stringify(cancelledPreviewRequests, null, 2),
+        body: JSON.stringify({
+          category: 'preview-rest',
+          count: browserMonitor.counts.cancelledPreview,
+          failureClass: 'aborted',
+          method: 'POST'
+        }, null, 2),
         contentType: 'application/json'
       });
     }
-    expect(browserErrors).toEqual([]);
-    expect(failedRequests).toEqual([]);
+    browserMonitor.assertClean();
+    } finally {
+      page.off('request', onImageUploadRequest);
+      browserMonitor.dispose();
+      if (!page.isClosed()) {
+        await page.unroute(isImageHostingUpload);
+        await page.unroute(syntheticUploadedImageUrl);
+      }
+    }
   });
 
   test('rejects an older normal preview response after a newer React request wins', async ({ page }, testInfo) => {
@@ -1333,7 +1366,9 @@ test.describe('EasyMDE editor workflows', () => {
       const lineNumber = document.querySelector(
         '.easymde-source-react .cm-lineNumbers .cm-gutterElement'
       );
-      const preview = document.querySelector('.easymde-pane-preview .easymde-preview');
+      const preview = document.querySelector(
+        '[data-easymde-editor-owner="react"] .easymde-pane-preview [data-easymde-preview-html-sink="1"]'
+      );
       if (
         !(gutter instanceof HTMLElement)
         || !(lineNumber instanceof HTMLElement)
@@ -1478,8 +1513,9 @@ test.describe('EasyMDE editor workflows', () => {
       await expect(page.locator(selector)).toHaveCount(0);
     }
 
-    await page.setViewportSize({ width: 1440, height: 1000 });
-    const desktopGeometry = await page.locator('.easymde-workspace').evaluate((workspace) => {
+    await page.setViewportSize(desktop);
+    const workspaceLocator = page.locator('[data-easymde-editor-owner="react"] .easymde-workspace');
+    const desktopGeometry = await workspaceLocator.evaluate((workspace) => {
       const source = workspace.querySelector('.easymde-pane-source').getBoundingClientRect();
       const preview = workspace.querySelector('.easymde-pane-preview').getBoundingClientRect();
       return { delta: Math.abs(source.width - preview.width), sameRow: source.top === preview.top };
@@ -1500,8 +1536,10 @@ test.describe('EasyMDE editor workflows', () => {
       return toolbar.getBoundingClientRect().right - finalControl.getBoundingClientRect().right;
     });
     expect(Math.abs(secondaryToolbarEndGap - 10)).toBeLessThanOrEqual(1);
-    await expect(page.locator('[data-easymde-layout-owner="react"]')).toHaveAttribute('dir', 'rtl');
-    const rtlDivider = await page.locator('.easymde-workspace').evaluate((workspace) => {
+    await expect(
+      page.locator('[data-easymde-editor-owner="react"] [data-easymde-layout-owner="react"]')
+    ).toHaveAttribute('dir', 'rtl');
+    const rtlDivider = await workspaceLocator.evaluate((workspace) => {
       const source = workspace.querySelector('.easymde-pane-source');
       const preview = workspace.querySelector('.easymde-pane-preview');
       if (!(source instanceof HTMLElement) || !(preview instanceof HTMLElement)) {
@@ -1523,9 +1561,9 @@ test.describe('EasyMDE editor workflows', () => {
       sourceFollowsPreview: true
     });
 
-    for (const width of [1080, 1079]) {
-      await page.setViewportSize({ width, height: 1000 });
-      await expect.poll(() => page.locator('.easymde-workspace').evaluate((workspace) => {
+    for (const viewport of editorWritingViewports) {
+      await page.setViewportSize(viewport);
+      await expect.poll(() => workspaceLocator.evaluate((workspace) => {
         const sourcePane = workspace.querySelector('.easymde-pane-source');
         const previewPane = workspace.querySelector('.easymde-pane-preview');
         if (!(sourcePane instanceof HTMLElement) || !(previewPane instanceof HTMLElement)) {
@@ -1539,24 +1577,32 @@ test.describe('EasyMDE editor workflows', () => {
           borderBottomWidth: sourceStyle.borderBottomWidth,
           borderLeftWidth: sourceStyle.borderLeftWidth,
           borderRightWidth: sourceStyle.borderRightWidth,
-          stacked: preview.top > source.top
+          equalWidth: Math.abs(source.width - preview.width) <= 1,
+          pageOverflow: Math.max(
+            0,
+            document.documentElement.scrollWidth - document.documentElement.clientWidth
+          ),
+          sameRow: Math.abs(source.top - preview.top) <= 1,
+          sourceFollowsPreview: Math.abs(source.left - preview.right) <= 1
         };
       })).toEqual({
-        borderBottomWidth: '1px',
-        borderLeftWidth: '0px',
+        borderBottomWidth: '0px',
+        borderLeftWidth: '1px',
         borderRightWidth: '0px',
-        stacked: true
+        equalWidth: true,
+        pageOverflow: 0,
+        sameRow: true,
+        sourceFollowsPreview: true
       });
     }
-    await page.setViewportSize({ width: 1081, height: 1000 });
-    await expect.poll(() => page.locator('.easymde-workspace').evaluate((workspace) => {
-      const source = workspace.querySelector('.easymde-pane-source').getBoundingClientRect();
-      const preview = workspace.querySelector('.easymde-pane-preview').getBoundingClientRect();
-      return source.top === preview.top && Math.abs(source.width - preview.width) <= 1;
-    })).toBe(true);
 
-    for (const [width, direction] of [[781, 'column'], [782, 'column'], [783, 'row']]) {
-      await page.setViewportSize({ width, height: 900 });
+    for (const [viewport, direction] of [
+      [miniPortrait, 'column'],
+      [miniLandscape, 'row'],
+      [desktop, 'row']
+    ]) {
+      const { width } = viewport;
+      await page.setViewportSize(viewport);
       const responsiveToolbar = page.locator('.easymde-toolbar');
       await expect(responsiveToolbar).toHaveCSS('flex-direction', direction);
       await expect.poll(() => page.locator('#easymde-editor').evaluate((editor) => ({
@@ -1650,6 +1696,1102 @@ test.describe('EasyMDE editor workflows', () => {
         await expect(panel).toBeHidden();
         await expect(trigger).toBeFocused();
       }
+    }
+  });
+
+  test('keeps the immersive header, toolbar rows, and outline geometrically usable across writing viewports', async ({ page }, testInfo) => {
+    const browserMonitor = attachPrivacySafeBrowserMonitor(page, {
+      baseURL: testInfo.project.use.baseURL
+    });
+    try {
+    await login(page, testInfo.easymdeUser);
+    await openEasyMdeNewPost(page);
+    const markdown = await canonicalMarkdownForPage(page);
+    await fillMarkdownAndWaitForPreview(page, markdown, null);
+
+    const immersiveLabels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    await page.setViewportSize(miniPortrait);
+    const editorOwner = page.locator('.easymde-editor[data-easymde-editor-owner="react"]');
+    await editorOwner.locator('.easymde-toolbar-immersive-toggle').click();
+    const immersiveRoot = page.locator(
+      '.easymde-editor[data-easymde-editor-owner="react"].is-immersive'
+    );
+    await expect(immersiveRoot).toHaveCount(1);
+    await expect(immersiveRoot.getByRole('region', { name: immersiveLabels.immersive })).toBeVisible();
+
+    const geometry = () => page.evaluate(() => {
+      const root = document.querySelector(
+        '.easymde-editor[data-easymde-editor-owner="react"].is-immersive'
+      );
+      if (!(root instanceof HTMLElement)) throw new Error('react-immersive-root-unavailable');
+      const selector = (value) => root.querySelector(value);
+      const box = (element) => {
+        if (!(element instanceof HTMLElement)) return null;
+        const rect = element.getBoundingClientRect();
+        return {
+          bottom: rect.bottom,
+          height: rect.height,
+          left: rect.left,
+          right: rect.right,
+          top: rect.top,
+          width: rect.width
+        };
+      };
+      const visible = (element) => {
+        if (!(element instanceof HTMLElement)) return false;
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.display !== 'none'
+          && style.visibility !== 'hidden'
+          && rect.width > 0
+          && rect.height > 0;
+      };
+      const withinViewport = (rect) => !!rect
+        && rect.left >= 0
+        && rect.top >= 0
+        && rect.right <= window.innerWidth + 1
+        && rect.bottom <= window.innerHeight + 1;
+      const intersects = (first, second) => !!first && !!second
+        && first.left < second.right - 1
+        && first.right > second.left + 1
+        && first.top < second.bottom - 1
+        && first.bottom > second.top + 1;
+      const centerHit = (element, rect) => {
+        if (!(element instanceof HTMLElement) || !rect) return false;
+        const target = document.elementFromPoint(
+          rect.left + rect.width / 2,
+          rect.top + rect.height / 2
+        );
+        return target === element || element.contains(target);
+      };
+
+      const header = selector('.easymde-immersive-header');
+      const brandName = selector('.easymde-immersive-brand-name');
+      const toolbar = selector('.easymde-immersive-toolbar-row');
+      const formatting = selector('.easymde-immersive-formatting');
+      const secondary = selector('.easymde-immersive-secondary-actions');
+      const publish = selector('.easymde-immersive-publish');
+      const publishText = selector('.easymde-immersive-publish > span:last-child');
+      const wechat = selector('.easymde-immersive-wechat');
+      const title = selector('.easymde-immersive-title-field');
+      const titleMeasure = selector('.easymde-immersive-title-measure');
+      const titleSpan = selector('.easymde-immersive-title-measure > span');
+      const titleInput = selector('.easymde-immersive-title-measure > textarea');
+      const viewSwitch = selector('.easymde-immersive-view-switch');
+      const viewSwitchLabels = Array.from(
+        root.querySelectorAll('.easymde-immersive-view-switch button > span')
+      );
+      const saveState = selector('.easymde-immersive-save-state');
+      const outline = selector('.easymde-immersive-outline');
+      const outlineResizer = selector('.easymde-immersive-outline-resizer');
+      const headerBox = box(header);
+      const toolbarBox = box(toolbar);
+      const formattingBox = box(formatting);
+      const secondaryBox = box(secondary);
+      const publishBox = box(publish);
+      const wechatBox = box(wechat);
+      const titleBox = box(title);
+      const titleMeasureBox = box(titleMeasure);
+      const titleInputBox = box(titleInput);
+      const viewSwitchBox = box(viewSwitch);
+      const saveStateBox = box(saveState);
+      const outlineBox = box(outline);
+      const secondaryDirection = secondary instanceof HTMLElement
+        ? getComputedStyle(secondary).direction
+        : 'ltr';
+      const headerStyle = header instanceof HTMLElement ? getComputedStyle(header) : null;
+      const publishStyle = publish instanceof HTMLElement ? getComputedStyle(publish) : null;
+      const titleStyle = title instanceof HTMLElement ? getComputedStyle(title) : null;
+      const titleMeasureStyle = titleMeasure instanceof HTMLElement
+        ? getComputedStyle(titleMeasure)
+        : null;
+      const titleInputStyle = titleInput instanceof HTMLElement
+        ? getComputedStyle(titleInput)
+        : null;
+      const outlineStyle = outline instanceof HTMLElement ? getComputedStyle(outline) : null;
+      const outlineResizerStyle = outlineResizer instanceof HTMLElement
+        ? getComputedStyle(outlineResizer)
+        : null;
+      const headerPaddingTop = Number.parseFloat(headerStyle?.paddingTop ?? '0') || 0;
+      const firstGridRowHeight = 'grid' === headerStyle?.display
+        ? Number.parseFloat(headerStyle.gridTemplateRows.split(/\s+/u)[0] ?? '0') || 0
+        : 0;
+      const firstGridRowBottom = headerBox && firstGridRowHeight > 0
+        ? headerBox.top + headerPaddingTop + firstGridRowHeight
+        : null;
+
+      return {
+        devicePixelRatio: window.devicePixelRatio,
+        viewport: { height: window.innerHeight, width: window.innerWidth },
+        brandName: { visible: visible(brandName) },
+        header: {
+          box: headerBox,
+          display: headerStyle?.display ?? null,
+          visible: visible(header)
+        },
+        toolbar: {
+          box: toolbarBox,
+          centerHit: centerHit(toolbar, toolbarBox),
+          scrollLeft: toolbar instanceof HTMLElement ? toolbar.scrollLeft : null,
+          visible: visible(toolbar)
+        },
+        formatting: {
+          box: formattingBox,
+          scrollLeft: formatting instanceof HTMLElement ? formatting.scrollLeft : null,
+          visible: visible(formatting)
+        },
+        secondary: {
+          box: secondaryBox,
+          scrollLeft: secondary instanceof HTMLElement ? secondary.scrollLeft : null,
+          visible: visible(secondary)
+        },
+        publish: {
+          box: publishBox,
+          centerHit: centerHit(publish, publishBox),
+          fontSize: Number.parseFloat(publishStyle?.fontSize ?? '0') || 0,
+          fullBoxVisible: !!publishBox
+            && publishBox.width > 0
+            && publishBox.height > 0
+            && withinViewport(publishBox),
+          textVisible: visible(publishText) && (Number.parseFloat(publishStyle?.fontSize ?? '0') || 0) > 0,
+          visible: visible(publish),
+          withinViewport: withinViewport(publishBox)
+        },
+        wechat: {
+          box: wechatBox,
+          centerHit: centerHit(wechat, wechatBox),
+          visible: visible(wechat),
+          withinViewport: withinViewport(wechatBox)
+        },
+        title: {
+          box: titleBox,
+          centerHit: centerHit(title, titleBox),
+          firstGridRowBottom,
+          fieldMaxWidth: titleStyle?.maxWidth ?? null,
+          inputBox: titleInputBox,
+          inputValue: titleInput instanceof HTMLTextAreaElement ? titleInput.value : null,
+          inputFontSize: titleInputStyle?.fontSize ?? null,
+          inputLineHeight: titleInputStyle?.lineHeight ?? null,
+          inputWithinHeader: !!titleInputBox && !!headerBox
+            && titleInputBox.left >= headerBox.left
+            && titleInputBox.right <= headerBox.right
+            && titleInputBox.top >= headerBox.top
+            && titleInputBox.bottom <= headerBox.bottom,
+          inputWithinOwner: titleInput instanceof HTMLElement && root.contains(titleInput),
+          measureBox: titleMeasureBox,
+          measureMaxWidth: titleMeasureStyle?.maxWidth ?? null,
+          measureText: titleSpan instanceof HTMLElement ? titleSpan.textContent : null,
+          visible: visible(title),
+          withinHeader: !!titleBox && !!headerBox
+            && titleBox.left >= headerBox.left
+            && titleBox.right <= headerBox.right
+        },
+        saveState: { box: saveStateBox, visible: visible(saveState) },
+        viewSwitch: {
+          box: viewSwitchBox,
+          labelCount: viewSwitchLabels.length,
+          labelsVisible: viewSwitchLabels.length === 3
+            && viewSwitchLabels.every((span) => visible(span)),
+          visible: visible(viewSwitch)
+        },
+        outline: {
+          box: outlineBox,
+          position: outlineStyle?.position ?? null,
+          visible: visible(outline)
+        },
+        outlineResizer: {
+          display: outlineResizerStyle?.display ?? null,
+          visible: visible(outlineResizer)
+        },
+        intersections: {
+          publishTitle: intersects(publishBox, titleBox),
+          publishViewSwitch: intersects(publishBox, viewSwitchBox),
+          titlePublish: intersects(titleBox, publishBox),
+          titleSaveState: intersects(titleBox, saveStateBox),
+          titleViewSwitch: intersects(titleBox, viewSwitchBox),
+          formattingSecondary: intersects(formattingBox, secondaryBox),
+          outlineToolbar: intersects(outlineBox, toolbarBox)
+        },
+        copyStartsSecondaryLogicalStart: !!wechatBox && !!secondaryBox
+          && ('rtl' === secondaryDirection
+            ? Math.abs(wechatBox.right - secondaryBox.right) <= 1
+            : Math.abs(wechatBox.left - secondaryBox.left) <= 1)
+      };
+    });
+
+    const longTitle = `平板与桌面沉浸式标题几何验证WritingTitleWithoutSpaces${'中文标题测试'.repeat(14)}`;
+
+    for (const { dir, overlay, viewport } of [
+      { dir: 'ltr', overlay: true, viewport: miniPortrait },
+      { dir: 'rtl', overlay: true, viewport: miniPortrait },
+      { dir: 'ltr', overlay: false, viewport: miniLandscape },
+      { dir: 'ltr', overlay: false, viewport: desktop }
+    ]) {
+      await page.setViewportSize(viewport);
+      const originalDir = 'rtl' === dir
+        ? await immersiveRoot.getAttribute('dir')
+        : null;
+      try {
+        if ('rtl' === dir) {
+          await immersiveRoot.evaluate((root) => root.setAttribute('dir', 'rtl'));
+        }
+        await expect(immersiveRoot.getByRole('region', { name: immersiveLabels.immersive })).toBeVisible();
+        const titleInput = immersiveRoot.locator('.easymde-immersive-title-measure > textarea');
+        await titleInput.fill(longTitle);
+        await expect(titleInput).toHaveValue(longTitle);
+        await expect(immersiveRoot.locator('.easymde-immersive-title-measure > span'))
+          .toHaveText(longTitle);
+        const initial = await geometry();
+
+        expect(initial.devicePixelRatio).toBe(1);
+        expect(initial.viewport).toEqual(viewport);
+        expect(initial.brandName.visible).toBe(true);
+        expect(initial.viewSwitch.visible).toBe(true);
+        expect(initial.viewSwitch.labelCount).toBe(3);
+        expect(initial.viewSwitch.labelsVisible).toBe(true);
+        expect(initial.header.visible).toBe(true);
+        expect(initial.toolbar.visible).toBe(true);
+        expect(initial.toolbar.scrollLeft).toBe(0);
+        expect(initial.toolbar.centerHit).toBe(true);
+        expect(initial.formatting.visible).toBe(true);
+        expect(initial.secondary.visible).toBe(true);
+        expect(initial.formatting.scrollLeft).toBe(0);
+        expect(initial.secondary.scrollLeft).toBe(0);
+        expect(initial.publish.visible).toBe(true);
+        expect(initial.publish.textVisible).toBe(true);
+        expect(initial.publish.withinViewport).toBe(true);
+        expect(initial.publish.fullBoxVisible).toBe(true);
+        expect(initial.publish.centerHit).toBe(true);
+        expect(initial.wechat.visible).toBe(true);
+        expect(initial.wechat.withinViewport).toBe(true);
+        expect(initial.wechat.centerHit).toBe(true);
+        expect(initial.title.visible).toBe(true);
+        expect(initial.title.withinHeader).toBe(true);
+        expect(initial.title.centerHit).toBe(true);
+        expect(initial.title.inputWithinOwner).toBe(true);
+        expect(initial.title.inputWithinHeader).toBe(true);
+        expect(initial.title.inputValue).toBe(longTitle);
+        expect(initial.title.measureText).toBe(longTitle);
+        expect(initial.title.box?.width).toBeGreaterThan(0);
+        expect(initial.title.box?.height).toBeGreaterThan(0);
+        expect(initial.title.inputBox?.height).toBeGreaterThan(0);
+        expect(initial.title.measureBox?.height).toBeGreaterThan(0);
+        expect(initial.title.box?.top).toBeGreaterThanOrEqual(
+          (initial.header.box?.top ?? 0) - 1
+        );
+        if (viewport.width <= 1232) {
+          expect(initial.title.box?.bottom).toBeLessThanOrEqual(
+            (initial.title.firstGridRowBottom ?? Number.POSITIVE_INFINITY) + 1
+          );
+          expect(initial.title.inputBox?.bottom).toBeLessThanOrEqual(
+            (initial.title.firstGridRowBottom ?? Number.POSITIVE_INFINITY) + 1
+          );
+        } else {
+          expect(initial.title.box?.bottom).toBeLessThanOrEqual(
+            (initial.header.box?.bottom ?? Number.POSITIVE_INFINITY) + 1
+          );
+        }
+        if (viewport.width <= 1080) {
+          expect(initial.secondary.box?.top).toBeGreaterThanOrEqual(
+            (initial.formatting.box?.bottom ?? 0) - 1
+          );
+        }
+        expect(initial.copyStartsSecondaryLogicalStart).toBe(true);
+        expect(initial.intersections.publishTitle).toBe(false);
+        expect(initial.intersections.publishViewSwitch).toBe(false);
+        expect(initial.intersections.titlePublish).toBe(false);
+        expect(initial.intersections.titleSaveState).toBe(false);
+        expect(initial.intersections.titleViewSwitch).toBe(false);
+        expect(initial.intersections.formattingSecondary).toBe(false);
+        expect(initial.intersections.outlineToolbar).toBe(false);
+
+        const showOutlineLabel = immersiveLabels.showOutline;
+        const hideOutlineLabel = immersiveLabels.hideOutline;
+        const showOutline = immersiveRoot.getByRole('button', { name: showOutlineLabel });
+        if (await showOutline.isVisible()) await showOutline.click();
+        await expect(immersiveRoot.locator('.easymde-immersive-outline')).toBeVisible();
+        const expanded = await geometry();
+        expect(expanded.intersections.outlineToolbar).toBe(false);
+        expect(expanded.toolbar.centerHit).toBe(true);
+        expect(expanded.toolbar.scrollLeft).toBe(0);
+        if (overlay) {
+          expect(expanded.outline.position).toBe('absolute');
+          expect(expanded.outlineResizer.display).toBe('none');
+        } else {
+          expect(expanded.outline.position).not.toBe('absolute');
+          expect(expanded.outlineResizer.visible).toBe(true);
+        }
+
+        await immersiveRoot.getByRole('button', { name: hideOutlineLabel }).first().click();
+        await expect(immersiveRoot.locator('.easymde-immersive-outline')).toHaveCount(0);
+        const collapsed = await geometry();
+        expect(collapsed.intersections.outlineToolbar).toBe(false);
+        expect(collapsed.toolbar.centerHit).toBe(true);
+        expect(collapsed.toolbar.scrollLeft).toBe(0);
+
+        await immersiveRoot.getByRole('button', { name: showOutlineLabel }).click();
+        await expect(immersiveRoot.locator('.easymde-immersive-outline')).toBeVisible();
+        const reopened = await geometry();
+        expect(reopened.intersections.outlineToolbar).toBe(false);
+        expect(reopened.toolbar.centerHit).toBe(true);
+      } finally {
+        if ('rtl' === dir) {
+          await immersiveRoot.evaluate((root, prevDir) => {
+            if (null === prevDir) {
+              root.removeAttribute('dir');
+            } else {
+              root.setAttribute('dir', prevDir);
+            }
+          }, originalDir);
+        }
+      }
+    }
+    browserMonitor.assertClean();
+    } finally {
+      browserMonitor.dispose();
+    }
+  });
+
+  test('keeps the immersive long title contained across the header breakpoint boundary', async ({ page }, testInfo) => {
+    const unexpectedPostCategoryCounts = {};
+    let previewPostCount = 0;
+    let heartbeatPostCount = 0;
+    let heartbeatMaintenancePostCount = 0;
+    let communityEventsPostCount = 0;
+    const recordUnexpectedPostCategory = (category) => {
+      unexpectedPostCategoryCounts[category] = (unexpectedPostCategoryCounts[category] ?? 0) + 1;
+    };
+    const sampleBaseURL = 'http://127.0.0.1:8089';
+    const sampleSubdirBaseURL = 'http://127.0.0.1:8089/subdir';
+    const heartbeatSample = classifyReadonlyPostRequest({
+      url: `${sampleBaseURL}/wp-admin/admin-ajax.php`,
+      contentType: 'application/x-www-form-urlencoded',
+      postData: 'action=heartbeat'
+    }, { baseURL: sampleBaseURL });
+    expect(heartbeatSample).toEqual({
+      category: 'heartbeat',
+      classification: 'heartbeat-readonly'
+    });
+    expect(Object.keys(heartbeatSample).sort()).toEqual(['category', 'classification']);
+    expect(classifyReadonlyPostRequest({
+      url: `${sampleBaseURL}/wp-admin/admin-ajax.php`,
+      contentType: 'application/x-www-form-urlencoded',
+      postData: 'action=heartbeat&data%5Bwp-refresh-post-lock%5D%5Bpost_id%5D=42'
+    }, { baseURL: sampleBaseURL })).toEqual({
+      category: 'heartbeat-lock-refresh',
+      classification: 'heartbeat-maintenance'
+    });
+    expect(classifyReadonlyPostRequest({
+      url: `${sampleBaseURL}/wp-admin/admin-ajax.php`,
+      contentType: 'application/x-www-form-urlencoded',
+      postData: 'action=get-community-events'
+    }, { baseURL: sampleBaseURL })).toEqual({
+      category: 'community-events',
+      classification: 'community-events-maintenance'
+    });
+    expect(classifyReadonlyPostRequest({
+      url: `${sampleBaseURL}/wp-admin/admin-ajax.php`,
+      contentType: 'application/x-www-form-urlencoded',
+      postData: 'action=get-community-events&location=London'
+    }, { baseURL: sampleBaseURL })).toEqual({
+      category: 'other-admin-ajax',
+      classification: 'unexpected-write'
+    });
+    expect(classifyReadonlyPostRequest({
+      url: `${sampleBaseURL}/wp-admin/admin-ajax.php`,
+      contentType: 'application/x-www-form-urlencoded',
+      postData: 'action=heartbeat&data%5Bwp_autosave%5D='
+    }, { baseURL: sampleBaseURL })).toEqual({
+      category: 'other-admin-ajax',
+      classification: 'unexpected-write'
+    });
+    expect(classifyReadonlyPostRequest({
+      url: `${sampleBaseURL}/wp-admin/admin-ajax.php`,
+      contentType: 'application/json',
+      postData: '{"action":"heartbeat","data":{"wp_autosave":{}}}'
+    }, { baseURL: sampleBaseURL })).toEqual({
+      category: 'other-admin-ajax',
+      classification: 'unexpected-write'
+    });
+    expect(classifyReadonlyPostRequest({
+      url: `${sampleBaseURL}/wp-admin/admin-ajax.php`,
+      contentType: 'application/json',
+      postData: '{"action":"heartbeat","data":{"unknown":{}}}'
+    }, { baseURL: sampleBaseURL })).toEqual({
+      category: 'other-admin-ajax',
+      classification: 'unexpected-write'
+    });
+    expect(classifyReadonlyPostRequest({
+      url: `${sampleBaseURL}/wp-json/easymde/v1/preview`,
+      contentType: 'application/json',
+      postData: '{"markdown":"alpha"}'
+    }, { baseURL: sampleBaseURL })).toEqual({
+      category: 'preview-rest',
+      classification: 'preview-readonly'
+    });
+    expect(classifyReadonlyPostRequest({
+      url: `${sampleSubdirBaseURL}/wp-json/easymde/v1/preview/`,
+      contentType: 'application/json',
+      postData: '{"markdown":"alpha"}'
+    }, { baseURL: sampleSubdirBaseURL })).toEqual({
+      category: 'preview-rest',
+      classification: 'preview-readonly'
+    });
+    expect(classifyReadonlyPostRequest({
+      url: `${sampleBaseURL}/?rest_route=/easymde/v1/preview`,
+      contentType: 'application/json',
+      postData: '{"markdown":"alpha"}'
+    }, { baseURL: sampleBaseURL })).toEqual({
+      category: 'preview-rest',
+      classification: 'preview-readonly'
+    });
+    expect(classifyReadonlyPostRequest({
+      url: `${sampleSubdirBaseURL}/index.php?rest_route=%20%2Feasymde%2Fv1%2Fpreview%2F%20`,
+      contentType: 'application/json',
+      postData: '{"markdown":"alpha"}'
+    }, { baseURL: sampleSubdirBaseURL })).toEqual({
+      category: 'preview-rest',
+      classification: 'preview-readonly'
+    });
+    expect(classifyReadonlyPostRequest({
+      url: `${sampleBaseURL}/wp-json/wp/v2/posts`,
+      contentType: 'application/json',
+      postData: '{"secret_field":"value"}'
+    }, { baseURL: sampleBaseURL })).toEqual({
+      category: 'other-rest',
+      classification: 'unexpected-write'
+    });
+    expect(classifyReadonlyPostRequest({
+      url: `${sampleBaseURL}/?rest_route=/easymde/v1/media`,
+      contentType: 'application/json',
+      postData: '{"secret_field":"value"}'
+    }, { baseURL: sampleBaseURL })).toEqual({
+      category: 'other-rest',
+      classification: 'unexpected-write'
+    });
+    expect(classifyReadonlyPostRequest({
+      url: `${sampleBaseURL}/wp-admin/post.php?rest_route=/easymde/v1/preview`,
+      contentType: 'application/x-www-form-urlencoded',
+      postData: 'action=secret_custom_action&custom_key=1'
+    }, { baseURL: sampleBaseURL })).toEqual({
+      category: 'other-post',
+      classification: 'unexpected-write'
+    });
+    expect(classifyReadonlyPostRequest({
+      url: `${sampleBaseURL}/wp-login.php?rest_route=/easymde/v1/preview`,
+      contentType: 'application/x-www-form-urlencoded',
+      postData: 'log=user&pwd=secret'
+    }, { baseURL: sampleBaseURL })).toEqual({
+      category: 'other-post',
+      classification: 'unexpected-write'
+    });
+    expect(classifyReadonlyPostRequest({
+      url: 'https://other.example/wp-json/easymde/v1/preview',
+      contentType: 'application/json',
+      postData: '{"markdown":"alpha"}'
+    }, { baseURL: sampleBaseURL })).toEqual({
+      category: 'external-post',
+      classification: 'unexpected-write'
+    });
+
+    const browserMonitor = attachPrivacySafeBrowserMonitor(page, {
+      baseURL: testInfo.project.use.baseURL
+    });
+    const onPostRequest = (request) => {
+      if ('POST' !== request.method()) return;
+      const classified = classifyReadonlyPostRequest(request, {
+        baseURL: testInfo.project.use.baseURL
+      });
+      if ('preview-readonly' === classified.classification) {
+        previewPostCount += 1;
+        return;
+      }
+      if ('community-events-maintenance' === classified.classification) {
+        communityEventsPostCount += 1;
+        return;
+      }
+      if ('heartbeat-readonly' === classified.classification) {
+        heartbeatPostCount += 1;
+        return;
+      }
+      if ('heartbeat-maintenance' === classified.classification) {
+        heartbeatMaintenancePostCount += 1;
+        return;
+      }
+      recordUnexpectedPostCategory(classified.category);
+    };
+    try {
+    await login(page, testInfo.easymdeUser);
+    page.on('request', onPostRequest);
+    await openEasyMdeNewPost(page);
+    const markdown = await canonicalMarkdownForPage(page);
+    await fillMarkdownAndWaitForPreview(page, markdown, 'Markdown 全量能力测试文档');
+
+    const bootstrap = await page.evaluate(() => ({
+      immersive: window.EasyMDEEditorRootBootstrap.strings.immersive,
+      statusBarMode: window.EasyMDEEditorRootBootstrap.settings.general.statusBarMode
+    }));
+    expect(bootstrap.statusBarMode).toBe('detailed');
+
+    const editorOwner = page.locator(
+      '.easymde-editor[data-easymde-editor-owner="react"]'
+    );
+    await editorOwner.locator('.easymde-toolbar-immersive-toggle').click();
+    const immersiveRoot = page.locator(
+      '.easymde-editor[data-easymde-editor-owner="react"].is-immersive'
+    );
+    await expect(immersiveRoot).toHaveCount(1);
+    await expect(immersiveRoot.getByRole('region', {
+      name: bootstrap.immersive.immersive
+    })).toBeVisible();
+    await expect(immersiveRoot.locator('.easymde-immersive-stats > span'))
+      .toHaveCount(3);
+
+    const titleValue = '沉浸式长标题中文EnglishTitleWithoutSpaces'.repeat(6);
+    const titleInput = immersiveRoot.locator('.easymde-immersive-title-measure > textarea');
+    const titleMeasure = immersiveRoot.locator('.easymde-immersive-title-measure > span');
+
+    const geometry = () => page.evaluate(() => {
+      const root = document.querySelector(
+        '.easymde-editor[data-easymde-editor-owner="react"].is-immersive'
+      );
+      if (!(root instanceof HTMLElement)) throw new Error('react-immersive-root-unavailable');
+      const select = (selector) => root.querySelector(selector);
+      const rect = (element) => {
+        if (!(element instanceof HTMLElement)) return null;
+        const box = element.getBoundingClientRect();
+        return {
+          bottom: box.bottom,
+          height: box.height,
+          left: box.left,
+          right: box.right,
+          top: box.top,
+          width: box.width
+        };
+      };
+      const visible = (element) => {
+        if (!(element instanceof HTMLElement)) return false;
+        const style = getComputedStyle(element);
+        const box = element.getBoundingClientRect();
+        return style.display !== 'none'
+          && style.visibility !== 'hidden'
+          && box.width > 0
+          && box.height > 0;
+      };
+      const withinViewport = (box) => !!box
+        && box.left >= -1
+        && box.top >= -1
+        && box.right <= window.innerWidth + 1
+        && box.bottom <= window.innerHeight + 1;
+      const centerHit = (element, box) => {
+        if (!(element instanceof HTMLElement) || !box) return false;
+        const target = document.elementFromPoint(
+          box.left + box.width / 2,
+          box.top + box.height / 2
+        );
+        return target === element || element.contains(target);
+      };
+      const intersects = (first, second) => !!first && !!second
+        && first.left < second.right - 1
+        && first.right > second.left + 1
+        && first.top < second.bottom - 1
+        && first.bottom > second.top + 1;
+
+      const header = select('.easymde-immersive-header');
+      const title = select('.easymde-immersive-title-field');
+      const titleMeasure = select('.easymde-immersive-title-measure');
+      const titleInput = select('.easymde-immersive-title-measure > textarea');
+      const titleSpan = select('.easymde-immersive-title-measure > span');
+      const publish = select('.easymde-immersive-publish');
+      const saveState = select('.easymde-immersive-save-state');
+      const stats = select('.easymde-immersive-stats');
+      const viewSwitch = select('.easymde-immersive-view-switch');
+      const headerBox = rect(header);
+      const titleBox = rect(title);
+      const titleMeasureBox = rect(titleMeasure);
+      const titleInputBox = rect(titleInput);
+      const publishBox = rect(publish);
+      const saveStateBox = rect(saveState);
+      const statsBox = rect(stats);
+      const viewSwitchBox = rect(viewSwitch);
+      const headerStyle = header instanceof HTMLElement ? getComputedStyle(header) : null;
+      const inputStyle = titleInput instanceof HTMLElement ? getComputedStyle(titleInput) : null;
+
+      return {
+        direction: root.getAttribute('dir') || getComputedStyle(root).direction,
+        header: {
+          box: headerBox,
+          display: headerStyle?.display ?? null,
+          height: headerBox?.height ?? 0,
+          variable: getComputedStyle(root)
+            .getPropertyValue('--easymde-immersive-header-height').trim()
+        },
+        title: {
+          box: titleBox,
+          centerHit: centerHit(title, titleBox),
+          inputBox: titleInputBox,
+          inputClientHeight: titleInput instanceof HTMLElement ? titleInput.clientHeight : 0,
+          inputLineHeight: inputStyle?.lineHeight ?? null,
+          inputValue: titleInput instanceof HTMLTextAreaElement ? titleInput.value : null,
+          measureBox: titleMeasureBox,
+          measureClientHeight: titleMeasure instanceof HTMLElement
+            ? titleMeasure.clientHeight
+            : 0,
+          measureText: titleSpan instanceof HTMLElement ? titleSpan.textContent : null,
+          withinHeader: !!titleBox && !!headerBox
+            && titleBox.left >= headerBox.left - 1
+            && titleBox.right <= headerBox.right + 1
+            && titleBox.top >= headerBox.top - 1
+            && titleBox.bottom <= headerBox.bottom + 1,
+          inputWithinHeader: !!titleInputBox && !!headerBox
+            && titleInputBox.left >= headerBox.left - 1
+            && titleInputBox.right <= headerBox.right + 1
+            && titleInputBox.top >= headerBox.top - 1
+            && titleInputBox.bottom <= headerBox.bottom + 1,
+          visible: visible(title)
+        },
+        publish: {
+          box: publishBox,
+          centerHit: centerHit(publish, publishBox),
+          fullBoxVisible: visible(publish) && withinViewport(publishBox),
+          visible: visible(publish)
+        },
+        saveState: {
+          box: saveStateBox,
+          centerHit: centerHit(saveState, saveStateBox),
+          fullBoxVisible: visible(saveState) && withinViewport(saveStateBox),
+          visible: visible(saveState)
+        },
+        stats: {
+          box: statsBox,
+          count: stats?.querySelectorAll(':scope > span').length ?? 0,
+          centerHit: centerHit(stats, statsBox),
+          fullBoxVisible: visible(stats) && withinViewport(statsBox),
+          visible: visible(stats)
+        },
+        viewSwitch: {
+          box: viewSwitchBox,
+          centerHit: centerHit(viewSwitch, viewSwitchBox),
+          fullBoxVisible: visible(viewSwitch) && withinViewport(viewSwitchBox),
+          visible: visible(viewSwitch)
+        },
+        dirty: !!root.querySelector('.easymde-immersive-save-state.is-dirty'),
+        intersections: {
+          publishTitle: intersects(publishBox, titleBox),
+          titleSaveState: intersects(titleBox, saveStateBox),
+          titleStats: intersects(titleBox, statsBox),
+          titleViewSwitch: intersects(titleBox, viewSwitchBox)
+        }
+      };
+    });
+
+    for (const { dir, viewport } of [
+      { dir: 'ltr', viewport: desktop },
+      { dir: 'ltr', viewport: miniLandscape },
+      { dir: 'rtl', viewport: miniLandscape },
+      { dir: 'ltr', viewport: miniPortrait }
+    ]) {
+      await page.setViewportSize(viewport);
+      const useRtl = 'rtl' === dir;
+      const originalDir = useRtl ? await immersiveRoot.getAttribute('dir') : null;
+      try {
+        if (useRtl) {
+          await immersiveRoot.evaluate((root) => root.setAttribute('dir', 'rtl'));
+        }
+        await titleInput.fill(titleValue);
+        await expect(titleInput).toHaveValue(titleValue);
+        await expect(titleMeasure).toHaveText(titleValue);
+        const state = await geometry();
+        const isTwoRowHeader = viewport.width <= 1232;
+
+        expect(state.header.display).toBe(isTwoRowHeader ? 'grid' : 'flex');
+        expect(state.header.variable).toBe(isTwoRowHeader ? '76px' : '60px');
+        expect(state.header.height).toBeGreaterThanOrEqual(isTwoRowHeader ? 75 : 59);
+        expect(state.title.visible).toBe(true);
+        expect(state.title.withinHeader).toBe(true);
+        expect(state.title.inputWithinHeader).toBe(true);
+        expect(state.title.centerHit).toBe(true);
+        expect(state.title.inputValue).toBe(titleValue);
+        expect(state.title.measureText).toBe(titleValue);
+        expect(state.title.inputClientHeight).toBeGreaterThanOrEqual(19);
+        expect(state.title.measureClientHeight).toBeGreaterThanOrEqual(19);
+        expect(state.title.inputLineHeight).toBe('18.75px');
+        expect(state.publish.visible).toBe(true);
+        expect(state.publish.fullBoxVisible).toBe(true);
+        expect(state.publish.centerHit).toBe(true);
+        if (viewport.width > 782) {
+          expect(state.stats.visible).toBe(true);
+          expect(state.stats.count).toBe(3);
+        } else {
+          expect(state.stats.visible).toBe(false);
+        }
+        expect(state.dirty).toBe(true);
+        expect(state.intersections.publishTitle).toBe(false);
+        expect(state.intersections.titleSaveState).toBe(false);
+        expect(state.intersections.titleStats).toBe(false);
+        expect(state.intersections.titleViewSwitch).toBe(false);
+
+        if (viewport.width >= 1280) {
+          expect(state.viewSwitch.visible).toBe(true);
+          expect(state.viewSwitch.fullBoxVisible).toBe(true);
+          expect(state.viewSwitch.centerHit).toBe(true);
+          expect(state.saveState.visible).toBe(true);
+          expect(state.saveState.fullBoxVisible).toBe(true);
+          expect(state.saveState.centerHit).toBe(true);
+          expect(state.stats.fullBoxVisible).toBe(true);
+          expect(state.stats.centerHit).toBe(true);
+        }
+        if (useRtl) expect(state.direction).toBe('rtl');
+      } finally {
+        if (useRtl) {
+          await immersiveRoot.evaluate((root, prevDir) => {
+            if (null === prevDir) root.removeAttribute('dir');
+            else root.setAttribute('dir', prevDir);
+          }, originalDir);
+        }
+      }
+    }
+    expect(
+      unexpectedPostCategoryCounts,
+      `non-readonly POSTs observed; preview-count=${previewPostCount}; heartbeat-count=${heartbeatPostCount}; heartbeat-maintenance-count=${heartbeatMaintenancePostCount}; community-events-count=${communityEventsPostCount}`
+    ).toEqual({});
+    browserMonitor.assertClean();
+    } finally {
+      page.off('request', onPostRequest);
+      browserMonitor.dispose();
+    }
+  });
+
+  test('keeps split panes usable beside an outline across writing viewports', async ({ page }, testInfo) => {
+    const browserMonitor = attachPrivacySafeBrowserMonitor(page, {
+      baseURL: testInfo.project.use.baseURL
+    });
+    try {
+    await login(page, testInfo.easymdeUser);
+    await openEasyMdeNewPost(page);
+    const markdown = await canonicalMarkdownForPage(page);
+    await fillMarkdownAndWaitForPreview(page, markdown, null);
+
+    const labels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    await page.setViewportSize(miniPortrait);
+    const editorOwner = page.locator('.easymde-editor[data-easymde-editor-owner="react"]');
+    await editorOwner.locator('.easymde-toolbar-immersive-toggle').click();
+
+    const editor = page.locator(
+      '.easymde-editor[data-easymde-editor-owner="react"].is-immersive'
+    );
+    await expect(editor).toHaveCount(1);
+    await expect(editor.getByRole('region', { name: labels.immersive })).toBeVisible();
+    const splitPreviewSetting = editor.getByRole('button', {
+      name: labels.editorSettings
+    });
+    await splitPreviewSetting.click();
+    const settingsDialog = editor.getByRole('dialog', { name: labels.editorSettings });
+    await expect(settingsDialog).toBeVisible();
+    const splitCheckbox = settingsDialog.getByRole('checkbox', { name: labels.splitPreview });
+    if (!await splitCheckbox.isChecked()) await splitCheckbox.click();
+    await page.keyboard.press('Escape');
+    await expect(editor).toHaveClass(/is-immersive-split/);
+
+    const geometry = () => page.evaluate(() => {
+      const root = document.querySelector(
+        '.easymde-editor[data-easymde-editor-owner="react"].is-immersive'
+      );
+      if (!(root instanceof HTMLElement)) throw new Error('react-immersive-root-unavailable');
+      const element = (selector) => root.querySelector(selector);
+      const box = (node) => {
+        if (!(node instanceof HTMLElement)) return null;
+        const rect = node.getBoundingClientRect();
+        return {
+          bottom: rect.bottom,
+          height: rect.height,
+          left: rect.left,
+          right: rect.right,
+          top: rect.top,
+          width: rect.width
+        };
+      };
+      const visible = (node) => {
+        if (!(node instanceof HTMLElement)) return false;
+        const style = getComputedStyle(node);
+        const rect = node.getBoundingClientRect();
+        return style.display !== 'none'
+          && style.visibility !== 'hidden'
+          && rect.width > 0
+          && rect.height > 0;
+      };
+      const centerHit = (node, rect) => {
+        if (!(node instanceof HTMLElement) || !rect) return false;
+        const target = document.elementFromPoint(
+          rect.left + rect.width / 2,
+          rect.top + rect.height / 2
+        );
+        return target === node || node.contains(target);
+      };
+
+      const workspace = element('.easymde-workspace.is-split-resizable');
+      const source = element('.easymde-pane-source');
+      const preview = element('.easymde-pane-preview');
+      const divider = element('.easymde-immersive-pane-divider');
+      const outline = element('.easymde-immersive-outline');
+      const outlineResizer = element('.easymde-immersive-outline-resizer');
+      const outlineShow = element('.easymde-immersive-outline-show');
+      const outlineClose = element('.easymde-immersive-outline-close');
+      const toolbar = element('.easymde-immersive-toolbar-row');
+      const formatting = element('.easymde-immersive-formatting');
+      const secondary = element('.easymde-immersive-secondary-actions');
+      const copy = element('.easymde-immersive-wechat');
+      const sourceBox = box(source);
+      const previewBox = box(preview);
+      const workspaceBox = box(workspace);
+      const toolbarBox = box(toolbar);
+      const dividerStyle = divider instanceof HTMLElement ? getComputedStyle(divider) : null;
+      const outlineStyle = outline instanceof HTMLElement ? getComputedStyle(outline) : null;
+      const outlineResizerStyle = outlineResizer instanceof HTMLElement
+        ? getComputedStyle(outlineResizer)
+        : null;
+
+      return {
+        mode: root instanceof HTMLElement
+          ? ['is-immersive-source', 'is-immersive-split', 'is-immersive-preview']
+            .find((name) => root.classList.contains(name)) ?? null
+          : null,
+        pageOverflow: Math.max(
+          0,
+          document.documentElement.scrollWidth - document.documentElement.clientWidth
+        ),
+        source: { box: sourceBox, visible: visible(source) },
+        preview: { box: previewBox, visible: visible(preview) },
+        workspace: { box: workspaceBox, visible: visible(workspace) },
+        divider: {
+          box: box(divider),
+          display: dividerStyle?.display ?? null,
+          exists: !!divider,
+          visible: visible(divider)
+        },
+        outline: {
+          box: box(outline),
+          position: outlineStyle?.position ?? null,
+          visible: visible(outline)
+        },
+        outlineResizer: {
+          display: outlineResizerStyle?.display ?? null,
+          exists: !!outlineResizer
+        },
+        outlineShow: {
+          box: box(outlineShow),
+          centerHit: centerHit(outlineShow, box(outlineShow)),
+          visible: visible(outlineShow)
+        },
+        outlineClose: {
+          box: box(outlineClose),
+          centerHit: centerHit(outlineClose, box(outlineClose)),
+          visible: visible(outlineClose)
+        },
+        toolbar: {
+          box: toolbarBox,
+          centerHit: centerHit(toolbar, toolbarBox),
+          scrollLeft: toolbar instanceof HTMLElement ? toolbar.scrollLeft : null
+        },
+        formatting: {
+          box: box(formatting),
+          scrollLeft: formatting instanceof HTMLElement ? formatting.scrollLeft : null
+        },
+        secondary: {
+          box: box(secondary),
+          scrollLeft: secondary instanceof HTMLElement ? secondary.scrollLeft : null
+        },
+        copy: {
+          box: box(copy),
+          centerHit: centerHit(copy, box(copy)),
+          visible: visible(copy)
+        }
+      };
+    });
+
+    const assertSharedMobileControls = (state) => {
+      expect(state.copy.visible).toBe(true);
+      expect(state.copy.centerHit).toBe(true);
+      expect(state.toolbar.centerHit).toBe(true);
+      expect(state.toolbar.scrollLeft).toBe(0);
+      expect(state.formatting.scrollLeft).toBe(0);
+      expect(state.secondary.scrollLeft).toBe(0);
+    };
+
+    const assertSideBySideSplitPanes = (state, dir = 'ltr') => {
+      expect(state.mode).toBe('is-immersive-split');
+      expect(state.divider.exists).toBe(true);
+      expect(state.divider.display).not.toBe('none');
+      expect(state.divider.visible).toBe(true);
+      expect(state.source.visible).toBe(true);
+      expect(state.preview.visible).toBe(true);
+      expect(Math.abs(state.source.box.top - state.preview.box.top)).toBeLessThanOrEqual(1);
+      expect(Math.abs(state.source.box.height - state.preview.box.height)).toBeLessThanOrEqual(1);
+      if ('rtl' === dir) {
+        expect(state.preview.box.right).toBeLessThanOrEqual(state.source.box.left + 1);
+      } else {
+        expect(state.source.box.right).toBeLessThanOrEqual(state.preview.box.left + 1);
+      }
+      expect(state.source.box.left).toBeGreaterThanOrEqual(state.workspace.box.left - 1);
+      expect(state.preview.box.left).toBeGreaterThanOrEqual(state.workspace.box.left - 1);
+      expect(state.source.box.right).toBeLessThanOrEqual(state.workspace.box.right + 1);
+      expect(state.preview.box.right).toBeLessThanOrEqual(state.workspace.box.right + 1);
+      expect(state.pageOverflow).toBe(0);
+    };
+
+    const assertOpenSplit = (state, dir = 'ltr', { overlay = false } = {}) => {
+      expect(state.outline.visible).toBe(true);
+      expect(state.outlineClose.centerHit).toBe(true);
+      if (overlay) {
+        expect(state.outline.position).toBe('absolute');
+        expect(state.outlineResizer.display).toBe('none');
+      } else {
+        expect(state.outline.position).not.toBe('absolute');
+        expect(state.outlineResizer.display).not.toBe('none');
+      }
+      assertSideBySideSplitPanes(state, dir);
+      assertSharedMobileControls(state);
+    };
+
+    const assertClosedSplit = (state, dir = 'ltr') => {
+      expect(state.outline.visible).toBe(false);
+      expect(state.outlineShow.visible).toBe(true);
+      expect(state.outlineShow.centerHit).toBe(true);
+      assertSideBySideSplitPanes(state, dir);
+      assertSharedMobileControls(state);
+    };
+
+    for (const { viewport, overlay } of [
+      { viewport: desktop, overlay: false },
+      { viewport: miniLandscape, overlay: false },
+      { viewport: miniPortrait, overlay: true }
+    ]) {
+      await page.setViewportSize(viewport);
+      await expect(editor).toHaveClass(/is-immersive-split/);
+      if (!await editor.locator('.easymde-immersive-outline').isVisible()) {
+        await editor.getByRole('button', { name: labels.showOutline }).click();
+      }
+      await expect(editor.locator('.easymde-immersive-outline')).toBeVisible();
+      assertOpenSplit(await geometry(), 'ltr', { overlay });
+
+      await editor.getByRole('button', { name: labels.hideOutline }).first().click();
+      await expect(editor.locator('.easymde-immersive-outline')).toHaveCount(0);
+      assertClosedSplit(await geometry(), 'ltr');
+
+      await editor.getByRole('button', { name: labels.showOutline }).click();
+      await expect(editor.locator('.easymde-immersive-outline')).toBeVisible();
+    }
+
+    await editor.getByRole('button', { name: labels.preview, exact: true }).click();
+    await expect(editor).toHaveClass(/is-immersive-preview/);
+    const previewMode = await geometry();
+    expect(previewMode.source.visible).toBe(false);
+    expect(previewMode.preview.visible).toBe(true);
+    expect(previewMode.divider.exists).toBe(false);
+    await editor.getByRole('button', { name: labels.edit, exact: true }).click();
+    await expect(editor).toHaveClass(/is-immersive-source/);
+    const sourceMode = await geometry();
+    expect(sourceMode.source.visible).toBe(true);
+    expect(sourceMode.preview.visible).toBe(false);
+    expect(sourceMode.divider.exists).toBe(false);
+
+    const originalDirs = await editor.evaluate((root) => {
+      const workspace = root.querySelector('.easymde-workspace');
+      return {
+        editor: root.getAttribute('dir'),
+        workspace: workspace?.getAttribute('dir') ?? null
+      };
+    });
+    try {
+      await editor.evaluate((root) => {
+        root.setAttribute('dir', 'rtl');
+        root.querySelector('.easymde-workspace')?.setAttribute('dir', 'rtl');
+      });
+      await editor.getByRole('button', { name: labels.split, exact: true }).click();
+      await expect(editor).toHaveClass(/is-immersive-split/);
+      for (const { viewport, overlay } of [
+        { viewport: miniLandscape, overlay: false },
+        { viewport: miniPortrait, overlay: true }
+      ]) {
+        await page.setViewportSize(viewport);
+        if (!await editor.locator('.easymde-immersive-outline').isVisible()) {
+          await editor.getByRole('button', { name: labels.showOutline }).click();
+        }
+        await expect(editor.locator('.easymde-immersive-outline')).toBeVisible();
+        assertOpenSplit(await geometry(), 'rtl', { overlay });
+      }
+    } finally {
+      await editor.evaluate((root, dirs) => {
+        if (null === dirs.editor) root.removeAttribute('dir');
+        else root.setAttribute('dir', dirs.editor);
+        const workspace = root.querySelector('.easymde-workspace');
+        if (workspace) {
+          if (null === dirs.workspace) workspace.removeAttribute('dir');
+          else workspace.setAttribute('dir', dirs.workspace);
+        }
+      }, originalDirs);
+    }
+
+    // Verify docked Outline resizer bounds align with CSS clamp(160px, 24vw, 220px) at 800px.
+    await page.setViewportSize({ width: 800, height: 900 });
+    await expect(editor).toHaveClass(/is-immersive-split/);
+    if (!await editor.locator('.easymde-immersive-outline').isVisible()) {
+      await editor.getByRole('button', { name: labels.showOutline }).click();
+    }
+    const dockedOutlineResizer = editor.locator('.easymde-immersive-outline-resizer');
+    await expect(dockedOutlineResizer).toBeVisible();
+    const readOutlineResizeState = () => editor.evaluate((root) => {
+      const outline = root.querySelector('.easymde-immersive-outline');
+      const resizer = root.querySelector('.easymde-immersive-outline-resizer');
+      if (!(outline instanceof HTMLElement) || !(resizer instanceof HTMLElement)) {
+        throw new Error('docked-outline-resize-elements-unavailable');
+      }
+      return {
+        max: Number.parseInt(resizer.getAttribute('aria-valuemax') ?? '', 10),
+        min: Number.parseInt(resizer.getAttribute('aria-valuemin') ?? '', 10),
+        now: Number.parseInt(resizer.getAttribute('aria-valuenow') ?? '', 10),
+        renderedWidth: Math.round(outline.getBoundingClientRect().width)
+      };
+    });
+    await expect.poll(readOutlineResizeState).toEqual({
+      max: 192,
+      min: 160,
+      now: 192,
+      renderedWidth: 192
+    });
+    await dockedOutlineResizer.focus();
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(readOutlineResizeState).toEqual({
+      max: 192,
+      min: 160,
+      now: 192,
+      renderedWidth: 192
+    });
+    await page.keyboard.press('ArrowLeft');
+    await expect.poll(readOutlineResizeState).toEqual({
+      max: 192,
+      min: 160,
+      now: 182,
+      renderedWidth: 182
+    });
+    await page.keyboard.press('Home');
+    await expect.poll(readOutlineResizeState).toEqual({
+      max: 192,
+      min: 160,
+      now: 192,
+      renderedWidth: 192
+    });
+
+    await page.setViewportSize(desktop);
+    await expect(editor).toHaveClass(/is-immersive-split/);
+    assertOpenSplit(await geometry(), 'ltr', { overlay: false });
+    browserMonitor.assertClean();
+    } finally {
+      browserMonitor.dispose();
     }
   });
 });

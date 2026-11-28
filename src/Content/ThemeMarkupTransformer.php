@@ -249,6 +249,7 @@ final class ThemeMarkupTransformer {
 		$footnotes = '';
 		if ( $uses_task_list_markup ) {
 			self::add_crimson_focus_task_list_classes( $root );
+			self::normalize_task_list_marker_spacing( $root );
 		}
 
 		if ( $uses_markdown2html_markup ) {
@@ -291,6 +292,67 @@ final class ThemeMarkupTransformer {
 		}
 
 		return $html;
+	}
+
+	/**
+	 * Remove the Markdown task marker's syntax separator from rendered flow.
+	 *
+	 * CommonMark emits the checkbox followed by the source line's separator
+	 * space (for example, `<input ...> Todo`). The checkbox already owns the
+	 * visual gap through its theme or shared marker margin; retaining that text
+	 * node makes the separator participate in inline layout and is especially
+	 * visible in the portable WeChat copy. Only a checkbox in a task-list item
+	 * is eligible, so authored text and unrelated form controls remain intact.
+	 */
+	private static function normalize_task_list_marker_spacing( DOMElement $root ) {
+		$xpath  = new DOMXPath( $root->ownerDocument );
+		$inputs = $xpath->query( './/input[translate(@type, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz") = "checkbox"]' );
+		if ( false === $inputs ) {
+			return;
+		}
+
+		foreach ( $inputs as $input ) {
+			if ( ! $input instanceof DOMElement ) {
+				continue;
+			}
+
+			// The checkbox may be a direct LI child (tight list) or live inside
+			// the paragraph that CommonMark emits for a loose list. Walk only to
+			// the containing LI so ordinary form controls remain untouched.
+			$list_item = $input->parentNode;
+			while ( $list_item instanceof DOMElement && 'li' !== strtolower( $list_item->nodeName ) ) {
+				$list_item = $list_item->parentNode;
+			}
+			if ( ! $list_item instanceof DOMElement || ! self::task_item_has_checkbox( $list_item ) ) {
+				continue;
+			}
+
+			$list = $list_item->parentNode;
+			if ( ! $list instanceof DOMElement || ! in_array( strtolower( $list->nodeName ), array( 'ul', 'ol' ), true ) ) {
+				continue;
+			}
+			$list_classes = preg_split( '/\s+/', trim( (string) $list->getAttribute( 'class' ) ) );
+			if ( ! in_array( 'task-list', $list_classes, true ) && ! in_array( 'contains-task-list', $list_classes, true ) ) {
+				continue;
+			}
+
+			$next = $input->nextSibling;
+			if ( ! $next instanceof DOMText ) {
+				continue;
+			}
+			$value      = (string) $next->nodeValue;
+			$normalized = preg_replace( '/^[\x20\t\r\n\f]+/u', '', $value );
+			if ( null === $normalized || $normalized === $value ) {
+				continue;
+			}
+			if ( '' === $normalized ) {
+				if ( $next->parentNode instanceof DOMNode ) {
+					$next->parentNode->removeChild( $next );
+				}
+			} else {
+				$next->nodeValue = $normalized;
+			}
+		}
 	}
 
 	private static function add_crimson_focus_task_list_classes( DOMElement $root ) {

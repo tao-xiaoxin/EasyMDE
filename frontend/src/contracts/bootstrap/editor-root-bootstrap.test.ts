@@ -366,8 +366,11 @@ function validBootstrap() {
     wechatExport: {
       enabled: true,
       pngConversionEnabled: false,
+      wechatMathAtlasContentVersion: '0123456789abcdef',
+      wechatMathAtlasUrl: `${previewEnhancementBootstrapFixture.assetBaseUrl}assets/math/easymde-katex-glyph-atlas.json?contentversion=0123456789abcdef`,
       strings: {
         failed: 'Copy failed',
+        failedWithUploads: 'Copy failed after uploading images',
         success: 'Copied',
         unsupported: 'Clipboard unsupported'
       }
@@ -517,6 +520,12 @@ describe('parseEditorRootBootstrap', () => {
         'http://localhost:8094'
       )
     ) as typeof value.previewEnhancement;
+    value.wechatExport = JSON.parse(
+      JSON.stringify(value.wechatExport).replaceAll(
+        'https://example.test',
+        'http://localhost:8094'
+      )
+    ) as typeof value.wechatExport;
     value.editorBlockIndexWorkerUrl =
       'http://localhost:8094/wp-content/plugins/easymde/assets/build/editor-block-index-worker/assets/editor-block-index-worker-DKcdIWB6.js?ver=d01150a8fcd15fec';
 
@@ -619,6 +628,17 @@ describe('parseEditorRootBootstrap', () => {
     [{ ...validBootstrap(), toolbar: null }, 'editor-root-toolbar-invalid'],
     [
       { ...validBootstrap(), wechatExport: null },
+      'editor-root-wechat-export-invalid'
+    ],
+    [
+      {
+        ...validBootstrap(),
+        wechatExport: {
+          ...validBootstrap().wechatExport,
+          wechatMathAtlasUrl:
+            `${previewEnhancementBootstrapFixture.assetBaseUrl}assets/math/easymde-katex-glyph-atlas.json?contentversion=0123456789abcdee`
+        }
+      },
       'editor-root-wechat-export-invalid'
     ],
     [

@@ -94,8 +94,11 @@ export function occurrenceOffset(source, value, occurrence = 0) {
   return offset;
 }
 
-export async function login(page) {
-  await page.goto('/wp-login.php');
+export async function login(page, { redirectTo } = {}) {
+  const loginUrl = typeof redirectTo === 'string' && redirectTo.length > 0
+    ? `/wp-login.php?redirect_to=${encodeURIComponent(redirectTo)}`
+    : '/wp-login.php';
+  await page.goto(loginUrl);
   await page.locator('#loginform').evaluate((form, credentials) => {
     const username = form.elements.namedItem('log');
     const password = form.elements.namedItem('pwd');
@@ -110,6 +113,13 @@ export async function login(page) {
     form.requestSubmit(submit);
   }, { password: adminPassword, username: adminUser });
   await expect(page.locator('#wpadminbar')).toBeVisible();
+  await page.waitForLoadState('load');
+  if (!redirectTo) {
+    // WordPress 7.1+ Dashboard triggers post-load emoji/thickbox asset fetches;
+    // wait briefly when landing on Dashboard so subsequent navigation does not
+    // abort in-flight same-origin scripts under privacy-safe monitoring.
+    await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
+  }
 }
 
 /**
@@ -181,6 +191,11 @@ export async function ensureSecondWordPressUser(page) {
 
 export async function openNewPost(page) {
   await page.goto('/wp-admin/post-new.php');
+  await expect(page.locator('#easymde-editor')).toBeVisible();
+}
+
+export async function loginAndOpenNewPost(page) {
+  await login(page, { redirectTo: '/wp-admin/post-new.php' });
   await expect(page.locator('#easymde-editor')).toBeVisible();
 }
 
@@ -943,7 +958,7 @@ export async function startContextMenuDiagnostics(page, categoryId, targetMetada
       if (selectionApiEvents.length > 64) selectionApiEvents.shift();
     };
     const canvasScrollState = () => {
-      const canvas = document.querySelector('.easymde-immersive-preview-canvas');
+      const canvas = document.querySelector('[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas');
       return canvas
         ? { left: canvas.scrollLeft, top: canvas.scrollTop }
         : null;
@@ -971,7 +986,7 @@ export async function startContextMenuDiagnostics(page, categoryId, targetMetada
       };
     };
     const windowGeometryState = () => {
-      const canvas = document.querySelector('.easymde-immersive-preview-canvas');
+      const canvas = document.querySelector('[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas');
       if (!canvas) return null;
       const scrollTop = canvas.scrollTop;
       // ADR-002: every top-level ProseMirror block is live; the retired
@@ -1178,7 +1193,7 @@ export async function startContextMenuDiagnostics(page, categoryId, targetMetada
       stop: null,
       targetMetadata: currentTargetMetadata,
       windowEvents,
-      workspaceElement: document.querySelector('.easymde-workspace')
+      workspaceElement: document.querySelector('[data-easymde-editor-owner="react"] .easymde-workspace')
     };
     const observer = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
@@ -1255,7 +1270,7 @@ export async function startContextMenuDiagnostics(page, categoryId, targetMetada
       });
     }
     state.preparationObserver = preparationObserver;
-    const canvas = document.querySelector('.easymde-immersive-preview-canvas');
+    const canvas = document.querySelector('[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas');
     const canvasObserver = canvas
       ? new MutationObserver(() => {
           appendWindowEvent({ state: windowGeometryState(), type: 'canvas-child-list' });
@@ -1386,7 +1401,7 @@ export async function readContextMenuDiagnostics(
       : null;
     const currentSourceElement = document.querySelector('.easymde-source-react .cm-content');
     const sourceValueElement = document.querySelector('#easymde-source');
-    const currentWorkspaceElement = document.querySelector('.easymde-workspace');
+    const currentWorkspaceElement = document.querySelector('[data-easymde-editor-owner="react"] .easymde-workspace');
     const editorRoot = document.querySelector('[data-easymde-editor-owner="react"]');
     const previewSurface = document.querySelector('[data-easymde-preview-html-sink="1"]');
     const previewError = previewSurface?.getAttribute('data-easymde-preview-error');
@@ -1481,18 +1496,18 @@ export async function readContextMenuDiagnostics(
         : [],
       target: state?.targetMetadata ?? null,
       scrollOffsets: {
-        canvas: scrollState(document.querySelector('.easymde-immersive-preview-canvas')),
+        canvas: scrollState(document.querySelector('[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas')),
         cmScroller: scrollState(document.querySelector('.cm-scroller')),
         document: {
           left: document.documentElement.scrollLeft,
           top: document.documentElement.scrollTop
         },
-        preview: scrollState(document.querySelector('.easymde-pane-preview')),
+        preview: scrollState(document.querySelector('[data-easymde-editor-owner="react"] .easymde-pane-preview')),
         window: {
           left: globalThis.scrollX,
           top: globalThis.scrollY
         },
-        workspace: scrollState(document.querySelector('.easymde-workspace'))
+        workspace: scrollState(document.querySelector('[data-easymde-editor-owner="react"] .easymde-workspace'))
       },
       scrollEvents: Array.isArray(state?.events) ? state.events.slice() : [],
       steps: stepStates,
@@ -1660,7 +1675,7 @@ async function readRootSubmenuGeometry(page, itemId) {
       item: describe(item),
       root: describe(root),
       viewport: describe(document.querySelector('[data-easymde-context-menu-viewport="true"]')),
-      workspace: describe(document.querySelector('.easymde-workspace'))
+      workspace: describe(document.querySelector('[data-easymde-editor-owner="react"] .easymde-workspace'))
     };
   }, itemId);
 }
@@ -1813,4 +1828,107 @@ export async function waitForSourcePreviewAccepted(preview, phase, previousDomHa
 export function replaceVisualSourceOccurrence(markdown, value, replacement, occurrence = 0) {
   const start = occurrenceOffset(markdown, value, occurrence);
   return `${markdown.slice(0, start)}${replacement}${markdown.slice(start + value.length)}`;
+}
+
+function assertNoHorizontalContextMenuClip(clipPath, label) {
+  if (!clipPath || 'none' === clipPath) return;
+  const match = clipPath.match(/^inset\(([^)]+)\)$/u);
+  if (!match) {
+    throw new Error(`unexpected-context-menu-clip-path:${label}:${clipPath}`);
+  }
+  const tokens = match[1]
+    .trim()
+    .split(/\s+/u)
+    .map((token) => Number.parseFloat(token));
+  const right = 1 === tokens.length ? tokens[0] : tokens[1];
+  const left = tokens.length <= 2 ? right : 3 === tokens.length ? tokens[1] : tokens[3];
+  expect(right, `${label} horizontal right clip`).toBe(0);
+  expect(left, `${label} horizontal left clip`).toBe(0);
+}
+
+export async function assertOpenContextMenuGeometry(
+  page,
+  { checkShortcuts = false, expectedOverlapped = false, phase }
+) {
+  const submenuFrame = page.locator('.easymde-editor-context-menu__submenu-frame').last();
+  const submenu = submenuFrame.locator('.easymde-editor-context-menu__submenu');
+  await expect(submenuFrame).toBeVisible();
+  await expect(submenu).toBeVisible();
+
+  const geometry = await page.evaluate((rootSelector) => {
+    const root = document.querySelector(rootSelector);
+    const frames = Array.from(
+      document.querySelectorAll('.easymde-editor-context-menu__submenu-frame')
+    );
+    const frame = frames.at(-1);
+    const sub = frame?.querySelector('.easymde-editor-context-menu__submenu') ?? null;
+    const layerPath = sub?.getAttribute('data-easymde-context-menu-layer') ?? null;
+    const pointers = layerPath
+      ? document.querySelectorAll(
+          `.easymde-editor-context-menu__pointer[data-easymde-context-menu-layer="${CSS.escape(layerPath)}"]`
+        )
+      : document.querySelectorAll('.easymde-editor-context-menu__pointer');
+    const shortcuts = Array.from(
+      document.querySelectorAll('.easymde-editor-context-menu__shortcut')
+    );
+    if (!(root instanceof HTMLElement)
+      || !(frame instanceof HTMLElement)
+      || !(sub instanceof HTMLElement)) {
+      throw new Error('context-menu-elements-unavailable');
+    }
+    const rootRect = root.getBoundingClientRect();
+    const frameRect = frame.getBoundingClientRect();
+    const subRect = sub.getBoundingClientRect();
+    return {
+      afterMaskImage: getComputedStyle(frame, '::after').maskImage,
+      frameClipPath: getComputedStyle(frame).clipPath,
+      frameLeft: frameRect.left,
+      frameOverlapped: frame.getAttribute('data-easymde-context-menu-overlapped'),
+      frameRight: frameRect.right,
+      pointerCount: pointers.length,
+      rootClipPath: getComputedStyle(root).clipPath,
+      rootLeft: rootRect.left,
+      rootRight: rootRect.right,
+      shortcutCount: shortcuts.length,
+      shortcutDisplays: shortcuts.map((el) => getComputedStyle(el).display),
+      subClipPath: getComputedStyle(sub).clipPath,
+      subLeft: subRect.left,
+      subRight: subRect.right,
+      viewportWidth: window.innerWidth
+    };
+  }, menuSelector);
+
+  expect(geometry.rootLeft, `${phase} root left`).toBeGreaterThanOrEqual(7.5);
+  expect(geometry.rootRight, `${phase} root right`).toBeLessThanOrEqual(
+    geometry.viewportWidth - 7.5
+  );
+  expect(geometry.frameLeft, `${phase} submenu frame left`).toBeGreaterThanOrEqual(7.5);
+  expect(geometry.frameRight, `${phase} submenu frame right`).toBeLessThanOrEqual(
+    geometry.viewportWidth - 7.5
+  );
+  expect(geometry.subLeft, `${phase} submenu left`).toBeGreaterThanOrEqual(7.5);
+  expect(geometry.subRight, `${phase} submenu right`).toBeLessThanOrEqual(
+    geometry.viewportWidth - 7.5
+  );
+  assertNoHorizontalContextMenuClip(geometry.rootClipPath, `${phase}-root`);
+  assertNoHorizontalContextMenuClip(geometry.frameClipPath, `${phase}-frame`);
+  assertNoHorizontalContextMenuClip(geometry.subClipPath, `${phase}-submenu`);
+
+  if (checkShortcuts) {
+    expect(geometry.shortcutCount, `${phase} shortcuts present`).toBeGreaterThan(0);
+    for (const display of geometry.shortcutDisplays) {
+      expect(display, `${phase} shortcut visible`).not.toBe('none');
+    }
+  }
+
+  if (expectedOverlapped) {
+    expect(geometry.frameOverlapped, `${phase} overlapped flag`).toBe('true');
+    expect(geometry.pointerCount, `${phase} overlapped pointer count`).toBe(0);
+    expect(geometry.afterMaskImage, `${phase} overlapped frame mask`).toBe('none');
+  } else {
+    expect(geometry.frameOverlapped, `${phase} non-overlapped flag`).toBeNull();
+    expect(geometry.pointerCount, `${phase} non-overlapped pointer count`).toBe(1);
+  }
+
+  return geometry;
 }

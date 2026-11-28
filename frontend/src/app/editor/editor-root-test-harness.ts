@@ -712,6 +712,7 @@ export function fixture(): EditorRootProps &
         cancel: vi.fn(),
         commit: vi.fn()
       }),
+      scopeRenderedStyles: vi.fn(() => ({ dispose: vi.fn() })),
       syncCodeFrameBackgrounds: vi.fn()
     },
     executeExternalCommand: vi.fn(),
@@ -1128,13 +1129,18 @@ export function fixture(): EditorRootProps &
       copy: vi
         .fn()
         .mockResolvedValue({ method: 'clipboard', status: 'copied' }),
+      rememberPreviewWidth: vi.fn(),
       prepare: vi.fn().mockResolvedValue(undefined)
     },
     wechatExport: {
       enabled: true,
       pngConversionEnabled: false,
+      wechatMathAtlasContentVersion: '0123456789abcdef',
+      wechatMathAtlasUrl:
+        'https://example.test/wp-content/plugins/easymde/assets/math/easymde-katex-glyph-atlas.json?contentversion=0123456789abcdef',
       strings: {
         failed: 'Copy failed',
+        failedWithUploads: 'Copy failed after uploading images',
         success: 'Copied',
         unsupported: 'Clipboard unsupported'
       }

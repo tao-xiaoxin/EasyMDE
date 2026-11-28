@@ -22,6 +22,7 @@ export type AdminEditorLoaderStartRuntime = Readonly<{
 	bootstrap: unknown;
 	document: Document;
 	failureMessage: string;
+	onStartupFailure: (code: string) => void;
 	window: Window;
 	wordpress: WordPressRuntime;
 }>;
@@ -272,11 +273,16 @@ export function startAdminEditorLoader(
 				bootstrap: bootstrap.editorBootstrap,
 				document: documentRef,
 				failureMessage: failureMessage(),
+				onStartupFailure: (code) => fail(new Error(code)),
 				window: windowRef,
 				wordpress,
 			});
 			if ("function" !== typeof teardown) {
 				throw new Error("react-editor-main-teardown-invalid");
+			}
+			if (state.failureCode) {
+				teardown();
+				return;
 			}
 			state.mainTeardown = teardown;
 			disconnectDomObserver();

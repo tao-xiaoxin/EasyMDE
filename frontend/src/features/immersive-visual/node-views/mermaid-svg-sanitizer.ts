@@ -3,6 +3,11 @@
  * Mermaid runtime initialization for protected Mermaid visual atoms.
  */
 
+import {
+	initializeMermaidRuntime,
+	type MermaidInitializableRuntime,
+} from "../../../shared/mermaid/mermaid-runtime-config";
+
 const FORBIDDEN_SVG_TAGS = new Set([
 	"animate",
 	"animatemotion",
@@ -448,7 +453,8 @@ export function sanitizeMermaidSvg(
 	const xmlDoc = parser.parseFromString(trimmed, "image/svg+xml");
 	const svgElement =
 		xmlDoc.querySelector("parsererror") === null &&
-		xmlDoc.documentElement?.localName.toLowerCase() === "svg"
+		xmlDoc.documentElement?.localName.toLowerCase() === "svg" &&
+		xmlDoc.documentElement.namespaceURI === "http://www.w3.org/2000/svg"
 			? xmlDoc.documentElement
 			: parser.parseFromString(trimmed, "text/html").querySelector("svg");
 	if (!svgElement) return null;
@@ -467,57 +473,15 @@ export function sanitizeMermaidSvg(
 		: null;
 }
 
-export type MermaidInitializationRuntime = Readonly<{
-	initialize?: (options: Record<string, unknown>) => void;
-}>;
-
-const MERMAID_LABEL_FONT_FAMILY = '"trebuchet ms", verdana, arial, sans-serif';
-const MERMAID_LABEL_GEOMETRY_CSS = `
-.node .label,
-.node .label *,
-.edgeLabel,
-.edgeLabel *,
-foreignObject > div,
-foreignObject > div * {
-  box-sizing: border-box !important;
-  font-family: ${MERMAID_LABEL_FONT_FAMILY} !important;
-  font-size: 16px !important;
-  font-weight: 400 !important;
-  line-height: 20px !important;
-  letter-spacing: normal !important;
-  word-spacing: normal !important;
-  white-space: nowrap !important;
-  margin: 0 !important;
-  padding: 0 !important;
-}
-
-foreignObject > div {
-  display: table-cell !important;
-}`;
-const initializedMermaidRuntimes = new WeakSet<object>();
+export type MermaidInitializationRuntime = MermaidInitializableRuntime;
 
 /**
- * Mirror the single formal-Preview Mermaid configuration exactly (including
- * flowchart padding and label-geometry CSS) so visual mode never degrades a
- * runtime the shared enhancement owner already configured.
+ * Reuse the single shared Mermaid runtime initialization owner (including
+ * strict security, Gantt width, flowchart padding, and root-scoped label CSS)
+ * so visual mode never overwrites or re-initializes `window.mermaid`.
  */
 export function ensureMermaidInitialized(
 	mermaid: MermaidInitializationRuntime,
 ): void {
-	if (initializedMermaidRuntimes.has(mermaid)) return;
-	initializedMermaidRuntimes.add(mermaid);
-	if (typeof mermaid.initialize !== "function") return;
-	try {
-		mermaid.initialize({
-			startOnLoad: false,
-			securityLevel: "strict",
-			theme: "default",
-			fontFamily: MERMAID_LABEL_FONT_FAMILY,
-			fontSize: 16,
-			flowchart: { diagramPadding: 12 },
-			themeCSS: MERMAID_LABEL_GEOMETRY_CSS,
-		});
-	} catch {
-		// Minimal runtimes or test mocks may reject re-initialization.
-	}
+	initializeMermaidRuntime(mermaid);
 }

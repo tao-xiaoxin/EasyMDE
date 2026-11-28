@@ -88,6 +88,7 @@ export type UseEditorVisualPreviewBridgeOptions = Readonly<{
   visualEditorRuntimeRef: SharedRef<ImmersiveVisualEditorRuntime | null>;
   visualPreviewEditingRef: SharedRef<boolean>;
   wechatClipboard: EditorRootProps['wechatClipboard'];
+  wechatCopyPendingRef: SharedRef<boolean>;
   wechatExport: EditorRootProps['wechatExport'];
 }>;
 
@@ -121,6 +122,7 @@ export function useEditorVisualPreviewBridge({
   visualEditorRuntimeRef,
   visualPreviewEditingRef,
   wechatClipboard,
+  wechatCopyPendingRef,
   wechatExport
 }: UseEditorVisualPreviewBridgeOptions) {
   const lastVisualFailureRef = useRef<string | null>(null);
@@ -216,6 +218,8 @@ export function useEditorVisualPreviewBridge({
 
   const {
     cancelWechatBackgroundPreparation,
+    clearScheduledWechatPreparation,
+    rememberWechatPreviewWidth,
     scheduleCurrentWechatPreviewPreparation,
     scheduleWechatPreviewPreparation
   } = useEditorWechatPreparation({
@@ -226,11 +230,14 @@ export function useEditorVisualPreviewBridge({
     previewRuntimeRef,
     previewSurfaceStatusRef,
     rootActiveRef,
+    visualEditorRuntimeRef,
     visualPreviewEditingRef,
     visualPreviewLockingRef,
     visualPreviewUnlockingRef,
     wechatClipboard,
-    wechatExportEnabled: wechatExport.enabled
+    wechatCopyPendingRef,
+    wechatExportEnabled: wechatExport.enabled,
+    wechatPngConversionEnabled: wechatExport.pngConversionEnabled
   });
 
   // The visual failure owner is composed after the unlock owner; a stable ref
@@ -318,7 +325,8 @@ export function useEditorVisualPreviewBridge({
     exitImmersive,
     immersiveLayoutClass,
     immersivePreferences,
-    immersiveToggleRef
+    immersiveToggleRef,
+    previewPresentation
   } = useEditorImmersiveMode({
     cancelVisualUnlockPreparation,
     closeForToolbar,
@@ -335,6 +343,7 @@ export function useEditorVisualPreviewBridge({
     prepareSourceMutationWithPreview,
     previewRuntimeGeneration,
     previewRuntimeRef,
+    rememberWechatPreviewWidth,
     reportFailure,
     rootActiveRef,
     rootRef,
@@ -352,10 +361,11 @@ export function useEditorVisualPreviewBridge({
   const handlePreviewReady = useCallback(
     (runtime: PreviewSurfaceRuntime) => {
       previewRuntimeRef.current = runtime;
+      rememberWechatPreviewWidth(runtime.surface);
       setPreviewRuntimeGeneration((generation) => generation + 1);
       notifyContextMenuReadiness();
     },
-    [notifyContextMenuReadiness, previewRuntimeRef]
+    [notifyContextMenuReadiness, previewRuntimeRef, rememberWechatPreviewWidth]
   );
 
   const handlePreviewImageReadinessChange = useCallback(() => {
@@ -668,7 +678,9 @@ export function useEditorVisualPreviewBridge({
   return {
     applyVisualCanonicalChange: visualHandlers.applyVisualCanonicalChange,
     cancelVisualUnlockPreparation,
+    cancelWechatBackgroundPreparation,
     changeImmersiveMode,
+    clearScheduledWechatPreparation,
     enterImmersive,
     executeVisualToolbarCommand: visualHandlers.executeVisualToolbarCommand,
     exitImmersive,
@@ -698,9 +710,11 @@ export function useEditorVisualPreviewBridge({
     prepareSourceMutation,
     prepareSourceMutationWithPreview,
     prepareVisualSource,
+    previewPresentation,
     previewRuntimeGeneration,
     previewSurfaceStatus,
     previewSurfaceStatusRef,
+    rememberWechatPreviewWidth,
     requestVisualPreviewUnlock,
     revealVisualHeading: visualHandlers.revealVisualHeading,
     scheduleCurrentWechatPreviewPreparation,

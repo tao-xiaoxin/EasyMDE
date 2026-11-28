@@ -20,39 +20,39 @@ msgid ""
 "The EasyMDE editor could not start. Your WordPress fields remain available."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:399
+#: src/Admin/AdminAssets.php:405
 msgid "Pasted image already uses the current image host."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:400
+#: src/Admin/AdminAssets.php:406
 msgid "Checking pasted image..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:402
+#: src/Admin/AdminAssets.php:408
 msgid "Pasted image upload is disabled. Use Insert Image to upload a file."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:495 src/Admin/AdminEditorStrings.php:304
+#: src/Admin/AdminAssets.php:504 src/Admin/AdminEditorStrings.php:304
 msgid "Preview"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:496 src/Admin/AdminEditorStrings.php:300
+#: src/Admin/AdminAssets.php:505 src/Admin/AdminEditorStrings.php:300
 #: src/Admin/SettingsCenterStrings.php:378
 msgid "Markdown"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:637
+#: src/Admin/AdminAssets.php:647
 msgid "Not saved yet."
 msgstr ""
 
 #. translators: 1: display name of the last editor, 2: localized post modified date and time.
-#: src/Admin/AdminAssets.php:661
+#: src/Admin/AdminAssets.php:671
 #, php-format
 msgid "Last edited by %1$s on %2$s"
 msgstr ""
 
 #. translators: %s: localized post modified date and time.
-#: src/Admin/AdminAssets.php:669
+#: src/Admin/AdminAssets.php:679
 #, php-format
 msgid "Last edited on %s"
 msgstr ""
@@ -626,7 +626,7 @@ msgstr ""
 msgid "Column"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:281 src/Admin/AdminEditorStrings.php:482
+#: src/Admin/AdminEditorStrings.php:281 src/Admin/AdminEditorStrings.php:483
 msgid "Edit"
 msgstr ""
 
@@ -682,7 +682,7 @@ msgstr ""
 msgid "Immersive writing"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:295 src/Admin/AdminEditorStrings.php:488
+#: src/Admin/AdminEditorStrings.php:295 src/Admin/AdminEditorStrings.php:489
 msgid "Insert"
 msgstr ""
 
@@ -843,7 +843,7 @@ msgstr ""
 msgid "Live preview editing area (what you see is what you get)"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:336 src/Admin/AdminEditorStrings.php:510
+#: src/Admin/AdminEditorStrings.php:336 src/Admin/AdminEditorStrings.php:511
 msgid "Table"
 msgstr ""
 
@@ -1210,295 +1210,301 @@ msgid "Copy for WeChat failed. Please try again in this browser."
 msgstr ""
 
 #: src/Admin/AdminEditorStrings.php:436
-msgid "Clipboard access is not available in this browser."
+msgid ""
+"Copy for WeChat failed. Some generated images may remain in the selected "
+"image storage; review them before retrying."
 msgstr ""
 
 #: src/Admin/AdminEditorStrings.php:437
-msgid "Uploading pasted image..."
+msgid "Clipboard access is not available in this browser."
 msgstr ""
 
 #: src/Admin/AdminEditorStrings.php:438
-msgid "Pasted image uploaded."
+msgid "Uploading pasted image..."
 msgstr ""
 
 #: src/Admin/AdminEditorStrings.php:439
+msgid "Pasted image uploaded."
+msgstr ""
+
+#: src/Admin/AdminEditorStrings.php:440
 msgid ""
 "Pasted image upload failed after the configured attempts were exhausted. "
 "Please try uploading the image again."
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:440
+#: src/Admin/AdminEditorStrings.php:441
 msgid "Pasted image is too large for this site."
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:441
+#: src/Admin/AdminEditorStrings.php:442
 msgid "Uploading dropped image..."
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:442
+#: src/Admin/AdminEditorStrings.php:443
 msgid "Dropped image uploaded."
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:443
+#: src/Admin/AdminEditorStrings.php:444
 msgid ""
 "Dropped image upload failed after the configured attempts were exhausted. "
 "Please try uploading the image again."
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:444
+#: src/Admin/AdminEditorStrings.php:445
 msgid "Dropped image is too large for this site."
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:445
+#: src/Admin/AdminEditorStrings.php:446
 msgid "alt text"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:446
+#: src/Admin/AdminEditorStrings.php:447
 msgid "image"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:447
+#: src/Admin/AdminEditorStrings.php:448
 msgid "The WordPress media library could not be opened."
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:448
+#: src/Admin/AdminEditorStrings.php:449
 msgid "link text"
 msgstr ""
 
 #. translators: %s: Locale-formatted Markdown character count.
-#: src/Admin/AdminEditorStrings.php:450
+#: src/Admin/AdminEditorStrings.php:451
 #, php-format
 msgid "Character count: %s"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:451 src/Rest/CustomCssController.php:154
+#: src/Admin/AdminEditorStrings.php:452 src/Rest/CustomCssController.php:154
 msgid ""
 "A theme with this name already exists. Please choose another name and try "
 "again."
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:452
+#: src/Admin/AdminEditorStrings.php:453
 msgid "Align center"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:453
+#: src/Admin/AdminEditorStrings.php:454
 msgid "Align left"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:454
+#: src/Admin/AdminEditorStrings.php:455
 msgid "Align right"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:455
+#: src/Admin/AdminEditorStrings.php:456
 msgid "Alignment"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:456
+#: src/Admin/AdminEditorStrings.php:457
 msgid "Editor context menu"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:457 src/Admin/SettingsCenterStrings.php:90
+#: src/Admin/AdminEditorStrings.php:458 src/Admin/SettingsCenterStrings.php:90
 #: src/Support/ToolbarRegistry.php:209
 msgid "Bold"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:458 src/Admin/SettingsCenterStrings.php:106
+#: src/Admin/AdminEditorStrings.php:459 src/Admin/SettingsCenterStrings.php:106
 msgid "Code block"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:459
+#: src/Admin/AdminEditorStrings.php:460
 msgid "Copy"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:460
+#: src/Admin/AdminEditorStrings.php:461
 msgid "Copy as HTML code"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:461
+#: src/Admin/AdminEditorStrings.php:462
 msgid "Copy as Markdown"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:462
+#: src/Admin/AdminEditorStrings.php:463
 msgid "Copy code block"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:463
+#: src/Admin/AdminEditorStrings.php:464
 msgid "Copy Code Block Content"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:464 src/Frontend/FrontendAssets.php:111
+#: src/Admin/AdminEditorStrings.php:465 src/Frontend/FrontendAssets.php:111
 msgid "Copy code"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:465
+#: src/Admin/AdminEditorStrings.php:466
 msgid "Copy as image"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:466
+#: src/Admin/AdminEditorStrings.php:467
 msgid "Copy MathML"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:467
+#: src/Admin/AdminEditorStrings.php:468
 msgid "Copy image"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:468
+#: src/Admin/AdminEditorStrings.php:469
 msgid "Copy link address"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:469
+#: src/Admin/AdminEditorStrings.php:470
 msgid "Copy / Paste as"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:470
+#: src/Admin/AdminEditorStrings.php:471
 msgid "Copy TeX"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:471
+#: src/Admin/AdminEditorStrings.php:472
 msgid "Copy with simplified formatting"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:472
+#: src/Admin/AdminEditorStrings.php:473
 msgid "Copy table"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:473
+#: src/Admin/AdminEditorStrings.php:474
 msgid "Cut"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:474
+#: src/Admin/AdminEditorStrings.php:475
 msgid "Delete code block"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:475
+#: src/Admin/AdminEditorStrings.php:476
 msgid "Delete column"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:476
+#: src/Admin/AdminEditorStrings.php:477
 msgid "Delete"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:477
+#: src/Admin/AdminEditorStrings.php:478
 msgid "Delete image"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:478
+#: src/Admin/AdminEditorStrings.php:479
 msgid "Delete row"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:479
+#: src/Admin/AdminEditorStrings.php:480
 msgid "Delete table"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:480
+#: src/Admin/AdminEditorStrings.php:481
 msgid "Delete horizontal rule"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:481
+#: src/Admin/AdminEditorStrings.php:482
 msgid "Diagram"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:483
+#: src/Admin/AdminEditorStrings.php:484
 msgid "Format Table Source"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:484 src/Support/ToolbarRegistry.php:389
+#: src/Admin/AdminEditorStrings.php:485 src/Support/ToolbarRegistry.php:389
 msgid "Image"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:485
+#: src/Admin/AdminEditorStrings.php:486
 msgid "Image scale"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:486
+#: src/Admin/AdminEditorStrings.php:487
 msgid "Adjust Code Block Indentation"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:487
+#: src/Admin/AdminEditorStrings.php:488
 msgid "Adjust Selected Code Indentation"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:489 src/Admin/AdminEditorStrings.php:497
+#: src/Admin/AdminEditorStrings.php:490 src/Admin/AdminEditorStrings.php:498
 msgid "Insert paragraph above"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:490 src/Admin/AdminEditorStrings.php:499
+#: src/Admin/AdminEditorStrings.php:491 src/Admin/AdminEditorStrings.php:500
 msgid "Insert paragraph below"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:491
+#: src/Admin/AdminEditorStrings.php:492
 msgid "Insert paragraph above code block"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:492
+#: src/Admin/AdminEditorStrings.php:493
 msgid "Insert paragraph below code block"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:493
+#: src/Admin/AdminEditorStrings.php:494
 msgid "Insert image above"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:494
+#: src/Admin/AdminEditorStrings.php:495
 msgid "Insert image below"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:495
+#: src/Admin/AdminEditorStrings.php:496
 msgid "Insert column left"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:496
+#: src/Admin/AdminEditorStrings.php:497
 msgid "Insert column right"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:498
+#: src/Admin/AdminEditorStrings.php:499
 msgid "Insert paragraph above table"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:500
+#: src/Admin/AdminEditorStrings.php:501
 msgid "Insert paragraph below table"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:501
+#: src/Admin/AdminEditorStrings.php:502
 msgid "Insert row above"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:502
+#: src/Admin/AdminEditorStrings.php:503
 msgid "Insert row below"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:503
+#: src/Admin/AdminEditorStrings.php:504
 msgid "Insert table above"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:504
+#: src/Admin/AdminEditorStrings.php:505
 msgid "Insert table below"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:505
+#: src/Admin/AdminEditorStrings.php:506
 msgid "Formula"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:506
+#: src/Admin/AdminEditorStrings.php:507
 msgid "Paste"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:507
+#: src/Admin/AdminEditorStrings.php:508
 msgid "Paste as plain text"
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:508
+#: src/Admin/AdminEditorStrings.php:509
 msgid "The editor action could not be completed."
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:509
+#: src/Admin/AdminEditorStrings.php:510
 msgid "Clipboard text is unavailable in this browser."
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:511
+#: src/Admin/AdminEditorStrings.php:512
 msgid "Unsupported for this selection."
 msgstr ""
 
-#: src/Admin/AdminEditorStrings.php:512
+#: src/Admin/AdminEditorStrings.php:513
 msgid "Upload image"
 msgstr ""
 
@@ -3177,14 +3183,14 @@ msgstr ""
 msgid "Unable to copy code. Try again."
 msgstr ""
 
-#: src/ImageHosting/ImageHostingRuntime.php:523
+#: src/ImageHosting/ImageHostingRuntime.php:529
 #: src/Rest/ImageHostingController.php:911
 #: src/Support/SettingsCenterSanitizer.php:234
 msgid ""
 "The primary and backup image hosts must use different storage destinations."
 msgstr ""
 
-#: src/ImageHosting/ImageHostingRuntime.php:539
+#: src/ImageHosting/ImageHostingRuntime.php:545
 msgid "The image-hosting operation could not be completed."
 msgstr ""
 

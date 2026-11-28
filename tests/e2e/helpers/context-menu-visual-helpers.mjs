@@ -33,7 +33,7 @@ async function recordVisualInteractionDiagnostic(page, phase, target, point = nu
   const targetMetadata = await readVisualTargetMetadata(target);
   const selection = await page.evaluate(() => {
     const current = globalThis.getSelection?.();
-    const canvas = document.querySelector('.easymde-immersive-preview-canvas');
+    const canvas = document.querySelector('[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas');
     return {
       collapsed: current?.isCollapsed ?? null,
       length: current ? current.toString().length : null,
@@ -103,7 +103,7 @@ async function recordVisualInteractionDiagnostic(page, phase, target, point = nu
 export async function enterImmersive(page) {
   const strings = await getImmersiveStrings(page);
   await page.getByRole('button', { name: strings.enter, exact: true }).click();
-  await expect(page.locator('.easymde-editor.is-immersive')).toBeVisible();
+  await expect(page.locator('[data-easymde-editor-owner="react"].easymde-editor.is-immersive')).toBeVisible();
   return strings;
 }
 
@@ -1184,7 +1184,7 @@ async function runVisualTableAlignmentAction(
 }
 
 export async function ensureWindowedVisualTargetMounted(page, target, occurrence) {
-  const canvas = page.locator('.easymde-immersive-preview-canvas');
+  const canvas = page.locator('[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas');
   const startStep = occurrence > 0 ? 9 : 0;
   for (let step = startStep; step <= 20; step += 1) {
     if (await target.count() > 0) return;
@@ -1368,7 +1368,7 @@ async function readVisualTargetMetadata(target) {
 }
 
 export async function scrollWindowedVisualToTop(page, visualEditor) {
-  const canvas = page.locator('.easymde-immersive-preview-canvas');
+  const canvas = page.locator('[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas');
   await canvas.evaluate((element) => {
     element.scrollTop = 0;
     element.dispatchEvent(new Event('scroll', { bubbles: true }));
@@ -1467,7 +1467,7 @@ async function readVisualTextPoint(visualEditor) {
 }
 
 export async function clickVisualTextPoint(page, visualEditor) {
-  const canvas = page.locator('.easymde-immersive-preview-canvas');
+  const canvas = page.locator('[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas');
   // The images can fill the visible window; the user would scroll to reach a
   // passage, and no menu is open here, so a bounded scroll is safe.
   for (const delta of [0, 220, -220, 440, -440, 660, -660]) {
@@ -1487,7 +1487,7 @@ export async function clickVisualTextPoint(page, visualEditor) {
 
 export async function readVisibleBand(page) {
   return page
-    .locator('.easymde-immersive-preview-canvas')
+    .locator('[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas')
     .evaluate((element) => {
       const rect = element.getBoundingClientRect();
       return {
@@ -1613,7 +1613,7 @@ export async function revealWindowedVisualBlock(page, blockId) {
   const match = /^pm-block-(\d+)$/u.exec(blockId ?? '');
   if (!match) throw new Error(`visual-block-id-invalid:${blockId}`);
   await page
-    .locator('.easymde-immersive-preview-canvas')
+    .locator('[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas')
     .evaluate((canvas, index) => {
       const surface = canvas.querySelector('[data-easymde-prosemirror-host="1"]');
       const block = surface?.children[index];

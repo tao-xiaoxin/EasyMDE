@@ -24,7 +24,8 @@ export type CustomCssPreviewResult =
 export interface AppearancePort {
   applyState(
     state: AppearanceState,
-    codeThemeExplicit: boolean
+    codeThemeExplicit: boolean,
+    onBeforePublish?: () => void
   ): Promise<boolean>;
   cancelPendingApply(): void;
   closeOtherPopovers(): void;

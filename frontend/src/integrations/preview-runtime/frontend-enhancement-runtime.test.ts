@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { initializeMermaidRuntime } from '../../shared/mermaid/mermaid-runtime-config';
 import {
   enhanceFrontendContent,
   readCachedMermaidSvg,
@@ -482,6 +483,90 @@ describe('frontend enhancement runtime', () => {
     expect(fake.yields).toBeGreaterThan(0);
   });
 
+  it.each([
+    ['gantt', '0 0 1200 268', 1200],
+    ['sequence', '-40.5 8.25 640.5 268.25', 640.5],
+    ['timeline', '12.5 -6.75 900.25 320.5', 900.25]
+  ] as const)('keeps a rendered %s SVG at its intrinsic viewBox size for local scrolling', async (
+    role,
+    viewBox,
+    width
+  ) => {
+    const root = document.createElement('article');
+    root.innerHTML = '<pre><code class="language-mermaid">diagram</code></pre>';
+    const windowRef = runtime();
+    windowRef.mermaid = {
+      initialize: vi.fn(),
+      render: vi.fn().mockResolvedValue({
+        svg: `<svg aria-roledescription="${role}" width="100%" height="268" viewBox="${viewBox}">`
+          + '<rect width="100%" height="100%"></rect></svg>'
+      })
+    };
+
+    await renderMermaidContent(root, { features: { mermaid: true } }, windowRef);
+
+    const container = root.querySelector('.easymde-mermaid');
+    const svg = container?.querySelector('svg');
+    expect(container?.getAttribute('data-easymde-mermaid-layout')).toBe(role);
+    expect(svg?.style.width).toBe(`${width}px`);
+    expect(svg?.style.height).toBe('auto');
+  });
+
+  it.each([
+    'flowchart',
+    'class',
+    'state',
+    'er',
+    'journey',
+    'pie',
+    'quadrant'
+  ])('does not mark a non-intrinsic Mermaid role: %s', async (role) => {
+    const root = document.createElement('article');
+    root.innerHTML = '<pre><code class="language-mermaid">diagram</code></pre>';
+    const windowRef = runtime();
+    windowRef.mermaid = {
+      initialize: vi.fn(),
+      render: vi.fn().mockResolvedValue({
+        svg: `<svg aria-roledescription="${role}" viewBox="-10 4 200 100">`
+          + '<rect width="200" height="100"></rect></svg>'
+      })
+    };
+
+    await renderMermaidContent(root, { features: { mermaid: true } }, windowRef);
+
+    const container = root.querySelector('.easymde-mermaid');
+    const svg = container?.querySelector('svg');
+    expect(container?.hasAttribute('data-easymde-mermaid-layout')).toBe(false);
+    expect(svg?.style.width).toBe('');
+    expect(svg?.style.height).toBe('');
+  });
+
+  it.each([
+    ['sequenceDiagram', '<svg aria-roledescription="sequenceDiagram" viewBox="0 0 200 100"><rect width="200" height="100"></rect></svg>'],
+    ['missing role', '<svg viewBox="0 0 200 100"><rect width="200" height="100"></rect></svg>'],
+    ['invalid viewBox', '<svg aria-roledescription="gantt" viewBox="0 0 0 Infinity"><rect width="200" height="100"></rect></svg>'],
+    ['multiple direct SVGs', '<svg aria-roledescription="gantt" viewBox="0 0 200 100"><rect width="200" height="100"></rect></svg><svg aria-roledescription="gantt" viewBox="0 0 200 100"><rect width="200" height="100"></rect></svg>']
+  ] as const)('fails closed for Mermaid intrinsic marker: %s', async (_label, svgMarkup) => {
+    const root = document.createElement('article');
+    root.innerHTML = '<pre><code class="language-mermaid">diagram</code></pre>';
+    const windowRef = runtime();
+    windowRef.mermaid = {
+      initialize: vi.fn(),
+      render: vi.fn().mockResolvedValue({ svg: svgMarkup })
+    };
+
+    await renderMermaidContent(root, { features: { mermaid: true } }, windowRef);
+
+    const container = root.querySelector('.easymde-mermaid');
+    expect(container?.hasAttribute('data-easymde-mermaid-layout')).toBe(false);
+    expect(container?.querySelectorAll(':scope > svg')).toHaveLength(
+      'multiple direct SVGs' === _label ? 2 : 1
+    );
+    container?.querySelectorAll(':scope > svg').forEach((svg) => {
+      expect(svg.getAttribute('style')).toBeNull();
+    });
+  });
+
   it('stops scheduled math work when its AbortSignal is cancelled between blocks', async () => {
     const root = document.createElement('article');
     root.innerHTML = [
@@ -549,6 +634,10 @@ describe('frontend enhancement runtime', () => {
       flowchart: {
         diagramPadding: 12
       },
+      gantt: {
+        useMaxWidth: true,
+        useWidth: 1200
+      },
       themeCSS: expect.stringContaining('font-weight: 400 !important;')
     });
     const initialization = initialize.mock.calls[0]?.[0];
@@ -556,12 +645,16 @@ describe('frontend enhancement runtime', () => {
     expect(initialization?.themeCSS).toContain('font-family: "trebuchet ms", verdana, arial, sans-serif !important;');
     expect(initialization?.themeCSS).toContain('font-size: 16px !important;');
     expect(initialization?.themeCSS).toContain('line-height: 20px !important;');
-    expect(initialization?.themeCSS).toContain('letter-spacing: normal !important;');
-    expect(initialization?.themeCSS).toContain('word-spacing: normal !important;');
     expect(initialization?.themeCSS).toContain('white-space: nowrap !important;');
     expect(initialization?.themeCSS).toContain('margin: 0 !important;');
     expect(initialization?.themeCSS).toContain('padding: 0 !important;');
     expect(initialization?.themeCSS).toContain('display: table-cell !important;');
+
+    const rootTypography = initialization?.themeCSS.match(/&\s*\{[^}]*\}/u)?.[0] ?? '';
+    expect(rootTypography).toMatch(/letter-spacing:\s*normal;/u);
+    expect(rootTypography).toMatch(/word-spacing:\s*normal;/u);
+    expect(initialization?.themeCSS.replace(rootTypography, ''))
+      .not.toMatch(/(?:letter|word)-spacing:/u);
     expect(windowRef.mermaid.render).toHaveBeenCalledWith(
       expect.any(String),
       expect.stringContaining('<img src=x onerror=alert(1)>')
@@ -1254,5 +1347,137 @@ describe('frontend enhancement runtime', () => {
       windowRef
     );
     expect(written).toBe('<svg id="easymde-visual-mermaid-45"><text>Visual</text></svg>');
+  });
+
+  it('shares Mermaid initialization state with the canonical runtime config helper across callers', async () => {
+    const windowRef = runtime();
+    const initialize = vi.fn();
+    const sharedMermaid = {
+      initialize,
+      render: vi.fn(async (id: string) => ({
+        svg: `<svg id="${id}" aria-roledescription="gantt" viewBox="0 0 1200 268"><rect width="1200" height="268"></rect></svg>`
+      }))
+    };
+    windowRef.mermaid = sharedMermaid;
+
+    initializeMermaidRuntime(sharedMermaid);
+
+    const root = document.createElement('article');
+    root.innerHTML = '<pre><code class="language-mermaid">gantt\n  title Shared</code></pre>';
+    await renderMermaidContent(root, { features: { mermaid: true } }, windowRef);
+
+    expect(initialize).toHaveBeenCalledTimes(1);
+    expect(root.querySelector('.easymde-mermaid')?.getAttribute('data-easymde-mermaid-layout'))
+      .toBe('gantt');
+  });
+
+  it('catches synchronous mermaid.initialize() failures without throwing or poisoning retries', async () => {
+    const windowRef = runtime();
+    let shouldFailInit = true;
+    const initialize = vi.fn(() => {
+      if (shouldFailInit) {
+        shouldFailInit = false;
+        throw new Error('transient-mermaid-init-error');
+      }
+    });
+    const render = vi.fn(async (id: string, source: string) => ({
+      svg: `<svg id="${id}">${source}</svg>`
+    }));
+    windowRef.mermaid = { initialize, render };
+    windowRef.EasyMDEMermaidRenderer = {
+      render: (targetRoot, config, control) =>
+        renderMermaidContent(
+          targetRoot,
+          config,
+          windowRef,
+          control ? { control } : {}
+        )
+    };
+
+    // Prime one cached diagram before initialize() ever succeeds to prove cached
+    // diagrams still render while uncached diagrams enter the error state cleanly.
+    writeCachedMermaidSvg(
+      'graph TD; Cached-->Ok;',
+      'cached-mermaid-seed',
+      '<svg id="cached-mermaid-seed"><g>cached</g></svg>',
+      windowRef
+    );
+
+    const root = document.createElement('article');
+    root.innerHTML = [
+      '<pre><code class="language-mermaid">graph TD; A--&gt;B;</code></pre>',
+      '<pre><code class="language-mermaid">graph TD; Cached--&gt;Ok;</code></pre>',
+      '<pre><code class="language-mermaid">graph TD; C--&gt;D;</code></pre>'
+    ].join('');
+    const config = {
+      features: { mermaid: true },
+      strings: { renderingFailed: 'Rendering failed.' }
+    };
+
+    let renderPromise: Promise<void> | undefined;
+    expect(() => {
+      renderPromise = enhanceFrontendContent(root, config, windowRef);
+    }).not.toThrow();
+    await expect(renderPromise).resolves.toBeUndefined();
+
+    expect(initialize).toHaveBeenCalledTimes(1);
+    expect(render).not.toHaveBeenCalled();
+    expect(root.querySelectorAll('.easymde-mermaid svg')).toHaveLength(1);
+    const failedPres = [...root.querySelectorAll('pre')];
+    expect(failedPres).toHaveLength(2);
+    for (const pre of failedPres) {
+      expect(pre.classList.contains('easymde-render-error')).toBe(true);
+      expect(pre.getAttribute('data-easymde-error')).toBe('Rendering failed.');
+    }
+
+    // Retrying once initialize() succeeds recovers both previously failed nodes
+    // on the same root without leaving initializedMermaidRuntimes poisoned.
+    await expect(renderMermaidContent(root, config, windowRef)).resolves.toBeUndefined();
+
+    expect(initialize).toHaveBeenCalledTimes(2);
+    expect(render).toHaveBeenCalledTimes(2);
+    expect(root.querySelectorAll('pre')).toHaveLength(0);
+    expect(root.querySelectorAll('.easymde-render-error')).toHaveLength(0);
+    expect(root.querySelectorAll('.easymde-mermaid svg')).toHaveLength(3);
+
+    // A later render on a fresh root reuses the latched initialized runtime.
+    const freshRoot = document.createElement('article');
+    freshRoot.innerHTML = '<pre><code class="language-mermaid">graph TD; E--&gt;F;</code></pre>';
+    await expect(enhanceFrontendContent(freshRoot, config, windowRef)).resolves.toBeUndefined();
+
+    expect(initialize).toHaveBeenCalledTimes(2);
+    expect(render).toHaveBeenCalledTimes(3);
+    expect(freshRoot.querySelectorAll('.easymde-mermaid svg')).toHaveLength(1);
+  });
+
+  it('skips Mermaid error DOM mutations when control becomes stale during a throwing initialize()', async () => {
+    const windowRef = runtime();
+    let current = true;
+    const initialize = vi.fn(() => {
+      current = false;
+      throw new Error('stale-init-error');
+    });
+    const render = vi.fn();
+    windowRef.mermaid = { initialize, render };
+
+    const root = document.createElement('article');
+    root.innerHTML = '<pre><code class="language-mermaid">graph TD; A--&gt;B;</code></pre>';
+
+    let renderPromise: Promise<void> | undefined;
+    expect(() => {
+      renderPromise = renderMermaidContent(
+        root,
+        { features: { mermaid: true }, strings: { renderingFailed: 'Rendering failed.' } },
+        windowRef,
+        { control: { isCurrent: () => current } }
+      );
+    }).not.toThrow();
+    await expect(renderPromise).resolves.toBeUndefined();
+
+    expect(initialize).toHaveBeenCalledTimes(1);
+    expect(render).not.toHaveBeenCalled();
+    const pre = root.querySelector('pre');
+    expect(pre?.classList.contains('easymde-render-error')).toBe(false);
+    expect(pre?.hasAttribute('data-easymde-error')).toBe(false);
   });
 });

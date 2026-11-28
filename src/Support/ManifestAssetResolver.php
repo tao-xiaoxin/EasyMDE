@@ -15,7 +15,8 @@ final class ManifestAssetResolver {
 		$expected_dependencies,
 		$file_prefix,
 		$verify_integrity = true,
-		$error_prefix = 'frontend-enhancement-'
+		$error_prefix = 'frontend-enhancement-',
+		$expected_resource_pattern = null
 	) {
 		$build_dir       = trailingslashit( $build_dir );
 		$filesystem_root = preg_match( '#^(?:[A-Za-z]:[\\\\/]|/)#', $build_dir ) ? $build_dir : Asset::path( $build_dir );
@@ -35,16 +36,17 @@ final class ManifestAssetResolver {
 			self::throw_contract_error( $error_prefix, 'manifest-invalid' );
 		}
 
-		$entry = $manifest['entries'][ $entry_key ];
-		$file  = isset( $entry['file'] ) ? (string) $entry['file'] : '';
-		$asset = isset( $entry['asset'] ) ? (string) $entry['asset'] : '';
+		$entry     = $manifest['entries'][ $entry_key ];
+		$file      = isset( $entry['file'] ) ? (string) $entry['file'] : '';
+		$asset     = isset( $entry['asset'] ) ? (string) $entry['asset'] : '';
+		$resources = $entry['resources'] ?? null;
 		if (
 			( $entry['handle'] ?? null ) !== $expected_handle
 			|| ( $entry['dependencies'] ?? null ) !== $expected_dependencies
-			|| array() !== ( $entry['resources'] ?? null )
 			|| '' === $file_prefix
 			|| ! preg_match( '#^assets/' . preg_quote( $file_prefix, '#' ) . '-[A-Za-z0-9_-]+\.js$#', $file )
 			|| preg_replace( '/\.js$/', '.asset.php', $file ) !== $asset
+			|| ! self::resources_match_contract( $resources, $expected_resource_pattern, $filesystem_root )
 		) {
 			self::throw_contract_error( $error_prefix, 'manifest-invalid' );
 		}
@@ -82,6 +84,25 @@ final class ManifestAssetResolver {
 			'dependencies' => $metadata['dependencies'],
 			'version'      => (string) $metadata['version'],
 		);
+	}
+
+	private static function resources_match_contract( $resources, $expected_resource_pattern, $filesystem_root ) {
+		if ( null === $expected_resource_pattern ) {
+			return array() === $resources;
+		}
+
+		if (
+			! is_string( $expected_resource_pattern )
+			|| ! is_array( $resources )
+			|| 1 !== count( $resources )
+			|| ! isset( $resources[0] )
+			|| ! is_string( $resources[0] )
+			|| 1 !== preg_match( $expected_resource_pattern, $resources[0] )
+		) {
+			return false;
+		}
+
+		return is_file( $filesystem_root . $resources[0] ) && is_readable( $filesystem_root . $resources[0] );
 	}
 
 	private static function throw_contract_error( $error_prefix, $suffix ) {

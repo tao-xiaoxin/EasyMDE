@@ -11,11 +11,9 @@ Development-only tools such as PHPUnit, PHPCS, WPCS, Playwright, and Node packag
 | dflydev/dot-access-data | v3.0.3 | https://github.com/dflydev/dflydev-dot-access-data.git | MIT | Nested configuration data access used by league/config. | Yes, under vendor/ | vendor/dflydev/dot-access-data |
 | league/commonmark | 2.8.2 | https://github.com/thephpleague/commonmark.git | BSD-3-Clause | Production Markdown and GFM rendering. | Yes, under vendor/ | vendor/league/commonmark |
 | league/config | v1.2.0 | https://github.com/thephpleague/config.git | BSD-3-Clause | Configuration support used by league/commonmark. | Yes, under vendor/ | vendor/league/config |
-| myclabs/php-enum | 1.8.5 | https://github.com/myclabs/php-enum.git | MIT | Enum compatibility dependency required by the Qiniu PHP SDK. | Yes, under vendor/ | vendor/myclabs/php-enum |
 | nette/schema | v1.2.5 | https://github.com/nette/schema.git | BSD-3-Clause, GPL-2.0-only, GPL-3.0-only | Schema validation support used by league/config. | Yes, under vendor/ | vendor/nette/schema |
 | nette/utils | v3.2.10 | https://github.com/nette/utils.git | BSD-3-Clause, GPL-2.0-only, GPL-3.0-only | Utility support used by nette/schema. | Yes, under vendor/ | vendor/nette/utils |
 | psr/event-dispatcher | 1.0.0 | https://github.com/php-fig/event-dispatcher.git | MIT | Event dispatcher interfaces used by league/commonmark. | Yes, under vendor/ | vendor/psr/event-dispatcher |
-| qiniu/php-sdk | v7.14.0 | https://github.com/qiniu/php-sdk.git | MIT | Official Qiniu Kodo authentication, region model, CRC32, and response protocol support. | Yes, under vendor/ | vendor/qiniu/php-sdk |
 | sabberworm/php-css-parser | v8.9.0 | https://github.com/MyIntervals/PHP-CSS-Parser.git | MIT | Custom CSS parsing, validation, and selector scoping. | Yes, under vendor/ | vendor/sabberworm/php-css-parser |
 | symfony/deprecation-contracts | v2.5.4 | https://github.com/symfony/deprecation-contracts.git | MIT | Deprecation helper contracts used by runtime dependencies. | Yes, under vendor/ | vendor/symfony/deprecation-contracts |
 | symfony/polyfill-php80 | v1.37.0 | https://github.com/symfony/polyfill-php80.git | MIT | PHP 8.0 compatibility polyfills required by runtime dependencies on PHP 7.4. | Yes, under vendor/ | vendor/symfony/polyfill-php80 |
@@ -31,6 +29,7 @@ Composer packages are bundled under `vendor/` in the release ZIP after `composer
 | JetBrains Mono font | 5.3.0 | https://registry.npmjs.org/@fontsource/jetbrains-mono/-/jetbrains-mono-5.3.0.tgz | OFL-1.1 | Local immersive-editor source and statistics font. | Yes, copied to assets/vendor/fonts/jetbrains-mono/ | assets/vendor/fonts/jetbrains-mono/LICENSE |
 | Lora font | 5.3.0 | https://registry.npmjs.org/@fontsource/lora/-/lora-5.3.0.tgz | OFL-1.1 | Local immersive Preview heading font. | Yes, copied to assets/vendor/fonts/lora/ | assets/vendor/fonts/lora/LICENSE |
 | Highlight.js CDN assets | 11.11.1 | https://registry.npmjs.org/@highlightjs/cdn-assets/-/cdn-assets-11.11.1.tgz | BSD-3-Clause | Local syntax highlighting script and bundled Highlight.js code themes. | Yes, copied to assets/vendor/highlight/highlight.min.js, assets/vendor/highlight/styles/*.css | assets/vendor/highlight/LICENSE |
+| EasyMDE KaTeX glyph atlas | generated from locked katex package | scripts/wechat-math-outline-atlas.mjs from node_modules/katex/dist/fonts | Font data: SIL OFL-1.1; generator: MIT | Deterministic local glyph outlines for WeChat math vector projection. | Yes, copied to assets/math/easymde-katex-glyph-atlas.json, assets/math/KaTeX_FONT_LICENSE.txt | assets/math/KaTeX_FONT_LICENSE.txt |
 | KaTeX | 0.16.47 | https://registry.npmjs.org/katex/-/katex-0.16.47.tgz | MIT | Local math rendering script, stylesheet, and fonts. | Yes, copied to assets/vendor/katex/katex.min.js, assets/vendor/katex/katex.min.css, assets/vendor/katex/fonts/ | assets/vendor/katex/LICENSE |
 
 Copied frontend assets are committed locally so the editor, preview, and frontend rendering do not require CDN access. Highlight.js and KaTeX retain license files under `assets/vendor/`; Mermaid is compiled into its on-demand local frontend bundle.
@@ -86,6 +85,7 @@ Copied frontend assets are committed locally so the editor, preview, and fronten
 | punycode.js | 2.3.1 | https://registry.npmjs.org/punycode.js/-/punycode.js-2.3.1.tgz | MIT | Punycode domain encoding helpers used by markdown-it. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | rope-sequence | 1.3.4 | https://registry.npmjs.org/rope-sequence/-/rope-sequence-1.3.4.tgz | MIT | Persistent rope sequence data structure used by ProseMirror history. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | style-mod | 4.1.3 | https://registry.npmjs.org/style-mod/-/style-mod-4.1.3.tgz | MIT | Scoped runtime style modules used by CodeMirror view. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
+| svg-pathdata | 7.2.0 | https://registry.npmjs.org/svg-pathdata/-/svg-pathdata-7.2.0.tgz | MIT | Complete SVG path syntax validation for source-painted WeChat task markers. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | uc.micro | 3.0.0 | https://registry.npmjs.org/uc.micro/-/uc.micro-3.0.0.tgz | MIT | Unicode character category regex helpers used by markdown-it and linkify-it. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | w3c-keyname | 2.2.8 | https://registry.npmjs.org/w3c-keyname/-/w3c-keyname-2.2.8.tgz | MIT | Cross-browser keyboard key normalization used by CodeMirror and ProseMirror views. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 
@@ -1282,6 +1282,31 @@ The above copyright notice and this permission notice shall be included in
 all copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+### svg-pathdata
+
+```text
+The MIT License (MIT)
+Copyright © 2017 Nicolas Froidure
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the “Software”), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
 AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER

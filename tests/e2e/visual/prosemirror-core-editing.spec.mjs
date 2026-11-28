@@ -13,6 +13,11 @@ import {
   waitForPreviewRefresh
 } from '../helpers/editor-e2e-helpers.mjs';
 import { selectOrdinaryOption } from '../helpers/ordinary-select.mjs';
+import {
+  finishVisualBrowserMonitor,
+  installVisualBrowserMonitor,
+  monitorError
+} from '../helpers/visual-browser-monitor.mjs';
 
 const PREVIEW_SINK_SELECTOR = '.easymde-pane-preview [data-easymde-preview-html-sink="1"]';
 const PREVIEW_POST_PATTERN = /\/wp-json\/easymde\/v1\/preview\/?$/u;
@@ -489,6 +494,247 @@ test.describe('Unified ProseMirror visual editor core editing', () => {
       expect(tracker.errors).toEqual([]);
     } finally {
       tracker.dispose();
+    }
+  });
+
+  test('commits immediate input after clearing a long document and preserves Undo/Redo caret state', async ({ page }, testInfo) => {
+    test.setTimeout(120_000);
+    const paragraphCount = 500;
+    const markdown = Array.from(
+      { length: paragraphCount },
+      (_, index) => `Immediate clear paragraph ${index}: ${'Synthetic text '.repeat(15)}`
+    ).join('\n\n');
+    const expectedVisibleText = '~x';
+    // ProseMirror's canonical Markdown serializer escapes literal `~` so
+    // plain text cannot combine into strikethrough or tilde-fence syntax.
+    const expectedMarkdown = '\\~x';
+    const monitor = await installVisualBrowserMonitor(page, {
+      baseURL: testInfo.project.use.baseURL
+    });
+    let testFailed = false;
+    try {
+      monitor.expectNavigation('/wp-login.php', 'open-login');
+      monitor.expectNavigation('/wp-admin/', 'login-submit');
+      await login(page, testInfo.easymdeUser);
+      await page.waitForLoadState('load', { timeout: 8_000 });
+      await monitor.drain({ timeoutMs: 8_000, quietMs: 250 });
+      await monitor.flushHistory();
+
+      await page.setViewportSize({ width: 1280, height: 720 });
+      monitor.expectNavigation('/wp-admin/post-new.php', 'open-new-post');
+      await openEasyMdeNewPost(page);
+      await fillMarkdownAndWaitForPreview(page, markdown, 'Immediate clear paragraph 0:');
+
+      const { source, visualEditor } = await enterImmersivePreviewAndUnlock(page);
+      await expectUnlockedVisualArticle(visualEditor);
+      await expect(visualEditor).toHaveAttribute('data-easymde-prosemirror-host', '1');
+      await expect(visualEditor.locator('[data-easymde-preview-window-spacer]')).toHaveCount(0);
+      await expect(visualEditor.locator('p')).toHaveCount(paragraphCount);
+
+      const readState = async () => visualEditor.evaluate((surface, expectedCount) => {
+        const field = document.querySelector('#easymde-source');
+        const selection = document.getSelection();
+        const anchor = selection?.anchorNode ?? null;
+        const selectedText = selection?.rangeCount ? selection.getRangeAt(0).toString() : '';
+        return {
+          activeElementIsSurface: document.activeElement === surface,
+          activeInsideSurface: Boolean(document.activeElement && surface.contains(document.activeElement)),
+          anchorConnected: Boolean(anchor?.isConnected),
+          anchorInsideSurface: Boolean(anchor && surface.contains(anchor)),
+          canonicalLength: field instanceof HTMLTextAreaElement ? field.value.length : null,
+          contentEditable: surface.getAttribute('contenteditable'),
+          isProseMirrorHost: surface.getAttribute('data-easymde-prosemirror-host') === '1',
+          paragraphCount: surface.querySelectorAll('p').length,
+          rangeCount: selection?.rangeCount ?? null,
+          selectedEndsAtLast: selectedText.includes(`Immediate clear paragraph ${expectedCount - 1}:`),
+          selectedStartsAtFirst: selectedText.startsWith('Immediate clear paragraph 0:'),
+          selectedTextLength: selectedText.length,
+          selectionCollapsed: Boolean(selection?.isCollapsed),
+          sourceSelection: field instanceof HTMLTextAreaElement ? {
+            end: field.selectionEnd,
+            start: field.selectionStart
+          } : null,
+          spacerCount: surface.querySelectorAll('[data-easymde-preview-window-spacer]').length,
+          surfaceConnected: surface.isConnected,
+          visualFailure: surface.closest('.easymde-editor')?.getAttribute('data-easymde-visual-failure') ?? null
+        };
+      }, paragraphCount);
+
+      const visibleParagraphIndex = await visualEditor.evaluate((surface) => {
+        const canvas = surface.closest('.easymde-immersive-preview-canvas');
+        if (!(canvas instanceof HTMLElement)) {
+          throw new Error('immediate-clear-preview-canvas-unavailable');
+        }
+        const canvasRect = canvas.getBoundingClientRect();
+        const candidates = Array.from(surface.querySelectorAll('p')).flatMap((paragraph, index) => {
+          const rect = paragraph.getBoundingClientRect();
+          const intersectsCanvas = rect.bottom > canvasRect.top
+            && rect.top < canvasRect.bottom
+            && rect.right > canvasRect.left
+            && rect.left < canvasRect.right;
+          return intersectsCanvas && rect.width > 0 && rect.height > 0
+            ? [{ index, top: rect.top }]
+            : [];
+        });
+        candidates.sort((left, right) => left.top - right.top);
+        return candidates[0]?.index ?? -1;
+      });
+      expect(visibleParagraphIndex).toBeGreaterThanOrEqual(0);
+      const visibleParagraph = visualEditor.locator('p').nth(visibleParagraphIndex);
+      await expect(visibleParagraph).toBeVisible();
+      await visibleParagraph.click();
+
+      await expect.poll(
+        () => readState(),
+        { message: 'clicking a visible paragraph should establish a collapsed caret inside ProseMirror' }
+      ).toMatchObject({
+        activeElementIsSurface: true,
+        activeInsideSurface: true,
+        anchorConnected: true,
+        anchorInsideSurface: true,
+        contentEditable: 'true',
+        isProseMirrorHost: true,
+        rangeCount: 1,
+        selectionCollapsed: true,
+        spacerCount: 0,
+        surfaceConnected: true,
+        visualFailure: null
+      });
+
+      await page.keyboard.press('ControlOrMeta+A');
+      await expect.poll(
+        () => readState(),
+        { message: 'ControlOrMeta+A should select the entire long ProseMirror document' }
+      ).toMatchObject({
+        activeElementIsSurface: true,
+        activeInsideSurface: true,
+        anchorConnected: true,
+        anchorInsideSurface: true,
+        contentEditable: 'true',
+        rangeCount: 1,
+        selectedEndsAtLast: true,
+        selectedStartsAtFirst: true,
+        selectionCollapsed: false,
+        visualFailure: null
+      });
+
+      // Clear the 500-paragraph document and type immediately without waiting.
+      await page.keyboard.press('Backspace');
+      await page.keyboard.press('Shift+Backquote');
+      await page.keyboard.type('x', { delay: 0 });
+
+      await expect(source).toHaveValue(expectedMarkdown, { timeout: 30_000 });
+      await expect(visualEditor).toContainText(expectedVisibleText);
+      await expect.poll(
+        () => readState(),
+        { message: 'caret and canonical selection should settle after immediate post-clear input' }
+      ).toMatchObject({
+        activeElementIsSurface: true,
+        activeInsideSurface: true,
+        anchorConnected: true,
+        anchorInsideSurface: true,
+        canonicalLength: expectedMarkdown.length,
+        contentEditable: 'true',
+        isProseMirrorHost: true,
+        paragraphCount: 1,
+        rangeCount: 1,
+        selectionCollapsed: true,
+        sourceSelection: {
+          end: expectedMarkdown.length,
+          start: expectedMarkdown.length
+        },
+        spacerCount: 0,
+        surfaceConnected: true,
+        visualFailure: null
+      });
+
+      // Undo back to the cleared empty state and verify caret restoration.
+      let undoSteps = 0;
+      while (undoSteps < 5 && '' !== (await source.inputValue())) {
+        await page.keyboard.press('ControlOrMeta+z');
+        undoSteps += 1;
+        await waitForBrowserPaint(page);
+      }
+      expect(undoSteps).toBeGreaterThan(0);
+      await expect(source).toHaveValue('', { timeout: 30_000 });
+      await expect.poll(
+        () => readState(),
+        { message: 'Undo after post-clear typing should restore an active collapsed caret at offset 0' }
+      ).toMatchObject({
+        activeElementIsSurface: true,
+        activeInsideSurface: true,
+        anchorConnected: true,
+        anchorInsideSurface: true,
+        canonicalLength: 0,
+        contentEditable: 'true',
+        isProseMirrorHost: true,
+        paragraphCount: 1,
+        rangeCount: 1,
+        selectionCollapsed: true,
+        sourceSelection: {
+          end: 0,
+          start: 0
+        },
+        spacerCount: 0,
+        surfaceConnected: true,
+        visualFailure: null
+      });
+
+      // Redo back to the typed text and verify the restored caret accepts further typing.
+      for (let step = 0; step < undoSteps; step += 1) {
+        await page.keyboard.press('ControlOrMeta+Shift+z');
+        await waitForBrowserPaint(page);
+      }
+      await expect(source).toHaveValue(expectedMarkdown, { timeout: 30_000 });
+      await expect(visualEditor).toContainText(expectedVisibleText);
+      await expect.poll(
+        () => readState(),
+        { message: 'Redo should restore the post-clear text and collapsed end caret' }
+      ).toMatchObject({
+        activeElementIsSurface: true,
+        activeInsideSurface: true,
+        anchorConnected: true,
+        anchorInsideSurface: true,
+        canonicalLength: expectedMarkdown.length,
+        contentEditable: 'true',
+        isProseMirrorHost: true,
+        paragraphCount: 1,
+        rangeCount: 1,
+        selectionCollapsed: true,
+        sourceSelection: {
+          end: expectedMarkdown.length,
+          start: expectedMarkdown.length
+        },
+        spacerCount: 0,
+        surfaceConnected: true,
+        visualFailure: null
+      });
+
+      await page.keyboard.type('Y', { delay: 0 });
+      await expect(source).toHaveValue(`${expectedMarkdown}Y`, { timeout: 30_000 });
+      await expect(visualEditor).toContainText(`${expectedVisibleText}Y`);
+    } catch (error) {
+      testFailed = true;
+      throw error;
+    } finally {
+      const summary = await finishVisualBrowserMonitor(page);
+      if (summary) {
+        try {
+          await testInfo.attach('visual-browser-monitor', {
+            body: JSON.stringify(summary),
+            contentType: 'application/json'
+          });
+        } catch {
+          if (!testFailed) throw new Error('visual-browser-monitor-attachment-failed');
+        }
+      }
+      if (!testFailed) {
+        expect(summary, 'visual browser monitor summary should be available').not.toBeNull();
+        expect(
+          summary.issues,
+          summary.issues.length > 0 ? monitorError(summary.issues) : undefined
+        ).toEqual([]);
+      }
     }
   });
 });

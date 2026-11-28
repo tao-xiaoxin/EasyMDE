@@ -9,6 +9,10 @@ import {
   Table
 } from '../../../generated/lucide-icons';
 import type { ImmersiveViewMode } from '../immersive-editor';
+import {
+  useWechatCopyStatus,
+  type WechatCopyStatusStore
+} from '../../wechat-export/wechat-copy-status';
 import { ImmersiveSettingsPopover } from './ImmersiveSettingsPopover';
 import type {
   ImmersiveSettings,
@@ -34,6 +38,7 @@ export function ImmersiveToolbar({
   strings,
   styleControls,
   toolbar,
+  wechatCopyStatus,
   wechatCopied,
   onCopyWechat,
   onExit,
@@ -48,6 +53,7 @@ export function ImmersiveToolbar({
   strings: ImmersiveStrings;
   styleControls: ReactNode;
   toolbar: ReactNode;
+  wechatCopyStatus: WechatCopyStatusStore;
   wechatCopied: boolean;
   onCopyWechat: () => void;
   onExit: () => void;
@@ -56,6 +62,10 @@ export function ImmersiveToolbar({
   onSettingsChange: (settings: ImmersiveSettings) => void;
   onTable: () => void;
 }>) {
+  const {
+    pending: wechatCopyPending,
+    unavailable: wechatCopyUnavailable
+  } = useWechatCopyStatus(wechatCopyStatus);
   const modeControls = [
     { icon: SquarePen, label: strings.editMode, value: 'source' },
     { icon: LayoutGrid, label: strings.splitMode, value: 'split' },
@@ -104,6 +114,8 @@ export function ImmersiveToolbar({
           type="button"
           onClick={onCopyWechat}
           className="easymde-immersive-wechat"
+          aria-busy={wechatCopyPending ? 'true' : undefined}
+          aria-disabled={wechatCopyPending || wechatCopyUnavailable ? 'true' : undefined}
         >
           <WeChatGlyph />
           <span>{wechatCopied ? strings.wechatCopied : strings.wechat}</span>

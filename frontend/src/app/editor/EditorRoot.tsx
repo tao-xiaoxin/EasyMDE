@@ -34,6 +34,8 @@ import {
 } from '../../features/live-preview/ui/PreviewSurfaceOwner';
 import { WordPressMediaPickerDialog } from '../../features/media-picker/ui/WordPressMediaPickerDialog';
 import type { EditorToolbarSession } from '../../features/toolbar/ui/EditorToolbar';
+import { createWechatCopyStatusStore } from '../../features/wechat-export/wechat-copy-status';
+import type { WechatExportSession } from '../../features/wechat-export/wechat-export-session';
 import { MoreHorizontal } from '../../generated/lucide-icons';
 import { formatKeyboardShortcut } from '../../shared/keyboard/keyboard-shortcut';
 import { EditorMessageAlert } from '../../shared/ui/EditorMessageAlert';
@@ -58,7 +60,10 @@ export function EditorRoot(props: EditorRootProps) {
   const failureHandlerRef = useRef(props.onFailure);
   failureHandlerRef.current = props.onFailure;
   const reportFailure = useCallback(
-    (code: string) => failureHandlerRef.current(code),
+    (code: string, level?: 'error' | 'info') =>
+      level === undefined
+        ? failureHandlerRef.current(code)
+        : failureHandlerRef.current(code, level),
     []
   );
 
@@ -81,12 +86,27 @@ export function EditorRoot(props: EditorRootProps) {
   const previewRefreshPendingRef = useRef(false);
   const codeThemePreparationRef = useRef<CodeThemePreparation | null>(null);
   const codeThemePreparationGenerationRef = useRef(0);
+  const appearanceTransitionPendingRef = useRef<number | null>(null);
   const immersiveRef = useRef(false);
   const prepareSourceMutationRef = useRef<() => boolean>(() => true);
   const cancelVisualUnlockPreparationRef = useRef<() => void>(() => undefined);
   const releasePendingContextResourcesRef = useRef<
     (reason?: 'cancelled' | 'unavailable') => void
   >(() => undefined);
+
+  const wechatCopyStatus = useMemo(() => createWechatCopyStatusStore(), []);
+  const wechatSessionRef = useRef<WechatExportSession | null>(null);
+  const wechatCopyPendingRef = useRef(false);
+  const wechatCopySequenceRef = useRef(0);
+
+  const cancelWechatCopyForThemeChange = useCallback(() => {
+    const hadPendingCopy = wechatCopyPendingRef.current;
+    wechatSessionRef.current?.cancelPending('theme-change');
+    if (!hadPendingCopy) return;
+    wechatCopySequenceRef.current += 1;
+    wechatCopyPendingRef.current = false;
+    wechatCopyStatus.setPending(false);
+  }, [wechatCopyStatus]);
 
   const contextMenuReadinessListenersRef = useRef(new Set<() => void>());
   const subscribeContextMenuReadiness = useCallback(
@@ -198,6 +218,7 @@ export function EditorRoot(props: EditorRootProps) {
     visualEditorRuntimeRef,
     visualPreviewEditingRef,
     wechatClipboard: props.wechatClipboard,
+    wechatCopyPendingRef,
     wechatExport: props.wechatExport
   });
 
@@ -205,7 +226,10 @@ export function EditorRoot(props: EditorRootProps) {
     appearance: props.appearance,
     appearancePort: props.appearancePort,
     appearanceSessionRef,
+    appearanceTransitionPendingRef,
     cancelVisualUnlockPreparation: visual.cancelVisualUnlockPreparation,
+    cancelWechatBackgroundPreparation: visual.cancelWechatBackgroundPreparation,
+    cancelWechatCopyForThemeChange,
     codeThemePreparationGenerationRef,
     codeThemePreparationRef,
     documentSession: session.documentSession,
@@ -216,6 +240,7 @@ export function EditorRoot(props: EditorRootProps) {
     markVisualPreviewChanged: visual.markVisualPreviewChanged,
     ordinarySettingsSessionRef,
     previewAppearanceRef,
+    previewPresentation: visual.previewPresentation,
     previewRefreshPendingRef,
     previewRuntimeRef,
     protectedOperationError: session.protectedOperationError,
@@ -230,7 +255,8 @@ export function EditorRoot(props: EditorRootProps) {
     submissionStateRef: session.submissionStateRef,
     toolbarSessionRef,
     visualEditorRuntimeRef,
-    visualPreviewEditingRef
+    visualPreviewEditingRef,
+    wechatCopyStatus
   });
 
   const immersiveStrings = props.immersiveStrings;
@@ -256,7 +282,9 @@ export function EditorRoot(props: EditorRootProps) {
   );
 
   const media = useEditorMediaUploadBridge({
+    appearanceTransitionPendingRef,
     applyVisualCanonicalChange: visual.applyVisualCanonicalChange,
+    clearScheduledWechatPreparation: visual.clearScheduledWechatPreparation,
     documentSession: session.documentSession,
     executeExternalCommand: props.executeExternalCommand,
     imageUpload: props.imageUpload,
@@ -273,6 +301,8 @@ export function EditorRoot(props: EditorRootProps) {
     remoteImageImportPort: props.remoteImageImportPort,
     reportFailure,
     rootActiveRef,
+    scheduleCurrentWechatPreviewPreparation:
+      visual.scheduleCurrentWechatPreviewPreparation,
     toolbar: props.toolbar,
     visualEditorRuntimeRef,
     visualEditorSurface: visual.visualEditorSurface,
@@ -280,7 +310,11 @@ export function EditorRoot(props: EditorRootProps) {
     visualPreviewEditingRef,
     waitForFreshFormalPreview: visual.waitForFreshFormalPreview,
     wechatClipboard: props.wechatClipboard,
+    wechatCopyPendingRef,
+    wechatCopySequenceRef,
+    wechatCopyStatus,
     wechatExport: props.wechatExport,
+    wechatSessionRef,
     wechatVisualRasterizationPort: props.wechatVisualRasterizationPort
   });
 
@@ -312,7 +346,6 @@ export function EditorRoot(props: EditorRootProps) {
     remoteImageImportPort: media.remoteImageImportPort,
     reportFailure,
     rootActiveRef,
-    rootRef,
     simplifiedFormattingParser: props.simplifiedFormattingParser,
     submissionField: props.submissionField,
     subscribeContextMenuReadiness,
@@ -331,6 +364,7 @@ export function EditorRoot(props: EditorRootProps) {
       ref={rootRef}
       className={visual.immersiveLayoutClass}
       data-easymde-editor-owner="react"
+      data-easymde-preview-presentation={visual.previewPresentation}
       data-easymde-session-status={session.sessionSnapshot.status}
     >
       {visual.immersive && documentSession ? (
@@ -349,6 +383,7 @@ export function EditorRoot(props: EditorRootProps) {
             visual.visualPreviewEditing
             && Boolean(visualEditorRuntimeRef.current?.surface.isConnected)
           }
+          wechatCopyStatus={wechatCopyStatus}
           focusVisualPreview={visual.focusVisualPreview}
           mode={visual.immersiveMode}
           direction={props.layout.direction}
@@ -452,6 +487,7 @@ export function EditorRoot(props: EditorRootProps) {
                 }
                 platform={props.platform}
                 toolbar={props.toolbar}
+                wechatCopyStatus={wechatCopyStatus}
               />
             ) : null}
             <button
@@ -545,9 +581,6 @@ export function EditorRoot(props: EditorRootProps) {
       ) : null}
       <EditorWorkspace
         direction={props.layout.direction}
-        {...(!visual.immersive
-          ? { mode: props.settings.general.editingMode }
-          : {})}
         onLayoutChange={visual.scheduleCurrentWechatPreviewPreparation}
         statusBarMode={props.settings.general.statusBarMode}
         {...(!visual.immersive && documentSession

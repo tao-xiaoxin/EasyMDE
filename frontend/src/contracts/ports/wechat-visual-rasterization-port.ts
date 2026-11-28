@@ -1,6 +1,20 @@
 export type WechatVisualRasterizationKind = 'math' | 'mermaid';
 
+export type WechatVisualRasterizationMathCapture = 'content' | 'full-root';
+
+export type WechatVisualRasterizationMermaidCapture =
+  | 'intrinsic-viewport'
+  | 'responsive-viewport';
+
+/** Mermaid roles whose renderer-owned viewBox may become a local scroll width. */
+export type WechatVisualRasterizationMermaidLayoutRole = 'gantt' | 'sequence' | 'timeline';
+
+export type WechatVisualRasterizationYield = (() => Promise<void>) & {
+  shouldYield: () => boolean;
+};
+
 export type WechatVisualRasterizationFailureCode =
+  | 'wechat-png-baseline-failed'
   | 'wechat-png-decode-failed'
   | 'wechat-png-encode-failed'
   | 'wechat-png-font-failed'
@@ -10,19 +24,72 @@ export type WechatVisualRasterizationFailureCode =
   | 'wechat-png-rasterization-timeout'
   | 'wechat-png-size-invalid';
 
-export type WechatVisualRasterizationRequest = Readonly<{
+type WechatVisualRasterizationRequestBase = Readonly<{
   height: number;
-  kind: WechatVisualRasterizationKind;
+  /** Original Preview parent used to preserve inline line-box typography. */
+  inlineParent?: Element;
+  /** Mermaid-only final display magnification; intrinsic local-scroll roles require 1. */
+  layoutMagnification?: number;
+  /** Clipboard-proven Mermaid SVG viewport capture mode. */
+  mermaidCapture?: WechatVisualRasterizationMermaidCapture;
   maxPixels: number;
   scale: number;
   signal: AbortSignal;
   source: Element;
+  /** Reuses the Clipboard owner's bounded task scheduler at safe raster stages. */
+  yieldToBrowser?: WechatVisualRasterizationYield;
+  width: number;
+}>;
+
+export type WechatVisualMermaidBackground = Readonly<{
+  color?: string;
+  image?: string;
+  position?: string;
+  repeat?: string;
+  size?: string;
+}>;
+
+export type WechatVisualRasterizationRequest =
+  | (WechatVisualRasterizationRequestBase & Readonly<{
+      kind: 'math';
+      /** The capture mode selected once from the accepted native capture clone. */
+      mathCapture: WechatVisualRasterizationMathCapture;
+    }>)
+  | (WechatVisualRasterizationRequestBase & Readonly<{
+      /**
+       * Pre-resolved ancestor theme background captured from the connected preview tree.
+       * `null` indicates resolution completed with no outer backdrop needed; `undefined`
+       * lets the rasterizer resolve from `source` itself.
+       */
+      inheritedBackground?: WechatVisualMermaidBackground | null;
+      kind: 'mermaid';
+      mathCapture?: never;
+    }>);
+
+export type WechatVisualInlineLayout = Readonly<{
+  baseline: number;
+  height: number;
+  overflowX?: WechatVisualInlineOverflow;
+  overflowY?: WechatVisualInlineOverflow;
+  paintOffsetX: number;
+  paintOffsetY: number;
+  viewport?: WechatVisualInlineViewport;
+  width: number;
+}>;
+
+export type WechatVisualInlineOverflow = 'auto' | 'clip' | 'hidden' | 'scroll' | 'visible';
+
+export type WechatVisualInlineViewport = Readonly<{
+  height: number;
+  offsetX: number;
+  offsetY: number;
   width: number;
 }>;
 
 export type WechatVisualRasterizationResult = Readonly<{
   file: File;
   height: number;
+  inlineLayout?: WechatVisualInlineLayout;
   pixelCount: number;
   width: number;
 }>;

@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import {
   anyMenuItem,
+  assertOpenContextMenuGeometry,
   assertSourceExactValue,
   closeMenu,
   expectMenuItemState,
@@ -8,10 +9,10 @@ import {
   imageSourceAlt,
   loadCanonicalFixture,
   login,
+  loginAndOpenNewPost,
   menuSelector,
   moveSourceCaret,
   occurrenceOffset,
-  openNewPost,
   openRootSubmenu,
   openSourceMenu,
   openSourceNativeMenu,
@@ -50,6 +51,11 @@ import {
   selectVisualText,
   waitForVisualPreviewAccepted
 } from '../helpers/context-menu-visual-helpers.mjs';
+import {
+  desktop,
+  editorWritingViewports
+} from '../helpers/editor-viewports.mjs';
+import { attachPrivacySafeBrowserMonitor } from '../helpers/privacy-safe-browser-monitor.mjs';
 
 test.use({
   permissions: ['clipboard-read', 'clipboard-write'],
@@ -59,8 +65,7 @@ test.use({
 
 test.describe('Editor context menu production surfaces', () => {
   test('moves the native Source caret relative and through the fallback to an exact UTF-16 offset', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, source } = await loadCanonicalFixture(page);
     const sourceEditor = page.locator('.easymde-source-react .cm-content');
     const line = '普通文本、**粗体文本**、*斜体文本*、***粗斜体文本***。';
@@ -117,8 +122,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('opens the generic Source menu when the caret is after the final rendered block', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, sourceEditor } = await loadCanonicalFixture(page);
 
     await sourceEditor.focus();
@@ -138,8 +142,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('keeps ordinary Source source-exact through inventory, copy/cancel, Bold Undo, table, and image actions', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { fixtureImageUrl, markdown, source, sourceEditor } = await loadCanonicalFixture(page);
     await assertSourceCategoryMatrix(page, {
       fixtureImageUrl,
@@ -211,8 +214,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('covers missing Source copy, cut, paste, link, and code actions in ordinary and immersive split modes', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, source, sourceEditor } = await loadCanonicalFixture(page);
     await exerciseMissingSourceActions(page, {
       markdown,
@@ -224,7 +226,9 @@ test.describe('Editor context menu production surfaces', () => {
 
     const strings = await enterImmersive(page);
     await page.getByRole('button', { name: strings.split, exact: true }).last().click();
-    await expect(page.locator('.easymde-editor.is-immersive.is-immersive-split')).toBeVisible();
+    await expect(
+      page.locator('#easymde-editor-root [data-easymde-editor-owner="react"].is-immersive.is-immersive-split')
+    ).toBeVisible();
     await exerciseMissingSourceActions(page, {
       markdown,
       mode: 'immersive-split-source',
@@ -235,8 +239,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('inserts a real WordPress media attachment from Source without saving the article', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, source, sourceEditor } = await loadCanonicalFixture(page);
     const insertionOffset = occurrenceOffset(markdown, '普通文本');
     const consoleProbe = startSourceMediaConsoleProbe(page);
@@ -309,8 +312,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('rejects formatted Source context media insertion after readOnly permission loss without changing history', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, preview, source, sourceEditor } = await loadCanonicalFixture(page);
     const consoleProbe = startSourceMediaConsoleProbe(page);
     const mutationProbe = await startSourceMediaMutationProbe(page);
@@ -418,8 +420,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('rejects formatted Source context media insertion after disabled permission loss without changing history', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, preview, source, sourceEditor } = await loadCanonicalFixture(page);
     const consoleProbe = startSourceMediaConsoleProbe(page);
     const mutationProbe = await startSourceMediaMutationProbe(page);
@@ -523,12 +524,13 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('keeps immersive split Source interactive without changing the canonical source on dismissal', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { fixtureImageUrl, markdown, source, sourceEditor } = await loadCanonicalFixture(page);
     const strings = await enterImmersive(page);
     await page.getByRole('button', { name: strings.split, exact: true }).last().click();
-    await expect(page.locator('.easymde-editor.is-immersive.is-immersive-split')).toBeVisible();
+    await expect(
+      page.locator('#easymde-editor-root [data-easymde-editor-owner="react"].is-immersive.is-immersive-split')
+    ).toBeVisible();
     await expect(source).toHaveValue(markdown);
     await assertSourceCategoryMatrix(page, {
       fixtureImageUrl,
@@ -837,6 +839,85 @@ test.describe('Editor context menu production surfaces', () => {
         );
         await expect(shortcutRecorder().locator('kbd')).toHaveText(originalLabels);
       }
+    }
+  });
+
+  test('keeps Source context menu and submenus unclipped across editor writing viewports', async ({ page }, testInfo) => {
+    const browserMonitor = attachPrivacySafeBrowserMonitor(page, {
+      baseURL: testInfo.project.use.baseURL
+    });
+    try {
+      await loginAndOpenNewPost(page);
+      const { markdown, source } = await loadCanonicalFixture(page);
+
+      const assertWritingViewportContextMenu = async (viewport, modeLabel) => {
+        await page.setViewportSize(viewport);
+        const activeSourceEditor = page.locator('.easymde-source-react .cm-content');
+        await expect(activeSourceEditor).toBeVisible();
+        await selectSourceText(page, activeSourceEditor, markdown, '普通文本');
+        await openSourceMenu(page, activeSourceEditor);
+        await openRootSubmenu(page, 'insert');
+
+        const phase = `${modeLabel}-${viewport.width}x${viewport.height}`;
+        await assertOpenContextMenuGeometry(page, {
+          checkShortcuts: true,
+          expectedOverlapped: false,
+          phase
+        });
+
+        await closeMenu(page, phase, { expectedSource: markdown });
+        await assertSourceExactValue(source, markdown, phase);
+      };
+
+      for (const viewport of editorWritingViewports) {
+        await assertWritingViewportContextMenu(viewport, 'ordinary-split');
+      }
+
+      await page.setViewportSize(desktop);
+      const strings = await enterImmersive(page);
+      await page.getByRole('button', { name: strings.split, exact: true }).last().click();
+      await expect(
+        page.locator('#easymde-editor-root [data-easymde-editor-owner="react"].is-immersive.is-immersive-split')
+      ).toBeVisible();
+
+      for (const viewport of editorWritingViewports) {
+        await assertWritingViewportContextMenu(viewport, 'immersive-split');
+      }
+
+      // Exercise the overlapped submenu fallback in real Chromium using a narrow desktop
+      // split-screen window (560x900 < root + 2*submenu + 2*gap + 2*gutter = 642px) so
+      // neither side of the centered root menu fits a non-overlapped submenu with pointer outset.
+      await page.setViewportSize({ height: 900, width: 560 });
+      const immersiveRoot = page.locator(
+        '#easymde-editor-root [data-easymde-editor-owner="react"].is-immersive.is-immersive-split'
+      );
+      const outline = immersiveRoot.locator('.easymde-immersive-outline');
+      if (await outline.isVisible()) {
+        await immersiveRoot.getByRole('button', { name: strings.hideOutline }).first().click();
+        await expect(outline).toHaveCount(0);
+      }
+      const sourceScroller = immersiveRoot.locator('.easymde-source-react .cm-scroller');
+      await expect(sourceScroller).toBeVisible();
+      const scrollerRect = await sourceScroller.boundingBox();
+      if (!scrollerRect) throw new Error('immersive-narrow-window-source-box-unavailable');
+      await page.mouse.click(
+        Math.round(Math.min(scrollerRect.x + scrollerRect.width - 20, 180)),
+        Math.round(scrollerRect.y + Math.min(120, scrollerRect.height / 2)),
+        { button: 'right' }
+      );
+      await expect(page.locator(menuSelector)).toBeVisible();
+      await openRootSubmenu(page, 'copy-paste-as');
+      await assertOpenContextMenuGeometry(page, {
+        checkShortcuts: true,
+        expectedOverlapped: true,
+        phase: 'immersive-split-560x900-overlapped'
+      });
+      await closeMenu(page, 'immersive-split-560x900-overlapped', { expectedSource: markdown });
+      await assertSourceExactValue(source, markdown, 'immersive-split-560x900-overlapped');
+
+      browserMonitor.assertClean();
+    } finally {
+      browserMonitor.dispose();
     }
   });
 });

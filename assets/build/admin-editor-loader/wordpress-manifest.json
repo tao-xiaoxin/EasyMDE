@@ -3,8 +3,8 @@
   "entries": {
     "frontend/src/entrypoints/admin-editor-loader.ts": {
       "handle": "easymde-admin-editor-toolbar",
-      "file": "assets/admin-editor-loader-BpAp27RU.js",
-      "asset": "assets/admin-editor-loader-BpAp27RU.asset.php",
+      "file": "assets/admin-editor-loader-BETIOZd-.js",
+      "asset": "assets/admin-editor-loader-BETIOZd-.asset.php",
       "dependencies": [
         "wp-api-fetch",
         "wp-element",

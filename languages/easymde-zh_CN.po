@@ -1214,6 +1214,14 @@ msgstr "已复制当前预览，可直接粘贴到公众号编辑器。"
 msgid "Copy for WeChat failed. Please try again in this browser."
 msgstr "复制到公众号失败，请在当前浏览器中重试。"
 
+#: src/Admin/AdminEditorStrings.php:436
+msgid ""
+"Copy for WeChat failed. Some generated images may remain in the selected "
+"image storage; review them before retrying."
+msgstr ""
+"复制到公众号失败。部分生成的图片可能仍保留在所选图床或媒体库中，请在重试前检"
+"查。"
+
 #: src/Admin/AdminAssets.php:1079
 msgid "Clipboard access is not available in this browser."
 msgstr "当前浏览器不支持剪贴板富文本复制。"
@@ -1483,10 +1491,6 @@ msgstr "在下方插入表格"
 msgid "Formula"
 msgstr "公式"
 
-#: src/Admin/AdminAssets.php:1145
-msgid "Open link"
-msgstr "打开链接"
-
 #: src/Admin/AdminAssets.php:1146
 msgid "Paste"
 msgstr "粘贴"
@@ -1494,10 +1498,6 @@ msgstr "粘贴"
 #: src/Admin/AdminAssets.php:1147
 msgid "Paste as plain text"
 msgstr "粘贴为纯文本"
-
-#: src/Admin/AdminAssets.php:1148
-msgid "Save as image"
-msgstr "保存为图片"
 
 #: src/Admin/AdminAssets.php:1149
 msgid "The editor action could not be completed."

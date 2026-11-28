@@ -15,6 +15,7 @@ import {
 	DEFAULT_EDITOR_CLIPBOARD_IMAGE_MAX_BYTES,
 	DEFAULT_EDITOR_CLIPBOARD_RICH_MAX_BYTES,
 } from "../../../contracts/ports/editor-clipboard-port";
+import { utf8ByteLength } from "../../../shared/utf8-byte-length";
 
 export type BrowserClipboardReadPermissionState =
 	| "denied"
@@ -290,23 +291,6 @@ function richMaxBytes(
 	return Number.isSafeInteger(maxBytes) && maxBytes > 0 ? maxBytes : null;
 }
 
-function utf8ByteLength(value: string): number {
-	let bytes = 0;
-	for (let index = 0; index < value.length; index += 1) {
-		const codePoint = value.codePointAt(index) ?? 0;
-		if (codePoint > 0xffff) index += 1;
-		bytes +=
-			codePoint <= 0x7f
-				? 1
-				: codePoint <= 0x7ff
-					? 2
-					: codePoint <= 0xffff
-						? 3
-						: 4;
-	}
-	return bytes;
-}
-
 function validateRichPayload(
 	value: unknown,
 	maxBytes: number,
@@ -545,6 +529,8 @@ export function createBrowserEditorClipboard(
 		text: Promise<string>,
 		options?: EditorClipboardOperationOptions,
 	): Promise<EditorClipboardWriteResult> => {
+		const sourceText = Promise.resolve(text);
+		void sourceText.catch(() => undefined);
 		if (!active) return { code: "editor-clipboard-disposed", status: "failed" };
 		if (options?.signal?.aborted)
 			return { code: "editor-clipboard-cancelled", status: "failed" };
@@ -565,7 +551,7 @@ export function createBrowserEditorClipboard(
 				reject(reason);
 			};
 			const onAbort = (): void => {
-				finishReject(new Error("editor-clipboard-cancelled"));
+				finishReject(new ClipboardOperationError("editor-clipboard-cancelled"));
 			};
 			operation = {
 				cleanup: () => {
@@ -576,12 +562,16 @@ export function createBrowserEditorClipboard(
 			};
 			deferredWrites.add(operation);
 			options?.signal?.addEventListener("abort", onAbort, { once: true });
-			void text.then(
+			void sourceText.then(
 				(value) => {
 					if (!active) {
-						finishReject(new Error("editor-clipboard-disposed"));
+						finishReject(
+							new ClipboardOperationError("editor-clipboard-disposed"),
+						);
 					} else if (options?.signal?.aborted) {
-						finishReject(new Error("editor-clipboard-cancelled"));
+						finishReject(
+							new ClipboardOperationError("editor-clipboard-cancelled"),
+						);
 					} else {
 						finishResolve(value);
 					}
@@ -590,9 +580,16 @@ export function createBrowserEditorClipboard(
 			);
 		});
 		void guardedText.catch(() => undefined);
+		let nativeFailed = false;
 		try {
+			// This invocation must remain before the first await so the caller's
+			// click activation reaches ClipboardItem and navigator.clipboard.write.
 			await runtime.writeDeferred(guardedText);
 		} catch {
+			nativeFailed = true;
+		}
+		if (nativeFailed) {
+			operation.cleanup();
 			return {
 				code: !active
 					? "editor-clipboard-disposed"
@@ -601,16 +598,30 @@ export function createBrowserEditorClipboard(
 						: "editor-clipboard-write-failed",
 				status: "failed",
 			};
-		} finally {
-			operation.cleanup();
 		}
-		if (!active || options?.signal?.aborted) {
-			return {
-				code: options?.signal?.aborted
-					? "editor-clipboard-cancelled"
-					: "editor-clipboard-disposed",
-				status: "failed",
-			};
+
+		try {
+			await guardedText;
+		} catch (reason) {
+			operation.cleanup();
+			if (!active) {
+				return { code: "editor-clipboard-disposed", status: "failed" };
+			}
+			if (options?.signal?.aborted) {
+				return { code: "editor-clipboard-cancelled", status: "failed" };
+			}
+			const operationCode = operationFailureCode(reason);
+			if (operationCode) {
+				return { code: operationCode, status: "failed" };
+			}
+			return { code: "editor-clipboard-write-failed", status: "failed" };
+		}
+		operation.cleanup();
+		if (!active) {
+			return { code: "editor-clipboard-disposed", status: "failed" };
+		}
+		if (options?.signal?.aborted) {
+			return { code: "editor-clipboard-cancelled", status: "failed" };
 		}
 		publish({ status: "unknown" });
 		return { status: "written" };
@@ -879,8 +890,11 @@ export function createBrowserEditorClipboard(
 		dispose() {
 			if (!active) return;
 			active = false;
-			for (const operation of deferredWrites) {
-				operation.reject(new Error("editor-clipboard-disposed"));
+			for (const operation of Array.from(deferredWrites)) {
+				operation.reject(
+					new ClipboardOperationError("editor-clipboard-disposed"),
+				);
+				operation.cleanup();
 			}
 			for (const operation of Array.from(deferredImageWrites)) {
 				operation.reject(

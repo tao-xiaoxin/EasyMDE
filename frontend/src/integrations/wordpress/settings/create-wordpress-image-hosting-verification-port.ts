@@ -3,6 +3,7 @@ import type {
 	ImageUploadVerificationPort,
 } from "../../../contracts/ports/image-hosting-verification-port";
 import type { SettingsCenterApi } from "../../../contracts/settings-center-settings";
+import { utf8ByteLength } from "../../../shared/utf8-byte-length";
 
 type FetchLike = (
 	input: RequestInfo | URL,
@@ -33,7 +34,7 @@ function isValidObjectKey(value: unknown): value is string {
 	if (
 		typeof value !== "string" ||
 		!value ||
-		new TextEncoder().encode(value).length > 1024 ||
+		utf8ByteLength(value) > 1024 ||
 		value.startsWith("/") ||
 		value.includes("\\") ||
 		!/^[\p{L}\p{N}._/-]+$/u.test(value)
@@ -74,7 +75,7 @@ function parseUploadVerificationResult(
 		!isValidObjectKey(result.path) ||
 		typeof result.url !== "string" ||
 		!result.url ||
-		new TextEncoder().encode(result.url).length > 2048
+		utf8ByteLength(result.url) > 2048
 	) {
 		throw new Error("settings-center-image-verification-response-invalid");
 	}

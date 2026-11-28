@@ -94,6 +94,12 @@ const productionFrontendBuilds = [
     entry: productionFrontendEntry,
     filePattern: /^assets\/admin-editor-[A-Za-z0-9_-]+\.js$/,
     handle: 'easymde-admin-editor-toolbar',
+    manifestResources: [
+      {
+        sourceEntry: 'frontend/src/integrations/browser/wechat/wechat-png-encoder.worker.ts',
+        filePattern: /^assets\/wechat-png-encoder-[A-Za-z0-9_-]+\.js$/
+      }
+    ],
     moduleFormat: 'esm'
   },
   {
@@ -475,16 +481,6 @@ export function shouldCopyReleaseFile(root, file) {
     return false;
   }
 
-  const relativePath = relative(root, file).replace(/\\/g, '/');
-
-  if (
-    relativePath === 'vendor/qiniu/php-sdk/test-env.sh' ||
-    relativePath.startsWith('vendor/qiniu/php-sdk/examples/') ||
-    relativePath === 'vendor/qiniu/php-sdk/examples'
-  ) {
-    return false;
-  }
-
   if (isComposerDevPackageFile(root, file)) {
     return false;
   }
@@ -604,8 +600,19 @@ function productionFrontendRequirements(root) {
     const viteEntry = manifest && manifest[build.entry];
     const entries = wordpressManifest && wordpressManifest.entries;
     const wordpressEntry = entries && entries[build.entry];
+    const manifestResources = build.manifestResources || [];
+    const resourceSourceKeys = new Set(
+      manifestResources.map((resource) => resource.sourceEntry)
+    );
+    const expectedManifestKeys = new Set([
+      build.entry,
+      ...resourceSourceKeys
+    ]);
+    const hasExpectedManifestKeys =
+      manifestKeys.length === expectedManifestKeys.size
+      && manifestKeys.every((key) => expectedManifestKeys.has(key));
     if (
-      (!build.allowDynamicChunks && 1 !== manifestKeys.length)
+      (!build.allowDynamicChunks && !hasExpectedManifestKeys)
       || 1 !== wordpressManifest.schemaVersion
       || !entries
       || 1 !== Object.keys(entries).length
@@ -617,10 +624,33 @@ function productionFrontendRequirements(root) {
       || !Array.isArray(wordpressEntry.dependencies)
       || JSON.stringify(build.dependencies) !== JSON.stringify(wordpressEntry.dependencies)
       || !Array.isArray(wordpressEntry.resources)
-      || 0 !== wordpressEntry.resources.length
+      || manifestResources.length !== wordpressEntry.resources.length
       || 'string' !== typeof wordpressEntry.file
       || !build.filePattern.test(wordpressEntry.file)
       || wordpressEntry.file.replace(/\.js$/, '.asset.php') !== wordpressEntry.asset
+    ) {
+      throw new Error('Release build requires matching production frontend manifest contracts.');
+    }
+
+    const resourceFiles = manifestResources.map((resource) => {
+      const manifestResource = manifest[resource.sourceEntry];
+      if (
+        !manifestResource
+        || false !== manifestResource.isEntry
+        || resource.sourceEntry !== manifestResource.src
+        || 'string' !== typeof manifestResource.file
+      ) {
+        throw new Error('Release build requires matching production frontend manifest contracts.');
+      }
+      resource.filePattern.lastIndex = 0;
+      if (!resource.filePattern.test(manifestResource.file)) {
+        throw new Error('Release build requires matching production frontend manifest contracts.');
+      }
+      return manifestResource.file;
+    });
+    if (
+      JSON.stringify([...resourceFiles].sort())
+      !== JSON.stringify([...wordpressEntry.resources].sort())
     ) {
       throw new Error('Release build requires matching production frontend manifest contracts.');
     }
@@ -649,13 +679,14 @@ function productionFrontendRequirements(root) {
           (key) =>
             'string' !== typeof key
             || key === build.entry
+            || resourceSourceKeys.has(key)
             || !Object.hasOwn(manifest, key)
         )
       ) {
         throw new Error('Release build requires matching production frontend manifest contracts.');
       }
       const chunkRecords = manifestKeys
-        .filter((key) => key !== build.entry)
+        .filter((key) => key !== build.entry && !resourceSourceKeys.has(key))
         .map((key) => manifest[key]);
       if (
         chunkRecords.some(
@@ -684,6 +715,10 @@ function productionFrontendRequirements(root) {
     managedRequirements.push(
       { path: `${build.buildRoot}/${wordpressEntry.file}`, type: 'file' },
       { path: `${build.buildRoot}/${wordpressEntry.asset}`, type: 'file' },
+      ...resourceFiles.map((file) => ({
+        path: `${build.buildRoot}/${file}`,
+        type: 'file'
+      })),
       ...chunks.map((chunk) => ({
         path: `${build.buildRoot}/${chunk}`,
         type: 'file'

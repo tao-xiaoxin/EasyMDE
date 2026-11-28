@@ -356,4 +356,118 @@ describe("SafePreviewHtmlSink", () => {
 			view.unmount();
 		}
 	});
+
+	it("restores the prior plain children before reporting a mutation failure", () => {
+		const surfaceRef = createRef<HTMLElement>();
+		const onDomMutationFailure = vi.fn();
+		const onDomMutation = vi.fn((surface: HTMLElement) =>
+			"New" === surface.textContent
+				? new Error("preview-style-scope-failed")
+				: undefined,
+		);
+		const view = render(
+			<SafePreviewHtmlSink
+				html={"Old" as SafePreviewHtml}
+				htmlRevision={1}
+				onDomMutation={onDomMutation}
+				onDomMutationFailure={onDomMutationFailure}
+				surfaceRef={surfaceRef}
+			/>,
+		);
+
+		view.rerender(
+			<SafePreviewHtmlSink
+				html={"New" as SafePreviewHtml}
+				htmlRevision={2}
+				onDomMutation={onDomMutation}
+				onDomMutationFailure={onDomMutationFailure}
+				surfaceRef={surfaceRef}
+			/>,
+		);
+
+		expect(surfaceRef.current?.textContent).toBe("Old");
+		expect(onDomMutationFailure).toHaveBeenCalledWith({
+			error: new Error("preview-style-scope-failed"),
+			kind: "restored",
+			previous: {
+				html: "Old" as SafePreviewHtml,
+				htmlRevision: 1,
+			},
+		});
+		view.unmount();
+	});
+
+	it("clears the surface and preserves both causes when restoration is unverified", () => {
+		const surfaceRef = createRef<HTMLElement>();
+		const onDomMutationFailure = vi.fn();
+		let oldSeen = false;
+		const onDomMutation = vi.fn((surface: HTMLElement) => {
+			if ("New" === surface.textContent) {
+				return new Error("preview-style-scope-failed");
+			}
+			if ("Old" === surface.textContent) {
+				if (oldSeen) return new Error("preview-style-scope-failed");
+				oldSeen = true;
+			}
+			return undefined;
+		});
+		const view = render(
+			<SafePreviewHtmlSink
+				html={"Old" as SafePreviewHtml}
+				htmlRevision={1}
+				onDomMutation={onDomMutation}
+				onDomMutationFailure={onDomMutationFailure}
+				surfaceRef={surfaceRef}
+			/>,
+		);
+
+		view.rerender(
+			<SafePreviewHtmlSink
+				html={"New" as SafePreviewHtml}
+				htmlRevision={2}
+				onDomMutation={onDomMutation}
+				onDomMutationFailure={onDomMutationFailure}
+				surfaceRef={surfaceRef}
+			/>,
+		);
+
+		expect(surfaceRef.current?.textContent).toBe("");
+		expect(onDomMutationFailure).toHaveBeenCalledWith({
+			error: new Error("preview-style-scope-failed"),
+			kind: "unverified",
+			rollbackError: new Error("preview-style-scope-failed"),
+		});
+		view.unmount();
+	});
+
+	it("notifies after plain and staged DOM mutations", () => {
+		const surfaceRef = createRef<HTMLElement>();
+		const onDomMutation = vi.fn();
+		const initial = "<p>Initial</p>" as SafePreviewHtml;
+		const next = "<p>Next</p>" as SafePreviewHtml;
+		const view = render(
+			<SafePreviewHtmlSink
+				html={initial}
+				htmlRevision={1}
+				onDomMutation={onDomMutation}
+				surfaceRef={surfaceRef}
+			/>,
+		);
+		expect(onDomMutation).toHaveBeenCalledTimes(1);
+
+		const template = document.createElement("template");
+		template.innerHTML = next;
+		const stagedNodes = Array.from(template.content.childNodes);
+		view.rerender(
+			<SafePreviewHtmlSink
+				html={next}
+				htmlRevision={2}
+				onDomMutation={onDomMutation}
+				stagedCommit={{ nodes: stagedNodes, revision: 2 }}
+				surfaceRef={surfaceRef}
+			/>,
+		);
+		expect(onDomMutation).toHaveBeenCalledTimes(2);
+		view.unmount();
+	});
 });

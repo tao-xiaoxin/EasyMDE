@@ -11,6 +11,7 @@ import {
   imageSourceAlt,
   loadCanonicalFixture,
   login,
+  loginAndOpenNewPost,
   menuSelector,
   menuViewportSelector,
   occurrenceOffset,
@@ -84,8 +85,7 @@ const testWithSecondUser = test.extend({
 
 test.describe('Editor context menu production surfaces', () => {
   test('keeps the real mutation probe behind the decoded-body guard for unreadable and file-bearing requests', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, source } = await loadCanonicalFixture(page);
     const savePost = page.locator('#save-post');
     await expect(savePost).not.toHaveClass(/\bdisabled\b/u, { timeout: 15_000 });
@@ -184,8 +184,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('decodes the real multipart Core lock release and denies foreign, duplicate, and autosave variants', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     // A saved draft is what gives Core a post id and an active post lock, the
     // two fields its pagehide release beacon actually reads.
     const { markdown, source } = await loadCanonicalFixture(page);
@@ -592,8 +591,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('keeps Source image copying capability gated by the real local PNG load', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const imageGate = createImageRequestGate();
     const { fixtureImageUrl, markdown, source, sourceEditor } =
       await loadCanonicalFixture(page, 1, { imageGate });
@@ -656,8 +654,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('applies every image scale through ordinary and immersive split Source, then saves 200% natively', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { fixtureImageUrl, markdown, preview, source, sourceEditor } =
       await loadCanonicalFixture(page);
     const imageMarkdown = `![${imageSourceAlt}](${fixtureImageUrl})`;
@@ -674,7 +671,7 @@ test.describe('Editor context menu production surfaces', () => {
 
     const strings = await enterImmersive(page);
     await page.getByRole('button', { name: strings.split, exact: true }).last().click();
-    await expect(page.locator('.easymde-editor.is-immersive.is-immersive-split')).toBeVisible();
+    await expect(page.locator('[data-easymde-editor-owner="react"].easymde-editor.is-immersive.is-immersive-split')).toBeVisible();
     const splitPreview = page.locator('[data-easymde-preview-html-sink="1"]').last();
     const splitSourceEditor = page.locator('.easymde-source-react .cm-content');
     await exerciseImageScaleMatrix(page, {
@@ -688,7 +685,7 @@ test.describe('Editor context menu production surfaces', () => {
     await assertSourceExactValue(source, markdown, 'immersive-split-source-complete');
 
     await page.getByRole('button', { name: strings.exit, exact: true }).click();
-    await expect(page.locator('.easymde-editor.is-immersive')).toHaveCount(0);
+    await expect(page.locator('[data-easymde-editor-owner="react"].easymde-editor.is-immersive')).toHaveCount(0);
 
     const finalExpected = imageScaleSource(markdown, imageMarkdown, 200);
     const ordinarySourceEditor = page.locator('.easymde-source-react .cm-content');
@@ -710,8 +707,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('exports canonical formula and Mermaid locally without changing Source or Preview', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, preview, source, sourceEditor } = await loadCanonicalFixture(page);
     await expect(preview.locator('.easymde-math').first()).toBeVisible();
     await expect(preview.locator('.easymde-mermaid').first()).toBeVisible();
@@ -896,8 +892,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('opens image actions when directly right-clicking an unselected Full Visual image', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     await loadCanonicalFixture(page);
     const full = await enterFullVisual(page);
     const image = full.visualEditor.getByAltText(imageSourceAlt, { exact: true }).first();
@@ -918,8 +913,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('re-anchors Windowed Visual image menus and selection to the image under the pointer', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, source } = await loadCanonicalFixture(page, 2);
     const { visualEditor } = await enterFullVisual(page);
     // ADR-002: two canonical fixtures stay one unified, fully live surface.
@@ -1004,8 +998,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('keeps image ownership on the image a replacing pointer demand selected', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, source } = await loadCanonicalFixture(page, 2);
     const { visualEditor } = await enterFullVisual(page);
     // ADR-002: two canonical fixtures stay one unified, fully live surface.
@@ -1083,8 +1076,7 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   test('selects the left-clicked image and moves its visible target state', async ({ page }) => {
-    await login(page);
-    await openNewPost(page);
+    await loginAndOpenNewPost(page);
     const { markdown, source } = await loadCanonicalFixture(page, 2);
     const { visualEditor } = await enterFullVisual(page);
     // ADR-002: two canonical fixtures stay one unified, fully live surface.
@@ -1157,7 +1149,7 @@ test.describe('Editor context menu production surfaces', () => {
     // page chrome: every step keeps the outline inside the band and viewport.
     for (const step of [180, 180, 180, 180]) {
       await page
-        .locator('.easymde-immersive-preview-canvas')
+        .locator('[data-easymde-editor-owner="react"] .easymde-immersive-preview-canvas')
         .evaluate((element, offset) => {
           element.scrollTop += offset;
           element.dispatchEvent(new Event('scroll', { bubbles: true }));

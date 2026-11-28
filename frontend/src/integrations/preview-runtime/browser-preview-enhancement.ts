@@ -13,6 +13,11 @@ import {
   type PreparedStyleOwner
 } from './browser-preview-enhancement-stylesheet-loader';
 import type { FrontendEnhancementControl } from './frontend-enhancement-runtime';
+import {
+  EditorStylesheetScopeError,
+  type EditorStylesheetScopeLease,
+  scopeEditorStylesheets
+} from '../../shared/css/editor-stylesheet-scope';
 
 type SharedEnhancements = Readonly<{
   enhance: (
@@ -39,14 +44,22 @@ export type PreviewEnhancementBrowserRuntime = Readonly<{
 
 type BrowserPreviewEnhancementOptions = Readonly<{
   documentRef: Document;
+  editorRootSelector?: string;
   runtime: PreviewEnhancementBrowserRuntime;
 }>;
 
-function createResourceLoader(documentRef: Document) {
+function createResourceLoader(
+  documentRef: Document,
+  editorRootSelector: string
+) {
   let disposed = false;
   const isDisposed = () => disposed;
   const scriptLoader = createPreviewScriptLoader(documentRef, isDisposed);
-  const stylesheetLoader = createPreviewStylesheetLoader(documentRef, isDisposed);
+  const stylesheetLoader = createPreviewStylesheetLoader(
+    documentRef,
+    isDisposed,
+    editorRootSelector
+  );
 
   function dispose(): void {
     if (disposed) return;
@@ -79,9 +92,49 @@ export function createBrowserPreviewEnhancementPort(
   bootstrap: PreviewEnhancementBootstrap,
   options: BrowserPreviewEnhancementOptions
 ): PreviewEnhancementPort {
-  const loader = createResourceLoader(options.documentRef);
+  const loader = createResourceLoader(
+    options.documentRef,
+    options.editorRootSelector ?? '#easymde-editor-root'
+  );
   const assets = bootstrap.assets;
   const readyFeatures = new Set<PreviewEnhancementRuntimeFeature>();
+
+  const editorRootSelector = options.editorRootSelector ?? '#easymde-editor-root';
+
+  function scopeRenderedStyles(surface: HTMLElement): EditorStylesheetScopeLease {
+    const stylesheets = Array.from(surface.querySelectorAll('svg style')).map((node) => {
+      if (node.namespaceURI !== 'http://www.w3.org/2000/svg') {
+        throw resourceError('preview-enhancement-rendered-style-unavailable');
+      }
+      const style = node as SVGStyleElement;
+      let stylesheet: CSSStyleSheet | null;
+      try {
+        stylesheet = style.sheet ?? null;
+      } catch {
+        throw resourceError('preview-enhancement-rendered-style-read-failed');
+      }
+      if (!stylesheet) {
+        throw resourceError('preview-enhancement-rendered-style-unavailable');
+      }
+      return stylesheet;
+    });
+    try {
+      return scopeEditorStylesheets(stylesheets, {
+        rootSelector: editorRootSelector
+      });
+    } catch (error) {
+      if (error instanceof EditorStylesheetScopeError) {
+        throw resourceError(
+          error.code === 'editor-stylesheet-rollback-failed'
+            ? 'preview-enhancement-rendered-style-rollback-failed'
+            : 'preview-enhancement-rendered-style-scope-failed'
+        );
+      }
+      throw error instanceof Error
+        ? error
+        : resourceError('preview-enhancement-rendered-style-scope-failed');
+    }
+  }
 
   async function prepareCodeThemeForOwner(
     context: PreviewEnhancementContext,
@@ -198,6 +251,7 @@ export function createBrowserPreviewEnhancementPort(
     },
     isFeatureReady: (feature) => readyFeatures.has(feature),
     prepareCodeTheme,
+    scopeRenderedStyles,
     syncCodeFrameBackgrounds(surface) {
       const enhancements = options.runtime.getEnhancements();
       if (!enhancements) {

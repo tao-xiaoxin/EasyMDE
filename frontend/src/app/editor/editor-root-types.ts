@@ -128,7 +128,7 @@ export type EditorRootProps = Readonly<{
   nativeSubmissionPort: NativeSubmissionPort;
   nativePublishPort: NativePublishPort;
   onDocumentOwnerChange: (owned: boolean) => void;
-  onFailure: (code: string) => void;
+  onFailure: (code: string, level?: 'error' | 'info') => void;
   platform: ToolbarPlatform;
   publishPost: (session: EditorDocumentSession) => boolean;
   prepareToolbarShortcuts: (
@@ -282,5 +282,7 @@ export type LayoutScrollRestoreEntry = Readonly<{
   layout: string;
   restore: () => void;
 }>;
+
+export type PreviewPresentation = 'preview' | 'split';
 
 export type SharedRef<T> = MutableRefObject<T>;

@@ -1047,10 +1047,12 @@ The constrained desktop submenu overlap (560 × 900) and docked outline clamp
 acceptance viewport. On tablet, the routine suite taps view and outline controls,
 opens the Source menu with its keyboard shortcut, then taps its submenu and taps
 outside to dismiss. This does not certify an OS-native long-press callout.
-The landscape case also drags both resize handles in one touch sequence: only
-the first handle resizes, and releasing the touches restores text selection and
-the cursor before another drag starts. The overlap probe verifies that Escape
-closes the submenu and then the root after pointer activation.
+A separately named touch probe at the same `1133 × 744` landscape viewport
+drags both resize handles in one touch sequence: only the first handle resizes,
+and releasing the touches restores text selection and the cursor. A subsequent
+divider drag confirms that the resize owner is available again. The overlap
+probe verifies that Escape closes the submenu and then the root after pointer
+activation.
 
 Workflow checklist verified by the routine writing suite:
 

@@ -26,3 +26,39 @@ it('keeps the first handle in control until capture ends and restores the origin
   release?.();
   expect(doc.body.style.userSelect).toBe('auto');
 });
+
+it('ignores a stale release without disturbing the next resize session', () => {
+  const doc = document.implementation.createHTMLDocument();
+  const outline = doc.createElement('hr');
+  const divider = doc.createElement('hr');
+  doc.body.append(outline, divider);
+  const { style } = doc.body;
+  style.cursor = 'text';
+  style.userSelect = 'auto';
+  const endOutline = vi.fn();
+  const moveDivider = vi.fn();
+  const endDivider = vi.fn();
+  const releaseOutline = startColumnResize(outline, 1, vi.fn(), endOutline);
+  expect(releaseOutline).not.toBeNull();
+  doc.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1 }));
+  expect(endOutline).toHaveBeenCalledOnce();
+
+  // Browsers can reuse a pointer ID for a new drag.
+  const releaseDivider = startColumnResize(divider, 1, moveDivider, endDivider);
+  expect(releaseDivider).not.toBeNull();
+  releaseOutline?.();
+
+  expect(style.cursor).toBe('col-resize');
+  expect(style.userSelect).toBe('none');
+  expect(endOutline).toHaveBeenCalledOnce();
+  expect(endDivider).not.toHaveBeenCalled();
+  expect(startColumnResize(outline, 2, vi.fn(), vi.fn())).toBeNull();
+  doc.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 45 }));
+  expect(moveDivider).toHaveBeenCalledExactlyOnceWith(45);
+
+  releaseDivider?.();
+  releaseDivider?.();
+  expect(endDivider).toHaveBeenCalledOnce();
+  expect(style.cursor).toBe('text');
+  expect(style.userSelect).toBe('auto');
+});

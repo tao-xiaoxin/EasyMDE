@@ -252,7 +252,6 @@ export const ImmersiveOutline = memo(function ImmersiveOutline({
   const boundsRef = useRef(bounds);
   boundsRef.current = bounds;
   const effectiveWidth = boundedWidth(preferredWidth, bounds);
-  const outlineRef = useRef<HTMLElement>(null);
   const releaseDragRef = useRef<(() => void) | null>(null);
   const onSelectRef = useRef(onSelect);
   const latestItemsRef = useRef(items);
@@ -354,7 +353,6 @@ export const ImmersiveOutline = memo(function ImmersiveOutline({
   return (
     <Fragment>
       <aside
-        ref={outlineRef}
         className="easymde-immersive-outline"
         aria-label={strings.outline}
         style={{ width: effectiveWidth }}

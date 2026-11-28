@@ -18,7 +18,7 @@
     "name": "shared"
   },
   "frontend/src/entrypoints/admin-editor.tsx": {
-    "file": "assets/admin-editor-C0SRUw9I.js",
+    "file": "assets/admin-editor-DzwDls2w.js",
     "name": "editor",
     "src": "frontend/src/entrypoints/admin-editor.tsx",
     "isEntry": true,

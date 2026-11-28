@@ -19,8 +19,10 @@ export function startColumnResize(
   const move = (event: PointerEvent) => {
     if (event.pointerId === pointerId) onMove(event.clientX);
   };
+  let released = false;
   const end = (event?: PointerEvent) => {
-    if (event && event.pointerId !== pointerId) return;
+    if (released || (event && event.pointerId !== pointerId)) return;
+    released = true;
     doc.removeEventListener('pointermove', move);
     doc.removeEventListener('pointerup', end);
     doc.removeEventListener('pointercancel', end);

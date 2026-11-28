@@ -332,39 +332,6 @@ test.describe('EasyMDE routine editor writing scenarios', () => {
             expect(immersiveSplitGeometry.outlineResizerVisible).toBe(true);
           }
 
-          if (scenario.viewport === miniLandscape) {
-            const center = async (handle, id) => {
-              const box = await handle.boundingBox();
-              if (!box) throw new Error('immersive-touch-resize-handle-box-unavailable');
-              return { id, x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
-            };
-            const outlineHandle = immersiveRoot.locator('.easymde-immersive-outline-resizer');
-            const dividerHandle = immersiveRoot.locator('.easymde-immersive-pane-divider');
-            const outline = await center(outlineHandle, 1);
-            const divider = await center(dividerHandle, 2);
-            const outlineBefore = Number(await outlineHandle.getAttribute('aria-valuenow'));
-            const outlineMax = Number(await outlineHandle.getAttribute('aria-valuemax'));
-            const dividerBefore = await dividerHandle.getAttribute('aria-valuenow');
-            const bodyStyle = () => page.evaluate(() => [document.body.style.userSelect, document.body.style.cursor]);
-            const before = await bodyStyle();
-            const cdp = await page.context().newCDPSession(page);
-            try {
-              await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [outline] });
-              expect(await bodyStyle()).toEqual(['none', 'col-resize']);
-              await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [outline, divider] });
-              const outlineDelta = outlineMax - outlineBefore >= 24 ? 24 : -24;
-              await cdp.send('Input.dispatchTouchEvent', {
-                type: 'touchMove',
-                touchPoints: [{ ...outline, x: outline.x + outlineDelta }, { ...divider, x: divider.x + 64 }]
-              });
-              await expect(outlineHandle).toHaveAttribute('aria-valuenow', String(outlineBefore + outlineDelta));
-              await expect(dividerHandle).toHaveAttribute('aria-valuenow', dividerBefore);
-              await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-              expect(await bodyStyle()).toEqual(before);
-            } finally {
-              await cdp.detach();
-            }
-          }
           await assertImmersiveSplitDividerResize(page, immersiveRoot, {
             hasTouch: scenario.hasTouch,
             phase: `${scenario.name}-immersive-split-divider`
@@ -434,6 +401,71 @@ test.describe('EasyMDE routine editor writing scenarios', () => {
       });
     });
   }
+
+  test.describe('iPad mini landscape touch probe (1133x744)', () => {
+    test.use({ hasTouch: true, isMobile: true, viewport: miniLandscape });
+
+    test('keeps the first of two simultaneous resize contacts in control', async ({ page }, testInfo) => {
+      const browserMonitor = attachPrivacySafeBrowserMonitor(page, {
+        baseURL: testInfo.project.use.baseURL
+      });
+      try {
+        await login(page, testInfo.easymdeUser);
+        await openEasyMdeNewPost(page);
+        const labels = await page.evaluate(() =>
+          window.EasyMDEEditorRootBootstrap.strings.immersive
+        );
+        await page.locator('.easymde-toolbar-immersive-toggle').tap();
+        const immersiveRoot = page.locator(
+          '.easymde-editor[data-easymde-editor-owner="react"].is-immersive'
+        );
+        await immersiveRoot.getByRole('button', { name: labels.split, exact: true }).tap();
+        if (!await immersiveRoot.locator('.easymde-immersive-outline').isVisible()) {
+          await immersiveRoot.getByRole('button', { name: labels.showOutline, exact: true }).tap();
+        }
+
+        const center = async (handle, id) => {
+          const box = await handle.boundingBox();
+          if (!box) throw new Error('immersive-touch-resize-handle-box-unavailable');
+          return { id, x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
+        };
+        const outlineHandle = immersiveRoot.locator('.easymde-immersive-outline-resizer');
+        const dividerHandle = immersiveRoot.locator('.easymde-immersive-pane-divider');
+        const outline = await center(outlineHandle, 1);
+        const divider = await center(dividerHandle, 2);
+        const outlineBefore = Number(await outlineHandle.getAttribute('aria-valuenow'));
+        const outlineMax = Number(await outlineHandle.getAttribute('aria-valuemax'));
+        const dividerBefore = await dividerHandle.getAttribute('aria-valuenow');
+        const bodyStyle = () => page.evaluate(() => [document.body.style.userSelect, document.body.style.cursor]);
+        const before = await bodyStyle();
+        const cdp = await page.context().newCDPSession(page);
+        try {
+          await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [outline] });
+          expect(await bodyStyle()).toEqual(['none', 'col-resize']);
+          await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [outline, divider] });
+          const outlineDelta = outlineMax - outlineBefore >= 24 ? 24 : -24;
+          await cdp.send('Input.dispatchTouchEvent', {
+            type: 'touchMove',
+            touchPoints: [{ ...outline, x: outline.x + outlineDelta }, { ...divider, x: divider.x + 64 }]
+          });
+          await expect(outlineHandle).toHaveAttribute('aria-valuenow', String(outlineBefore + outlineDelta));
+          await expect(dividerHandle).toHaveAttribute('aria-valuenow', dividerBefore);
+          await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+          expect(await bodyStyle()).toEqual(before);
+        } finally {
+          await cdp.detach();
+        }
+        await assertImmersiveSplitDividerResize(page, immersiveRoot, {
+          hasTouch: true,
+          phase: 'landscape-touch-probe-next-divider-drag'
+        });
+        expect(await bodyStyle()).toEqual(before);
+        browserMonitor.assertClean();
+      } finally {
+        browserMonitor.dispose();
+      }
+    });
+  });
 
   test.describe('desktop editingMode bootstrap contract (1280x1040)', () => {
     test.use({

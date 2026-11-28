@@ -1418,7 +1418,9 @@ across all viewport widths with the immersive split divider preserved
 (single-pane presentation occurs only when the user selects Source-only or
 Preview-only inside Immersive Editing). The docked Outline resizer and split
 divider share one per-document pointer-drag owner; the first handle keeps the
-drag until release, cancellation, capture loss, or teardown. At tablet-portrait
+drag until release, cancellation, capture loss, or teardown. Release is
+idempotent per drag session; a stale callback cannot alter a later drag or
+restore its cursor and selection styles. At tablet-portrait
 widths (`<= 782px`, matching WordPress Core's admin breakpoint and covering
 iPad mini portrait `744 × 1133`), the Outline overlays the full-width workspace. A
 completed transition into editable immersive Preview, or a width crossing into

@@ -4,6 +4,7 @@ import { collectFailureDiagnostics } from "./wechat-copy/page-diagnostics.mjs";
 import { visibleSelectorDiagnosticsByPage } from "./wechat-copy/page-diagnostics.mjs";
 import { waitForVisibleSelector } from "./wechat-copy/page-diagnostics.mjs";
 import { createWordPressFixture } from './wechat-wordpress-fixture.mjs';
+import { runLongTaskStopScenario } from './wechat-copy/long-task-stop-scenario.mjs';
 import { runPrivatePixelEvidenceBoundaryScenario } from './wechat-copy/fixture-boundary-scenario.mjs';
 import { runCopyModeScenario1 } from './wechat-copy/copy-modes-scenarios.mjs';
 import { runCopyModeScenario2 } from './wechat-copy/copy-modes-scenarios.mjs';
@@ -65,6 +66,10 @@ test('rejects private pixel evidence symlink escapes before outside creation', a
 	await runPrivatePixelEvidenceBoundaryScenario({ _baseURL, test, testInfo });
 });
 
+
+test('separates Long Tasks in the Copy stop frame from later tasks', async ({ baseURL, browser }, testInfo) => {
+  await runLongTaskStopScenario({ baseURL, browser, testInfo });
+});
 
 test.describe('WeChat copy browser regressions', () => {
   test.beforeEach(async ({ page: _page }, testInfo) => {

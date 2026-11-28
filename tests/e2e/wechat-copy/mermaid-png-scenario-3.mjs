@@ -185,8 +185,18 @@ export async function runMermaidPngScenario3({ baseURL, context, login, page, te
             width
           }
         );
+        const expectedRaster = {
+          height: Math.ceil(expectedHeight * dpr),
+          width: Math.ceil(expectedWidth * dpr)
+        };
         expect(placement.width, `${role} placement width`).toBeCloseTo(expectedWidth, 0);
-        expect(placement.height, `${role} placement height`).toBeCloseTo(expectedHeight, 0);
+        expect(placement.naturalWidth, `${role} loaded raster width`).toBe(expectedRaster.width);
+        expect(placement.naturalHeight, `${role} loaded raster height`).toBe(expectedRaster.height);
+        expect(placement.imageDeclarations.height.value, `${role} automatic height`).toBe('auto');
+        // The loaded image uses the raster's quantized aspect ratio, not the
+        // fractional viewBox height that a broken image's fallback can use.
+        const expectedAutoHeight = expectedWidth * expectedRaster.height / expectedRaster.width;
+        expect(placement.height, `${role} placement height`).toBeCloseTo(expectedAutoHeight, 0);
         expect(placement.ownerDataIgnoreWidth).toBe('');
         expect(placement.ownerOverflowX).toMatch(/^(auto|scroll)$/u);
         expect(placement.ownerOverflowOwnerCount).toBe(1);
@@ -208,9 +218,8 @@ export async function runMermaidPngScenario3({ baseURL, context, login, page, te
         }
         expect(pngEvidence.devicePixelRatio).toBe(dpr);
         expect(pngEvidence.dimensions).toMatchObject({
-          expected: { height: Math.ceil(expectedHeight * dpr), width: Math.ceil(expectedWidth * dpr) },
-          height: Math.ceil(expectedHeight * dpr),
-          width: Math.ceil(expectedWidth * dpr)
+          expected: expectedRaster,
+          ...expectedRaster
         });
         expect(pngEvidence.frame).toMatchObject({
           cssPixels: 10,
@@ -321,7 +330,7 @@ export async function runMermaidPngScenario3({ baseURL, context, login, page, te
       }
     } finally {
       await cdp.send('Emulation.clearDeviceMetricsOverride');
-      if (uploadRoute) await page.unroute(uploadRoute.matcher);
+      if (uploadRoute) await uploadRoute.dispose();
       await page.unroute(fullCapabilityImageSource);
     }
     await testInfo.attach('wechat-bloom-intrinsic-mermaid-oracle.json', {

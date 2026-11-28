@@ -439,11 +439,21 @@ export async function installControlledPngUploadRoute(page) {
   const uploads = [];
   const pngs = [];
   const matcher = (url) => new URL(url).pathname === uploadPath;
+  const fixtureImageOrigin = 'https://images.example.test';
+  const fixtureImagePath = /^\/e2e\/source-png-(\d+)\.png$/u;
+  const imageMatcher = (url) => url.origin === fixtureImageOrigin && fixtureImagePath.test(url.pathname);
+  await page.route(imageMatcher, async (route) => {
+    const index = Number(fixtureImagePath.exec(new URL(route.request().url()).pathname)[1]);
+    const png = pngs[index];
+    if (!png) throw new Error(`wechat-source-png-fixture-bytes-unavailable:${index}`);
+    await route.fulfill({ body: Buffer.from(png, 'base64'), contentType: 'image/png' });
+  });
   await page.route(matcher, async (route) => {
     const request = route.request();
-    const index = uploads.push(request.method()) - 1;
+    const index = pngs.length;
     pngs.push(multipartFileBytes(request).toString('base64'));
-    const url = `https://images.example.test/e2e/source-png-${index}.png`;
+    uploads.push(request.method());
+    const url = `${fixtureImageOrigin}/e2e/source-png-${index}.png`;
     const response = bootstrap.owner === 'image-hosting'
       ? { alt: '', backup: { status: 'disabled' }, title: '', url }
       : { alt: '', filename: `source-png-${index}.png`, id: 12_000 + index, title: '', url };
@@ -453,7 +463,14 @@ export async function installControlledPngUploadRoute(page) {
       status: 200
     });
   });
-  return { matcher, pngs, uploads };
+  return {
+    async dispose() {
+      await page.unroute(matcher);
+      await page.unroute(imageMatcher);
+    },
+    pngs,
+    uploads
+  };
 }
 
 export async function assertSourcePresentation(page, preview, expectedPresentation = 'split') {

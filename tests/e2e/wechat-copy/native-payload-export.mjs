@@ -229,9 +229,3 @@ export function multipartFileBytes(request) {
   }
   return body.subarray(fileStart + fileStartMarker.length, fileEnd);
 }
-
-export function multipartFileDigest(request) {
-  return createHash('sha256')
-    .update(multipartFileBytes(request))
-    .digest('hex');
-}

@@ -220,7 +220,7 @@ export async function runCopyFeedbackScenario1({ baseURL, context, login, page, 
     } finally {
       await stopZeroWriteProbe(page);
       if (noReplyWorkerRoute) await page.unroute(noReplyWorkerRoute.matcher);
-      await page.unroute(uploadRoute.matcher);
+      await uploadRoute.dispose();
     }
     await dismissEditorStatus(page);
 }

@@ -18,6 +18,7 @@ import { readNativeCodeSurfaceEvidence } from "./payload-evidence.mjs";
 import { waitForPreviewVisualReadiness } from "./editor-session.mjs";
 import { assertNativeCodePayloadMatches } from "./payload-geometry-oracle.mjs";
 import { copyNativePayload } from "./copy-driver.mjs";
+import { summarizeCopyLongTaskWindow } from "./copy-long-task-evidence.mjs";
 
 export async function runThemeProjectionScenario3({ baseURL, context, login, page, test, testInfo }) {
 
@@ -108,13 +109,14 @@ export async function runThemeProjectionScenario3({ baseURL, context, login, pag
     };
     const beginCopyLongTaskProbe = () => page.evaluate(() => {
       globalThis.__easymdeCodeModeLongTaskObserver?.disconnect();
-      globalThis.__easymdeCodeModeLongTasks = [];
+      const probe = { startedAt: performance.now(), tasks: [] };
+      globalThis.__easymdeCodeModeLongTaskProbe = probe;
       if (!('PerformanceObserver' in globalThis)) {
         throw new Error('wechat-code-mode-matrix-longtask-observer-unavailable');
       }
       const observer = new PerformanceObserver((list) => {
         list.getEntries().forEach((entry) => {
-          globalThis.__easymdeCodeModeLongTasks.push(entry.duration);
+          probe.tasks.push([entry.startTime, entry.duration]);
         });
       });
       observer.observe({ type: 'longtask', buffered: false });
@@ -123,14 +125,24 @@ export async function runThemeProjectionScenario3({ baseURL, context, login, pag
     const stopCopyLongTaskProbe = () => page.evaluate(async () => {
       await new Promise((resolve) => requestAnimationFrame(() => resolve()));
       const observer = globalThis.__easymdeCodeModeLongTaskObserver;
+      const probe = globalThis.__easymdeCodeModeLongTaskProbe;
       observer?.takeRecords().forEach((entry) => {
-        globalThis.__easymdeCodeModeLongTasks.push(entry.duration);
+        probe.tasks.push([entry.startTime, entry.duration]);
       });
       observer?.disconnect();
       delete globalThis.__easymdeCodeModeLongTaskObserver;
-      const durations = [...(globalThis.__easymdeCodeModeLongTasks ?? [])];
-      delete globalThis.__easymdeCodeModeLongTasks;
-      return durations;
+      delete globalThis.__easymdeCodeModeLongTaskProbe;
+      const stoppedAt = performance.now();
+      const trace = globalThis.__easymdeWechatCopyTrace;
+      const current = trace?.startedAt >= probe.startedAt ? trace : null;
+      return {
+        ...probe,
+        stoppedAt,
+        armedAt: current?.startedAt,
+        clickAt: current?.clicks[0]?.at,
+        writeAt: current?.writes[current.startedWriteCount]?.at,
+        pendingAt: current?.pendingFrameAt
+      };
     });
     const copyMode = async ({
       article,
@@ -146,21 +158,33 @@ export async function runThemeProjectionScenario3({ baseURL, context, login, pag
       expect(state.state.codeTheme, label + ' code state').toBe(codeTheme.id);
       await beginCopyLongTaskProbe();
       let payload;
+      let observation;
       let longTasks;
       try {
-        payload = await copyNativePayload(page, button);
-      } finally {
-        longTasks = await stopCopyLongTaskProbe();
+        try {
+          payload = await copyNativePayload(page, button);
+        } finally {
+          observation = await stopCopyLongTaskProbe();
+        }
+        longTasks = observation.tasks.map(([, duration]) => duration);
+        if (!payload) throw new Error('wechat-code-mode-matrix-payload-unavailable');
+        expect(payload.metrics.clickToWriteMs, label + ' click-to-write').toBeLessThanOrEqual(50);
+        expect(Number.isFinite(payload.metrics.clickToPendingFrameMs), label + ' pending metric')
+          .toBe(true);
+        expect(payload.metrics.clickToPendingFrameMs, label + ' click-to-pending')
+          .toBeLessThanOrEqual(100);
+        expect(payload.metrics.writeCount, label + ' write count').toBe(1);
+        expect(payload.metrics.writeActivation, label + ' activation').toBe(true);
+        expect(longTasks, label + ' long tasks').toEqual([]);
+      } catch (error) {
+        if (observation) {
+          await testInfo.attach('wechat-copy-long-task-window.json', {
+            body: JSON.stringify(summarizeCopyLongTaskWindow(observation)),
+            contentType: 'application/json'
+          });
+        }
+        throw error;
       }
-      if (!payload) throw new Error('wechat-code-mode-matrix-payload-unavailable');
-      expect(payload.metrics.clickToWriteMs, label + ' click-to-write').toBeLessThanOrEqual(50);
-      expect(Number.isFinite(payload.metrics.clickToPendingFrameMs), label + ' pending metric')
-        .toBe(true);
-      expect(payload.metrics.clickToPendingFrameMs, label + ' click-to-pending')
-        .toBeLessThanOrEqual(100);
-      expect(payload.metrics.writeCount, label + ' write count').toBe(1);
-      expect(payload.metrics.writeActivation, label + ' activation').toBe(true);
-      expect(longTasks, label + ' long tasks').toEqual([]);
       assertCodeText(payload, label);
       const isolated = await readNativeCodeSurfaceEvidence(page, payload.html, { widths });
       expect(isolated.payload, label + ' destinations').toHaveLength(2);

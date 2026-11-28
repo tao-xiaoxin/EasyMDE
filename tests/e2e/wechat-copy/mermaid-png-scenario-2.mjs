@@ -18,7 +18,7 @@ import { copyNativePayload } from "./copy-driver.mjs";
 import { installClipboardInstrumentation } from "./clipboard-instrumentation.mjs";
 import { installPngWorkerLifecycleProbe } from "./page-diagnostics.mjs";
 import { installWechatConsoleDiagnostics } from "./page-diagnostics.mjs";
-import { multipartFileBytes } from "./native-payload-export.mjs";
+import { installControlledPngUploadRoute } from "./editor-session.mjs";
 import { pngWorkerResourcePattern } from "./environment.mjs";
 import { readDecodedPngEvidence } from "./mermaid-geometry.mjs";
 import { readGanttSourceOwnerEvidence } from "./mermaid-geometry.mjs";
@@ -60,36 +60,8 @@ export async function runMermaidPngScenario2({ baseURL, context, login, page, te
 
     await openEasyMdeNewPost(page);
     await assertPngConversionEnabled(page);
-    const imageUploadBootstrap = await page.evaluate(() => ({
-      endpoint: window.EasyMDEEditorRootBootstrap.imageUpload.endpoint,
-      owner: window.EasyMDEEditorRootBootstrap.imageUpload.uploadOwner
-    }));
-    if (!imageUploadBootstrap.endpoint || !imageUploadBootstrap.owner) {
-      throw new Error('wechat-full-example-png-upload-bootstrap-unavailable');
-    }
-    const imageUploadPath = new URL(imageUploadBootstrap.endpoint, page.url()).pathname;
-    const uploadedPngs = [];
-    const uploadedDigests = [];
-    let uploadResponseIndex = 0;
-    const imageUploadMatcher = (url) => new URL(url).pathname === imageUploadPath;
-    page.on('request', (request) => {
-      if (new URL(request.url()).pathname !== imageUploadPath) return;
-      const bytes = multipartFileBytes(request);
-      uploadedPngs.push(bytes.toString('base64'));
-      uploadedDigests.push(createHash('sha256').update(bytes).digest('hex'));
-    });
-    await page.route(imageUploadMatcher, async (route) => {
-      const index = uploadResponseIndex++;
-      const url = `https://images.example.test/e2e/full-example-png-${index}.png`;
-      const response = 'image-hosting' === imageUploadBootstrap.owner
-        ? { alt: '', backup: { status: 'disabled' }, title: '', url }
-        : { alt: '', filename: `full-example-png-${index}.png`, id: 15_000 + index, title: '', url };
-      await route.fulfill({
-        body: JSON.stringify(response),
-        contentType: 'application/json',
-        status: 200
-      });
-    });
+    const upload = await installControlledPngUploadRoute(page);
+    const uploadedPngs = upload.pngs;
 
     const fullMarkdown = fullCapabilityMarkdown;
     await fillMarkdownAndWaitForPreview(page, fullMarkdown, 'Markdown 全量能力测试文档');
@@ -468,7 +440,6 @@ export async function runMermaidPngScenario2({ baseURL, context, login, page, te
     });
     const firstImmersivePayload = await copyNativePayload(page, immersiveButton);
     const firstImmersivePngs = uploadedPngs.slice(ordinaryUploadCount);
-    const firstImmersiveDigests = uploadedDigests.slice(ordinaryUploadCount);
     expect(firstImmersivePngs.length).toBe(candidateOrder.length);
     const firstImmersivePlacements = await readPayloadPngPlacements(
       page,
@@ -477,11 +448,11 @@ export async function runMermaidPngScenario2({ baseURL, context, login, page, te
     );
     const secondImmersivePayload = await copyNativePayload(page, immersiveButton);
     const secondImmersivePngs = uploadedPngs.slice(ordinaryUploadCount + firstImmersivePngs.length);
-    const secondImmersiveDigests = uploadedDigests.slice(
-      ordinaryUploadCount + firstImmersivePngs.length
-    );
     expect(secondImmersivePngs.length).toBe(firstImmersivePngs.length);
-    expect(secondImmersiveDigests).toEqual(firstImmersiveDigests);
+    const pngDigests = (pngs) => pngs.map(
+      (png) => createHash('sha256').update(Buffer.from(png, 'base64')).digest('hex')
+    );
+    expect(pngDigests(secondImmersivePngs)).toEqual(pngDigests(firstImmersivePngs));
     const secondImmersivePlacements = await readPayloadPngPlacements(
       page,
       secondImmersivePayload.html,
@@ -680,5 +651,5 @@ export async function runMermaidPngScenario2({ baseURL, context, login, page, te
       successStatus: false
     });
     expect(digestClipboard(await readSystemClipboardPayload(page))).toEqual(isolatedBaselineClipboard);
-    await page.unroute(imageUploadMatcher);
+    await upload.dispose();
 }

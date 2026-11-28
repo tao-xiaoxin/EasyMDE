@@ -319,34 +319,9 @@ export async function readPayloadPngPlacements(
   page,
   html,
   width = 677,
-  { ownerPaddingInline = 0, recordedPngs = null } = {}
+  { ownerPaddingInline = 0 } = {}
 ) {
-  const recordedPngMatcher = recordedPngs
-    ? (url) => /\/e2e\/source-png-\d+\.png$/u.test(new URL(url).pathname)
-    : null;
-  if (recordedPngMatcher) {
-    await page.route(recordedPngMatcher, async (route) => {
-      const match = /\/e2e\/source-png-(\d+)\.png$/u.exec(new URL(route.request().url()).pathname);
-      if (!match) throw new Error('wechat-png-placement-recorded-url-invalid');
-      const index = Number(match[1]);
-      const encoded = recordedPngs[index];
-      if ('string' !== typeof encoded || !encoded) {
-        throw new Error(`wechat-png-placement-recorded-byte-unavailable:${index}`);
-      }
-      await route.fulfill({
-        body: Buffer.from(encoded, 'base64'),
-        contentType: 'image/png',
-        status: 200
-      });
-    });
-  }
-  try {
-    return await page.evaluate(async ({
-      hostWidth,
-      ownerPaddingInline,
-      sourceHtml,
-      waitForRecordedPngs
-    }) => {
+  return page.evaluate(async ({ hostWidth, ownerPaddingInline, sourceHtml }) => {
     const parsed = new DOMParser().parseFromString(sourceHtml, 'text/html');
     const root = parsed.body.firstElementChild;
     if (!(root instanceof HTMLElement)) throw new Error('wechat-png-placement-root-unavailable');
@@ -367,17 +342,12 @@ export async function readPayloadPngPlacements(
       const pngImages = images.filter((image) => /(?:^|-)png-(\d+)\.png$/u.test(
         image.getAttribute('src') ?? ''
       ));
-      if (waitForRecordedPngs) {
-        await Promise.all(pngImages.map(async (image) => {
-          if ('function' !== typeof image.decode) {
-            throw new Error('wechat-png-placement-image-decode-unavailable');
-          }
-          await image.decode();
-          if (!image.complete || image.naturalWidth <= 0 || image.naturalHeight <= 0) {
-            throw new Error('wechat-png-placement-image-decode-invalid');
-          }
-        }));
-      }
+      await Promise.all(pngImages.map(async (image) => {
+        await image.decode();
+        if (!image.complete || image.naturalWidth <= 0 || image.naturalHeight <= 0) {
+          throw new Error('wechat-png-placement-image-decode-invalid');
+        }
+      }));
       return images
         .map((image) => {
           const source = image.getAttribute('src') ?? '';
@@ -476,6 +446,8 @@ export async function readPayloadPngPlacements(
             imageStartLeft: startRect.left - owner.left,
             imageStartRight: startRect.right - owner.left,
             left: rect.left - owner.left,
+            naturalHeight: image.naturalHeight,
+            naturalWidth: image.naturalWidth,
             ownerBackgroundColor: getComputedStyle(ownerElement).backgroundColor,
             ownerBackgroundImage: getComputedStyle(ownerElement).backgroundImage,
             ownerBorderRadius: getComputedStyle(ownerElement).borderRadius,
@@ -546,13 +518,5 @@ export async function readPayloadPngPlacements(
     } finally {
       host.remove();
     }
-    }, {
-      hostWidth: width,
-      ownerPaddingInline,
-      sourceHtml: html,
-      waitForRecordedPngs: Boolean(recordedPngs)
-    });
-  } finally {
-    if (recordedPngMatcher) await page.unroute(recordedPngMatcher);
-  }
+  }, { hostWidth: width, ownerPaddingInline, sourceHtml: html });
 }

@@ -685,7 +685,11 @@ original Safe Preview root must never be marked and hidden raw context markers
 must remain temporary and absent from the payload.
 PNG scale coverage must compare natural pixel dimensions with displayed CSS
 dimensions at DPR 1 and 2 across ordinary and immersive Copy; responsive rules
-must not overwrite the captured display geometry.
+must not overwrite the captured display geometry. The controlled upload fixture
+serves each URL from the corresponding captured PNG bytes. Placement checks
+wait for browser decode before measuring geometry. For intrinsic Mermaid, verify
+the captured CSS width and auto-height derived from the exact DPR-quantized PNG
+aspect ratio separately.
 The canonical Mermaid matrix renders the full-capability fixture at 255, 335,
 and 677 CSS-pixel viewports. It requires a 1200px Gantt logical viewBox, zero
 intersecting date labels, stable authored task/date/milestone geometry,
@@ -754,7 +758,10 @@ Each activation requires a finite pending measurement, the existing activation
 and pending budgets, one native write, no Copy-window Long Task, stable Source
 and Preview, exact token/frame/text projection at 335 and 677 CSS pixels, and
 an ordinary live long line that reaches both horizontal ends through wheel input
-without moving the page.
+without moving the page. On Copy or timing failure, the matrix also attaches
+relative phase intervals from the existing Clipboard probe and any observed
+Long Task overlaps. Phase overlap indicates timing only. The attachment
+contains no Clipboard payload or browser trace.
 These portable-payload projections do not prove WeChat importer or reader
 fidelity. Record actual WeChat desktop/phone checks separately, including loaded
 images and the themes and editor modes actually exercised. Keep any opt-in

@@ -12,7 +12,7 @@ import { beginCopy } from "./copy-driver.mjs";
 import { copyTrace } from "./copy-driver.mjs";
 import { dismissEditorStatus } from "./copy-driver.mjs";
 import { installWechatConsoleDiagnostics } from "./page-diagnostics.mjs";
-import { multipartFileDigest } from "./native-payload-export.mjs";
+import { installControlledPngUploadRoute } from "./editor-session.mjs";
 import { readPngMeasurements } from "./png-measurement-probe.mjs";
 import { readZeroWriteProbe } from "./page-diagnostics.mjs";
 import { setupZeroWriteProbe } from "./page-diagnostics.mjs";
@@ -68,49 +68,9 @@ export async function runCopyModeScenario6({ baseURL, context, login, page, test
     await openEasyMdeNewPost(page);
     await assertPngConversionEnabled(page);
 
-    const imageUploadBootstrap = await page.evaluate(() => ({
-      endpoint: window.EasyMDEEditorRootBootstrap.imageUpload.endpoint,
-      owner: window.EasyMDEEditorRootBootstrap.imageUpload.uploadOwner
-    }));
-    if (!imageUploadBootstrap.endpoint || !imageUploadBootstrap.owner) {
-      throw new Error('wechat-png-image-upload-bootstrap-unavailable');
-    }
-    expect(['image-hosting', 'media']).toContain(imageUploadBootstrap.owner);
-    const imageUploadPath = new URL(
-      imageUploadBootstrap.endpoint,
-      page.url()
-    ).pathname;
-    const uploadRequests = [];
-    const uploadDigests = [];
-    const imageUploadMatcher = (url) => new URL(url).pathname === imageUploadPath;
-    page.on('request', (request) => {
-      if (new URL(request.url()).pathname === imageUploadPath) {
-        uploadRequests.push({ method: request.method() });
-        uploadDigests.push(multipartFileDigest(request));
-      }
-    });
-    await page.route(imageUploadMatcher, async (route) => {
-      const index = uploadRequests.length;
-      const response = imageUploadBootstrap.owner === 'image-hosting'
-        ? {
-            alt: '',
-            backup: { status: 'disabled' },
-            title: '',
-            url: `https://images.example.test/e2e/wechat-png-${index}.png`
-          }
-        : {
-            alt: '',
-            filename: `wechat-png-${index}.png`,
-            id: 9000 + index,
-            title: '',
-            url: `https://images.example.test/e2e/wechat-png-${index}.png`
-          };
-      await route.fulfill({
-        body: JSON.stringify(response),
-        contentType: 'application/json',
-        status: 200
-      });
-    });
+    const upload = await installControlledPngUploadRoute(page);
+    const uploadRequests = upload.uploads;
+    const uploadedPngs = upload.pngs;
 
     await fillMarkdownAndWaitForPreview(
       page,
@@ -211,7 +171,7 @@ export async function runCopyModeScenario6({ baseURL, context, login, page, test
       hasTable: true
     });
     expect(uploadRequests).toHaveLength(2);
-    expect(uploadDigests).toHaveLength(2);
+    expect(uploadedPngs).toHaveLength(2);
     await expect(page.locator('.easymde-wechat-preview-measurement')).toHaveCount(0);
     const firstMeasurements = await readPngMeasurements(page);
     expect(firstMeasurements.length).toBeGreaterThan(0);
@@ -272,9 +232,9 @@ export async function runCopyModeScenario6({ baseURL, context, login, page, test
       imageCount: 2
     });
     expect(uploadRequests).toHaveLength(4);
-    expect(uploadDigests).toHaveLength(4);
-    expect(uploadDigests.slice(2).some(
-      (digest, index) => digest !== uploadDigests[index]
+    expect(uploadedPngs).toHaveLength(4);
+    expect(uploadedPngs.slice(2).some(
+      (png, index) => png !== uploadedPngs[index]
     )).toBe(true);
     const updatedZeroWrite = await readZeroWriteProbe(page);
     expect(updatedZeroWrite).toMatchObject({
@@ -425,5 +385,5 @@ export async function runCopyModeScenario6({ baseURL, context, login, page, test
     await page.evaluate(() => {
       window.sessionStorage.removeItem('easymde-e2e-hidden-png-source');
     });
-    await page.unroute(imageUploadMatcher);
+    await upload.dispose();
 }

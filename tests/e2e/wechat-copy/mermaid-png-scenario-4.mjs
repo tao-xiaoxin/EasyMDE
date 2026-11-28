@@ -205,9 +205,7 @@ export async function runMermaidPngScenario4({ baseURL, context, login, page, te
           const payload = await copyNativePayload(page, button);
           const uploadedPngs = uploadRoute.pngs.slice(uploadStart);
           expect(uploadedPngs.length).toBe(candidateOrder.length);
-          const placements = await readPayloadPngPlacements(page, payload.html, width, {
-            recordedPngs: uploadRoute.pngs
-          });
+          const placements = await readPayloadPngPlacements(page, payload.html, width);
           expect(placements).toHaveLength(candidateOrder.length);
           expect(placements.map(({ uploadIndex }) => uploadIndex)).toEqual(
             candidateOrder.map((_, index) => uploadStart + index)
@@ -273,7 +271,7 @@ export async function runMermaidPngScenario4({ baseURL, context, login, page, te
                 page,
                 payload.html,
                 destinationWidth,
-                { ownerPaddingInline, recordedPngs: uploadRoute.pngs }
+                { ownerPaddingInline }
               );
               expect(destinationPlacements).toHaveLength(candidateOrder.length);
               const destinationEvidence = [];
@@ -382,7 +380,7 @@ export async function runMermaidPngScenario4({ baseURL, context, login, page, te
       }
     } finally {
       await cdp.send('Emulation.clearDeviceMetricsOverride');
-      if (uploadRoute) await page.unroute(uploadRoute.matcher);
+      if (uploadRoute) await uploadRoute.dispose();
       await page.unroute(fullCapabilityImageSource);
     }
     expect([...wideResponsiveRolesByDpr.keys()].sort()).toEqual(dprsToRun.slice().sort());

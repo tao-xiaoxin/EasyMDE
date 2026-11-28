@@ -109,12 +109,12 @@ export async function runThemeProjectionScenario3({ baseURL, context, login, pag
     const beginCopyLongTaskProbe = () => page.evaluate(() => {
       globalThis.__easymdeCodeModeLongTaskObserver?.disconnect();
       globalThis.__easymdeCodeModeLongTasks = [];
-      if (!('PerformanceObserver' in globalThis)) {
+      if (!globalThis.PerformanceObserver?.supportedEntryTypes.includes('longtask')) {
         throw new Error('wechat-code-mode-matrix-longtask-observer-unavailable');
       }
       const observer = new PerformanceObserver((list) => {
         list.getEntries().forEach((entry) => {
-          globalThis.__easymdeCodeModeLongTasks.push(entry.duration);
+          globalThis.__easymdeCodeModeLongTasks.push({ start: entry.startTime, duration: entry.duration });
         });
       });
       observer.observe({ type: 'longtask', buffered: false });
@@ -124,13 +124,23 @@ export async function runThemeProjectionScenario3({ baseURL, context, login, pag
       await new Promise((resolve) => requestAnimationFrame(() => resolve()));
       const observer = globalThis.__easymdeCodeModeLongTaskObserver;
       observer?.takeRecords().forEach((entry) => {
-        globalThis.__easymdeCodeModeLongTasks.push(entry.duration);
+        globalThis.__easymdeCodeModeLongTasks.push({ start: entry.startTime, duration: entry.duration });
       });
       observer?.disconnect();
       delete globalThis.__easymdeCodeModeLongTaskObserver;
-      const durations = [...(globalThis.__easymdeCodeModeLongTasks ?? [])];
+      const tasks = globalThis.__easymdeCodeModeLongTasks;
       delete globalThis.__easymdeCodeModeLongTasks;
-      return durations;
+      const trace = globalThis.__easymdeWechatCopyTrace;
+      const clickAt = trace?.clicks[0]?.at;
+      const successAt = trace?.successAt;
+      if (!tasks || !Number.isFinite(clickAt) || !Number.isFinite(successAt) || successAt < clickAt) {
+        return null;
+      }
+      // The driver also focuses the control, reads back the ClipboardItem,
+      // and dismisses the alert. Charge only tasks overlapping Copy through
+      // the success UI, keeping the full duration of every overlapping task.
+      return tasks.filter(({ start, duration }) => start < successAt && start + duration > clickAt)
+        .map(({ duration }) => duration);
     });
     const copyMode = async ({
       article,

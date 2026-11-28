@@ -1120,11 +1120,24 @@ test.describe('EasyMDE editor workflows', () => {
       .fill(customCss);
     await expect(customCssDialog.locator('.easymde-immersive-custom-css-preview p').first())
       .toHaveCSS('color', 'rgb(1, 2, 3)');
+    const editorUrl = new URL(page.url());
+    const customCssUrl = new URL(await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.wordpress.customCssUrl
+    ), editorUrl);
+    // Core can append _locale. A rest_route override must never match the save.
+    const routeParams = new Set(['rest_route', ...customCssUrl.searchParams.keys()]);
     const customCssResponse = page.waitForResponse((response) => {
       const url = new URL(response.url());
       return response.request().method() === 'POST'
-        && url.origin === new URL(page.url()).origin
-        && url.pathname === '/wp-json/easymde/v1/custom-css';
+        && url.origin === editorUrl.origin
+        && url.origin === customCssUrl.origin
+        && url.pathname === customCssUrl.pathname
+        && [...routeParams].every((key) => {
+          const expected = customCssUrl.searchParams.getAll(key);
+          const actual = url.searchParams.getAll(key);
+          return actual.length === expected.length
+            && expected.every((value, index) => value === actual[index]);
+        });
     });
     await customCssDialog
       .getByRole('button', {

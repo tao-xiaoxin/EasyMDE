@@ -15,6 +15,7 @@ export async function installClipboardInstrumentation(page) {
       statusObserverInstalled: false,
       statusEventCountAtStart: 0,
       statusEvents: [],
+      successAt: null,
       startedWriteCount: 0,
       writes: []
     };
@@ -156,6 +157,7 @@ export async function installClipboardInstrumentation(page) {
       trace.release = null;
       trace.reject = null;
       trace.statusEventCountAtStart = trace.statusEvents.length;
+      trace.successAt = null;
       lastStatusCode = '';
       trace.startedAt = performance.now();
       trace.startedWriteCount = trace.writes.length;
@@ -263,6 +265,7 @@ export async function installClipboardInstrumentation(page) {
       if (eventCode === lastStatusCode) return;
       lastStatusCode = eventCode;
       trace.statusEvents.push(code);
+      if (code === 'wechat-success') trace.successAt = performance.now();
     };
     const installStatusObserver = () => {
       if (trace.statusObserverInstalled) return true;

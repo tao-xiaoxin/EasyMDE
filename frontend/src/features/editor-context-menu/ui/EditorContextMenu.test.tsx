@@ -1,4 +1,4 @@
-import { createElement } from '@wordpress/element';
+import { createElement, useState } from '@wordpress/element';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -471,6 +471,53 @@ describe('EditorContextMenu', () => {
 
     expect(onMenuPointerDown).toHaveBeenCalledOnce();
     expect(screen.getByRole('menu', { name: 'Insert' })).toBeTruthy();
+  });
+
+  it('keeps Escape available after pointer selection restore with no enabled submenu items', async () => {
+    await withManualRafAndExternalFocus(({ external }) => {
+      const onDismiss = vi.fn();
+      function Harness() {
+        const [open, setOpen] = useState(true);
+        return (
+          <EditorContextMenu
+            anchor={{ x: 12, y: 18 }}
+            direction="ltr"
+            model={{ items: [{
+              children: [{ disabled: true, id: 'image', kind: 'item', label: 'Image' }],
+              id: 'insert',
+              kind: 'submenu',
+              label: 'Insert'
+            }] }}
+            onAction={vi.fn()}
+            onDismiss={(options) => {
+              onDismiss(options);
+              setOpen(false);
+            }}
+            onMenuPointerDown={() => external.focus()}
+            open={open}
+          />
+        );
+      }
+      render(<Harness />);
+
+      const menuOwner = screen.getByRole('menu').closest('[data-easymde-context-menu]');
+      const insert = screen.getByRole('menuitem', { name: 'Insert' });
+      fireEvent.mouseEnter(insert);
+      fireEvent.pointerDown(insert, { button: 0 });
+      fireEvent.click(insert);
+
+      expect(screen.getByRole('menu', { name: 'Insert' })).toBeTruthy();
+      const activeElement = document.activeElement;
+      if (!(activeElement instanceof HTMLElement)) throw new Error('context-menu-focus-missing');
+      expect(menuOwner?.contains(activeElement)).toBe(true);
+      fireEvent.keyDown(activeElement, { key: 'Escape' });
+      expect(screen.queryByRole('menu', { name: 'Insert' })).toBeNull();
+      expect(document.activeElement).toBe(insert);
+      expect(onDismiss).not.toHaveBeenCalled();
+      fireEvent.keyDown(insert, { key: 'Escape' });
+      expect(onDismiss).toHaveBeenCalledExactlyOnceWith({ restoreFocus: true });
+      expect(screen.queryByRole('menu')).toBeNull();
+    });
   });
 
   it('renders semantic menus, exposes disabled items, and opens submenus by keyboard', async () => {
@@ -1810,6 +1857,7 @@ describe('EditorContextMenu', () => {
   });
 
   it('preserves focus inside the menu container without focusing the new child when hovering a sibling submenu while focus is in an open submenu', async () => {
+    const user = userEvent.setup();
     const onDismiss = vi.fn();
     render(
       <EditorContextMenu
@@ -1822,9 +1870,8 @@ describe('EditorContextMenu', () => {
       />
     );
 
-    const viewport = document.body.querySelector<HTMLElement>('[data-easymde-context-menu-viewport="true"]');
     const rootContainer = document.body.querySelector<HTMLElement>('[data-easymde-context-menu="true"]');
-    if (!viewport || !rootContainer) throw new Error('context-menu-container-missing');
+    if (!rootContainer) throw new Error('context-menu-container-missing');
 
     const insert = screen.getByRole('menuitem', { name: 'Insert' });
     const format = screen.getByRole('menuitem', { name: 'Format' });
@@ -1837,23 +1884,21 @@ describe('EditorContextMenu', () => {
     fireEvent.mouseEnter(format);
     const bold = await screen.findByRole('menuitem', { name: 'Bold' });
     expect(screen.queryByRole('menuitem', { name: 'Table' })).toBeNull();
-    expect(viewport.contains(document.activeElement)).toBe(true);
     expect(document.activeElement).toBe(rootContainer);
-    expect(document.activeElement).not.toBe(document.body);
-    expect(document.activeElement).not.toBe(bold);
     expect(bold.classList.contains('is-hovered')).toBe(false);
     expect(bold.tabIndex).toBe(-1);
 
-    fireEvent.keyDown(rootContainer, { key: 'Escape' });
+    await user.keyboard('{Escape}');
     expect(screen.queryByRole('menuitem', { name: 'Bold' })).toBeNull();
     expect(document.activeElement).toBe(format);
     expect(onDismiss).not.toHaveBeenCalled();
 
-    fireEvent.keyDown(format, { key: 'Escape' });
+    await user.keyboard('{Escape}');
     expect(onDismiss).toHaveBeenCalledExactlyOnceWith({ restoreFocus: true });
   });
 
   it('preserves focus inside the menu container when hovering a non-submenu root sibling while focus is in an open submenu', async () => {
+    const user = userEvent.setup();
     const onDismiss = vi.fn();
     render(
       <EditorContextMenu
@@ -1866,9 +1911,8 @@ describe('EditorContextMenu', () => {
       />
     );
 
-    const viewport = document.body.querySelector<HTMLElement>('[data-easymde-context-menu-viewport="true"]');
     const rootContainer = document.body.querySelector<HTMLElement>('[data-easymde-context-menu="true"]');
-    if (!viewport || !rootContainer) throw new Error('context-menu-container-missing');
+    if (!rootContainer) throw new Error('context-menu-container-missing');
 
     const copy = screen.getByRole('menuitem', { name: 'Copy' });
     const insert = screen.getByRole('menuitem', { name: 'Insert' });
@@ -1880,13 +1924,10 @@ describe('EditorContextMenu', () => {
 
     fireEvent.mouseEnter(copy);
     await waitFor(() => expect(screen.queryByRole('menuitem', { name: 'Table' })).toBeNull());
-    expect(viewport.contains(document.activeElement)).toBe(true);
     expect(document.activeElement).toBe(rootContainer);
-    expect(document.activeElement).not.toBe(document.body);
-    expect(document.activeElement).not.toBe(copy);
     expect(copy.classList.contains('is-hovered')).toBe(true);
 
-    fireEvent.keyDown(rootContainer, { key: 'Escape' });
+    await user.keyboard('{Escape}');
     expect(onDismiss).toHaveBeenCalledExactlyOnceWith({ restoreFocus: true });
   });
 

@@ -1042,6 +1042,18 @@ Normative policy:
   article reader pages, WeChat mobile reader export columns, and Settings
   Center surfaces.
 
+The constrained desktop submenu overlap (560 × 900) and docked outline clamp
+(800 × 900) have separately named regression tests. Neither is a writing
+acceptance viewport. On tablet, the routine suite taps view and outline controls,
+opens the Source menu with its keyboard shortcut, then taps its submenu and taps
+outside to dismiss. This does not certify an OS-native long-press callout.
+A separately named touch probe at the same `1133 × 744` landscape viewport
+drags both resize handles in one touch sequence: only the first handle resizes,
+and releasing the touches restores text selection and the cursor. A subsequent
+divider drag confirms that the resize owner is available again. The overlap
+probe verifies that Escape closes the submenu and then the root after pointer
+activation.
+
 Workflow checklist verified by the routine writing suite:
 
 1. Ordinary editor opens in fixed side-by-side split (Source left of Preview,
@@ -1082,7 +1094,14 @@ focused standalone specs under `tests/e2e/`:
     three-viewport split-plus-outline layout regressions;
   - `tests/e2e/ordinary/themes-and-appearance.spec.mjs`: registered article
     and code themes, Custom CSS scoping, ordinary settings popover, and the
-    integrated Crimson Focus native task-marker layout regressions;
+    integrated Crimson Focus native task-marker layout regressions. The
+    appearance workflow requires the latest Custom CSS preview to affect the
+    rendered sample, the protected Custom CSS library POST to succeed, and
+    native draft Save to persist the same library ID. The browser monitor
+    counts cancelled same-site JSON Custom CSS preview fetches separately from
+    Markdown preview cancellations; library and native Save failures, and HTTP
+    errors on the preview itself, still fail the gate. The appearance workflow
+    attaches only sanitized browser-monitor evidence when that monitor fails;
   - `tests/e2e/ordinary/publishing-revisions-and-export.spec.mjs`: immersive
     publishing, excerpts, autosaves, native revisions, local preview
     enhancements/WeChat export, and the integrated published full-capability
@@ -1119,6 +1138,27 @@ focused standalone specs under `tests/e2e/`:
   `tests/e2e/phycat-task-layout.spec.mjs`,
   `tests/e2e/theme-layout-audit.spec.mjs`, and
   `tests/e2e/immersive-unlock-latency.spec.mjs`.
+
+The authenticated appearance workflow, three ordinary/immersive writing
+viewport cases, two-contact resize, split-plus-outline, 800px outline clamp,
+and writing-viewport and 560px Source menu cases opt into
+`tests/e2e/helpers/privacy-safe-failure-test.mjs`. It disables automatic
+Playwright trace, video, screenshots, and failure page snapshots only for those
+cases. The fixture redacts recorded errors on setup and on subsequent writes
+to the test's error array, including late hook errors recorded after fixture
+teardown. Playwright uses those redacted errors for failure context attachments
+and worker results. The privacy annotation identifies those cases to
+`scripts/e2e-privacy-reporter.mjs`, which redacts step errors and replaces
+assertion, browser-operation, and custom step titles throughout nested title
+paths before other reporters receive them. List, JUnit, and
+HTML retain failure status, error counts, and static source locations, including
+for nested steps and `beforeEach`/`afterEach` failures. The fixture refuses to
+run a protected case when a reporter override drops or reorders the privacy
+reporter. To add a local HTML report from the repository root, run:
+
+```bash
+PLAYWRIGHT_HTML_OPEN=never npm run test:e2e -- --reporter=./scripts/e2e-privacy-reporter.mjs,list,html
+```
 
 With the cutover to the unified ProseMirror immersive visual editor
 ([ADR-002](decisions/ADR-002-visual-editor-and-esm-architecture.md)) and the

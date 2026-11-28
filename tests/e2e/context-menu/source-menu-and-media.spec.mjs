@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { privacySafeFailureDetails, privacySafeFailureTest } from '../helpers/privacy-safe-failure-test.mjs';
 import {
   anyMenuItem,
   assertOpenContextMenuGeometry,
@@ -842,7 +843,7 @@ test.describe('Editor context menu production surfaces', () => {
     }
   });
 
-  test('keeps Source context menu and submenus unclipped across editor writing viewports', async ({ page }, testInfo) => {
+  privacySafeFailureTest('keeps Source context menu and submenus unclipped across editor writing viewports', privacySafeFailureDetails, async ({ page }, testInfo) => {
     const browserMonitor = attachPrivacySafeBrowserMonitor(page, {
       baseURL: testInfo.project.use.baseURL
     });
@@ -884,6 +885,19 @@ test.describe('Editor context menu production surfaces', () => {
         await assertWritingViewportContextMenu(viewport, 'immersive-split');
       }
 
+      browserMonitor.assertClean();
+    } finally {
+      browserMonitor.dispose();
+    }
+  });
+
+  privacySafeFailureTest('positions an overlapped submenu in a constrained desktop window', privacySafeFailureDetails, async ({ page }, testInfo) => {
+    const browserMonitor = attachPrivacySafeBrowserMonitor(page, { baseURL: testInfo.project.use.baseURL });
+    try {
+      await loginAndOpenNewPost(page);
+      const { markdown, source } = await loadCanonicalFixture(page);
+      const strings = await enterImmersive(page);
+      await page.getByRole('button', { name: strings.split, exact: true }).last().click();
       // Exercise the overlapped submenu fallback in real Chromium using a narrow desktop
       // split-screen window (560x900 < root + 2*submenu + 2*gap + 2*gutter = 642px) so
       // neither side of the centered root menu fits a non-overlapped submenu with pointer outset.

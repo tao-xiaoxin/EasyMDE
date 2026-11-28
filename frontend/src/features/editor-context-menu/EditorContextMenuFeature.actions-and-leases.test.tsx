@@ -74,12 +74,11 @@ describe('EditorContextMenuFeature', () => {
   it.each(['full', 'windowed'] as const)(
     'preserves a backward %s visual selection while entering a submenu',
     async (visualMode) => {
-      const visual = document.createElement('div');
+      const { container } = render(<div data-visual-mode={visualMode}>alpha beta</div>);
+      const visual = container.firstElementChild;
+      if (!(visual instanceof HTMLElement)) throw new Error('visual-fixture-missing');
       visual.contentEditable = 'true';
-      visual.dataset.visualMode = visualMode;
-      visual.append('alpha beta');
       layoutSurface(visual);
-      document.body.append(visual);
       const text = selectBackward(visual);
 
       render(
@@ -105,7 +104,14 @@ describe('EditorContextMenuFeature', () => {
 
       fireEvent.pointerDown(visual, { button: 2 });
       fireEvent.contextMenu(visual, { clientX: 20, clientY: 30 });
-      await screen.findByRole('menu');
+      const menu = await screen.findByRole('menu');
+      const root = menu.closest<HTMLElement>('[data-easymde-context-menu]');
+      if (!root) throw new Error('context-menu-root-missing');
+      // jsdom collapses the document Selection on HTMLElement.focus(), unlike
+      // Chromium. Settle menu focus before testing our pointer restoration.
+      root.focus();
+      expect(root).toBe(document.activeElement);
+      expect(document.getSelection()?.isCollapsed).toBe(true);
 
       const insert = screen.getByRole('menuitem', { name: labels.insert });
       fireEvent.pointerDown(insert, { button: 0 });
@@ -117,11 +123,8 @@ describe('EditorContextMenuFeature', () => {
     }
   );
 
-  // The Escape-cancellation focus/selection contract is verified against the
-  // real browser in tests/e2e/editor-context-menu.spec.mjs. This jsdom fixture
-  // cannot focus a contentEditable created through the property (jsdom does
-  // not reflect it to the attribute), so a native-focus assertion here would be
-  // vacuous or timing-dependent rather than product behavior.
+  // Real menu focus and native Escape selection return are covered in
+  // tests/e2e/context-menu/visual-menu-and-thematic-breaks.spec.mjs.
 
   it('keeps providerless mixed text copyable while disabling relative insertion', async () => {
     const source = document.createElement('div');

@@ -1,3 +1,4 @@
+import { startColumnResize } from '../../../shared/dom/column-resize';
 import {
   Fragment,
   createElement,
@@ -251,7 +252,6 @@ export const ImmersiveOutline = memo(function ImmersiveOutline({
   const boundsRef = useRef(bounds);
   boundsRef.current = bounds;
   const effectiveWidth = boundedWidth(preferredWidth, bounds);
-  const outlineRef = useRef<HTMLElement>(null);
   const releaseDragRef = useRef<(() => void) | null>(null);
   const onSelectRef = useRef(onSelect);
   const latestItemsRef = useRef(items);
@@ -319,40 +319,18 @@ export const ImmersiveOutline = memo(function ImmersiveOutline({
   const startResize = (event: ReactPointerEvent<HTMLHRElement>) => {
     if ('mouse' === event.pointerType && 0 !== event.button) return;
     event.preventDefault();
-    releaseDragRef.current?.();
-    const documentRef = outlineRef.current?.ownerDocument;
-    if (!documentRef) throw new Error('immersive-outline-document-unavailable');
+    if (releaseDragRef.current) return;
     const resizer = event.currentTarget;
     const pointerId = event.pointerId;
     const startWidth = effectiveWidth;
     const startX = event.clientX;
-    const previousCursor = documentRef.body.style.cursor;
-    const previousSelection = documentRef.body.style.userSelect;
-    const onMove = (moveEvent: globalThis.PointerEvent) => {
-      if (moveEvent.pointerId !== pointerId) return;
-      const physicalDelta = moveEvent.clientX - startX;
+    releaseDragRef.current = startColumnResize(resizer, pointerId, (clientX) => {
+      const physicalDelta = clientX - startX;
       const logicalDelta = 'rtl' === direction ? -physicalDelta : physicalDelta;
       setPreferredWidth(boundedWidth(startWidth + logicalDelta, boundsRef.current));
-    };
-    const release = (releaseEvent?: globalThis.PointerEvent) => {
-      if (releaseEvent && releaseEvent.pointerId !== pointerId) return;
-      documentRef.removeEventListener('pointermove', onMove);
-      documentRef.removeEventListener('pointerup', release);
-      documentRef.removeEventListener('pointercancel', release);
-      if (resizer.hasPointerCapture?.(pointerId)) {
-        resizer.releasePointerCapture(pointerId);
-      }
-      documentRef.body.style.cursor = previousCursor;
-      documentRef.body.style.userSelect = previousSelection;
+    }, () => {
       releaseDragRef.current = null;
-    };
-    releaseDragRef.current = release;
-    documentRef.body.style.cursor = 'col-resize';
-    documentRef.body.style.userSelect = 'none';
-    resizer.setPointerCapture?.(pointerId);
-    documentRef.addEventListener('pointermove', onMove);
-    documentRef.addEventListener('pointerup', release);
-    documentRef.addEventListener('pointercancel', release);
+    });
   };
   const resizeWithKeyboard = (event: KeyboardEvent<HTMLHRElement>) => {
     const physicalStep =
@@ -375,7 +353,6 @@ export const ImmersiveOutline = memo(function ImmersiveOutline({
   return (
     <Fragment>
       <aside
-        ref={outlineRef}
         className="easymde-immersive-outline"
         aria-label={strings.outline}
         style={{ width: effectiveWidth }}

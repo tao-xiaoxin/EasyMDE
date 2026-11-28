@@ -603,6 +603,7 @@ test('attachPrivacySafeBrowserMonitor stays clean on allowed WordPress navigatio
   assert.deepEqual(monitor.snapshot(), {
     counts: {
       abortedAdminAjax: 1,
+      cancelledCustomCssPreview: 0,
       cancelledPreview: 1,
       consoleErrors: 0,
       consoleWarnings: 0,
@@ -719,6 +720,7 @@ test('attachPrivacySafeBrowserMonitor catches warnings, redacts console text, di
   ]);
   assert.deepEqual(monitor.counts, {
     abortedAdminAjax: 0,
+    cancelledCustomCssPreview: 0,
     cancelledPreview: 0,
     consoleErrors: 1,
     consoleWarnings: 1,
@@ -1717,6 +1719,54 @@ test('rest_route PHP key spoofing fails closed across URL classification, readon
   assert.equal(benignMonitor.counts.cancelledPreview, 1);
   assert.equal(benignMonitor.counts.requestFailures, 0);
   benignMonitor.dispose();
+});
+
+test('Custom CSS cancellation is limited to the exact same-site read-only preview POST', () => {
+  const route = `${BASE_URL}/wp-json/easymde/v1/custom-css/preview`;
+  const cancelled = 'net::ERR_ABORTED';
+  const request = (overrides) => stubRequest({
+    url: route, errorText: cancelled, postData: '{"css":"synthetic-css"}', ...overrides
+  });
+  for (const url of [route, `${BASE_URL}/?rest_route=/easymde/v1/custom-css/preview`]) {
+    const page = createStubPage();
+    const monitor = attachPrivacySafeBrowserMonitor(page, { baseURL: BASE_URL });
+    page.emit('requestfailed', request({ url }));
+    assert.equal(monitor.counts.cancelledCustomCssPreview, 1);
+    monitor.assertClean();
+    monitor.dispose();
+  }
+  const rejected = [
+    { url: `${BASE_URL}/wp-json/easymde/v1/custom-css` },
+    { url: `${BASE_URL}/wp-admin/post.php`, resourceType: 'document' },
+    { url: `${route}?rest_route=/easymde/v1/custom-css` },
+    { url: 'https://external.example/wp-json/easymde/v1/custom-css/preview' },
+    { method: 'GET' },
+    { resourceType: 'document' },
+    { postData: '{"css":"synthetic-css","rest_route":"/easymde/v1/custom-css"}' },
+    { postData: '{"css":false}' },
+    { errorText: 'net::ERR_CONNECTION_RESET' }
+  ];
+  for (const overrides of rejected) {
+    const page = createStubPage();
+    const monitor = attachPrivacySafeBrowserMonitor(page, { baseURL: BASE_URL });
+    page.emit('requestfailed', request(overrides));
+    assert.equal(monitor.counts.cancelledCustomCssPreview, 0);
+    assert.equal(monitor.counts.requestFailures, 1);
+    assert.throws(() => monitor.assertClean(), /request-failed/u);
+    monitor.dispose();
+  }
+  const siteUnknown = createStubPage();
+  const siteUnknownMonitor = attachPrivacySafeBrowserMonitor(siteUnknown);
+  siteUnknown.emit('requestfailed', request({}));
+  assert.equal(siteUnknownMonitor.counts.cancelledCustomCssPreview, 0);
+  assert.throws(() => siteUnknownMonitor.assertClean(), /request-failed/u);
+  siteUnknownMonitor.dispose();
+
+  const page = createStubPage();
+  const monitor = attachPrivacySafeBrowserMonitor(page, { baseURL: BASE_URL });
+  page.emit('response', { url: () => route, status: () => 500, request: () => request({}) });
+  assert.throws(() => monitor.assertClean(), /http-500:custom-css-preview-rest:fetch/u);
+  monitor.dispose();
 });
 
 test('preview REST POST body override and non-JSON shapes fail closed in classification and aborted request monitoring', () => {

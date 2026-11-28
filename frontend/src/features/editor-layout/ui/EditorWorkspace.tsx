@@ -1,3 +1,4 @@
+import { startColumnResize } from '../../../shared/dom/column-resize';
 import {
   Fragment,
   createElement,
@@ -112,41 +113,20 @@ export function EditorWorkspace({
   const startResize = (event: ReactPointerEvent<HTMLHRElement>) => {
     if ('mouse' === event.pointerType && 0 !== event.button) return;
     event.preventDefault();
-    releaseDragRef.current?.();
+    if (releaseDragRef.current) return;
     const divider = event.currentTarget;
-    const documentRef = divider.ownerDocument;
     const pointerId = event.pointerId;
     const startX = event.clientX;
     const startSplit = split;
     const width = workspaceRef.current?.offsetWidth ?? 0;
     if (width <= 0) throw new Error('immersive-split-workspace-width-unavailable');
-    const previousCursor = documentRef.body.style.cursor;
-    const previousSelection = documentRef.body.style.userSelect;
-    const onMove = (moveEvent: globalThis.PointerEvent) => {
-      if (moveEvent.pointerId !== pointerId) return;
-      const physicalDelta = ((moveEvent.clientX - startX) / width) * 100;
+    releaseDragRef.current = startColumnResize(divider, pointerId, (clientX) => {
+      const physicalDelta = ((clientX - startX) / width) * 100;
       const logicalDelta = 'rtl' === direction ? -physicalDelta : physicalDelta;
       setSplit(clampSplit(startSplit + logicalDelta));
-    };
-    const release = (releaseEvent?: globalThis.PointerEvent) => {
-      if (releaseEvent && releaseEvent.pointerId !== pointerId) return;
-      documentRef.removeEventListener('pointermove', onMove);
-      documentRef.removeEventListener('pointerup', release);
-      documentRef.removeEventListener('pointercancel', release);
-      if (divider.hasPointerCapture?.(pointerId)) {
-        divider.releasePointerCapture(pointerId);
-      }
-      documentRef.body.style.cursor = previousCursor;
-      documentRef.body.style.userSelect = previousSelection;
+    }, () => {
       releaseDragRef.current = null;
-    };
-    releaseDragRef.current = release;
-    documentRef.body.style.cursor = 'col-resize';
-    documentRef.body.style.userSelect = 'none';
-    divider.setPointerCapture?.(pointerId);
-    documentRef.addEventListener('pointermove', onMove);
-    documentRef.addEventListener('pointerup', release);
-    documentRef.addEventListener('pointercancel', release);
+    });
   };
 
   const resizeWithKeyboard = (event: KeyboardEvent<HTMLElement>) => {

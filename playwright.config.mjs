@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { loadEnvFile } from 'node:process';
 import { defineConfig, devices } from '@playwright/test';
+import { privacyReporterPath } from './scripts/e2e-privacy-reporter.mjs';
 import { E2E_TEST_MATCH } from './scripts/e2e-test-match.mjs';
 
 const localEnv = new URL('.env', import.meta.url);
@@ -53,14 +54,17 @@ export default defineConfig({
     timeout: 15_000
   },
   retries: 0,
-  reporter: process.env.EASYMDE_PLAYWRIGHT_JUNIT_FILE
-    ? [
-        ['junit', { outputFile: process.env.EASYMDE_PLAYWRIGHT_JUNIT_FILE }],
-        ['./scripts/e2e-shard-case-reporter.mjs', { outputFile: `${process.env.EASYMDE_PLAYWRIGHT_JUNIT_FILE}.cases.json` }]
-      ]
-    : process.env.CI
-      ? [['list'], ['junit', { outputFile: 'test-results/playwright-junit.xml' }]]
-      : [['list']],
+  reporter: [
+    [privacyReporterPath],
+    ...(process.env.EASYMDE_PLAYWRIGHT_JUNIT_FILE
+      ? [
+          ['junit', { outputFile: process.env.EASYMDE_PLAYWRIGHT_JUNIT_FILE }],
+          ['./scripts/e2e-shard-case-reporter.mjs', { outputFile: `${process.env.EASYMDE_PLAYWRIGHT_JUNIT_FILE}.cases.json` }]
+        ]
+      : process.env.CI
+        ? [['list'], ['junit', { outputFile: 'test-results/playwright-junit.xml' }]]
+        : [['list']])
+  ],
   use: {
     baseURL,
     trace: 'retain-on-failure',

@@ -1042,6 +1042,16 @@ Normative policy:
   article reader pages, WeChat mobile reader export columns, and Settings
   Center surfaces.
 
+The constrained desktop submenu overlap (560 × 900) and docked outline clamp
+(800 × 900) have separately named regression tests. Neither is a writing
+acceptance viewport. On tablet, the routine suite taps view and outline controls,
+opens the Source menu with its keyboard shortcut, then taps its submenu and taps
+outside to dismiss. This does not certify an OS-native long-press callout.
+The landscape case also drags both resize handles in one touch sequence: only
+the first handle resizes, and releasing the touches restores text selection and
+the cursor before another drag starts. The overlap probe verifies that Escape
+closes the submenu and then the root after pointer activation.
+
 Workflow checklist verified by the routine writing suite:
 
 1. Ordinary editor opens in fixed side-by-side split (Source left of Preview,

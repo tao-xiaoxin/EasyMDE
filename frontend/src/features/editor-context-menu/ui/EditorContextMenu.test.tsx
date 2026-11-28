@@ -473,6 +473,40 @@ describe('EditorContextMenu', () => {
     expect(screen.getByRole('menu', { name: 'Insert' })).toBeTruthy();
   });
 
+  it('keeps Escape available after pointer selection restore with no enabled submenu items', async () => {
+    await withManualRafAndExternalFocus(({ external }) => {
+      const onDismiss = vi.fn();
+      render(
+        <EditorContextMenu
+          anchor={{ x: 12, y: 18 }}
+          direction="ltr"
+          model={{ items: [{
+            children: [{ disabled: true, id: 'image', kind: 'item', label: 'Image' }],
+            id: 'insert',
+            kind: 'submenu',
+            label: 'Insert'
+          }] }}
+          onAction={vi.fn()}
+          onDismiss={onDismiss}
+          onMenuPointerDown={() => external.focus()}
+          open
+        />
+      );
+
+      const insert = screen.getByRole('menuitem', { name: 'Insert' });
+      fireEvent.mouseEnter(insert);
+      fireEvent.pointerDown(insert, { button: 0 });
+      fireEvent.click(insert);
+
+      expect(document.activeElement).not.toBe(external);
+      fireEvent.keyDown(document, { key: 'Escape' });
+      expect(screen.queryByRole('menu', { name: 'Insert' })).toBeNull();
+      expect(document.activeElement).toBe(insert);
+      fireEvent.keyDown(document, { key: 'Escape' });
+      expect(onDismiss).toHaveBeenCalledWith({ restoreFocus: true });
+    });
+  });
+
   it('renders semantic menus, exposes disabled items, and opens submenus by keyboard', async () => {
     const user = userEvent.setup();
     const onAction = vi.fn();

@@ -275,9 +275,10 @@ function MenuLayerComponent({
                 event.preventDefault();
               }}
               onPointerDown={(event) => {
-                onInteraction();
                 event.preventDefault();
                 onMenuPointerDown?.();
+                // Restoring a DOM selection can focus the contenteditable surface.
+                onInteraction();
               }}
               onMouseEnter={() => {
                 onHoverPath(currentPath);

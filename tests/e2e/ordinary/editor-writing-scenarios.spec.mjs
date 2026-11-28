@@ -3,7 +3,8 @@ import {
   assertOpenContextMenuGeometry,
   closeMenu,
   openRootSubmenu,
-  openSourceMenu
+  openSourceMenu,
+  rootItem
 } from '../helpers/context-menu-helpers.mjs';
 import {
   assertOrdinarySideBySideSplit,
@@ -28,18 +29,31 @@ test.use({
   video: 'off'
 });
 
-async function assertSourceContextMenuAndSubmenu(page, { expectedSource, phase }) {
+async function assertSourceContextMenuAndSubmenu(page, { expectedSource, phase, hasTouch }) {
   const sourceEditor = page.locator('.easymde-source-react .cm-content');
   const sourceField = page.locator('#easymde-source');
   await expect(sourceEditor).toBeVisible();
-  await sourceEditor.click();
-  await openSourceMenu(page, sourceEditor);
-  await openRootSubmenu(page, 'insert');
+  if (hasTouch) {
+    // The editor handles native contextmenu and keyboard requests; mobile OS
+    // selection callouts are not an editor-owned long-press gesture.
+    await sourceEditor.tap();
+    await openSourceMenu(page, sourceEditor);
+    await rootItem(page, 'insert').tap();
+  } else {
+    await sourceEditor.click();
+    await openSourceMenu(page, sourceEditor);
+    await openRootSubmenu(page, 'insert');
+  }
   await assertOpenContextMenuGeometry(page, {
     expectedOverlapped: false,
     phase
   });
-  await closeMenu(page, phase, { expectedSource });
+  if (hasTouch) {
+    await page.locator('.easymde-pane-preview').tap({ position: { x: 12, y: 12 } });
+    await expect(rootItem(page, 'insert')).toHaveCount(0);
+  } else {
+    await closeMenu(page, phase, { expectedSource });
+  }
   await expect(sourceField).toHaveValue(expectedSource);
 }
 
@@ -210,6 +224,7 @@ test.describe('EasyMDE routine editor writing scenarios', () => {
 
           await assertSourceContextMenuAndSubmenu(page, {
             expectedSource: initialMarkdown,
+            hasTouch: scenario.hasTouch,
             phase: `${scenario.name}-ordinary-split`
           });
 
@@ -232,7 +247,8 @@ test.describe('EasyMDE routine editor writing scenarios', () => {
             ).toBe(true);
           }
 
-          await page.locator('.easymde-toolbar-immersive-toggle').click();
+          const activate = (button) => scenario.hasTouch ? button.tap() : button.click();
+          await activate(page.locator('.easymde-toolbar-immersive-toggle'));
           const immersiveRoot = page.locator(
             '.easymde-editor[data-easymde-editor-owner="react"].is-immersive'
           );
@@ -241,17 +257,17 @@ test.describe('EasyMDE routine editor writing scenarios', () => {
             immersiveRoot.getByRole('region', { name: immersiveLabels.immersive })
           ).toBeVisible();
 
-          await immersiveRoot.getByRole('button', {
+          await activate(immersiveRoot.getByRole('button', {
             name: immersiveLabels.split,
             exact: true
-          }).click();
+          }));
           await expect(immersiveRoot).toHaveClass(/is-immersive-split/);
 
           const showOutlineButton = immersiveRoot.getByRole('button', {
             name: immersiveLabels.showOutline
           });
           if (!await immersiveRoot.locator('.easymde-immersive-outline').isVisible()) {
-            await showOutlineButton.click();
+            await activate(showOutlineButton);
           }
           await expect(immersiveRoot.locator('.easymde-immersive-outline')).toBeVisible();
 
@@ -307,15 +323,48 @@ test.describe('EasyMDE routine editor writing scenarios', () => {
           if (scenario.outlineOverlay) {
             expect(immersiveSplitGeometry.outlinePosition).toBe('absolute');
             expect(immersiveSplitGeometry.outlineResizerDisplay).toBe('none');
-            await immersiveRoot.getByRole('button', {
+            await activate(immersiveRoot.getByRole('button', {
               name: immersiveLabels.hideOutline
-            }).first().click();
+            }).first());
             await expect(immersiveRoot.locator('.easymde-immersive-outline')).toHaveCount(0);
           } else {
             expect(immersiveSplitGeometry.outlinePosition).not.toBe('absolute');
             expect(immersiveSplitGeometry.outlineResizerVisible).toBe(true);
           }
 
+          if (scenario.viewport === miniLandscape) {
+            const center = async (handle, id) => {
+              const box = await handle.boundingBox();
+              if (!box) throw new Error('immersive-touch-resize-handle-box-unavailable');
+              return { id, x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
+            };
+            const outlineHandle = immersiveRoot.locator('.easymde-immersive-outline-resizer');
+            const dividerHandle = immersiveRoot.locator('.easymde-immersive-pane-divider');
+            const outline = await center(outlineHandle, 1);
+            const divider = await center(dividerHandle, 2);
+            const outlineBefore = Number(await outlineHandle.getAttribute('aria-valuenow'));
+            const outlineMax = Number(await outlineHandle.getAttribute('aria-valuemax'));
+            const dividerBefore = await dividerHandle.getAttribute('aria-valuenow');
+            const bodyStyle = () => page.evaluate(() => [document.body.style.userSelect, document.body.style.cursor]);
+            const before = await bodyStyle();
+            const cdp = await page.context().newCDPSession(page);
+            try {
+              await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [outline] });
+              expect(await bodyStyle()).toEqual(['none', 'col-resize']);
+              await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [outline, divider] });
+              const outlineDelta = outlineMax - outlineBefore >= 24 ? 24 : -24;
+              await cdp.send('Input.dispatchTouchEvent', {
+                type: 'touchMove',
+                touchPoints: [{ ...outline, x: outline.x + outlineDelta }, { ...divider, x: divider.x + 64 }]
+              });
+              await expect(outlineHandle).toHaveAttribute('aria-valuenow', String(outlineBefore + outlineDelta));
+              await expect(dividerHandle).toHaveAttribute('aria-valuenow', dividerBefore);
+              await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+              expect(await bodyStyle()).toEqual(before);
+            } finally {
+              await cdp.detach();
+            }
+          }
           await assertImmersiveSplitDividerResize(page, immersiveRoot, {
             hasTouch: scenario.hasTouch,
             phase: `${scenario.name}-immersive-split-divider`
@@ -323,13 +372,14 @@ test.describe('EasyMDE routine editor writing scenarios', () => {
 
           await assertSourceContextMenuAndSubmenu(page, {
             expectedSource: initialMarkdown,
+            hasTouch: scenario.hasTouch,
             phase: `${scenario.name}-immersive-split`
           });
 
-          await immersiveRoot.getByRole('button', {
+          await activate(immersiveRoot.getByRole('button', {
             name: immersiveLabels.edit,
             exact: true
-          }).click();
+          }));
           await expect(immersiveRoot).toHaveClass(/is-immersive-source/);
           await expect(immersiveRoot.locator('.easymde-pane-preview')).toBeHidden();
           await expect(immersiveRoot.locator('.easymde-pane-source')).toBeVisible();
@@ -337,10 +387,10 @@ test.describe('EasyMDE routine editor writing scenarios', () => {
           await sourceEditor.fill(updatedMarkdown);
           await expect(sourceField).toHaveValue(updatedMarkdown);
 
-          await immersiveRoot.getByRole('button', {
+          await activate(immersiveRoot.getByRole('button', {
             name: immersiveLabels.preview,
             exact: true
-          }).click();
+          }));
           await expect(immersiveRoot).toHaveClass(/is-immersive-preview/);
           await expect(immersiveRoot.locator('.easymde-pane-source')).toBeHidden();
           await expect(immersiveRoot.locator('.easymde-pane-preview')).toBeVisible();
@@ -348,10 +398,10 @@ test.describe('EasyMDE routine editor writing scenarios', () => {
           await expect(previewSink).not.toHaveAttribute('data-easymde-preview-error', '1');
           await expect(previewSink).toContainText(secondParagraph);
 
-          await immersiveRoot.getByRole('button', {
+          await activate(immersiveRoot.getByRole('button', {
             name: immersiveLabels.exit,
             exact: true
-          }).click();
+          }));
           await expect(
             page.getByRole('region', { name: immersiveLabels.immersive })
           ).toHaveCount(0);

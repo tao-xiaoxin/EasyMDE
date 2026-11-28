@@ -2736,60 +2736,74 @@ test.describe('EasyMDE editor workflows', () => {
       }, originalDirs);
     }
 
-    // Verify docked Outline resizer bounds align with CSS clamp(160px, 24vw, 220px) at 800px.
-    await page.setViewportSize({ width: 800, height: 900 });
-    await expect(editor).toHaveClass(/is-immersive-split/);
-    if (!await editor.locator('.easymde-immersive-outline').isVisible()) {
-      await editor.getByRole('button', { name: labels.showOutline }).click();
-    }
-    const dockedOutlineResizer = editor.locator('.easymde-immersive-outline-resizer');
-    await expect(dockedOutlineResizer).toBeVisible();
-    const readOutlineResizeState = () => editor.evaluate((root) => {
-      const outline = root.querySelector('.easymde-immersive-outline');
-      const resizer = root.querySelector('.easymde-immersive-outline-resizer');
-      if (!(outline instanceof HTMLElement) || !(resizer instanceof HTMLElement)) {
-        throw new Error('docked-outline-resize-elements-unavailable');
-      }
-      return {
-        max: Number.parseInt(resizer.getAttribute('aria-valuemax') ?? '', 10),
-        min: Number.parseInt(resizer.getAttribute('aria-valuemin') ?? '', 10),
-        now: Number.parseInt(resizer.getAttribute('aria-valuenow') ?? '', 10),
-        renderedWidth: Math.round(outline.getBoundingClientRect().width)
-      };
-    });
-    await expect.poll(readOutlineResizeState).toEqual({
-      max: 192,
-      min: 160,
-      now: 192,
-      renderedWidth: 192
-    });
-    await dockedOutlineResizer.focus();
-    await page.keyboard.press('ArrowRight');
-    await expect.poll(readOutlineResizeState).toEqual({
-      max: 192,
-      min: 160,
-      now: 192,
-      renderedWidth: 192
-    });
-    await page.keyboard.press('ArrowLeft');
-    await expect.poll(readOutlineResizeState).toEqual({
-      max: 192,
-      min: 160,
-      now: 182,
-      renderedWidth: 182
-    });
-    await page.keyboard.press('Home');
-    await expect.poll(readOutlineResizeState).toEqual({
-      max: 192,
-      min: 160,
-      now: 192,
-      renderedWidth: 192
-    });
-
     await page.setViewportSize(desktop);
     await expect(editor).toHaveClass(/is-immersive-split/);
     assertOpenSplit(await geometry(), 'ltr', { overlay: false });
     browserMonitor.assertClean();
+    } finally {
+      browserMonitor.dispose();
+    }
+  });
+
+  test('clamps docked outline keyboard resizing to its CSS bounds', async ({ page }, testInfo) => {
+    const browserMonitor = attachPrivacySafeBrowserMonitor(page, { baseURL: testInfo.project.use.baseURL });
+    try {
+      await login(page, testInfo.easymdeUser);
+      await openEasyMdeNewPost(page);
+      const labels = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.strings.immersive);
+      const editor = page.locator('.easymde-editor[data-easymde-editor-owner="react"]');
+      await editor.locator('.easymde-toolbar-immersive-toggle').click();
+      await editor.getByRole('button', { name: labels.split, exact: true }).click();
+      // Verify docked Outline resizer bounds align with CSS clamp(160px, 24vw, 220px) at 800px.
+      await page.setViewportSize({ width: 800, height: 900 });
+      await expect(editor).toHaveClass(/is-immersive-split/);
+      if (!await editor.locator('.easymde-immersive-outline').isVisible()) {
+        await editor.getByRole('button', { name: labels.showOutline }).click();
+      }
+      const dockedOutlineResizer = editor.locator('.easymde-immersive-outline-resizer');
+      await expect(dockedOutlineResizer).toBeVisible();
+      const readOutlineResizeState = () => editor.evaluate((root) => {
+        const outline = root.querySelector('.easymde-immersive-outline');
+        const resizer = root.querySelector('.easymde-immersive-outline-resizer');
+        if (!(outline instanceof HTMLElement) || !(resizer instanceof HTMLElement)) {
+          throw new Error('docked-outline-resize-elements-unavailable');
+        }
+        return {
+          max: Number.parseInt(resizer.getAttribute('aria-valuemax') ?? '', 10),
+          min: Number.parseInt(resizer.getAttribute('aria-valuemin') ?? '', 10),
+          now: Number.parseInt(resizer.getAttribute('aria-valuenow') ?? '', 10),
+          renderedWidth: Math.round(outline.getBoundingClientRect().width)
+        };
+      });
+      await expect.poll(readOutlineResizeState).toEqual({
+        max: 192,
+        min: 160,
+        now: 192,
+        renderedWidth: 192
+      });
+      await dockedOutlineResizer.focus();
+      await page.keyboard.press('ArrowRight');
+      await expect.poll(readOutlineResizeState).toEqual({
+        max: 192,
+        min: 160,
+        now: 192,
+        renderedWidth: 192
+      });
+      await page.keyboard.press('ArrowLeft');
+      await expect.poll(readOutlineResizeState).toEqual({
+        max: 192,
+        min: 160,
+        now: 182,
+        renderedWidth: 182
+      });
+      await page.keyboard.press('Home');
+      await expect.poll(readOutlineResizeState).toEqual({
+        max: 192,
+        min: 160,
+        now: 192,
+        renderedWidth: 192
+      });
+      browserMonitor.assertClean();
     } finally {
       browserMonitor.dispose();
     }

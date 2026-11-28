@@ -182,6 +182,17 @@ export function inlineVerticalAlignValue(sourceStyle: CSSStyleDeclaration | unde
   return `${normalizeCssPixel(measuredValue)}px`;
 }
 
+// The margin box supplies the measured line allocation. The inner box starts
+// at its measured offset, whether it holds unclipped paint or a clip viewport.
+function inlineVerticalMargins(height: number, offset: number, innerHeight: number): string[] {
+  const top = normalizeCssPixel(offset);
+  const bottom = normalizeCssPixel(height - offset - innerHeight);
+  return [
+    ...(top === 0 ? [] : [`margin-top:${top}px`]),
+    ...(bottom === 0 ? [] : [`margin-bottom:${bottom}px`]),
+  ];
+}
+
 function replaceInlineMathVisual(
   completed: Extract<CompletedUpload, { mode: 'math-inline' }>,
   image: HTMLImageElement,
@@ -199,28 +210,18 @@ function replaceInlineMathVisual(
   const overflowY = inlineOverflowStyleValue(inlineLayout.overflowY, sourceStyle, 'overflow-y');
   const preservesSourceViewport = usesInlineOverflowViewport(overflowX, overflowY);
 
+  const verticalAlign = inlineVerticalAlignValue(sourceStyle, inlineLayout.baseline - inlineLayout.height);
+
   // Ordinary unclipped inline math replaces the source span directly with one
   // static inline-block image. Keeping positioned wrappers or block images
   // inside inline spans causes WeChat's ProseMirror editor to split nodes
   // while async image transfer holds stale positions.
   if (!preservesSourceViewport) {
-    const verticalAlign = inlineVerticalAlignValue(
-      sourceStyle,
-      inlineLayout.baseline - (inlineLayout.paintOffsetY + imageHeight),
-    );
     const flowDeclarations = inlineFlowDeclarations(
       sourceStyle,
       inlineLayout.paintOffsetX,
       inlineLayout.width - (inlineLayout.paintOffsetX + imageWidth),
     );
-    // Top and bottom align the image margin box to the line. Keep that box
-    // at the measured allocation height while the image paints beyond it.
-    const edgeAlignedMargins = ('top' === verticalAlign || 'bottom' === verticalAlign)
-      ? [
-          ['margin-top', normalizeCssPixel(inlineLayout.paintOffsetY)],
-          ['margin-bottom', normalizeCssPixel(inlineLayout.height - inlineLayout.paintOffsetY - imageHeight)],
-        ].filter(([, value]) => value !== 0).map(([property, value]) => `${property}:${value}px`)
-      : [];
     if (flowDeclarations.length) {
       replaceDeclarations(image, flowDeclarations);
     }
@@ -232,7 +233,7 @@ function replaceInlineMathVisual(
         `height:${imageHeight}px`,
         'max-width:none',
         `vertical-align:${verticalAlign}`,
-        ...edgeAlignedMargins,
+        ...inlineVerticalMargins(inlineLayout.height, inlineLayout.paintOffsetY, imageHeight),
       ],
       true,
     );
@@ -254,18 +255,14 @@ function replaceInlineMathVisual(
   const wrapperHeight = hasLocalViewport && viewport
     ? viewport.height
     : positiveDimensionOrFallback(completed.sourceRect.height, inlineLayout.height);
-  const verticalAlign = inlineVerticalAlignValue(
-    sourceStyle,
-    hasLocalViewport && viewport
-      ? inlineLayout.baseline - (viewport.offsetY + viewport.height)
-      : inlineLayout.baseline - inlineLayout.height,
-  );
+  const viewportTop = viewport?.offsetY ?? 0;
   const wrapperDeclarations = [
     ...inlineFlowDeclarations(
       sourceStyle,
       hasLocalViewport && viewport ? viewport.offsetX : 0,
       hasLocalViewport && viewport ? inlineLayout.width - (viewport.offsetX + viewport.width) : 0,
     ),
+    ...inlineVerticalMargins(inlineLayout.height, viewportTop, wrapperHeight).map((value) => `${value}!important`),
     'display:inline-block!important',
     `overflow-x:${overflowX}!important`,
     `overflow-y:${overflowY}!important`,
@@ -280,7 +277,7 @@ function replaceInlineMathVisual(
     hasLocalViewport && viewport ? inlineLayout.paintOffsetX - viewport.offsetX : inlineLayout.paintOffsetX,
   );
   const imageTop = normalizeCssPixel(
-    hasLocalViewport && viewport ? inlineLayout.paintOffsetY - viewport.offsetY : inlineLayout.paintOffsetY,
+    inlineLayout.paintOffsetY - viewportTop,
   );
   replaceDeclarations(
     image,

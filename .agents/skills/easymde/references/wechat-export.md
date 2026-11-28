@@ -654,15 +654,15 @@ splitting during async image transfer): horizontal allocation deltas
 (`paintOffsetX` and `width - (paintOffsetX + imageWidth)`) are folded into the
 image's static `margin-left`/`margin-right` along with source `float`/`clear`,
 while source `vertical-align:top` and `bottom` retain their original neighboring
-line-box keywords. For these keywords, vertical margins preserve the measured
-allocation height and place the painted image at `paintOffsetY`. Other modes use
-the measured
-`baseline - (paintOffsetY + imageHeight)` relation. When inline overflow
+line-box keywords. For every alignment, the image margin box has the measured
+allocation height. Set the top margin to `paintOffsetY` and the bottom margin
+to `height - paintOffsetY - imageHeight`. Baseline-relative modes align the
+margin-box bottom with the measured `baseline - height` offset. When inline overflow
 clipping or scrolling is active (`auto`/`scroll`/`hidden`/`clip`), replacement
 keeps a single non-positioned `display:inline-block` overflow wrapper owning the
-viewport dimensions, overflow axes, folded outer horizontal margins, and
-vertical alignment (`baseline - (viewport.offsetY + viewport.height)` or
-`baseline - inlineLayout.height`), containing one static-flow
+viewport dimensions, overflow axes, folded outer horizontal margins, and the
+same measured margin-box alignment. The wrapper uses the viewport offset and
+height to preserve the remaining vertical allocation and contains one static-flow
 `display:inline-block` `<img>` positioned via static `margin-left`/`margin-top`
 offsets and `vertical-align:top` rather than `position:relative`/`absolute`.
 Paint placement still uses only root-local union and viewport offsets; no fixed
@@ -873,7 +873,10 @@ inline, logical, shorthand, higher-specificity, or `!important` override
 falls back to the effective source padding instead of silently replacing the
 Preview semantics. Uncertain padding-affecting selectors still trigger this
 fallback. A rule with only color declarations and no padding-affecting children
-does not affect qualification. Viewport functions such as `clamp()` and `calc()` are not
+does not affect qualification. Readable `@scope` and `@container` groups are
+skipped only when their complete subtree has no possible padding declaration.
+The index still falls back for padding in a context-dependent group or when
+it cannot inspect a rule. Viewport functions such as `clamp()` and `calc()` are not
 portable through the WeChat editor because its Save path removes them. Wrap
 text leaves and encode code-line breaks while keeping each source line
 non-wrapping.

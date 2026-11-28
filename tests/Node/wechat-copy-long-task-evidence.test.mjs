@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readCopyOperationWindow, summarizeCopyLongTaskWindow } from '../e2e/wechat-copy/copy-long-task-evidence.mjs';
+import { assertCopyLongTaskWindows, readCopyOperationWindow, summarizeCopyLongTaskWindow } from '../e2e/wechat-copy/copy-long-task-evidence.mjs';
 
 const window = { startedAt: 100, stoppedAt: 200, armedAt: 110, clickAt: 120, writeAt: 140, pendingAt: 160 };
 
@@ -74,4 +74,18 @@ test('operation requires trusted click, observed native settlement and ordered t
   for (const override of [{ trustedClick: false }, { nativeSettledAt: undefined }, { terminalAt: 169 }]) {
     assert.equal(readCopyOperationWindow({ ...operation, tasks: [], ...override }), null);
   }
+});
+
+test('the matrix gate rejects an in-operation Long Task', () => {
+  assert.throws(() => assertCopyLongTaskWindows({ ...operation, tasks: [[125, 50]] }, 'copy'), {
+    message: /^copy operation-window long tasks\b/u
+  });
+});
+
+test('the matrix gate rejects a Long Task after terminal status in the whole observation', () => {
+  const observation = { ...operation, stoppedAt: 260, tasks: [[190, 50]] };
+  assert.throws(() => assertCopyLongTaskWindows(observation, 'copy'), {
+    message: /^copy whole-window long tasks\b/u
+  });
+  assert.deepEqual(assertCopyLongTaskWindows({ ...observation, tasks: [] }, 'copy').longTasks, []);
 });

@@ -151,6 +151,50 @@ describe("compiled and cached padding cascade index", () => {
 		}
 	});
 
+	it.each(["CSSScopeRule", "CSSContainerRule"])(
+		"inspects readable %s subtrees without trusting their cascade",
+		(kind) => {
+			const fixture = createNestedQuoteFixture();
+			const sheet = fixture.stylesheet.sheet;
+			if (!sheet) throw new Error("stylesheet unavailable");
+			const original = [...Array.from(sheet.cssRules)];
+			const declarationRule = (style: Record<string, string>, cssRules: unknown[] = []) => ({
+				[Symbol.toStringTag]: "CSSStyleRule",
+				selectorText: ".inner",
+				style: mockStyle(style),
+				cssRules,
+			});
+			const group = (cssRules: unknown[]) => ({ [Symbol.toStringTag]: kind, cssRules });
+			const setRule = (rule: unknown) => Object.defineProperty(sheet, "cssRules", {
+				configurable: true,
+				value: [...original, rule],
+			});
+			try {
+				setRule(group([declarationRule({ color: "red" }, [group([declarationRule({ color: "blue" })])])]));
+				expect(buildPaddingCascadeIndex(document, "padding-left").entries).toHaveLength(1);
+				expect(buildPaddingCascadeIndex(document, "padding-left").unreadableStyleSheet).toBe(false);
+				setRule(declarationRule({ color: "red" }, [group([declarationRule({ color: "blue" })])]));
+				expect(buildPaddingCascadeIndex(document, "padding-left").unreadableStyleSheet).toBe(false);
+				setRule(declarationRule({ color: "red" }, [group([declarationRule({ padding: "29px" })])]));
+				expect(buildPaddingCascadeIndex(document, "padding-left").unreadableStyleSheet).toBe(true);
+				for (const rule of [
+					declarationRule({ "padding-inline-start": "31px" }),
+					declarationRule({ all: "unset" }),
+					declarationRule({ color: "red" }, [group([declarationRule({ padding: "29px" })])]),
+					{ cssRules: [] },
+				]) {
+					setRule(group([rule]));
+					expect(buildPaddingCascadeIndex(document, "padding-left").unreadableStyleSheet).toBe(true);
+				}
+				setRule({ [Symbol.toStringTag]: kind, get cssRules() { throw new Error("unreadable"); } });
+				expect(buildPaddingCascadeIndex(document, "padding-left").unreadableStyleSheet).toBe(true);
+			} finally {
+				delete (sheet as { cssRules?: CSSRuleList }).cssRules;
+				fixture.cleanup();
+			}
+		},
+	);
+
 	it("respects @media and @supports conditions when building the cascade index", () => {
 		const fixture = createNestedQuoteFixture();
 		const conditional = document.createElement("style");

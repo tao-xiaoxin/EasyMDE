@@ -662,7 +662,8 @@ describe('createBrowserWechatClipboard', () => {
     expect(scrollStyle).toContain('height:18px!important');
     expect(scrollStyle).toContain('overflow-x:auto!important');
     expect(scrollStyle).toContain('overflow-y:hidden!important');
-    expect(scrollStyle).toContain('vertical-align:0px!important');
+    expect(scrollStyle).toContain('vertical-align:-4px!important');
+    expect(scrollStyle).toContain('margin-bottom:4px!important');
     expect(scrollStyle).not.toContain('position:relative');
     expect(scrollStyle).not.toContain('position:absolute');
     expect(scrollStyle).not.toContain('display:block');
@@ -682,7 +683,8 @@ describe('createBrowserWechatClipboard', () => {
     expect(clipStyle).toContain('height:18px!important');
     expect(clipStyle).toContain('overflow-x:hidden!important');
     expect(clipStyle).toContain('overflow-y:hidden!important');
-    expect(clipStyle).toContain('vertical-align:0px!important');
+    expect(clipStyle).toContain('vertical-align:-4px!important');
+    expect(clipStyle).toContain('margin-bottom:4px!important');
     expect(clipStyle).not.toContain('overflow:visible!important');
     expect(clipStyle).not.toContain('position:relative');
     expect(clipStyle).not.toContain('display:block');

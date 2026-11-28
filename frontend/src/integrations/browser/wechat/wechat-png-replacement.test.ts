@@ -118,7 +118,7 @@ describe('replaceCompletedVisuals', () => {
     },
     {
       baseline: 18,
-      expectedVerticalAlign: '2px',
+      expectedVerticalAlign: '-6px',
       height: 24,
       label: 'positive paintOffsetY superscript above baseline',
       paintOffsetY: 2,
@@ -126,7 +126,7 @@ describe('replaceCompletedVisuals', () => {
     },
     {
       baseline: 18,
-      expectedVerticalAlign: '-10px',
+      expectedVerticalAlign: '-6px',
       height: 24,
       label: 'combined ascender and descender overhang',
       paintOffsetY: -2,
@@ -209,10 +209,14 @@ describe('replaceCompletedVisuals', () => {
       expect(style).not.toContain('position:relative');
       expect(style).not.toContain('position:absolute');
       expect(style).not.toContain('display:block');
-      if (['top', 'bottom'].includes(expectedVerticalAlign)) {
-        expect(style).toContain('margin-top:-3px!important');
-      } else {
-        expect(style).not.toContain('margin-top');
+      const verticalMargins = [
+        ['margin-top', paintOffsetY],
+        ['margin-bottom', height - paintOffsetY - rasterHeight],
+      ] as const;
+      for (const [property, pixels] of verticalMargins) {
+        expect(declaredStyleDeclarations(image, property)).toEqual(pixels === 0 ? [] : [
+          { important: true, property, value: `${pixels}px` },
+        ]);
       }
     },
   );
@@ -265,7 +269,9 @@ describe('replaceCompletedVisuals', () => {
     expect(wrapperStyle).toContain('overflow-y:hidden!important');
     expect(wrapperStyle).toContain('width:12px!important');
     expect(wrapperStyle).toContain('height:18px!important');
-    expect(wrapperStyle).toContain('vertical-align:-1px!important');
+    expect(wrapperStyle).toContain('vertical-align:-4px!important');
+    expect(wrapperStyle).toContain('margin-top:3px!important');
+    expect(wrapperStyle).toContain('margin-bottom:3px!important');
     expect(wrapperStyle).toContain('margin-left:2px');
     expect(wrapperStyle).toContain('margin-right:2px');
     expect(wrapperStyle).not.toContain('position:relative');

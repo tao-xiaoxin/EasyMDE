@@ -762,6 +762,9 @@ without moving the page. The independent operation window starts at the trusted
 Copy click and includes native Clipboard promise settlement and the observed
 terminal Copy status. It requires ordered timestamps and zero overlapping Long
 Tasks. The full-window assertion remains active for setup and teardown tasks.
+The Node control cases call the matrix assertion directly. They require
+distinct failures for a task inside the Copy operation and for a task after
+terminal status but still inside the full observation.
 On Copy or timing failure, the matrix also attaches
 relative phase intervals from the existing Clipboard probe and any observed
 Long Task overlaps. Phase overlap indicates timing only. The attachment

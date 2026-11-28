@@ -18,7 +18,7 @@ import { readNativeCodeSurfaceEvidence } from "./payload-evidence.mjs";
 import { waitForPreviewVisualReadiness } from "./editor-session.mjs";
 import { assertNativeCodePayloadMatches } from "./payload-geometry-oracle.mjs";
 import { copyNativePayload } from "./copy-driver.mjs";
-import { readCopyOperationWindow, summarizeCopyLongTaskWindow } from "./copy-long-task-evidence.mjs";
+import { assertCopyLongTaskWindows, summarizeCopyLongTaskWindow } from "./copy-long-task-evidence.mjs";
 
 export async function runThemeProjectionScenario3({ baseURL, context, login, page, test, testInfo }) {
 
@@ -170,7 +170,6 @@ export async function runThemeProjectionScenario3({ baseURL, context, login, pag
         } finally {
           observation = await stopCopyLongTaskProbe();
         }
-        longTasks = observation.tasks.map(([, duration]) => duration);
         if (!payload) throw new Error('wechat-code-mode-matrix-payload-unavailable');
         expect(payload.metrics.clickToWriteMs, label + ' click-to-write').toBeLessThanOrEqual(50);
         expect(Number.isFinite(payload.metrics.clickToPendingFrameMs), label + ' pending metric')
@@ -179,10 +178,7 @@ export async function runThemeProjectionScenario3({ baseURL, context, login, pag
           .toBeLessThanOrEqual(100);
         expect(payload.metrics.writeCount, label + ' write count').toBe(1);
         expect(payload.metrics.writeActivation, label + ' activation').toBe(true);
-        operationWindow = readCopyOperationWindow(observation);
-        expect(operationWindow, label + ' trusted copy operation window').not.toBeNull();
-        expect(operationWindow.longTasks, label + ' operation-window long tasks').toEqual([]);
-        expect(longTasks, label + ' long tasks').toEqual([]);
+        ({ operationWindow, longTasks } = assertCopyLongTaskWindows(observation, label));
       } catch (error) {
         if (observation) {
           await testInfo.attach('wechat-copy-long-task-window.json', {

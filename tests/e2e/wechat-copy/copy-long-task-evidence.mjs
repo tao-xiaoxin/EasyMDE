@@ -1,3 +1,14 @@
+import assert from 'node:assert/strict';
+
+export function assertCopyLongTaskWindows(observation, label) {
+  const operationWindow = readCopyOperationWindow(observation);
+  assert.ok(operationWindow, `${label} trusted copy operation window`);
+  assert.deepEqual(operationWindow.longTasks, [], `${label} operation-window long tasks`);
+  const longTasks = observation.tasks.map(([, duration]) => duration);
+  assert.deepEqual(longTasks, [], `${label} whole-window long tasks`);
+  return { operationWindow, longTasks };
+}
+
 export function readCopyOperationWindow({
   startedAt, stoppedAt, trustedClick, clickAt, writeAt, nativeSettledAt, terminalAt, tasks
 }) {

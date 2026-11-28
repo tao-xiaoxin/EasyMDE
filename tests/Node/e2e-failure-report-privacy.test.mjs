@@ -6,11 +6,34 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { parseJUnitXml } from '../../scripts/e2e-shard-summary.mjs';
+import { redactRecordedFailures } from '../e2e/helpers/privacy-safe-failure-test.mjs';
 
 const repo = new URL('../../', import.meta.url);
 const redaction = 'Authenticated workflow failed; browser and assertion data omitted';
 const privateMarker = /SYNTHETIC_PROTECTED_(?:BODY|BEFORE|AFTER|TITLE|PARENT_TITLE|CUSTOM_STEP)/u;
 const publicMarker = 'SYNTHETIC_UNPROTECTED';
+
+test('the protected error collection redacts each write and preserves its positions', () => {
+  const file = '/synthetic/privacy.spec.mjs';
+  const info = { file, errors: [{ message: 'synthetic existing error' }] };
+  redactRecordedFailures(info);
+
+  const { errors } = info;
+  const syntheticError = {
+    message: 'synthetic late error',
+    stack: `Error: synthetic late error\n    at probe (${file}:12:4)`,
+    errorContext: 'synthetic matcher context',
+    cause: { message: 'synthetic cause' }
+  };
+  assert.equal(errors.push(syntheticError), 2);
+  assert.deepEqual(errors, [
+    { message: `${redaction}.` },
+    { message: `${redaction} at privacy.spec.mjs:12:4.` }
+  ]);
+  errors[0] = { value: 'synthetic direct assignment' };
+  assert.deepEqual(errors[0], { message: `${redaction}.` });
+  assert.equal(errors.length, 2);
+});
 
 const specSource = `import { expect, test } from ${JSON.stringify(new URL('node_modules/@playwright/test/index.mjs', repo).href)};
 import { privacySafeFailureDetails as details, privacySafeFailureTest as protectedTest } from ${JSON.stringify(new URL('tests/e2e/helpers/privacy-safe-failure-test.mjs', repo).href)};

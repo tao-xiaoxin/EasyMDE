@@ -1144,8 +1144,10 @@ viewport cases, two-contact resize, split-plus-outline, 800px outline clamp,
 and writing-viewport and 560px Source menu cases opt into
 `tests/e2e/helpers/privacy-safe-failure-test.mjs`. It disables automatic
 Playwright trace, video, screenshots, and failure page snapshots only for those
-cases. That fixture strips runtime error details before Playwright writes
-failure context attachments. The privacy annotation identifies those cases to
+cases. The fixture redacts recorded errors on setup and on subsequent writes
+to the test's error array, including late hook errors recorded after fixture
+teardown. Playwright uses those redacted errors for failure context attachments
+and worker results. The privacy annotation identifies those cases to
 `scripts/e2e-privacy-reporter.mjs`, which redacts step errors and replaces
 assertion, browser-operation, and custom step titles throughout nested title
 paths before other reporters receive them. List, JUnit, and

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, vi } from 'vitest';
+import type { BrowserWechatClipboardRuntime } from "./wechat-clipboard-runtime";
 
 import type {
   WechatClipboardCopyOptions,
@@ -70,6 +71,27 @@ export function computedStyle(element: Element, pseudoElement?: string): CSSStyl
   }
   return window.getComputedStyle(element);
 }
+
+export function mockStyleRuntime(
+	resolver: (
+		element: Element,
+		pseudoElement?: string,
+	) => CSSStyleDeclaration,
+	fetch?: BrowserWechatClipboardRuntime["fetch"],
+): BrowserWechatClipboardRuntime {
+	return {
+		blob: Blob,
+		clipboardItem: null,
+		document,
+		...(fetch ? { fetch } : {}),
+		getComputedStyle: resolver,
+		getSelection: () => null,
+		pageOffset: () => ({ x: 0, y: 0 }),
+		scrollTo: () => undefined,
+		write: null,
+	};
+}
+
 
 export function declaration(values: Record<string, string>): CSSStyleDeclaration {
   return { getPropertyValue: (property: string) => values[property] ?? '' } as unknown as CSSStyleDeclaration;
